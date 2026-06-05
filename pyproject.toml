@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "panther-journal"
+version = "0.1.0"
+description = "Near-real-time TTRPG session journal automation with speaker-attributed transcripts."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Panther contributors"}]
+dependencies = [
+  "click>=8.1",
+  "pydantic>=2.7",
+  "PyYAML>=6.0",
+  "jsonschema>=4.22"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "ruff>=0.5"
+]
+openai = [
+  "openai>=1.30"
+]
+
+[project.scripts]
+panther = "panther_journal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,74 @@
+{
+  "events": [
+    {
+      "channel": 0,
+      "timestamp_start": 0.0,
+      "timestamp_end": 5.3,
+      "text": "The trapdoor beneath the old mill opens into a stone stairwell lit by a green-glass lantern.",
+      "asr_confidence": 0.98
+    },
+    {
+      "channel": 1,
+      "timestamp_start": 5.4,
+      "timestamp_end": 8.2,
+      "text": "\"Nyx says, I take the lantern but keep it hooded.\"",
+      "asr_confidence": 0.96
+    },
+    {
+      "channel": 2,
+      "timestamp_start": 8.3,
+      "timestamp_end": 12.6,
+      "text": "Bram checks the door for the Ashen Sigil cult mark.",
+      "asr_confidence": 0.95
+    },
+    {
+      "channel": 3,
+      "timestamp_start": 12.7,
+      "timestamp_end": 16.9,
+      "text": "Can I roll investigation, or is this more like arcana because of the sigil?",
+      "asr_confidence": 0.93
+    },
+    {
+      "channel": 4,
+      "timestamp_start": 17.0,
+      "timestamp_end": 19.1,
+      "text": "I need a drink refill before we go further.",
+      "asr_confidence": 0.97
+    },
+    {
+      "channel": 0,
+      "timestamp_start": 19.2,
+      "timestamp_end": 24.4,
+      "text": "The sigil is carved inside the lock plate, fresh enough that the metal shavings are still bright.",
+      "asr_confidence": 0.98
+    },
+    {
+      "channel": 1,
+      "timestamp_start": 24.5,
+      "timestamp_end": 28.0,
+      "text": "Nyx says Bram should not touch it until Seren checks for a curse.",
+      "asr_confidence": 0.94
+    },
+    {
+      "channel": 2,
+      "timestamp_start": 28.1,
+      "timestamp_end": 30.0,
+      "text": "Quick bathroom break after this door.",
+      "asr_confidence": 0.99
+    },
+    {
+      "channel": 3,
+      "timestamp_start": 30.1,
+      "timestamp_end": 35.0,
+      "text": "Seren whispers a warding prayer and marks the lantern as a clue.",
+      "asr_confidence": 0.96
+    },
+    {
+      "channel": 4,
+      "timestamp_start": 35.1,
+      "timestamp_end": 39.8,
+      "text": "Orrin braces the door with his shield while everyone argues about initiative.",
+      "asr_confidence": 0.95
+    }
+  ]
+}

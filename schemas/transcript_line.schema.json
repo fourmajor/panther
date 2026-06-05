@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/panther/transcript_line.schema.json",
+  "title": "TranscriptLine",
+  "type": "object",
+  "required": [
+    "id",
+    "session_id",
+    "speaker_id",
+    "speaker_name",
+    "channel",
+    "timestamp_start",
+    "timestamp_end",
+    "text",
+    "asr_confidence"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "session_id": {"type": "string"},
+    "speaker_id": {"type": "string"},
+    "speaker_name": {"type": "string"},
+    "channel": {"type": "integer"},
+    "timestamp_start": {"type": "number", "minimum": 0},
+    "timestamp_end": {"type": "number", "minimum": 0},
+    "text": {"type": "string"},
+    "asr_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}

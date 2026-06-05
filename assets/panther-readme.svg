@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-label="Black panther over a tabletop RPG map with audio waveforms">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#12151a"/>
+      <stop offset="0.52" stop-color="#20242b"/>
+      <stop offset="1" stop-color="#31373f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="44%" r="54%">
+      <stop offset="0" stop-color="#d7b46a" stop-opacity=".35"/>
+      <stop offset=".45" stop-color="#785f31" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="360" fill="url(#bg)"/>
+  <rect width="1200" height="360" fill="url(#glow)"/>
+  <g opacity=".25" stroke="#d9c596" stroke-width="2" fill="none">
+    <path d="M65 275 C180 235 230 305 335 260 S510 232 590 270 S735 305 860 248 S1030 246 1135 286"/>
+    <path d="M86 118 H225 M275 118 H410 M928 120 H1120"/>
+    <path d="M118 84 l55 92 l-28 86 M1028 82 l-62 101 l35 86"/>
+    <circle cx="213" cy="238" r="24"/>
+    <circle cx="993" cy="236" r="24"/>
+    <path d="M735 78 c47 28 74 65 80 112"/>
+  </g>
+  <g opacity=".5" stroke="#79c6d1" stroke-width="5" stroke-linecap="round">
+    <path d="M150 180 v-18 M178 180 v-44 M206 180 v-72 M234 180 v-35 M262 180 v-58"/>
+    <path d="M940 180 v-52 M968 180 v-28 M996 180 v-78 M1024 180 v-42 M1052 180 v-22"/>
+  </g>
+  <ellipse cx="600" cy="286" rx="360" ry="32" fill="#000" opacity=".42" filter="url(#soft)"/>
+  <g transform="translate(265 36)">
+    <path d="M168 197 C187 111 287 52 394 72 C481 88 529 135 566 194 C617 197 672 217 720 253 C683 259 628 257 583 242 C519 267 436 275 346 257 C283 245 229 228 168 197Z" fill="#060709"/>
+    <path d="M144 197 C100 180 69 181 29 211 C74 211 113 227 152 251 C153 232 156 214 168 197Z" fill="#050607"/>
+    <path d="M566 194 C587 155 621 137 663 141 C652 162 635 183 609 198 C651 202 688 221 720 253 C663 246 608 234 566 194Z" fill="#050607"/>
+    <path d="M349 80 C329 43 344 18 375 5 C383 35 378 56 394 72Z" fill="#050607"/>
+    <path d="M441 84 C455 45 483 30 518 36 C507 66 487 83 468 96Z" fill="#050607"/>
+    <path d="M225 236 C205 257 200 280 210 308 L260 308 C252 277 260 256 291 245Z" fill="#050607"/>
+    <path d="M492 250 C482 274 488 292 510 308 L563 308 C537 285 531 265 548 239Z" fill="#050607"/>
+    <path d="M373 257 C355 278 358 294 380 308 L431 308 C409 288 409 271 430 261Z" fill="#050607"/>
+    <path d="M566 194 C598 203 621 220 642 247" stroke="#202833" stroke-width="7" stroke-linecap="round" fill="none" opacity=".65"/>
+    <path d="M205 179 C265 109 358 93 456 110" stroke="#222a34" stroke-width="9" stroke-linecap="round" fill="none" opacity=".6"/>
+    <path d="M618 173 C631 168 648 169 663 178" stroke="#1d242c" stroke-width="6" stroke-linecap="round" fill="none"/>
+    <ellipse cx="615" cy="170" rx="8" ry="5" fill="#f2d36f"/>
+    <ellipse cx="653" cy="174" rx="7" ry="5" fill="#f2d36f"/>
+    <path d="M640 189 c13 8 29 8 45 1" stroke="#0b0d10" stroke-width="5" stroke-linecap="round" fill="none"/>
+  </g>
+  <g fill="#c8b273" opacity=".45">
+    <polygon points="96,300 114,272 132,300"/>
+    <polygon points="1094,296 1112,268 1130,296"/>
+    <circle cx="89" cy="91" r="5"/>
+    <circle cx="1114" cy="88" r="5"/>
+  </g>
+</svg>

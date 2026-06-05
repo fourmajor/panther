@@ -1,0 +1,8 @@
+services:
+  panther:
+    build: .
+    volumes:
+      - ./runs:/app/runs
+      - ./config:/app/config:ro
+      - ./fixtures:/app/fixtures:ro
+    command: ["ingest-sample", "--config", "config/example.yaml", "--out", "runs/sample-session"]

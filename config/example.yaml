@@ -1,0 +1,61 @@
+campaign:
+  name: "Ashes of Briarwall"
+  session_id: "sample-session-001"
+  session_title: "The Lantern Under the Mill"
+
+audio:
+  input_provider: "mock"
+  sample_fixture: "fixtures/sample/mock_audio_events.json"
+  channel_layout: "isolated_speaker_channels"
+
+speakers:
+  - id: "gm"
+    display_name: "Mara"
+    role: "GM"
+    channel: 0
+  - id: "pc_1"
+    display_name: "Jules"
+    role: "Player"
+    character_name: "Nyx"
+    channel: 1
+  - id: "pc_2"
+    display_name: "Theo"
+    role: "Player"
+    character_name: "Bram"
+    channel: 2
+  - id: "pc_3"
+    display_name: "Priya"
+    role: "Player"
+    character_name: "Seren"
+    channel: 3
+  - id: "pc_4"
+    display_name: "Cal"
+    role: "Player"
+    character_name: "Orrin"
+    channel: 4
+
+models:
+  asr_provider: "mock"
+  llm_provider: "mock"
+  classifier_prompt: "prompts/v1/line_classifier.md"
+  lore_prompt: "prompts/v1/lore_extractor.md"
+  novel_prompt: "prompts/v1/novel_recap.md"
+  screenplay_prompt: "prompts/v1/screenplay_recap.md"
+
+filtering:
+  include_labels:
+    - "GAME_CANON"
+    - "RULES_CHAT"
+    - "CHARACTER_DIALOGUE"
+    - "UNCERTAIN"
+  exclude_labels:
+    - "TABLE_LOGISTICS"
+    - "FOOD_DRINK"
+    - "FAMILY_PERSONAL"
+    - "JOKE_OOC"
+  keep_uncertain: true
+
+output:
+  style:
+    novel_tense: "past"
+    screenplay_format: "compact"

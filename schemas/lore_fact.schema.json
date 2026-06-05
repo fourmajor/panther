@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/panther/lore_fact.schema.json",
+  "title": "LoreFact",
+  "type": "object",
+  "required": [
+    "type",
+    "name",
+    "session_id",
+    "timestamp_start",
+    "timestamp_end",
+    "facts",
+    "status",
+    "confidence",
+    "source_line_ids"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["npc", "pc", "location", "faction", "item", "clue", "quest", "event", "rule_note"]
+    },
+    "name": {"type": "string"},
+    "session_id": {"type": "string"},
+    "timestamp_start": {"type": "number", "minimum": 0},
+    "timestamp_end": {"type": "number", "minimum": 0},
+    "facts": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string"},
+    "confidence": {"type": "string", "enum": ["confirmed", "inferred", "uncertain"]},
+    "source_line_ids": {"type": "array", "items": {"type": "string"}}
+  }
+}

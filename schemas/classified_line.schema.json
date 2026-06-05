@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/panther/classified_line.schema.json",
+  "title": "ClassifiedLine",
+  "allOf": [
+    {"$ref": "transcript_line.schema.json"},
+    {
+      "type": "object",
+      "required": ["label", "classifier_confidence", "rationale"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "enum": [
+            "GAME_CANON",
+            "RULES_CHAT",
+            "CHARACTER_DIALOGUE",
+            "TABLE_LOGISTICS",
+            "FOOD_DRINK",
+            "FAMILY_PERSONAL",
+            "JOKE_OOC",
+            "UNCERTAIN"
+          ]
+        },
+        "classifier_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "rationale": {"type": "string"}
+      }
+    }
+  ]
+}
