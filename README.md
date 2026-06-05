@@ -1,6 +1,30 @@
 # Panther
 
-![A black panther crouched over a tabletop RPG session map with waveform motifs](assets/panther-readme.svg)
+```text
+                         .-''''-.
+                    _.-'  .-..-.  `-._
+                 .-'     /  ||  \     `-.
+        _..--''''       /   ||   \       ``''--.._
+     .-'               /_.-^^^^-._\               `-.
+   .'              _.-'  _..---.._  `-._              `.
+  /            _.-'   .-'  _____  `-.   `-._            \
+ /        _.-'      .'   .'     `.   `.      `-._        \
+|      .-'        .'    /  .- -.  \    `.        `-.      |
+|    .'          /     |  /  _  \  |     \          `.    |
+|   /           |      | |  ( )  | |      |           \   |
+|  |            |      |  \  -  /  |      |            |  |
+|  |             \      \  `---'  /      /             |  |
+|   \             `._    `-.___.-'    _.'             /   |
+ \   `._              `--._____.--'              _.'   /
+  `.    `-._                                      _.-'    .'
+    `-._    `--..__                      __..--'    _.-'
+        `--.._       ``----......----''       _..--'
+              ``--..__                __..--''
+                      ``------------''
+          /\_/\        P A N T H E R        /\_/\
+     ____/ o o \____  session audio to lore  / o o \____
+          \_^_/                            \_^_/
+```
 
 Panther is a TTRPG session journal automation system for turning multi-person tabletop audio into speaker-attributed transcripts, grounded recaps, and structured campaign memory.
 
