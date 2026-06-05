@@ -1,31 +1,5 @@
 # Panther
 
-```text
-                         .-''''-.
-                    _.-'  .-..-.  `-._
-                 .-'     /  ||  \     `-.
-        _..--''''       /   ||   \       ``''--.._
-     .-'               /_.-^^^^-._\               `-.
-   .'              _.-'  _..---.._  `-._              `.
-  /            _.-'   .-'  _____  `-.   `-._            \
- /        _.-'      .'   .'     `.   `.      `-._        \
-|      .-'        .'    /  .- -.  \    `.        `-.      |
-|    .'          /     |  /  _  \  |     \          `.    |
-|   /           |      | |  ( )  | |      |           \   |
-|  |            |      |  \  -  /  |      |            |  |
-|  |             \      \  `---'  /      /             |  |
-|   \             `._    `-.___.-'    _.'             /   |
- \   `._              `--._____.--'              _.'   /
-  `.    `-._                                      _.-'    .'
-    `-._    `--..__                      __..--'    _.-'
-        `--.._       ``----......----''       _..--'
-              ``--..__                __..--''
-                      ``------------''
-          /\_/\        P A N T H E R        /\_/\
-     ____/ o o \____  session audio to lore  / o o \____
-          \_^_/                            \_^_/
-```
-
 Panther is a TTRPG session journal automation system for turning multi-person tabletop audio into speaker-attributed transcripts, grounded recaps, and structured campaign memory.
 
 The architecture assumes one known audio channel per speaker. Diarization is a fallback, not the main attribution strategy.
