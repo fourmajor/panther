@@ -1,12 +1,11 @@
 name: CI
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
-    runs-on: [self-hosted, panther]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

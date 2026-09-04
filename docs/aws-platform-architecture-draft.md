@@ -16,8 +16,9 @@ assets live in a dedicated AWS account and are never stored in the application r
 - Use one dedicated AWS account for the Panther application and its game data.
 - Treat GitHub as the source of truth for application and infrastructure code.
 - Define infrastructure as code using AWS CDK.
-- Run CI/CD on computers owned by the project owner whenever possible.
-- Do not use GitHub-hosted runners.
+- Use local laptop checks and deployments initially; automatic CI is not required for the baseline.
+- Allow manually triggered GitHub-hosted CI within the free tier when it is materially useful.
+- Prefer computers owned by the project owner for future routine CI/CD compute.
 - Support private group collaboration and selectively published web content.
 - Support open-ended asset types without changing the S3 hierarchy for each new type.
 - Preserve original recordings and generated artifacts independently of application deployments.
@@ -41,11 +42,11 @@ application multi-tenant.
 
 ```mermaid
 flowchart LR
-    GitHub[GitHub repository] --> Runner[Home self-hosted runner]
-    Runner -->|Test, build, and CDK deploy| IaC[CloudFormation stacks]
-    Laptop[Developer laptop] -->|Manual CDK deploy| IaC
-    GitHub -. Optional fallback .-> Build[On-demand CodeBuild]
-    Build -.-> IaC
+    Laptop[Developer laptop] -->|Test, build, and CDK deploy| IaC[CloudFormation stacks]
+    GitHub[GitHub repository] -. Manual free-tier workflow .-> Hosted[GitHub-hosted runner]
+    Hosted -.-> IaC
+    GitHub -. Future .-> Runner[Home self-hosted runner]
+    Runner -.-> IaC
     IaC --> AWS[AWS account]
 
     Group[Gaming group] --> Web[CloudFront / web application]
@@ -198,47 +199,46 @@ Suggested stack boundaries:
 
 Console-created application resources are not authoritative and must be captured in CDK. Manual
 account creation, root-user security, and the first CDK bootstrap are documented exceptions because
-they necessarily precede the deployed stacks. Installing and registering the physical home runner
-is also documented as a manual machine-bootstrap step.
+they necessarily precede the deployed stacks. Installing and registering a future physical home
+runner will also be documented as a manual machine-bootstrap step.
 
 ## Continuous Integration and Delivery
 
-### Decision: Home self-hosted runner
+### Decision: Local first; automated CI deferred
 
-The primary CI/CD environment is a GitHub Actions self-hosted runner on a computer owned by the
-project owner. GitHub coordinates and reports the job, while all test, build, synthesis, and
-deployment compute runs on home hardware. The repository workflow requires the custom runner label
-`panther` so jobs cannot silently fall back to GitHub-hosted compute.
+The initial workflow uses laptop compute for tests, builds, CDK synthesis, infrastructure review,
+and deployment. Automatic CI is intentionally disabled while the baseline infrastructure is being
+established. Avoiding CI is preferable when local checks provide adequate confidence.
 
-The runner does not have to remain powered on. Jobs can wait for the runner to become available;
-GitHub currently fails a job if it remains queued for more than 24 hours. Slow or delayed builds are
-acceptable in exchange for eliminating hosted compute cost.
+The GitHub Actions workflow is manually triggered and uses the GitHub-hosted free tier. It is a
+temporary fallback for cases where remote CI adds meaningful value, not a required step for every
+pull request.
 
 The delivery paths are:
 
-1. **Home self-hosted runner:** The normal automated path for pull-request checks and deployments.
-2. **Laptop:** Run the same checked-in scripts directly, authenticate with short-lived AWS
-   credentials, inspect `cdk diff`, and deploy manually when necessary.
-3. **CodeBuild on demand:** An optional future fallback if the home runner is unavailable for more
-   than 24 hours or a build needs temporary capacity. It is not deployed in the initial foundation.
+1. **Laptop:** The normal path. Run checked-in scripts directly, authenticate with short-lived AWS
+   credentials, inspect `cdk diff`, and deploy manually.
+2. **Manual GitHub-hosted workflow:** Use the GitHub free tier only when CI is specifically useful.
+3. **Future home self-hosted runner:** Add routine automated CI/CD later using project-owned compute.
+4. **CodeBuild on demand:** Retain only as an optional future fallback; do not deploy it initially.
+
+When a home runner is eventually introduced, it should be repository-scoped and isolated from
+general-purpose personal use. GitHub will coordinate jobs while the owned machine performs the
+compute. Slow or delayed builds are acceptable in exchange for avoiding hosted compute cost.
 
 If CodeBuild is introduced later, Lambda compute mode is appropriate for checks that finish within
-15 minutes and do not require Docker. Standard on-demand CodeBuild can handle longer or Docker-based
-jobs without Panther owning an EC2 instance. CodePipeline is not required.
+15 minutes and do not require Docker. CodePipeline is not required.
 
-All build commands live in the repository and behave the same on the home runner, when invoked
-directly from a laptop, and in any future CodeBuild fallback.
+All build commands live in the repository and behave the same locally, in the manual GitHub
+workflow, and on any future home runner.
 
 ## Delivery and Security
 
-- GitHub Actions uses OIDC to obtain short-lived AWS credentials for a narrowly scoped deployment
-  role. Long-lived AWS access keys are not stored in GitHub or on the runner.
-- Manual laptop deployments also use short-lived AWS credentials.
-- Pull requests run formatting, tests, synthesis, and infrastructure-difference checks.
-- The runner is repository-scoped, uses a dedicated OS account or isolated virtual machine, and is
-  not a general-purpose personal environment.
-- Workflows from forks and other untrusted sources do not execute on the home runner.
-- The runner initiates outbound HTTPS connections; no inbound home-network port is opened.
+- Manual GitHub Actions deployments use OIDC to obtain short-lived AWS credentials for a narrowly
+  scoped deployment role. Long-lived AWS access keys are not stored in GitHub.
+- Laptop deployments use short-lived AWS credentials.
+- Pull requests are verified locally unless the manual GitHub workflow is explicitly started.
+- A future home runner will be repository-scoped, isolated, and restricted to trusted workflows.
 - Deployment roles follow least privilege and are separate from normal user access.
 - The AWS root user has MFA and no access keys.
 - Administrative access uses short-lived credentials.
@@ -255,7 +255,6 @@ complete web application.
 4. Deploy the GitHub OIDC provider and restricted administration and deployment roles.
 5. Deploy the private and published S3 buckets with encryption, versioning, and lifecycle rules.
 6. Verify an authenticated command-line upload to the private bucket.
-7. Register a repository-scoped home runner with the `panther` label and verify the CI workflow.
 
 CloudFront, Cognito, the application API, database tables, and processing services can follow in
 later milestones. They are not required before uploading the first assets.
