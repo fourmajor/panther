@@ -94,6 +94,16 @@ CDK creates the first Identity Center user and two assigned permission sets:
 Use `PantherAssetUploader` for game-specific sessions. Reserve `PantherAdministrator` for CDK and
 account-administration work. The temporary root profile is only for account bootstrap and recovery.
 
+## 8. Activate the Identity Center user
+
+Users created through the Identity Store API do not have an initial password. AWS does not expose
+the email-OTP setting through CloudFormation, CDK, or a public API, so enable it in the IAM Identity
+Center console under **Settings**, **Authentication**, **Standard authentication**, **Configure**,
+then **Send email OTP**.
+
+Start a first sign-in from the AWS access portal. Follow the emailed verification link to set a
+password and register MFA. Do not recreate the user in the console.
+
 The foundation stack outputs the private and published bucket names. The same names are also stored
 in these standard SSM parameters:
 
@@ -102,7 +112,7 @@ in these standard SSM parameters:
 /panther/foundation/published-asset-bucket
 ```
 
-## 8. Verify the private bucket
+## 9. Verify the private bucket
 
 ```bash
 AWS_PROFILE=panther-uploader aws ssm get-parameter \

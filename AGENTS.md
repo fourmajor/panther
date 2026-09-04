@@ -44,6 +44,10 @@
   through CloudFormation, CDK, or a public API. After CDK creates the one-account Organization, that
   enablement is a documented console step; its users, permission sets, and assignments remain CDK
   managed.
+- Known user-activation exception: Identity Center users created through its API have no initial
+  password, and AWS exposes the email-OTP setting only in the Identity Center console. Enabling that
+  setting and completing the user's initial password and MFA enrollment are documented console
+  steps; do not recreate the user manually.
 
 ## Cost posture
 
