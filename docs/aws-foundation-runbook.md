@@ -131,3 +131,54 @@ AWS_PROFILE=panther-uploader aws s3 cp /path/to/portrait.png \
 ```
 
 The actual game ID, asset ID, portrait, and related metadata remain outside this repository.
+
+## 10. Deploy the media explorer
+
+Deploy the read-only media explorer with the short-lived administrator profile:
+
+```bash
+cd infra
+AWS_PROFILE=panther-sso-admin npm run deploy -- PantherMediaExplorer \
+  --context account=ACCOUNT_ID \
+  --exclusively
+```
+
+CDK creates the private web bucket, CloudFront distribution, Cognito user pool, two users, protected
+HTTP API, and on-demand Lambda functions. The default Cognito domain prefix is checked into
+`infra/cdk.json`; change that context value if AWS reports that the globally named prefix is already
+in use. `--exclusively` prevents this focused deployment from also updating the existing foundation
+stack without its deployment-time budget email context.
+
+The two initial usernames are `stu` and `other_stu`. Their generated passwords are stored as standard
+SSM SecureString parameters. Retrieve each password with administrative access:
+
+```bash
+AWS_PROFILE=panther-sso-admin aws ssm get-parameter \
+  --region us-west-2 \
+  --name /panther/media-explorer/users/stu/password \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text
+
+AWS_PROFILE=panther-sso-admin aws ssm get-parameter \
+  --region us-west-2 \
+  --name /panther/media-explorer/users/other_stu/password \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text
+```
+
+Password generation and user provisioning happen inside the CDK deployment. No password is passed
+through CDK context, committed to Git, or returned in a CloudFormation output. CloudFormation cannot
+natively set permanent Cognito passwords or create SSM SecureString values, so an on-demand custom
+resource performs those two operations and owns their lifecycle.
+
+Read the explorer URL from the deployment output or later with:
+
+```bash
+AWS_PROFILE=panther-sso-admin aws cloudformation describe-stacks \
+  --region us-west-2 \
+  --stack-name PantherMediaExplorer \
+  --query "Stacks[0].Outputs[?OutputKey=='MediaExplorerUrl'].OutputValue | [0]" \
+  --output text
+```
