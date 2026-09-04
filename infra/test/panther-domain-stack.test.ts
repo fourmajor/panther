@@ -24,4 +24,8 @@ test("domain stack retains the public Panther hosted zone", () => {
     DeletionPolicy: "Retain",
     UpdateReplacePolicy: "Retain",
   });
+  template.hasResourceProperties("AWS::CertificateManager::Certificate", {
+    DomainName: "panther.place",
+    ValidationMethod: "DNS",
+  });
 });

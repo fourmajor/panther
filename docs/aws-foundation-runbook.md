@@ -183,39 +183,48 @@ AWS_PROFILE=panther-sso-admin aws cloudformation describe-stacks \
   --output text
 ```
 
-## 11. Register and adopt the application domain
+## 11. Register and delegate the application domain
 
 The selected domain is `panther.place`. Domain registration is the narrow manual API exception:
 CloudFormation and CDK cannot register a domain. Register it for one year with auto-renewal and
 privacy protection through the Route 53 Domains API. Do not put registrant contact details in Git,
 CDK context, shell history, or CloudFormation.
 
-Route 53 automatically creates a hosted zone during registration. CloudFormation can manage and
-import that resource, so adopt it into the `PantherDomain` stack instead of creating a duplicate.
-Bootstrap CDK in the stack's required region, then obtain the hosted zone ID:
+Route 53 automatically creates a temporary hosted zone during registration. Panther deliberately
+creates the authoritative zone with CDK so its lifecycle, tags, certificate validation, and records
+remain reproducible. Bootstrap CDK in the stack's required region and deploy the domain stack:
 
 ```bash
 cd infra
-AWS_PROFILE=panther-sso-admin npx cdk bootstrap aws://ACCOUNT_ID/us-east-1
+AWS_PROFILE=panther-sso-admin npx cdk bootstrap aws://ACCOUNT_ID/us-east-1 \
+  --context account=ACCOUNT_ID
 
-AWS_PROFILE=panther-sso-admin aws route53 list-hosted-zones-by-name \
-  --dns-name panther.place \
-  --query "HostedZones[?Name=='panther.place.'].Id | [0]" \
-  --output text
+AWS_PROFILE=panther-sso-admin npx cdk deploy PantherDomain \
+  --context account=ACCOUNT_ID \
+  --exclusively
 ```
 
-Then import the existing zone using the logical ID emitted by `cdk synth`:
+After the registration operation succeeds, read the four name servers from the `PantherDomain`
+hosted zone and update the registered domain to use them. Updating registrar name servers is not
+supported by CloudFormation or CDK:
 
 ```bash
-AWS_PROFILE=panther-sso-admin npx cdk import PantherDomain \
-  --context account=ACCOUNT_ID \
-  --resource-mapping-inline \
-  '{"HostedZoneDB99F866":{"HostedZoneId":"HOSTED_ZONE_ID"}}' \
-  --yes
+AWS_PROFILE=panther-sso-admin aws route53 get-hosted-zone \
+  --id CDK_HOSTED_ZONE_ID \
+  --query DelegationSet.NameServers \
+  --output text
+
+AWS_PROFILE=panther-sso-admin aws route53domains update-domain-nameservers \
+  --region us-east-1 \
+  --domain-name panther.place \
+  --nameservers Name=NAME_SERVER_1 Name=NAME_SERVER_2 Name=NAME_SERVER_3 Name=NAME_SERVER_4
 ```
 
-Do not run a normal first deployment of `PantherDomain`; it would create a duplicate hosted zone.
-After import, run drift detection and use ordinary CDK deployments for every subsequent DNS change.
-The domain stack is deliberately located in `us-east-1` because the CloudFront certificate added in
-the next application-domain change must live there. This is the documented exception to the default
-`us-west-2` region.
+Verify that the domain now reports the CDK zone's name servers. Then confirm that the registrar-created
+zone contains only its default `NS` and `SOA` records and delete that unused zone so Panther pays for
+only one hosted zone. This cleanup is part of the unavoidable registrar side effect, not an ongoing
+infrastructure workflow.
+
+Use ordinary CDK deployments for the certificate, application aliases, and every subsequent DNS
+change. The domain stack is deliberately located in `us-east-1` because its CloudFront certificate
+must live there. This is the documented exception to the default `us-west-2` region.

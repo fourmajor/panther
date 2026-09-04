@@ -10,7 +10,11 @@ function mediaExplorerTemplate(): Template {
       account: "123456789012",
       region: "us-west-2",
     },
+    certificateArn:
+      "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
     cognitoDomainPrefix: "panther-media-example",
+    domainName: "panther.place",
+    hostedZoneId: "Z1234567890",
   });
   return Template.fromStack(stack);
 }
@@ -27,6 +31,25 @@ test("media explorer uses private static hosting and Cognito authentication", ()
     },
   });
   template.resourceCountIs("AWS::CloudFront::Distribution", 1);
+  template.hasResourceProperties("AWS::CloudFront::Distribution", {
+    DistributionConfig: Match.objectLike({
+      Aliases: ["panther.place"],
+      ViewerCertificate: Match.objectLike({
+        AcmCertificateArn:
+          "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
+        MinimumProtocolVersion: "TLSv1.2_2021",
+      }),
+    }),
+  });
+  template.resourceCountIs("AWS::Route53::RecordSet", 2);
+  template.hasResourceProperties("AWS::Route53::RecordSet", {
+    Name: "panther.place.",
+    Type: "A",
+  });
+  template.hasResourceProperties("AWS::Route53::RecordSet", {
+    Name: "panther.place.",
+    Type: "AAAA",
+  });
   template.hasResourceProperties("AWS::CloudFront::ResponseHeadersPolicy", {
     ResponseHeadersPolicyConfig: Match.objectLike({
       SecurityHeadersConfig: Match.objectLike({
@@ -53,8 +76,15 @@ test("media explorer uses private static hosting and Cognito authentication", ()
   template.hasResourceProperties("AWS::Cognito::UserPoolClient", {
     AllowedOAuthFlows: ["code"],
     AllowedOAuthFlowsUserPoolClient: true,
+    CallbackURLs: ["https://panther.place/"],
     GenerateSecret: false,
+    LogoutURLs: ["https://panther.place/"],
     PreventUserExistenceErrors: "ENABLED",
+  });
+  template.hasResourceProperties("AWS::ApiGatewayV2::Api", {
+    CorsConfiguration: Match.objectLike({
+      AllowOrigins: ["https://panther.place"],
+    }),
   });
 });
 

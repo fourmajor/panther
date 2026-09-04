@@ -39,7 +39,7 @@ if (domainName !== "panther.place") {
   throw new Error("domainName must be panther.place unless the architecture decision changes");
 }
 
-new PantherDomainStack(app, "PantherDomain", {
+const domain = new PantherDomainStack(app, "PantherDomain", {
   env: {
     account,
     // CloudFront certificates must live in us-east-1, so domain resources are anchored there.
@@ -65,10 +65,15 @@ const mediaExplorer = new PantherMediaExplorerStack(app, "PantherMediaExplorer",
     account,
     region,
   },
+  certificateArn: domain.certificate.certificateArn,
   cognitoDomainPrefix: mediaExplorerDomainPrefix,
+  crossRegionReferences: true,
+  domainName,
+  hostedZoneId: domain.hostedZone.hostedZoneId,
   description: "Password-protected serverless browser for private Panther media",
 });
 mediaExplorer.addStackDependency(foundation);
+mediaExplorer.addStackDependency(domain);
 
 const accessContext = [
   administratorEmail,
