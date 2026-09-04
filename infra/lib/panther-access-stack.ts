@@ -42,6 +42,10 @@ export class PantherAccessStack extends Stack {
       IdentityStoreId: props.identityStoreId,
       UserName: props.administratorEmail,
       DisplayName: "Panther Administrator",
+      Name: {
+        GivenName: "Panther",
+        FamilyName: "Administrator",
+      },
       Emails: administratorEmails,
     };
     const administratorUserLogGroup = new logs.LogGroup(
@@ -72,6 +76,7 @@ export class PantherAccessStack extends Stack {
           IdentityStoreId: props.identityStoreId,
           UserId: new cr.PhysicalResourceIdReference(),
         },
+        ignoreErrorCodesMatching: "ResourceNotFoundException|ValidationException",
       },
       policy: cr.AwsCustomResourcePolicy.fromStatements([
         new iam.PolicyStatement({
