@@ -13,3 +13,5 @@ build/
 infra/node_modules/
 infra/dist/
 infra/cdk.out/
+infra/test-results/
+infra/playwright-report/

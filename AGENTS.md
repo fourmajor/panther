@@ -16,10 +16,13 @@
 
 - Prefer command-line tools and APIs. Do not operate the user's browser for repository work.
 - Avoid running CI unless it adds material confidence beyond the relevant local checks.
-- No project-owned CI runner is currently available. Home-owned self-hosted runners are a future
-  option, not a current dependency.
-- If cloud CI is needed before a home runner exists, use a manually triggered GitHub-hosted runner
-  within the GitHub free tier. Do not enable automatic hosted CI without explicit approval.
+- A Docker-based, repository-scoped runner can run on the owner's MacBook. Start it with
+  `bash ops/runner/start.sh`; it accepts one job and exits. See `docs/self-hosted-runner.md`.
+- CI remains manually triggered, restricted to trusted `main` and the owner. Never enable
+  automatic fork/PR execution on a personal runner. Containers are not a complete security boundary.
+- Do not mount personal directories, AWS credentials, or the Docker socket into the runner.
+- Prefer this owned compute over GitHub-hosted runners; do not enable automatic hosted CI without
+  explicit approval. Continue deploying from the laptop with short-lived AWS credentials.
 - Avoid always-on hosted compute solely to reduce build latency.
 - AWS infrastructure is defined with AWS CDK and committed alongside the application.
 

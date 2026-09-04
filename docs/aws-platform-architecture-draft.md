@@ -17,8 +17,8 @@ assets live in a dedicated AWS account and are never stored in the application r
 - Treat GitHub as the source of truth for application and infrastructure code.
 - Define infrastructure as code using AWS CDK.
 - Use local laptop checks and deployments initially; automatic CI is not required for the baseline.
-- Allow manually triggered GitHub-hosted CI within the free tier when it is materially useful.
-- Prefer computers owned by the project owner for future routine CI/CD compute.
+- Run manually triggered, trusted CI in a disposable Docker runner on the owner's MacBook.
+- Move that runner to another owned computer later; automatic CI remains deferred.
 - Support private group collaboration and selectively published web content.
 - Support open-ended asset types without changing the S3 hierarchy for each new type.
 - Preserve original recordings and generated artifacts independently of application deployments.
@@ -43,10 +43,7 @@ application multi-tenant.
 ```mermaid
 flowchart LR
     Laptop[Developer laptop] -->|Test, build, and CDK deploy| IaC[CloudFormation stacks]
-    GitHub[GitHub repository] -. Manual free-tier workflow .-> Hosted[GitHub-hosted runner]
-    Hosted -.-> IaC
-    GitHub -. Future .-> Runner[Home self-hosted runner]
-    Runner -.-> IaC
+    GitHub[GitHub repository] -. Manual trusted checks .-> Runner[MacBook Docker runner]
     IaC --> AWS[AWS account]
 
     Group[Gaming group] --> Web[CloudFront / web application]
@@ -215,8 +212,8 @@ Suggested stack boundaries:
 Console-created application resources are not authoritative and must be captured in CDK. Manual
 account creation, root-user security, the first CDK bootstrap, and enabling organization-level IAM
 Identity Center are documented exceptions because AWS does not expose those operations through
-CDK. Installing and registering a future physical home runner will also be documented as a manual
-machine-bootstrap step.
+CDK. Installing and registering the local Docker runner is a non-AWS machine-bootstrap step,
+documented in [the runner runbook](self-hosted-runner.md).
 
 ## Continuous Integration and Delivery
 
@@ -226,35 +223,36 @@ The initial workflow uses laptop compute for tests, builds, CDK synthesis, infra
 and deployment. Automatic CI is intentionally disabled while the baseline infrastructure is being
 established. Avoiding CI is preferable when local checks provide adequate confidence.
 
-The GitHub Actions workflow is manually triggered and uses the GitHub-hosted free tier. It is a
-temporary fallback for cases where remote CI adds meaningful value, not a required step for every
-pull request.
+The GitHub Actions workflow is manually triggered and uses a one-job Docker runner on the owner's
+MacBook. It is optional, not a required step for every pull request. It has no AWS credentials or
+deployment permissions. See [the runner runbook](self-hosted-runner.md).
 
 The delivery paths are:
 
 1. **Laptop:** The normal path. Run checked-in scripts directly, authenticate with short-lived AWS
    credentials, inspect `cdk diff`, and deploy manually.
-2. **Manual GitHub-hosted workflow:** Use the GitHub free tier only when CI is specifically useful.
-3. **Future home self-hosted runner:** Add routine automated CI/CD later using project-owned compute.
+2. **Manual self-hosted workflow:** Run trusted-main checks in a fresh MacBook Docker container.
+3. **Another owned computer:** Move the same container setup off the MacBook later.
 4. **CodeBuild on demand:** Retain only as an optional future fallback; do not deploy it initially.
 
-When a home runner is eventually introduced, it should be repository-scoped and isolated from
-general-purpose personal use. GitHub will coordinate jobs while the owned machine performs the
-compute. Slow or delayed builds are acceptable in exchange for avoiding hosted compute cost.
+The runner is repository-scoped and does not mount personal files, AWS credentials, or a Docker
+socket. Only the owner can dispatch its workflow on trusted main. Containers are not a complete
+security boundary for hostile code; untrusted PR jobs must not run on this machine. Slow or delayed
+builds are acceptable in exchange for avoiding hosted compute cost.
 
 If CodeBuild is introduced later, Lambda compute mode is appropriate for checks that finish within
 15 minutes and do not require Docker. CodePipeline is not required.
 
 All build commands live in the repository and behave the same locally, in the manual GitHub
-workflow, and on any future home runner.
+workflow, and on another owned runner.
 
 ## Delivery and Security
 
-- Manual GitHub Actions deployments use OIDC to obtain short-lived AWS credentials for a narrowly
-  scoped deployment role. Long-lived AWS access keys are not stored in GitHub.
+- If GitHub Actions deployments are added later, use OIDC for short-lived, narrowly scoped AWS
+  credentials. Current CI only runs checks and synthesis; it cannot deploy.
 - Laptop deployments use short-lived AWS credentials.
 - Pull requests are verified locally unless the manual GitHub workflow is explicitly started.
-- A future home runner will be repository-scoped, isolated, and restricted to trusted workflows.
+- The MacBook Docker runner is repository-scoped, disposable, and restricted to trusted workflows.
 - Deployment roles follow least privilege and are separate from normal user access.
 - The AWS root user has MFA and no access keys.
 - Administrative access uses short-lived credentials.
@@ -313,7 +311,7 @@ exception to Panther's `us-west-2` default because ACM certificates used by Clou
 - Retention periods for raw audio and intermediate artifacts
 - Backup and disaster-recovery targets
 - Rules governing promotion from private to published content
-- Home-runner hardware, operating system, and isolation method
+- Which owned computer will eventually replace the MacBook runner host
 
 ## Relevant AWS Documentation
 
