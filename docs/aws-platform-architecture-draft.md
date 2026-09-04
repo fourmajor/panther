@@ -124,14 +124,21 @@ the initial design.
 
 ### Web application and access
 
-- CloudFront and S3, or Amplify Hosting, serve the group-facing web application.
-- Cognito provides invited-user authentication when the group interface is introduced.
-- API Gateway and Lambda provide the application API.
+- CloudFront and a private S3 site bucket serve the initial group-facing media explorer.
+- Cognito provides invited-user authentication with self-registration disabled.
+- API Gateway and Lambda provide a read-only media API protected by a Cognito JWT authorizer.
 - Private files are accessed through short-lived signed URLs.
 - Published files are deliberately promoted to the published asset bucket.
 
-The initial infrastructure does not need to deploy the web application. It only needs to preserve
-the path to this design.
+The initial explorer can navigate the private `games/` hierarchy and preview files. It intentionally
+does not upload, delete, rename, or publish assets. Those operations will first be introduced through
+the Panther CLI and can later be added to the web application with explicit authorization rules.
+
+The first two Cognito users are provisioned by a CDK custom resource. It creates strong passwords at
+deployment time and stores them as SSM SecureString parameters; plaintext passwords never enter Git,
+CDK context, CloudFormation outputs, or Lambda logs. The custom resource exists because
+CloudFormation cannot model a Cognito user's permanent password or an SSM SecureString value. It runs
+only during stack lifecycle operations.
 
 ### Processing
 
@@ -263,8 +270,19 @@ The operational procedure is maintained in [aws-foundation-runbook.md](aws-found
 5. Deploy the private and published S3 buckets with encryption, versioning, and lifecycle rules.
 6. Verify an authenticated command-line upload to the private bucket.
 
-CloudFront, Cognito, the application API, database tables, and processing services can follow in
-later milestones. They are not required before uploading the first assets.
+Database tables and processing services can follow in later milestones. They are not required before
+uploading or browsing the first assets.
+
+## Initial Media Explorer Milestone
+
+The first read-only explorer adds:
+
+1. A private S3 bucket and CloudFront distribution for the static web application.
+2. A Cognito user pool with self-registration disabled and two CDK-managed users.
+3. An HTTP API with JWT authorization and an on-demand Lambda reader for private assets.
+4. Five-minute S3 links for in-browser media previews.
+
+It adds no VPC, NAT Gateway, EC2 instance, load balancer, database, or always-running service.
 
 ## Deferred Decisions
 

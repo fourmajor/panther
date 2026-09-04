@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Panther Media</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="config.js"></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="brand" href="/" aria-label="Panther Media home">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>
+          <strong>Panther</strong>
+          <small>Media archive</small>
+        </span>
+      </a>
+      <div class="account" id="account" hidden>
+        <span id="username"></span>
+        <button class="quiet-button" id="logout-button" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="welcome" id="welcome">
+        <p class="eyebrow">Private game archive</p>
+        <h1>Your game’s source material and finished stories, together.</h1>
+        <p class="lede">
+          Browse recordings, portraits, maps, transcripts, narrative retellings, episodic
+          reimaginings, and the wonderfully unnecessary videos in between.
+        </p>
+        <button class="primary-button" id="login-button" type="button">Sign in</button>
+        <p class="error" id="auth-error" role="alert" hidden></p>
+      </section>
+
+      <section class="explorer" id="explorer" hidden>
+        <div class="explorer-heading">
+          <div>
+            <p class="eyebrow">Private library</p>
+            <h1>Media</h1>
+          </div>
+          <button class="quiet-button" id="refresh-button" type="button">Refresh</button>
+        </div>
+
+        <nav class="breadcrumbs" id="breadcrumbs" aria-label="Current folder"></nav>
+        <div class="status" id="status" role="status">Loading…</div>
+        <div class="entries" id="entries" aria-live="polite"></div>
+        <button class="load-more" id="load-more-button" type="button" hidden>Load more</button>
+      </section>
+    </main>
+
+    <dialog class="preview" id="preview-dialog">
+      <div class="preview-header">
+        <div>
+          <p class="eyebrow">Preview</p>
+          <h2 id="preview-title"></h2>
+        </div>
+        <button class="icon-button" id="preview-close" type="button" aria-label="Close preview">×</button>
+      </div>
+      <div class="preview-body" id="preview-body"></div>
+      <div class="preview-footer">
+        <span id="preview-details"></span>
+        <a class="quiet-button link-button" id="open-original" target="_blank" rel="noreferrer">Open original</a>
+      </div>
+    </dialog>
+
+    <template id="folder-template">
+      <button class="entry folder" type="button">
+        <span class="entry-icon" aria-hidden="true">▰</span>
+        <span class="entry-main">
+          <strong class="entry-name"></strong>
+          <small>Folder</small>
+        </span>
+        <span class="entry-arrow" aria-hidden="true">›</span>
+      </button>
+    </template>
+
+    <template id="file-template">
+      <button class="entry file" type="button">
+        <span class="entry-icon file-kind" aria-hidden="true">◆</span>
+        <span class="entry-main">
+          <strong class="entry-name"></strong>
+          <small class="entry-meta"></small>
+        </span>
+        <span class="entry-arrow" aria-hidden="true">Preview</span>
+      </button>
+    </template>
+  </body>
+</html>

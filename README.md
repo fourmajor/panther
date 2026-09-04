@@ -39,12 +39,14 @@ recorded fact from creative interpretation.
 ## Current Status
 
 The initial AWS foundation is operational. It provides private and published asset storage,
-short-lived administrative access, and a near-zero-idle-cost baseline managed with AWS CDK.
+short-lived administrative access, and a near-zero-idle-cost baseline managed with AWS CDK. A
+password-protected, read-only media explorer is available for browsing and previewing private game
+assets.
 
 `src/panther_journal` is an early prototype of the transcription and narrative-generation pipeline.
 It does not define the full scope of Panther. Reliable session capture, production transcription,
-speaker attribution, the group-facing web application, and the media-production workflows remain to
-be built.
+speaker attribution, richer group collaboration, and the media-production workflows remain to be
+built.
 
 ## Scope
 
