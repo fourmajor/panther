@@ -198,10 +198,9 @@ Suggested stack boundaries:
 - `PantherProcessingStack`: queues, workflows, and on-demand processing
 
 Console-created application resources are not authoritative and must be captured in CDK. Manual
-account creation, root-user security, creation of the IAM Identity Center instance and first user,
-and the first CDK bootstrap are documented exceptions because they necessarily precede the deployed
-stacks. Installing and registering a future physical home runner will also be documented as a
-manual machine-bootstrap step.
+account creation, root-user security, and the first CDK bootstrap are documented exceptions because
+they necessarily precede the deployed stacks. Installing and registering a future physical home
+runner will also be documented as a manual machine-bootstrap step.
 
 ## Continuous Integration and Delivery
 

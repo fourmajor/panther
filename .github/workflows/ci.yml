@@ -21,5 +21,8 @@ jobs:
         working-directory: infra
       - run: npm test
         working-directory: infra
-      - run: npm run synth
+      - run: >-
+          npm run synth --
+          --context account=000000000000
+          --context administratorEmail=admin@example.com
         working-directory: infra
