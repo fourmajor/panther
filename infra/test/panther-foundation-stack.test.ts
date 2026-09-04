@@ -94,6 +94,11 @@ test("access assigns administrator and asset-uploader permission sets", () => {
   const template = Template.fromStack(stack);
 
   template.resourceCountIs("Custom::AWS", 1);
+  template.hasResourceProperties("Custom::AWS", {
+    Create: Match.stringLikeRegexp(
+      '"Name":\\{"GivenName":"Panther","FamilyName":"Administrator"\\}',
+    ),
+  });
   template.hasResourceProperties("AWS::IAM::Policy", {
     PolicyDocument: Match.objectLike({
       Statement: Match.arrayWith([
