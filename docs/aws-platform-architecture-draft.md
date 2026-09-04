@@ -249,6 +249,8 @@ workflow, and on any future home runner.
 The first milestone is deliberately small. It enables asset uploads without committing to the
 complete web application.
 
+The operational procedure is maintained in [aws-foundation-runbook.md](aws-foundation-runbook.md).
+
 1. Create the dedicated AWS account and secure administrative and recovery access.
 2. Select the primary AWS region and establish billing alerts.
 3. Add the CDK application to the GitHub repository and bootstrap the account from the laptop.

@@ -10,3 +10,6 @@ runs/
 dist/
 build/
 *.egg-info/
+infra/node_modules/
+infra/dist/
+infra/cdk.out/
