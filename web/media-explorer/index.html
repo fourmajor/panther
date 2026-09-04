@@ -7,6 +7,7 @@
     <title>Panther Media</title>
     <link rel="stylesheet" href="styles.css">
     <script src="config.js"></script>
+    <script type="module" src="vendor/model-viewer.min.js"></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -18,6 +19,10 @@
           <small>Media archive</small>
         </span>
       </a>
+      <nav class="primary-nav" id="primary-nav" aria-label="Panther sections" hidden>
+        <a href="/characters">Characters</a>
+        <a href="/media">Media</a>
+      </nav>
       <div class="account" id="account" hidden>
         <span id="username"></span>
         <button class="quiet-button" id="logout-button" type="button">Sign out</button>
@@ -34,6 +39,71 @@
         </p>
         <button class="primary-button" id="login-button" type="button">Sign in</button>
         <p class="error" id="auth-error" role="alert" hidden></p>
+      </section>
+
+      <section class="characters" id="characters" hidden>
+        <div class="explorer-heading">
+          <div>
+            <p class="eyebrow">The crew</p>
+            <h1>Characters</h1>
+          </div>
+        </div>
+        <div class="status" id="characters-status" role="status">Loading…</div>
+        <div class="character-list" id="character-list" aria-live="polite"></div>
+
+        <article class="character-profile" id="character-profile" hidden>
+          <button class="back-button" id="character-back" type="button">← All characters</button>
+          <div class="character-heading">
+            <div>
+              <p class="eyebrow" id="character-title"></p>
+              <h1 id="character-name"></h1>
+              <p class="lede" id="character-summary"></p>
+            </div>
+          </div>
+
+          <div class="model-layout">
+            <div class="model-stage">
+              <model-viewer
+                id="character-model"
+                camera-controls
+                touch-action="pan-y"
+                loading="lazy"
+                reveal="manual"
+                interaction-prompt="auto"
+                interaction-prompt-style="basic"
+                shadow-intensity="0.8"
+                environment-image="neutral"
+              >
+                <div class="model-poster" id="model-poster" slot="poster">
+                  <img id="character-poster" alt="">
+                  <button class="primary-button model-load" id="model-load" type="button">
+                    Explore 3D model
+                  </button>
+                </div>
+                <div class="model-progress" slot="progress-bar" aria-hidden="true">
+                  <span id="model-progress-bar"></span>
+                </div>
+              </model-viewer>
+              <div class="model-fallback" id="model-fallback" hidden>
+                <img id="fallback-poster" alt="">
+                <p id="model-fallback-message"></p>
+              </div>
+            </div>
+
+            <aside class="model-panel" aria-label="3D model controls">
+              <p class="eyebrow">Interactive model</p>
+              <p id="model-status" role="status">Portrait ready. Load the model when you want it.</p>
+              <button class="quiet-button" id="model-reset" type="button" disabled>Reset view</button>
+              <p class="model-help">
+                Drag or use arrow keys to rotate. Pinch, scroll, or use plus and minus to zoom.
+              </p>
+              <dl class="model-facts">
+                <div><dt>Web model</dt><dd id="model-size">—</dd></div>
+                <div><dt>Source</dt><dd id="model-source">—</dd></div>
+              </dl>
+            </aside>
+          </div>
+        </article>
       </section>
 
       <section class="explorer" id="explorer" hidden>

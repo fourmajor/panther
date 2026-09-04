@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   CfnOutput,
@@ -90,6 +91,7 @@ export class PantherMediaExplorerStack extends Stack {
               "object-src 'none'",
               "script-src 'self'",
               "style-src 'self'",
+              "worker-src 'self' blob:",
             ].join("; "),
             override: true,
           },
@@ -258,7 +260,7 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
-    for (const route of ["/objects", "/object-url"]) {
+    for (const route of ["/objects", "/object-url", "/characters", "/character"]) {
       mediaApi.addRoutes({
         path: route,
         methods: [apigwv2.HttpMethod.GET],
@@ -347,6 +349,16 @@ export class PantherMediaExplorerStack extends Stack {
             }),
             ";\n",
           ].join(""),
+        ),
+        s3deploy.Source.data(
+          "vendor/model-viewer.min.js",
+          fs.readFileSync(
+            path.join(
+              __dirname,
+              "../../node_modules/@google/model-viewer/dist/model-viewer-module.min.js",
+            ),
+            "utf8",
+          ),
         ),
       ],
       distribution,

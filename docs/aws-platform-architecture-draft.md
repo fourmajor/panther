@@ -84,6 +84,7 @@ games/<game-id>/assets/<asset-id>/original/<filename>
 games/<game-id>/assets/<asset-id>/derived/<representation-id>/<filename>
 games/<game-id>/assets/<asset-id>/manifests/<version>.json
 games/<game-id>/sessions/<session-id>/manifests/<version>.json
+games/<game-id>/characters/<character-id>/profile.json
 ```
 
 The private bucket contains canonical originals and working derivatives. The published bucket uses
@@ -101,6 +102,7 @@ Examples of assets and representations that fit this model:
 | Asset | Possible original | Possible derived representations |
 |---|---|---|
 | Portrait | PNG, JPEG, or source project | WebP, thumbnail, cropped avatar |
+| 3D character | glTF source plus provenance | Size-limited GLB and poster image |
 | Generated video | Source video and generation metadata | Web MP4, poster image, captions |
 | Transcript | Timestamped JSON | Markdown, HTML, subtitles, searchable text |
 | Music | WAV, FLAC, or licensed source | Streaming format, preview, waveform |
@@ -133,6 +135,12 @@ the initial design.
 The initial explorer can navigate the private `games/` hierarchy and preview files. It intentionally
 does not upload, delete, rename, or publish assets. Those operations will first be introduced through
 the Panther CLI and can later be added to the web application with explicit authorization rules.
+
+Character profiles are private JSON manifests that refer to ordinary asset keys. The interactive
+viewer requests a fresh short-lived URL only when a user chooses to load the model. A web GLB is
+limited to 5 MB, loads progressively behind a poster image, and preserves links to its original glTF
+and provenance manifest. Rendering happens in the user's browser, so no rendering service remains
+running between visits.
 
 The first two Cognito users are provisioned by a CDK custom resource. It creates strong passwords at
 deployment time and stores them as SSM SecureString parameters; plaintext passwords never enter Git,

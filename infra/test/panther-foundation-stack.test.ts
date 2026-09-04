@@ -7,6 +7,7 @@ import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 test("foundation retains two encrypted and private asset buckets", () => {
   const app = new App();
   const stack = new PantherFoundationStack(app, "TestFoundation", {
+    applicationOrigin: "https://panther.place",
     monthlyBudgetUsd: 10,
   });
   const template = Template.fromStack(stack);
@@ -44,6 +45,7 @@ test("foundation retains two encrypted and private asset buckets", () => {
 test("foundation records bucket names and creates an account budget", () => {
   const app = new App();
   const stack = new PantherFoundationStack(app, "TestFoundation", {
+    applicationOrigin: "https://panther.place",
     budgetEmail: "alerts@example.com",
     monthlyBudgetUsd: 10,
   });
@@ -51,6 +53,19 @@ test("foundation records bucket names and creates an account budget", () => {
 
   template.hasResourceProperties("AWS::Organizations::Organization", {
     FeatureSet: "ALL",
+  });
+  template.hasResourceProperties("AWS::S3::Bucket", {
+    CorsConfiguration: {
+      CorsRules: [
+        {
+          AllowedHeaders: ["*"],
+          AllowedMethods: ["GET", "HEAD"],
+          AllowedOrigins: ["https://panther.place"],
+          ExposedHeaders: ["ETag"],
+          MaxAge: 3600,
+        },
+      ],
+    },
   });
   template.allResources("AWS::Organizations::Organization", {
     DeletionPolicy: "Retain",

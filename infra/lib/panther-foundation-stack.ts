@@ -13,6 +13,7 @@ import * as ssm from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 
 export interface PantherFoundationStackProps extends StackProps {
+  readonly applicationOrigin: string;
   readonly budgetEmail?: string;
   readonly monthlyBudgetUsd: number;
 }
@@ -30,7 +31,10 @@ export class PantherFoundationStack extends Stack {
     });
     organization.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
-    const privateAssets = this.createAssetBucket("PrivateAssets");
+    const privateAssets = this.createAssetBucket(
+      "PrivateAssets",
+      props.applicationOrigin,
+    );
     const publishedAssets = this.createAssetBucket("PublishedAssets");
 
     new ssm.StringParameter(
@@ -97,7 +101,7 @@ export class PantherFoundationStack extends Stack {
     });
   }
 
-  private createAssetBucket(id: string): s3.Bucket {
+  private createAssetBucket(id: string, applicationOrigin?: string): s3.Bucket {
     return new s3.Bucket(this, id, {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -106,6 +110,17 @@ export class PantherFoundationStack extends Stack {
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
       removalPolicy: RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
+      cors: applicationOrigin
+        ? [
+            {
+              allowedHeaders: ["*"],
+              allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+              allowedOrigins: [applicationOrigin],
+              exposedHeaders: ["ETag"],
+              maxAge: Duration.hours(1).toSeconds(),
+            },
+          ]
+        : undefined,
       lifecycleRules: [
         {
           id: "AbortIncompleteMultipartUploads",

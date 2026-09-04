@@ -10,6 +10,7 @@
     "deploy": "npm run build && cdk deploy"
   },
   "dependencies": {
+    "@google/model-viewer": "4.3.1",
     "aws-cdk-lib": "2.268.0",
     "constructs": "10.8.1"
   },
