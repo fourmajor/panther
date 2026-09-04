@@ -284,9 +284,20 @@ The first read-only explorer adds:
 
 It adds no VPC, NAT Gateway, EC2 instance, load balancer, database, or always-running service.
 
+## Domain and DNS
+
+The primary application domain is `panther.place`. Route 53 domain registration is an unavoidable
+manual API operation because CloudFormation and CDK do not support domain registrations. Route 53
+automatically creates a public hosted zone as a side effect of registration; because
+`AWS::Route53::HostedZone` supports CloudFormation import, that zone is adopted into the
+`PantherDomain` CDK stack immediately after registration rather than left unmanaged.
+
+The hosted zone and future CloudFront certificate are anchored in `us-east-1`. This is a documented
+exception to Panther's `us-west-2` default because ACM certificates used by CloudFront must be in
+`us-east-1`. Regional application services remain in `us-west-2`.
+
 ## Deferred Decisions
 
-- Final domain name and DNS ownership
 - DynamoDB access patterns and table design
 - Web framework and hosting choice between Amplify and S3/CloudFront
 - Transcription provider and processing runtime

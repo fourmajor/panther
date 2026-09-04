@@ -2,6 +2,7 @@
 
 import * as cdk from "aws-cdk-lib";
 import { PantherAccessStack } from "../lib/panther-access-stack";
+import { PantherDomainStack } from "../lib/panther-domain-stack";
 import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
@@ -16,6 +17,7 @@ const administratorEmail = app.node.tryGetContext("administratorEmail");
 const identityCenterInstanceArn = app.node.tryGetContext("identityCenterInstanceArn");
 const identityStoreId = app.node.tryGetContext("identityStoreId");
 const monthlyBudgetUsd = Number(app.node.tryGetContext("monthlyBudgetUsd") ?? 10);
+const domainName = app.node.tryGetContext("domainName") ?? "panther.place";
 const mediaExplorerDomainPrefix =
   app.node.tryGetContext("mediaExplorerDomainPrefix") ?? "panther-media-fourmajor";
 
@@ -32,6 +34,21 @@ if (!/^[a-z0-9-]{1,63}$/.test(mediaExplorerDomainPrefix)) {
     "mediaExplorerDomainPrefix must contain 1-63 lowercase letters, numbers, or hyphens",
   );
 }
+
+if (domainName !== "panther.place") {
+  throw new Error("domainName must be panther.place unless the architecture decision changes");
+}
+
+new PantherDomainStack(app, "PantherDomain", {
+  env: {
+    account,
+    // CloudFront certificates must live in us-east-1, so domain resources are anchored there.
+    region: "us-east-1",
+  },
+  crossRegionReferences: true,
+  domainName,
+  description: "Public DNS and global certificate foundation for the Panther web application",
+});
 
 const foundation = new PantherFoundationStack(app, "PantherFoundation", {
   env: {
