@@ -224,19 +224,21 @@ and deployment. Automatic CI is intentionally disabled while the baseline infras
 established. Avoiding CI is preferable when local checks provide adequate confidence.
 
 The GitHub Actions workflow is manually triggered and uses a one-job Docker runner on the owner's
-MacBook. It is optional, not a required step for every pull request. It has no AWS credentials or
+MacBook. Frontend-affecting PRs require Playwright on that runner before merge; other PRs use CI
+only when useful. It has no AWS credentials or
 deployment permissions. See [the runner runbook](self-hosted-runner.md).
 
 The delivery paths are:
 
 1. **Laptop:** The normal path. Run checked-in scripts directly, authenticate with short-lived AWS
    credentials, inspect `cdk diff`, and deploy manually.
-2. **Manual self-hosted workflow:** Run trusted-main checks in a fresh MacBook Docker container.
+2. **Manual self-hosted workflow:** Check reviewed main or codex branches in a fresh Docker container.
 3. **Another owned computer:** Move the same container setup off the MacBook later.
 4. **CodeBuild on demand:** Retain only as an optional future fallback; do not deploy it initially.
 
 The runner is repository-scoped and does not mount personal files, AWS credentials, or a Docker
-socket. Only the owner can dispatch its workflow on trusted main. Containers are not a complete
+socket. Only the owner can dispatch its workflow on reviewed main or codex branches in this repo.
+Containers are not a complete
 security boundary for hostile code; untrusted PR jobs must not run on this machine. Slow or delayed
 builds are acceptable in exchange for avoiding hosted compute cost.
 
@@ -251,7 +253,8 @@ workflow, and on another owned runner.
 - If GitHub Actions deployments are added later, use OIDC for short-lived, narrowly scoped AWS
   credentials. Current CI only runs checks and synthesis; it cannot deploy.
 - Laptop deployments use short-lived AWS credentials.
-- Pull requests are verified locally unless the manual GitHub workflow is explicitly started.
+- Frontend-affecting PRs require a successful self-hosted Playwright run on their latest commit.
+  Other PRs use local checks unless the manual workflow adds material confidence.
 - The MacBook Docker runner is repository-scoped, disposable, and restricted to trusted workflows.
 - Deployment roles follow least privilege and are separate from normal user access.
 - The AWS root user has MFA and no access keys.
