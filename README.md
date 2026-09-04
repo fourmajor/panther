@@ -73,6 +73,7 @@ data live in the dedicated AWS account and must never be committed to GitHub.
 
 ## Project Documentation
 
+- [Panther CLI and agent usage](docs/cli.md)
 - [AWS platform architecture](docs/aws-platform-architecture-draft.md)
 - [AWS foundation runbook](docs/aws-foundation-runbook.md)
 - [Audio capture strategy](docs/adr/0001-audio-capture-strategy.md)
@@ -98,4 +99,3 @@ panther generate-screenplay
 
 Sample artifacts are written to `runs/sample-session/` by default and must not contain real game
 data intended for shared or durable storage.
-- [Panther CLI and agent usage](docs/cli.md)
