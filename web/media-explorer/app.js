@@ -100,6 +100,9 @@ async function login() {
 
 async function completeLogin() {
   const parameters = new URLSearchParams(window.location.search);
+  if (parameters.get("error")) {
+    throw new Error(parameters.get("error_description") || "Sign-in was not completed.");
+  }
   const code = parameters.get("code");
   if (!code) return;
 

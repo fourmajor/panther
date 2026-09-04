@@ -25,7 +25,8 @@ def _password():
 
 def _read_or_create_password(parameter_name):
     try:
-        return ssm.get_parameter(Name=parameter_name, WithDecryption=True)["Parameter"]["Value"]
+        value = ssm.get_parameter(Name=parameter_name, WithDecryption=True)["Parameter"]["Value"]
+        return value, False
     except ssm.exceptions.ParameterNotFound:
         password = _password()
         ssm.put_parameter(
@@ -40,26 +41,27 @@ def _read_or_create_password(parameter_name):
                 {"Key": "Environment", "Value": "production"},
             ],
         )
-        return password
+        return password, True
 
 
-def _user_exists(user_pool_id, username):
+def _user_status(user_pool_id, username):
     try:
-        cognito.admin_get_user(UserPoolId=user_pool_id, Username=username)
-        return True
+        return cognito.admin_get_user(UserPoolId=user_pool_id, Username=username).get("UserStatus")
     except cognito.exceptions.UserNotFoundException:
-        return False
+        return None
 
 
 def _upsert_user(user_pool_id, username, parameter_name):
-    password = _read_or_create_password(parameter_name)
-    if not _user_exists(user_pool_id, username):
+    password, password_was_created = _read_or_create_password(parameter_name)
+    user_status = _user_status(user_pool_id, username)
+    if user_status is None:
         cognito.admin_create_user(
             UserPoolId=user_pool_id,
             Username=username,
             TemporaryPassword=password,
             MessageAction="SUPPRESS",
         )
+    if user_status in {None, "FORCE_CHANGE_PASSWORD"} or password_was_created:
         cognito.admin_set_user_password(
             UserPoolId=user_pool_id,
             Username=username,
