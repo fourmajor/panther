@@ -252,7 +252,9 @@ complete web application.
 The operational procedure is maintained in [aws-foundation-runbook.md](aws-foundation-runbook.md).
 
 1. Create the dedicated AWS account and secure administrative and recovery access.
-2. Select the primary AWS region and establish billing alerts.
+2. Use `us-west-2` as the primary AWS region and establish billing alerts. Global AWS resources are
+   the only default exception; any additional-region resource requires an explicit, documented
+   reason.
 3. Add the CDK application to the GitHub repository and bootstrap the account from the laptop.
 4. Deploy restricted Identity Center administration and asset-uploader permission sets. Defer the
    GitHub OIDC provider and deployment role until remote deployment is actually needed.

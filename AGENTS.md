@@ -36,6 +36,10 @@
   repository runbook. Keep all resources created after the bootstrap boundary under CDK control.
 - Preview account changes with `cdk diff` and confirm the target account and region before each
   deployment.
+- Use `us-west-2` as Panther's default and primary AWS region. Define regional CDK resources there
+  unless an AWS service is global or the user explicitly approves a different-region requirement.
+- Document every resource that must live outside `us-west-2` and the AWS constraint that requires
+  the exception.
 
 ## Cost posture
 
