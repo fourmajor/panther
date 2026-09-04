@@ -6,6 +6,7 @@ import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 test("foundation retains two encrypted and private asset buckets", () => {
   const app = new App();
   const stack = new PantherFoundationStack(app, "TestFoundation", {
+    administratorEmail: "admin@example.com",
     monthlyBudgetUsd: 10,
   });
   const template = Template.fromStack(stack);
@@ -43,6 +44,7 @@ test("foundation retains two encrypted and private asset buckets", () => {
 test("foundation records bucket names and creates an account budget", () => {
   const app = new App();
   const stack = new PantherFoundationStack(app, "TestFoundation", {
+    administratorEmail: "admin@example.com",
     budgetEmail: "alerts@example.com",
     monthlyBudgetUsd: 10,
   });
@@ -79,12 +81,27 @@ test("foundation assigns administrator and asset-uploader access", () => {
       account: "123456789012",
       region: "us-west-2",
     },
-    administratorPrincipalId: "1234567890-12345678-1234-1234-1234-123456789012",
-    identityCenterInstanceArn: "arn:aws:sso:::instance/ssoins-1234567890abcdef",
+    administratorEmail: "admin@example.com",
     monthlyBudgetUsd: 10,
   });
   const template = Template.fromStack(stack);
 
+  template.resourceCountIs("AWS::SSO::Instance", 1);
+  template.resourceCountIs("Custom::AWS", 1);
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: Match.objectLike({
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: [
+            "identitystore:CreateUser",
+            "identitystore:DeleteUser",
+          ],
+          Effect: "Allow",
+          Resource: "*",
+        }),
+      ]),
+    }),
+  });
   template.resourceCountIs("AWS::SSO::PermissionSet", 2);
   template.resourceCountIs("AWS::SSO::Assignment", 2);
   template.hasResourceProperties("AWS::SSO::PermissionSet", {

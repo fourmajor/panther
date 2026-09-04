@@ -13,9 +13,10 @@ enable root-user MFA immediately, and do not create root access keys.
 Create an administrative CLI profile that uses short-lived credentials. The examples below call it
 `panther-admin`; a different local name is fine.
 
-For a standalone account, enabling IAM Identity Center and creating its first user are also account
-bootstrap actions because they must exist before CDK can manage permission sets and assignments.
-Do not create IAM access keys.
+Do not create IAM access keys. CDK creates the IAM Identity Center instance, its first user, and all
+permission sets and assignments. Because CloudFormation does not expose the Identity Store user
+resource in `us-west-2`, CDK manages that user with an on-demand custom resource. Its Lambda runs
+only when the stack creates, updates, or deletes the user.
 
 ## 2. Confirm the target
 
@@ -49,16 +50,18 @@ Replace `ACCOUNT_ID` with the verified Panther account ID.
 
 ```bash
 AWS_PROFILE=panther-admin npm run deploy -- \
+  --context account=ACCOUNT_ID \
+  --context administratorEmail=YOUR_EMAIL \
   --context budgetEmail=YOUR_EMAIL \
-  --context identityCenterInstanceArn=INSTANCE_ARN \
-  --context administratorPrincipalId=USER_ID \
   --context monthlyBudgetUsd=10
 ```
 
 The email context is optional, but without it the budget will not send notifications. AWS requires
 the recipient to confirm the budget-notification subscription.
 
-The Identity Center contexts cause CDK to create and assign two permission sets:
+The account ID and administrator email contexts are required. Requiring the account ID prevents CDK
+from silently inheriting a different default AWS profile. The administrator email causes CDK to
+create IAM Identity Center, its first user, and two assigned permission sets:
 
 - `PantherAdministrator` for infrastructure administration
 - `PantherAssetUploader` for routine access to private game assets

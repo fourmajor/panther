@@ -7,6 +7,7 @@ import {
   Tags,
 } from "aws-cdk-lib";
 import * as budgets from "aws-cdk-lib/aws-budgets";
+import * as cr from "aws-cdk-lib/custom-resources";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sso from "aws-cdk-lib/aws-sso";
@@ -14,9 +15,8 @@ import * as ssm from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 
 export interface PantherFoundationStackProps extends StackProps {
-  readonly administratorPrincipalId?: string;
+  readonly administratorEmail: string;
   readonly budgetEmail?: string;
-  readonly identityCenterInstanceArn?: string;
   readonly monthlyBudgetUsd: number;
 }
 
@@ -79,8 +79,59 @@ export class PantherFoundationStack extends Stack {
       notificationsWithSubscribers,
     });
 
+    const identityCenter = new sso.CfnInstance(this, "IdentityCenter", {
+      name: "Panther",
+    });
+
+    const administratorEmails = [
+      {
+        Value: props.administratorEmail,
+        Type: "work",
+        Primary: true,
+      },
+    ];
+    const administratorUserParameters = {
+      IdentityStoreId: identityCenter.attrIdentityStoreId,
+      UserName: props.administratorEmail,
+      DisplayName: "Panther Administrator",
+      Emails: administratorEmails,
+    };
+    const administrator = new cr.AwsCustomResource(this, "AdministratorUser", {
+      onCreate: {
+        service: "identitystore",
+        action: "createUser",
+        parameters: administratorUserParameters,
+        physicalResourceId: cr.PhysicalResourceId.fromResponse("UserId"),
+      },
+      onUpdate: {
+        service: "identitystore",
+        action: "createUser",
+        parameters: administratorUserParameters,
+        physicalResourceId: cr.PhysicalResourceId.fromResponse("UserId"),
+      },
+      onDelete: {
+        service: "identitystore",
+        action: "deleteUser",
+        parameters: {
+          IdentityStoreId: identityCenter.attrIdentityStoreId,
+          UserId: new cr.PhysicalResourceIdReference(),
+        },
+      },
+      policy: cr.AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: [
+            "identitystore:CreateUser",
+            "identitystore:DeleteUser",
+          ],
+          resources: ["*"],
+        }),
+      ]),
+      installLatestAwsSdk: false,
+    });
+
     this.createIdentityCenterAccess(
-      props,
+      identityCenter.attrInstanceArn,
+      administrator.getResponseField("UserId"),
       privateAssets,
       privateAssetBucketParameter,
     );
@@ -102,22 +153,11 @@ export class PantherFoundationStack extends Stack {
   }
 
   private createIdentityCenterAccess(
-    props: PantherFoundationStackProps,
+    instanceArn: string,
+    principalId: string,
     privateAssets: s3.Bucket,
     privateAssetBucketParameter: ssm.StringParameter,
   ): void {
-    const instanceArn = props.identityCenterInstanceArn;
-    const principalId = props.administratorPrincipalId;
-
-    if (!instanceArn && !principalId) {
-      return;
-    }
-    if (!instanceArn || !principalId) {
-      throw new Error(
-        "identityCenterInstanceArn and administratorPrincipalId must be provided together",
-      );
-    }
-
     const administrator = new sso.CfnPermissionSet(
       this,
       "AdministratorPermissionSet",
