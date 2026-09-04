@@ -1,12 +1,12 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import test from "node:test";
+import { PantherAccessStack } from "../lib/panther-access-stack";
 import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 
 test("foundation retains two encrypted and private asset buckets", () => {
   const app = new App();
   const stack = new PantherFoundationStack(app, "TestFoundation", {
-    administratorEmail: "admin@example.com",
     monthlyBudgetUsd: 10,
   });
   const template = Template.fromStack(stack);
@@ -44,12 +44,18 @@ test("foundation retains two encrypted and private asset buckets", () => {
 test("foundation records bucket names and creates an account budget", () => {
   const app = new App();
   const stack = new PantherFoundationStack(app, "TestFoundation", {
-    administratorEmail: "admin@example.com",
     budgetEmail: "alerts@example.com",
     monthlyBudgetUsd: 10,
   });
   const template = Template.fromStack(stack);
 
+  template.hasResourceProperties("AWS::Organizations::Organization", {
+    FeatureSet: "ALL",
+  });
+  template.allResources("AWS::Organizations::Organization", {
+    DeletionPolicy: "Retain",
+    UpdateReplacePolicy: "Retain",
+  });
   template.resourceCountIs("AWS::SSM::Parameter", 2);
   template.hasResourceProperties("AWS::Budgets::Budget", {
     Budget: {
@@ -74,19 +80,19 @@ test("foundation records bucket names and creates an account budget", () => {
   });
 });
 
-test("foundation assigns administrator and asset-uploader access", () => {
+test("access assigns administrator and asset-uploader permission sets", () => {
   const app = new App();
-  const stack = new PantherFoundationStack(app, "TestFoundation", {
+  const stack = new PantherAccessStack(app, "TestAccess", {
     env: {
       account: "123456789012",
       region: "us-west-2",
     },
     administratorEmail: "admin@example.com",
-    monthlyBudgetUsd: 10,
+    identityCenterInstanceArn: "arn:aws:sso:::instance/ssoins-1234567890abcdef",
+    identityStoreId: "d-1234567890",
   });
   const template = Template.fromStack(stack);
 
-  template.resourceCountIs("AWS::SSO::Instance", 1);
   template.resourceCountIs("Custom::AWS", 1);
   template.hasResourceProperties("AWS::IAM::Policy", {
     PolicyDocument: Match.objectLike({

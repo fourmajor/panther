@@ -40,6 +40,10 @@
   unless an AWS service is global or the user explicitly approves a different-region requirement.
 - Document every resource that must live outside `us-west-2` and the AWS constraint that requires
   the exception.
+- Known bootstrap exception: AWS does not expose organization-level IAM Identity Center enablement
+  through CloudFormation, CDK, or a public API. After CDK creates the one-account Organization, that
+  enablement is a documented console step; its users, permission sets, and assignments remain CDK
+  managed.
 
 ## Cost posture
 

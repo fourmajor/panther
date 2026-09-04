@@ -198,9 +198,10 @@ Suggested stack boundaries:
 - `PantherProcessingStack`: queues, workflows, and on-demand processing
 
 Console-created application resources are not authoritative and must be captured in CDK. Manual
-account creation, root-user security, and the first CDK bootstrap are documented exceptions because
-they necessarily precede the deployed stacks. Installing and registering a future physical home
-runner will also be documented as a manual machine-bootstrap step.
+account creation, root-user security, the first CDK bootstrap, and enabling organization-level IAM
+Identity Center are documented exceptions because AWS does not expose those operations through
+CDK. Installing and registering a future physical home runner will also be documented as a manual
+machine-bootstrap step.
 
 ## Continuous Integration and Delivery
 
@@ -251,12 +252,13 @@ complete web application.
 
 The operational procedure is maintained in [aws-foundation-runbook.md](aws-foundation-runbook.md).
 
-1. Create the dedicated AWS account and secure administrative and recovery access.
+1. Create the dedicated AWS account and secure root recovery access.
 2. Use `us-west-2` as the primary AWS region and establish billing alerts. Global AWS resources are
    the only default exception; any additional-region resource requires an explicit, documented
    reason.
-3. Add the CDK application to the GitHub repository and bootstrap the account from the laptop.
-4. Deploy restricted Identity Center administration and asset-uploader permission sets. Defer the
+3. Bootstrap CDK and deploy a one-account AWS Organization from the laptop.
+4. Enable organization-level IAM Identity Center in the console, then deploy its user and restricted
+   administration and asset-uploader permission sets with CDK. Defer the
    GitHub OIDC provider and deployment role until remote deployment is actually needed.
 5. Deploy the private and published S3 buckets with encryption, versioning, and lifecycle rules.
 6. Verify an authenticated command-line upload to the private bucket.
