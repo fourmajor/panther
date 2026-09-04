@@ -1,4 +1,5 @@
 import { CfnOutput, RemovalPolicy, Stack, StackProps, Tags } from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
@@ -7,6 +8,7 @@ export interface PantherDomainStackProps extends StackProps {
 }
 
 export class PantherDomainStack extends Stack {
+  public readonly certificate: acm.Certificate;
   public readonly hostedZone: route53.PublicHostedZone;
 
   constructor(scope: Construct, id: string, props: PantherDomainStackProps) {
@@ -22,6 +24,11 @@ export class PantherDomainStack extends Stack {
     });
     this.hostedZone.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
+    this.certificate = new acm.Certificate(this, "Certificate", {
+      domainName: props.domainName,
+      validation: acm.CertificateValidation.fromDns(this.hostedZone),
+    });
+
     new CfnOutput(this, "HostedZoneId", {
       value: this.hostedZone.hostedZoneId,
       description: "Route 53 public hosted zone managed by CDK",
@@ -29,6 +36,10 @@ export class PantherDomainStack extends Stack {
     new CfnOutput(this, "DomainName", {
       value: props.domainName,
       description: "Primary Panther application domain",
+    });
+    new CfnOutput(this, "CertificateArn", {
+      value: this.certificate.certificateArn,
+      description: "ACM certificate for the Panther CloudFront distribution",
     });
   }
 }

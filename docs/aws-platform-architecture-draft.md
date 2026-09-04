@@ -288,11 +288,12 @@ It adds no VPC, NAT Gateway, EC2 instance, load balancer, database, or always-ru
 
 The primary application domain is `panther.place`. Route 53 domain registration is an unavoidable
 manual API operation because CloudFormation and CDK do not support domain registrations. Route 53
-automatically creates a public hosted zone as a side effect of registration; because
-`AWS::Route53::HostedZone` supports CloudFormation import, that zone is adopted into the
-`PantherDomain` CDK stack immediately after registration rather than left unmanaged.
+also creates a temporary public hosted zone as a side effect. Panther creates its authoritative
+hosted zone in the `PantherDomain` CDK stack; after registration completes, the registrar is pointed
+at the CDK zone's name servers and the unused temporary zone is removed. This one-time registrar
+coordination is the only DNS step outside CDK. All records are managed in CDK.
 
-The hosted zone and future CloudFront certificate are anchored in `us-east-1`. This is a documented
+The hosted zone and CloudFront certificate are anchored in `us-east-1`. This is a documented
 exception to Panther's `us-west-2` default because ACM certificates used by CloudFront must be in
 `us-east-1`. Regional application services remain in `us-west-2`.
 

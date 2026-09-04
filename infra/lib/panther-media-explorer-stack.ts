@@ -13,6 +13,7 @@ import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
@@ -20,18 +21,33 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as ssm from "aws-cdk-lib/aws-ssm";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
 const MEDIA_USERS = ["stu", "other_stu"] as const;
 
 export interface PantherMediaExplorerStackProps extends StackProps {
+  readonly certificateArn: string;
   readonly cognitoDomainPrefix: string;
+  readonly domainName: string;
+  readonly hostedZoneId: string;
 }
 
 export class PantherMediaExplorerStack extends Stack {
   constructor(scope: Construct, id: string, props: PantherMediaExplorerStackProps) {
     super(scope, id, props);
+
+    const certificate = acm.Certificate.fromCertificateArn(
+      this,
+      "DomainCertificate",
+      props.certificateArn,
+    );
+    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, "HostedZone", {
+      hostedZoneId: props.hostedZoneId,
+      zoneName: props.domainName,
+    });
 
     Tags.of(this).add("Project", "Panther");
     Tags.of(this).add("ManagedBy", "AWS-CDK");
@@ -105,6 +121,7 @@ export class PantherMediaExplorerStack extends Stack {
     );
 
     const distribution = new cloudfront.Distribution(this, "Distribution", {
+      certificate,
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -125,9 +142,25 @@ export class PantherMediaExplorerStack extends Stack {
           ttl: Duration.minutes(1),
         },
       ],
+      domainNames: [props.domainName],
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
     });
-    const siteUrl = `https://${distribution.distributionDomainName}`;
+    const siteUrl = `https://${props.domainName}`;
+
+    const distributionAlias = route53.RecordTarget.fromAlias(
+      new route53Targets.CloudFrontTarget(distribution),
+    );
+    new route53.ARecord(this, "IPv4Alias", {
+      zone: hostedZone,
+      recordName: props.domainName,
+      target: distributionAlias,
+    });
+    new route53.AaaaRecord(this, "IPv6Alias", {
+      zone: hostedZone,
+      recordName: props.domainName,
+      target: distributionAlias,
+    });
 
     const userPool = new cognito.UserPool(this, "UserPool", {
       userPoolName: "panther-media-explorer",
