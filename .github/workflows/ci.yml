@@ -9,7 +9,11 @@ permissions:
 jobs:
   test:
     # Never run untrusted PR/fork code on a personal machine.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'fourmajor'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'fourmajor/panther' &&
+      github.actor == 'fourmajor' && github.triggering_actor == 'fourmajor' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/codex/'))
     runs-on: [self-hosted, Linux, panther-local]
     timeout-minutes: 20
     steps:
@@ -31,7 +35,8 @@ jobs:
         working-directory: infra
       - run: npx playwright install chromium
         working-directory: infra
-      - run: npm run test:browser
+      - name: Playwright browser tests (self-hosted)
+        run: npm run test:browser
         working-directory: infra
       - run: >-
           npm run synth --

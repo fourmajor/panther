@@ -15,6 +15,12 @@ gh workflow run ci.yml --repo fourmajor/panther --ref main
 gh run list --repo fourmajor/panther --workflow ci.yml --limit 1
 ```
 
+Frontend-affecting changes must pass Playwright **on this self-hosted runner before merge**.
+Review and push the PR branch, then replace `main` above with its `codex/...` branch name.
+The workflow installs Chromium and runs the named `Playwright browser tests (self-hosted)` step.
+Wait for success on the latest PR commit and record the run URL in the PR. Direct host-browser
+tests or GitHub-hosted runs do not substitute for this gate. Never dispatch untrusted fork code.
+
 The start script builds a pinned, checksum-verified GitHub runner image, registers a new repository
 runner using a short-lived token passed over stdin, and starts it. The token is not saved in the
 image, environment, repository, or host file. Runner credentials live only inside that container.
@@ -33,7 +39,8 @@ the exact stopped container. Completed ephemeral runners normally remove their o
 
 ## Security and limits
 
-- Manual dispatch only, on reviewed `main`, by `fourmajor`. No PR or fork event triggers.
+- Manual dispatch only, on reviewed `main` or `codex/` branches in `fourmajor/panther`, by
+  `fourmajor` (including reruns). No PR or fork event triggers.
 - Read-only workflow token; checkout does not retain Git credentials.
 - Non-root container, dropped capabilities, no privilege escalation, two CPUs and 4 GiB RAM.
 - No host directories, Docker socket, AWS keys, SSH agent, or personal files mounted.
