@@ -3,23 +3,35 @@ name: CI
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Never run untrusted PR/fork code on a personal machine.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'fourmajor'
+    runs-on: [self-hosted, Linux, panther-local]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
+      - run: |
+          python3 -m venv .venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - run: python -m pip install -e ".[dev]"
       - run: ruff check .
       - run: pytest -q
       - run: npm ci --no-audit --no-fund
         working-directory: infra
       - run: npm test
+        working-directory: infra
+      - run: npx playwright install chromium
+        working-directory: infra
+      - run: npm run test:browser
         working-directory: infra
       - run: >-
           npm run synth --
