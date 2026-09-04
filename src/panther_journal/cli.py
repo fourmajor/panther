@@ -22,7 +22,10 @@ DEFAULT_RUN_DIR = "runs/sample-session"
 
 @click.group()
 def main() -> None:
-    """Panther: private game assets, session records, and creative media."""
+    """Panther: private game assets, session records, and creative media.
+
+    Agents: run `panther instructions` before organizing or uploading assets.
+    """
 
 
 @main.command("ingest-sample")
