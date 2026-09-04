@@ -21,6 +21,25 @@
   user explicitly requests an approval gate or a substantive unresolved decision requires input.
 - After merging, update the local `main` branch when practical.
 
+## Frontend verification
+
+- Playwright is a required readiness gate for changes that affect the frontend, including UI,
+  styling, navigation, browser authentication, asset loading, and backend/infrastructure changes
+  that alter browser behavior (such as API contracts, CSP, CORS, or static hosting).
+- Add or update focused Playwright regression tests for the affected user behavior; do not rely
+  only on the existing suite when it does not exercise the change. Run `npm run test:browser` from
+  `infra/` before declaring the change ready to merge. Install Chromium with
+  `npx playwright install chromium` when needed.
+- Use isolated test browsers launched through the CLI, never the user's personal browser or
+  profile. Use synthetic fixtures and test credentials; keep private game assets out of Git.
+- For visual/layout changes, verify relevant desktop and mobile sizes, inspect rendered output,
+  and assert actual visibility and usability. Do not let automatic scrolling or forced clicks
+  conceal clipping, overlays, or otherwise inaccessible controls.
+- If a required browser test cannot run, report the blocker and do not claim frontend verification
+  or routine merge readiness. Static checks and mocked API tests alone are not substitutes.
+- The manual CI workflow already runs Playwright. This requirement does not enable automatic CI
+  or require CI runs for documentation-only or unrelated backend changes.
+
 ## Tooling and CI/CD
 
 - Prefer command-line tools and APIs. Do not operate the user's browser for repository work.
