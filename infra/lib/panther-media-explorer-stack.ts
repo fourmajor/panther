@@ -29,6 +29,13 @@ import { Construct } from "constructs";
 
 const MEDIA_USERS = ["stu", "other_stu"] as const;
 
+// The module build has bare Three.js imports; static hosting needs this
+// self-contained browser distribution instead.
+export const MODEL_VIEWER_BUNDLE_PATH = path.join(
+  __dirname,
+  "../../node_modules/@google/model-viewer/dist/model-viewer.min.js",
+);
+
 export interface PantherMediaExplorerStackProps extends StackProps {
   readonly certificateArn: string;
   readonly cognitoDomainPrefix: string;
@@ -89,8 +96,11 @@ export class PantherMediaExplorerStack extends Stack {
               "img-src 'self' data: https://*.amazonaws.com",
               "media-src https://*.amazonaws.com",
               "object-src 'none'",
-              "script-src 'self'",
-              "style-src 'self'",
+              // Model-viewer's bundled decoder initializes WebAssembly; this
+              // permits WASM without enabling JavaScript eval.
+              "script-src 'self' 'wasm-unsafe-eval'",
+              // Exact hash of model-viewer 4.3.1's injected style element.
+              "style-src 'self' 'sha256-F7kvx28zBT3UUQL/hTOYst+55RSmqyCY3muSCYmt6A4='",
               "worker-src 'self' blob:",
             ].join("; "),
             override: true,
@@ -352,13 +362,7 @@ export class PantherMediaExplorerStack extends Stack {
         ),
         s3deploy.Source.data(
           "vendor/model-viewer.min.js",
-          fs.readFileSync(
-            path.join(
-              __dirname,
-              "../../node_modules/@google/model-viewer/dist/model-viewer-module.min.js",
-            ),
-            "utf8",
-          ),
+          fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8"),
         ),
       ],
       distribution,
