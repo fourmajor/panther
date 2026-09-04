@@ -55,6 +55,7 @@ const foundation = new PantherFoundationStack(app, "PantherFoundation", {
     account,
     region,
   },
+  applicationOrigin: `https://${domainName}`,
   budgetEmail,
   monthlyBudgetUsd,
   description: "Near-zero-idle foundation for Panther application and game assets",

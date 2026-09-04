@@ -126,7 +126,7 @@ test("media API is JWT protected and can only read private assets", () => {
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 2);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 4);
   template.allResourcesProperties("AWS::ApiGatewayV2::Route", {
     AuthorizationType: "JWT",
   });
