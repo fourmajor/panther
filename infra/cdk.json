@@ -1,3 +1,6 @@
 {
-  "app": "node dist/bin/panther.js"
+  "app": "node dist/bin/panther.js",
+  "context": {
+    "region": "us-west-2"
+  }
 }
