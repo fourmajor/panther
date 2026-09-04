@@ -198,9 +198,10 @@ Suggested stack boundaries:
 - `PantherProcessingStack`: queues, workflows, and on-demand processing
 
 Console-created application resources are not authoritative and must be captured in CDK. Manual
-account creation, root-user security, and the first CDK bootstrap are documented exceptions because
-they necessarily precede the deployed stacks. Installing and registering a future physical home
-runner will also be documented as a manual machine-bootstrap step.
+account creation, root-user security, creation of the IAM Identity Center instance and first user,
+and the first CDK bootstrap are documented exceptions because they necessarily precede the deployed
+stacks. Installing and registering a future physical home runner will also be documented as a
+manual machine-bootstrap step.
 
 ## Continuous Integration and Delivery
 
@@ -254,7 +255,8 @@ The operational procedure is maintained in [aws-foundation-runbook.md](aws-found
 1. Create the dedicated AWS account and secure administrative and recovery access.
 2. Select the primary AWS region and establish billing alerts.
 3. Add the CDK application to the GitHub repository and bootstrap the account from the laptop.
-4. Deploy the GitHub OIDC provider and restricted administration and deployment roles.
+4. Deploy restricted Identity Center administration and asset-uploader permission sets. Defer the
+   GitHub OIDC provider and deployment role until remote deployment is actually needed.
 5. Deploy the private and published S3 buckets with encryption, versioning, and lifecycle rules.
 6. Verify an authenticated command-line upload to the private bucket.
 
