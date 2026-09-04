@@ -71,3 +71,39 @@ test("foundation records bucket names and creates an account budget", () => {
     ]),
   });
 });
+
+test("foundation assigns administrator and asset-uploader access", () => {
+  const app = new App();
+  const stack = new PantherFoundationStack(app, "TestFoundation", {
+    env: {
+      account: "123456789012",
+      region: "us-west-2",
+    },
+    administratorPrincipalId: "1234567890-12345678-1234-1234-1234-123456789012",
+    identityCenterInstanceArn: "arn:aws:sso:::instance/ssoins-1234567890abcdef",
+    monthlyBudgetUsd: 10,
+  });
+  const template = Template.fromStack(stack);
+
+  template.resourceCountIs("AWS::SSO::PermissionSet", 2);
+  template.resourceCountIs("AWS::SSO::Assignment", 2);
+  template.hasResourceProperties("AWS::SSO::PermissionSet", {
+    Name: "PantherAdministrator",
+    ManagedPolicies: ["arn:aws:iam::aws:policy/AdministratorAccess"],
+  });
+  template.hasResourceProperties("AWS::SSO::PermissionSet", {
+    Name: "PantherAssetUploader",
+    InlinePolicy: Match.objectLike({
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: Match.arrayWith(["s3:PutObject"]),
+          Effect: "Allow",
+        }),
+        Match.objectLike({
+          Action: "ssm:GetParameter",
+          Effect: "Allow",
+        }),
+      ]),
+    }),
+  });
+});

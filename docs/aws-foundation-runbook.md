@@ -13,6 +13,10 @@ enable root-user MFA immediately, and do not create root access keys.
 Create an administrative CLI profile that uses short-lived credentials. The examples below call it
 `panther-admin`; a different local name is fine.
 
+For a standalone account, enabling IAM Identity Center and creating its first user are also account
+bootstrap actions because they must exist before CDK can manage permission sets and assignments.
+Do not create IAM access keys.
+
 ## 2. Confirm the target
 
 ```bash
@@ -46,11 +50,21 @@ Replace `ACCOUNT_ID` with the verified Panther account ID.
 ```bash
 AWS_PROFILE=panther-admin npm run deploy -- \
   --context budgetEmail=YOUR_EMAIL \
+  --context identityCenterInstanceArn=INSTANCE_ARN \
+  --context administratorPrincipalId=USER_ID \
   --context monthlyBudgetUsd=10
 ```
 
 The email context is optional, but without it the budget will not send notifications. AWS requires
 the recipient to confirm the budget-notification subscription.
+
+The Identity Center contexts cause CDK to create and assign two permission sets:
+
+- `PantherAdministrator` for infrastructure administration
+- `PantherAssetUploader` for routine access to private game assets
+
+Use `PantherAssetUploader` for game-specific sessions. Reserve `PantherAdministrator` for CDK and
+account-administration work. The temporary root profile is only for account bootstrap and recovery.
 
 The stack outputs the private and published bucket names. The same names are also stored in these
 standard SSM parameters:
@@ -63,7 +77,7 @@ standard SSM parameters:
 ## 6. Verify the private bucket
 
 ```bash
-AWS_PROFILE=panther-admin aws ssm get-parameter \
+AWS_PROFILE=panther-uploader aws ssm get-parameter \
   --name /panther/foundation/private-asset-bucket \
   --query Parameter.Value \
   --output text
@@ -72,7 +86,7 @@ AWS_PROFILE=panther-admin aws ssm get-parameter \
 The game-specific session can upload a portrait using a caller-supplied game ID and asset ID:
 
 ```bash
-AWS_PROFILE=panther-admin aws s3 cp /path/to/portrait.png \
+AWS_PROFILE=panther-uploader aws s3 cp /path/to/portrait.png \
   s3://PRIVATE_BUCKET/games/GAME_ID/assets/ASSET_ID/original/portrait.png \
   --content-type image/png \
   --metadata asset-kind=portrait

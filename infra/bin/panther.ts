@@ -8,6 +8,8 @@ const app = new cdk.App();
 const region =
   app.node.tryGetContext("region") ?? process.env.PANTHER_AWS_REGION ?? "us-west-2";
 const budgetEmail = app.node.tryGetContext("budgetEmail");
+const identityCenterInstanceArn = app.node.tryGetContext("identityCenterInstanceArn");
+const administratorPrincipalId = app.node.tryGetContext("administratorPrincipalId");
 const monthlyBudgetUsd = Number(app.node.tryGetContext("monthlyBudgetUsd") ?? 10);
 
 if (!Number.isFinite(monthlyBudgetUsd) || monthlyBudgetUsd <= 0) {
@@ -15,11 +17,13 @@ if (!Number.isFinite(monthlyBudgetUsd) || monthlyBudgetUsd <= 0) {
 }
 
 new PantherFoundationStack(app, "PantherFoundation", {
+  administratorPrincipalId,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,
   },
   budgetEmail,
+  identityCenterInstanceArn,
   monthlyBudgetUsd,
   description: "Near-zero-idle foundation for Panther application and game assets",
 });
