@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import logging
 import os
@@ -5,10 +7,11 @@ import re
 from pathlib import PurePosixPath
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 
-s3 = boto3.client("s3")
+s3 = boto3.client("s3", config=Config(signature_version="s3v4"))
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 BUCKET_NAME = os.environ["ASSET_BUCKET_NAME"]
@@ -21,6 +24,7 @@ CHARACTER_PROFILE_PATTERN = re.compile(
 MAX_CHARACTER_COUNT = 100
 MAX_MODEL_BYTES = 5 * 1024 * 1024
 MAX_POSTER_BYTES = 8 * 1024 * 1024
+MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 
 def _response(status_code, body):
@@ -164,8 +168,7 @@ def _character(event):
     poster_key = model.get("posterKey")
     game_prefix = f"games/{game_id}/"
     if not all(
-        isinstance(key, str) and key.startswith(game_prefix)
-        for key in (web_key, poster_key)
+        isinstance(key, str) and key.startswith(game_prefix) for key in (web_key, poster_key)
     ):
         return _response(422, {"error": "Character assets are invalid"})
     try:
@@ -265,6 +268,11 @@ def _object_url(event):
             return _response(404, {"error": "Object not found"})
         raise
 
+    stored = metadata.get("Metadata", {})
+    try:
+        details = json.loads(base64.b64decode(stored.get("panther", "e30="), validate=True))
+    except (ValueError, binascii.Error):
+        details = {}
     return _response(
         200,
         {
@@ -273,6 +281,155 @@ def _object_url(event):
             "size": metadata.get("ContentLength", 0),
             "url": _signed_asset(key),
             "expiresIn": SIGNED_URL_TTL_SECONDS,
+            "kind": stored.get("kind"),
+            "metadata": details,
+            "uploadedBy": stored.get("uploaded-by"),
+        },
+    )
+
+
+def _upload(event):
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
+    uploader = claims.get("sub")
+    if not isinstance(uploader, str) or not re.fullmatch(r"[a-zA-Z0-9-]{1,128}", uploader):
+        return _response(401, {"error": "Sign in to upload"})
+    try:
+        raw = event.get("body") or ""
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw, validate=True).decode("utf-8")
+        body = json.loads(raw)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return _response(400, {"error": "Invalid upload request"})
+    if not isinstance(body, dict):
+        return _response(400, {"error": "Invalid upload request"})
+    game, asset, kind = (body.get(name) for name in ("gameId", "assetId", "kind"))
+    if not all(_valid_slug(value) and len(value) <= 96 for value in (game, asset, kind)):
+        return _response(
+            400, {"error": "Use lowercase words separated by hyphens for IDs and kind"}
+        )
+    filename = body.get("filename")
+    if (
+        not isinstance(filename, str)
+        or not 1 <= len(filename.encode("utf-8")) <= 180
+        or filename in {".", ".."}
+        or any(ord(c) < 32 or c in "/\\" for c in filename)
+    ):
+        return _response(400, {"error": "Invalid filename"})
+    size = body.get("size")
+    if type(size) is not int or not 0 <= size <= MAX_UPLOAD_BYTES:
+        return _response(400, {"error": "Uploads must be at most 1 GiB"})
+    content_type = body.get("contentType")
+    if (
+        not isinstance(content_type, str)
+        or not re.fullmatch(r"[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+", content_type)
+        or len(content_type) > 120
+    ):
+        return _response(400, {"error": "Invalid content type"})
+    checksum = body.get("sha256")
+    try:
+        valid_checksum = (
+            isinstance(checksum, str) and len(base64.b64decode(checksum, validate=True)) == 32
+        )
+    except (ValueError, binascii.Error):
+        valid_checksum = False
+    if not valid_checksum:
+        return _response(400, {"error": "Invalid SHA-256 checksum"})
+    metadata = body.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return _response(400, {"error": "Metadata must be a JSON object"})
+    allowed = {
+        "title",
+        "description",
+        "category",
+        "characterIds",
+        "sessionId",
+        "tags",
+        "sourceKeys",
+        "extra",
+    }
+    if set(metadata) - allowed:
+        return _response(400, {"error": "Unknown metadata fields belong under extra"})
+    for field in ("title", "description"):
+        if field in metadata and (
+            not isinstance(metadata[field], str) or len(metadata[field]) > 500
+        ):
+            return _response(400, {"error": f"Invalid metadata {field}"})
+    categories = {
+        "canonical-source",
+        "grounded-adaptation",
+        "creative-reimagining",
+        "playful-derivative",
+        "reference",
+        "unclassified",
+    }
+    metadata.setdefault("category", "unclassified")
+    if not isinstance(metadata["category"], str) or metadata["category"] not in categories:
+        return _response(400, {"error": "Invalid metadata category"})
+    for field in ("characterIds", "tags"):
+        values = metadata.get(field, [])
+        if (
+            not isinstance(values, list)
+            or len(values) > 20
+            or not all(_valid_slug(value) and len(value) <= 96 for value in values)
+        ):
+            return _response(400, {"error": f"Invalid metadata {field}"})
+    if "sessionId" in metadata and (
+        not _valid_slug(metadata["sessionId"]) or len(metadata["sessionId"]) > 96
+    ):
+        return _response(400, {"error": "Invalid metadata sessionId"})
+    sources = metadata.get("sourceKeys", [])
+    if (
+        not isinstance(sources, list)
+        or len(sources) > 20
+        or not all(_valid_key(key) and key.startswith(f"games/{game}/") for key in sources)
+    ):
+        return _response(400, {"error": "Source keys must belong to this game"})
+    if "extra" in metadata and not isinstance(metadata["extra"], dict):
+        return _response(400, {"error": "Metadata extra must be an object"})
+    try:
+        encoded_metadata = base64.b64encode(
+            json.dumps(
+                {"schemaVersion": 1, **metadata},
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).decode("ascii")
+    except (ValueError, TypeError):
+        return _response(400, {"error": "Metadata must be valid JSON"})
+    object_metadata = {"kind": kind, "uploaded-by": uploader, "panther": encoded_metadata}
+    if sum(len(k) + len(v) for k, v in object_metadata.items()) > 1900:
+        return _response(
+            400, {"error": "Metadata is too large; upload long notes as another asset"}
+        )
+    key = f"games/{game}/assets/{asset}/original/{filename}"
+    headers = {
+        "Content-Type": content_type,
+        "Content-Length": str(size),
+        "If-None-Match": "*",
+        "x-amz-checksum-sha256": checksum,
+        **{f"x-amz-meta-{name}": value for name, value in object_metadata.items()},
+    }
+    url = s3.generate_presigned_url(
+        "put_object",
+        Params={
+            "Bucket": BUCKET_NAME,
+            "Key": key,
+            "ContentType": content_type,
+            "ContentLength": size,
+            "IfNoneMatch": "*",
+            "ChecksumSHA256": checksum,
+            "Metadata": object_metadata,
+        },
+        ExpiresIn=SIGNED_URL_TTL_SECONDS,
+    )
+    return _response(
+        200,
+        {
+            "key": key,
+            "url": url,
+            "headers": headers,
+            "expiresIn": SIGNED_URL_TTL_SECONDS,
         },
     )
 
@@ -280,6 +437,8 @@ def _object_url(event):
 def handler(event, _context):
     route_key = event.get("routeKey", "")
     try:
+        if route_key == "POST /uploads":
+            return _upload(event)
         if route_key == "GET /objects":
             return _list_objects(event)
         if route_key == "GET /object-url":

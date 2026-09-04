@@ -6,6 +6,7 @@ import click
 
 from panther_journal.artifacts import ensure_run_dir, read_models, write_models
 from panther_journal.config import load_config
+from panther_journal.cloud import register
 from panther_journal.contracts import ClassifiedLine, LoreFact, TranscriptLine
 from panther_journal.generation.novel import generate_novel_recap
 from panther_journal.generation.screenplay import generate_screenplay_recap
@@ -21,7 +22,10 @@ DEFAULT_RUN_DIR = "runs/sample-session"
 
 @click.group()
 def main() -> None:
-    """Panther TTRPG session journal automation."""
+    """Panther: private game assets, session records, and creative media.
+
+    Agents: run `panther instructions` before organizing or uploading assets.
+    """
 
 
 @main.command("ingest-sample")
@@ -103,6 +107,8 @@ def generate_screenplay(run_dir: str) -> None:
     (run_path / "screenplay_recap.md").write_text(output, encoding="utf-8")
     click.echo(f"Wrote screenplay recap to {run_path / 'screenplay_recap.md'}")
 
+
+register(main)
 
 if __name__ == "__main__":
     main()

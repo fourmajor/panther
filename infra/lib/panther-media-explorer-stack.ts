@@ -219,11 +219,23 @@ export class PantherMediaExplorerStack extends Stack {
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: RemovalPolicy.DESTROY,
     });
+    const cliClient = userPool.addClient("CliClient", {
+      userPoolClientName: "panther-cli",
+      generateSecret: false,
+      authFlows: { userPassword: true },
+      preventUserExistenceErrors: true,
+      enableTokenRevocation: true,
+      accessTokenValidity: Duration.hours(1),
+      idTokenValidity: Duration.hours(1),
+      refreshTokenValidity: Duration.days(7),
+    });
     const mediaApiFunction = new lambda.Function(this, "MediaApiFunction", {
       runtime: lambda.Runtime.PYTHON_3_13,
       architecture: lambda.Architecture.ARM_64,
       handler: "index.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api")),
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api"), {
+        exclude: ["**/__pycache__/**", "**/*.pyc"],
+      }),
       timeout: Duration.seconds(10),
       memorySize: 256,
       logGroup: mediaApiLogGroup,
@@ -249,12 +261,19 @@ export class PantherMediaExplorerStack extends Stack {
         resources: [privateAssets.arnForObjects("games/*")],
       }),
     );
+    mediaApiFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:PutObject"],
+        resources: [privateAssets.arnForObjects("games/*/assets/*/original/*")],
+        conditions: { StringEquals: { "s3:if-none-match": "*" } },
+      }),
+    );
 
     const authorizer = new apigwv2Authorizers.HttpJwtAuthorizer(
       "CognitoAuthorizer",
       `https://cognito-idp.${this.region}.${this.urlSuffix}/${userPool.userPoolId}`,
       {
-        jwtAudience: [userPoolClient.userPoolClientId],
+        jwtAudience: [userPoolClient.userPoolClientId, cliClient.userPoolClientId],
       },
     );
     const mediaApi = new apigwv2.HttpApi(this, "MediaApi", {
@@ -278,6 +297,12 @@ export class PantherMediaExplorerStack extends Stack {
         authorizer,
       });
     }
+    mediaApi.addRoutes({
+      path: "/uploads",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: mediaIntegration,
+      authorizer,
+    });
 
     const passwordParameterPrefix = "/panther/media-explorer/users";
     const provisionerLogGroup = new logs.LogGroup(this, "UserProvisionerLogGroup", {
@@ -347,6 +372,12 @@ export class PantherMediaExplorerStack extends Stack {
       destinationBucket: siteBucket,
       sources: [
         s3deploy.Source.asset(path.join(__dirname, "../../../web/media-explorer")),
+        s3deploy.Source.data("cli-config.json", JSON.stringify({
+          apiUrl: mediaApi.apiEndpoint,
+          clientId: cliClient.userPoolClientId,
+          region: this.region,
+          maxUploadBytes: 1024 * 1024 * 1024,
+        })),
         s3deploy.Source.data(
           "config.js",
           [

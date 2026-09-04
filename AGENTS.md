@@ -1,5 +1,14 @@
 # Repository Agent Instructions
 
+## Panther CLI and game assets
+
+- Before organizing or uploading game assets, run `panther instructions`. The guide is bundled in
+  `src/panther_journal/agent-instructions.md` and ships with the CLI, not just this repository.
+- Follow its object layout, kind/category distinctions, metadata schema, and provenance rules.
+- Use the Panther CLI for supported application operations. Do not bypass its no-overwrite or
+  authorization limits with direct S3 writes. Keep all actual game files and metadata outside Git.
+- Update the bundled guide and CLI tests when changing asset organization or metadata behavior.
+
 ## Change workflow
 
 - Make all repository changes on a branch and deliver them through a pull request.
