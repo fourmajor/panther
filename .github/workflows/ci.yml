@@ -24,5 +24,4 @@ jobs:
       - run: >-
           npm run synth --
           --context account=000000000000
-          --context administratorEmail=admin@example.com
         working-directory: infra
