@@ -121,14 +121,14 @@ test("media explorer provisions two users without exposing password values", () 
   });
 });
 
-test("media API is JWT protected and can only read private assets", () => {
+test("media API is JWT protected with limited conditional upload permissions", () => {
   const template = mediaExplorerTemplate();
 
   template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 4);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 5);
   template.allResourcesProperties("AWS::ApiGatewayV2::Route", {
     AuthorizationType: "JWT",
   });
@@ -159,7 +159,18 @@ test("media API is JWT protected and can only read private assets", () => {
           Action: "s3:GetObject",
           Effect: "Allow",
         }),
+        Match.objectLike({
+          Action: "s3:PutObject",
+          Resource: Match.anyValue(),
+          Condition: { StringEquals: { "s3:if-none-match": "*" } },
+          Effect: "Allow",
+        }),
       ]),
     }),
+  });
+  template.hasResourceProperties("AWS::Cognito::UserPoolClient", {
+    ClientName: "panther-cli",
+    GenerateSecret: false,
+    ExplicitAuthFlows: Match.arrayWith(["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]),
   });
 });

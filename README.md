@@ -43,6 +43,10 @@ short-lived administrative access, and a near-zero-idle-cost baseline managed wi
 password-protected, read-only media explorer is available for browsing and previewing private game
 assets at [panther.place](https://panther.place).
 
+The Panther CLI supports private uploads, listing, and metadata inspection using the same account
+as the website—no AWS credentials required. See [CLI setup and usage](docs/cli.md). Agents should
+read `panther instructions` for the bundled organization, categorization, and provenance rules.
+
 `src/panther_journal` is an early prototype of the transcription and narrative-generation pipeline.
 It does not define the full scope of Panther. Reliable session capture, production transcription,
 speaker attribution, richer group collaboration, and the media-production workflows remain to be
@@ -94,3 +98,4 @@ panther generate-screenplay
 
 Sample artifacts are written to `runs/sample-session/` by default and must not contain real game
 data intended for shared or durable storage.
+- [Panther CLI and agent usage](docs/cli.md)

@@ -121,7 +121,9 @@ AWS_PROFILE=panther-uploader aws ssm get-parameter \
   --output text
 ```
 
-The game-specific session can upload a portrait using a caller-supplied game ID and asset ID:
+For normal game uploads, use the [Panther CLI](cli.md) with the user's Panther login. Agents must
+read `panther instructions` first. The following is the historical administrative bootstrap path,
+not the DM upload workflow:
 
 ```bash
 AWS_PROFILE=panther-uploader aws s3 cp /path/to/portrait.png \

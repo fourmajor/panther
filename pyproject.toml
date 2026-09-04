@@ -14,7 +14,10 @@ dependencies = [
   "click>=8.1",
   "pydantic>=2.7",
   "PyYAML>=6.0",
-  "jsonschema>=4.22"
+  "jsonschema>=4.22",
+  "boto3>=1.36,<2",
+  "keyring>=25,<26",
+  "requests>=2.32,<3"
 ]
 
 [project.optional-dependencies]
@@ -31,6 +34,9 @@ panther = "panther_journal.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+panther_journal = ["agent-instructions.md"]
 
 [tool.ruff]
 line-length = 100
