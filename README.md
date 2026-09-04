@@ -41,7 +41,7 @@ recorded fact from creative interpretation.
 The initial AWS foundation is operational. It provides private and published asset storage,
 short-lived administrative access, and a near-zero-idle-cost baseline managed with AWS CDK. A
 password-protected, read-only media explorer is available for browsing and previewing private game
-assets.
+assets at [panther.place](https://panther.place).
 
 `src/panther_journal` is an early prototype of the transcription and narrative-generation pipeline.
 It does not define the full scope of Panther. Reliable session capture, production transcription,
