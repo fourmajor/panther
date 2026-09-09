@@ -45,6 +45,8 @@ def test_instructions_ship_with_cli():
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
     assert "recording attribute" in result.output
+    assert "recording transcribe --blind" in result.output
+    assert "recording sync RECORDING_DIR" in result.output
     assert "game set-ruleset" in result.output
     assert "never infer identities" in result.output
     assert "original/<filename>" in result.output
