@@ -110,6 +110,12 @@ main {
   padding: clamp(3rem, 7vw, 7rem) 0;
 }
 
+.game-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin-bottom: 2rem; }
+.game-toolbar select { min-width: 0; max-width: 100%; flex: 1 1 15rem; border: 1px solid var(--line); border-radius: .4rem; background: var(--panel); color: var(--ink); padding: .7rem; font: inherit; }
+.game-purpose { color: var(--accent); }
+.roster { margin-bottom: 2rem; color: var(--muted); }
+.roster ul { padding-left: 1.25rem; line-height: 1.8; }
+
 .welcome {
   max-width: 760px;
 }

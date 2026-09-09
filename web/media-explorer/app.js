@@ -1,6 +1,10 @@
 const config = window.PANTHER_CONFIG;
 
 const elements = {
+  gameToolbar: document.querySelector("#game-toolbar"),
+  gameSelector: document.querySelector("#game-selector"),
+  gamePurpose: document.querySelector("#game-purpose"),
+  playerRoster: document.querySelector("#player-roster"),
   account: document.querySelector("#account"),
   authError: document.querySelector("#auth-error"),
   breadcrumbs: document.querySelector("#breadcrumbs"),
@@ -44,6 +48,9 @@ const elements = {
 };
 
 const state = {
+  games: null,
+  gameId: null,
+  gameDetail: null,
   charactersLoaded: false,
   currentPrefix: "games/",
   currentCharacter: null,
@@ -52,6 +59,9 @@ const state = {
   tokens: readTokens(),
 };
 let refreshingSession = null;
+let routeEpoch = 0;
+let listingEpoch = 0;
+let previewEpoch = 0;
 let sessionEpoch = 0;
 const LOGOUT_MARKER = "panther.signed-out";
 
@@ -160,6 +170,12 @@ function storeTokens(tokens) {
 }
 
 function clearSession() {
+  state.games = null;
+  state.gameId = null;
+  state.gameDetail = null;
+  routeEpoch += 1;
+  listingEpoch += 1;
+  closePreview();
   sessionEpoch += 1;
   state.tokens = null;
   state.charactersLoaded = false;
@@ -262,6 +278,7 @@ async function api(path, parameters = {}) {
 }
 
 function showWelcome(message = "") {
+  elements.gameToolbar.hidden = true;
   elements.welcome.hidden = false;
   elements.explorer.hidden = true;
   elements.characters.hidden = true;
@@ -281,7 +298,10 @@ function showApplicationChrome() {
 
 function setActiveNavigation(section) {
   for (const link of elements.primaryNav.querySelectorAll("a")) {
-    const active = link.getAttribute("href") === `/${section}`;
+    const part = link.dataset.section || link.getAttribute("href").split("/").at(-1);
+    link.dataset.section = part;
+    link.href = gamePath(part);
+    const active = part === section;
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
@@ -298,11 +318,12 @@ function renderBreadcrumbs(prefix) {
   let accumulated = "";
   for (const segment of segments) {
     accumulated += `${segment}/`;
+    if (accumulated === "games/") continue;
     const destination = accumulated;
     const button = document.createElement("button");
     button.className = "crumb";
     button.type = "button";
-    button.textContent = segment;
+    button.textContent = accumulated === `games/${state.gameId}/` ? state.gameDetail?.game.name || segment : segment;
     button.addEventListener("click", () => loadPrefix(destination));
     elements.breadcrumbs.append(button);
   }
@@ -326,7 +347,62 @@ function webGlAvailable() {
 }
 
 function characterPath(character) {
-  return `/characters/${encodeURIComponent(character.gameId)}/${encodeURIComponent(character.id)}`;
+  return `/games/${encodeURIComponent(character.gameId)}/characters/${encodeURIComponent(character.id)}`;
+}
+
+function gamePath(section) {
+  return state.gameId ? `/games/${encodeURIComponent(state.gameId)}/${section}` : `/${section}`;
+}
+
+async function selectGame(requested, epoch) {
+  if (!state.games) {
+    const result = await api("/games");
+    if (epoch !== routeEpoch) return false;
+    state.games = result.games;
+    elements.gameSelector.replaceChildren();
+    for (const game of state.games) {
+      const option = document.createElement("option");
+      option.value = game.id;
+      option.textContent = game.name + (game.purpose === "test" ? " (Test)" : "");
+      elements.gameSelector.append(option);
+    }
+  }
+  let remembered = null;
+  try { remembered = sessionStorage.getItem("panther.game"); } catch { /* Optional preference. */ }
+  const selected = requested || state.gameId || remembered || state.games[0]?.id;
+  if (!state.games.some(g => g.id === selected)) throw new Error("Game not found. Choose an available game.");
+  elements.gameToolbar.hidden = false;
+  if (selected !== state.gameId) {
+    state.gameId = selected;
+    state.gameDetail = null;
+    state.charactersLoaded = false;
+    state.mediaLoaded = false;
+    state.currentCharacter = null;
+    state.currentPrefix = `games/${selected}/`;
+    listingEpoch += 1;
+    elements.entries.replaceChildren();
+    elements.characterList.replaceChildren();
+    elements.characterProfile.hidden = true;
+    elements.playerRoster.replaceChildren();
+    elements.characterModel.removeAttribute("src");
+    closePreview();
+  }
+  elements.gameSelector.value = selected;
+  elements.gamePurpose.textContent = state.games.find(g => g.id === selected).purpose === "test" ? "Test game · separate from campaign material" : "";
+  if (!state.gameDetail) {
+    const detail = await api("/game", { gameId: selected });
+    if (epoch !== routeEpoch || state.gameId !== selected) return false;
+    state.gameDetail = detail;
+    for (const member of detail.memberships) {
+      const person = detail.players.find(p => p.id === member.playerId);
+      const names = member.characterIds.map(id => detail.characters.find(c => c.id === id)?.name || id);
+      const li = document.createElement("li");
+      li.textContent = `${person?.name || member.playerId} — ${member.role === "dungeon-master" ? "Dungeon Master" : names.join(", ") || "Player"}`;
+      elements.playerRoster.append(li);
+    }
+  }
+  try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
+  return true;
 }
 
 function navigate(path, { replace = false } = {}) {
@@ -365,6 +441,7 @@ function renderCharacterCard(character) {
 }
 
 async function loadCharacters() {
+  const epoch = routeEpoch;
   elements.characterProfile.hidden = true;
   elements.characterList.hidden = false;
   elements.charactersStatus.hidden = false;
@@ -374,18 +451,22 @@ async function loadCharacters() {
     return;
   }
   try {
-    const result = await api("/characters");
+    const result = await api("/characters", { gameId: state.gameId });
+    if (epoch !== routeEpoch) return;
+    const merged = new Map(state.gameDetail.characters.map(c => [c.id, { ...c, title: "Character" }]));
+    for (const c of result.characters) if (c.gameId === state.gameId) merged.set(c.id, c);
     elements.characterList.replaceChildren();
-    for (const character of result.characters) renderCharacterCard(character);
+    for (const character of merged.values()) renderCharacterCard(character);
     state.charactersLoaded = true;
     elements.charactersStatus.hidden = true;
-    if (!result.characters.length) {
+    if (!merged.size) {
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent = "There are no character profiles yet.";
       elements.characterList.append(empty);
     }
   } catch (error) {
+    if (epoch !== routeEpoch) return;
     if (error.message !== "Session expired") {
       elements.charactersStatus.textContent = error.message;
     }
@@ -406,6 +487,9 @@ function configureCharacter(profile) {
   elements.characterName.textContent = character.name;
   elements.characterTitle.textContent = character.title;
   elements.characterSummary.textContent = character.summary;
+  document.querySelector("#character-model-area").hidden = !model;
+  document.querySelector("#character-no-model").hidden = Boolean(model);
+  if (!model) { state.currentCharacter = null; return; }
   elements.characterPoster.src = poster.url;
   elements.characterPoster.alt = `Portrait of ${character.name}`;
   elements.fallbackPoster.src = poster.url;
@@ -434,16 +518,26 @@ function configureCharacter(profile) {
 }
 
 async function loadCharacter(gameId, characterId) {
+  const epoch = routeEpoch;
   elements.characterList.hidden = true;
   elements.characterProfile.hidden = true;
   elements.charactersStatus.hidden = false;
   elements.charactersStatus.textContent = "Loading character…";
   try {
     const profile = await api("/character", { gameId, characterId });
+    if (epoch !== routeEpoch) return;
     configureCharacter(profile);
     elements.characterProfile.hidden = false;
     elements.charactersStatus.hidden = true;
   } catch (error) {
+    if (epoch !== routeEpoch) return;
+    const character = state.gameDetail?.characters.find(c => c.id === characterId);
+    if (character && error.message === "Character not found") {
+      configureCharacter({ character: { ...character, title: "Character", summary: "" } });
+      elements.characterProfile.hidden = false;
+      elements.charactersStatus.hidden = true;
+      return;
+    }
     if (error.message !== "Session expired") {
       elements.charactersStatus.textContent = error.message;
     }
@@ -451,6 +545,7 @@ async function loadCharacter(gameId, characterId) {
 }
 
 async function loadCharacterModel() {
+  const epoch = routeEpoch;
   if (!state.currentCharacter) return;
   if (!webGlAvailable()) {
     showModelFallback("This device cannot display WebGL, so the portrait is shown instead.");
@@ -467,10 +562,12 @@ async function loadCharacterModel() {
         window.setTimeout(() => reject(new Error("3D viewer unavailable")), 10_000),
       ),
     ]);
+    if (epoch !== routeEpoch) return;
     elements.characterModel.src = profile.model.url;
     elements.characterModel.dismissPoster();
     elements.modelStatus.textContent = "Loading the 3D model…";
   } catch (error) {
+    if (epoch !== routeEpoch) return;
     showModelFallback(
       error.message === "Session expired"
         ? "Your session has expired."
@@ -487,20 +584,36 @@ function resetCharacterModel() {
 }
 
 async function renderRoute() {
+  const epoch = ++routeEpoch;
   try { await ensureSession(); } catch (error) { showWelcome(error.message); return; }
+  if (epoch !== routeEpoch) return;
   showApplicationChrome();
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
-  if (window.location.pathname === "/characters" || characterMatch) {
+  try {
+    if (!await selectGame(gameRoute?.[1] || characterMatch?.[1], epoch)) return;
+  } catch (error) {
+    if (epoch !== routeEpoch) return;
+    elements.characters.hidden = true;
+    elements.explorer.hidden = false;
+    elements.entries.replaceChildren();
+    elements.status.hidden = false;
+    elements.status.textContent = error.message;
+    return;
+  }
+  if (epoch !== routeEpoch) return;
+  if (window.location.pathname === "/characters" || characterMatch || gameRoute?.[2] === "characters") {
     setActiveNavigation("characters");
     elements.characters.hidden = false;
     elements.explorer.hidden = true;
     if (characterMatch) await loadCharacter(characterMatch[1], characterMatch[2]);
+    else if (gameRoute?.[3]) await loadCharacter(gameRoute[1], gameRoute[3]);
     else await loadCharacters();
     return;
   }
-  if (window.location.pathname !== "/" && window.location.pathname !== "/media") {
+  if (window.location.pathname !== "/" && window.location.pathname !== "/media" && !gameRoute) {
     navigate("/media", { replace: true });
     return;
   }
@@ -541,6 +654,8 @@ function appendFile(file) {
 }
 
 async function loadPrefix(prefix, cursor = null) {
+  if (!state.gameId || !prefix.startsWith(`games/${state.gameId}/`)) return;
+  const epoch = ++listingEpoch;
   elements.status.hidden = false;
   elements.status.textContent = cursor ? "Loading more…" : "Loading…";
   elements.loadMore.hidden = true;
@@ -552,6 +667,7 @@ async function loadPrefix(prefix, cursor = null) {
 
   try {
     const result = await api("/objects", { prefix, cursor });
+    if (epoch !== listingEpoch || !state.tokens) return;
     for (const childPrefix of result.prefixes) appendFolder(childPrefix);
     for (const file of result.objects) appendFile(file);
     state.nextCursor = result.nextCursor;
@@ -564,6 +680,7 @@ async function loadPrefix(prefix, cursor = null) {
       elements.entries.append(empty);
     }
   } catch (error) {
+    if (epoch !== listingEpoch) return;
     if (error.message !== "Session expired") {
       elements.status.textContent = error.message;
       elements.status.hidden = false;
@@ -598,6 +715,7 @@ function previewElement(contentType, url, title) {
 }
 
 async function previewFile(file) {
+  const epoch = ++previewEpoch;
   elements.previewTitle.textContent = file.name;
   elements.previewBody.textContent = "Preparing preview…";
   elements.previewDetails.textContent = formatBytes(file.size);
@@ -606,15 +724,18 @@ async function previewFile(file) {
 
   try {
     const result = await api("/object-url", { key: file.key });
+    if (epoch !== previewEpoch) return;
     elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
   } catch (error) {
+    if (epoch !== previewEpoch) return;
     elements.previewBody.textContent = error.message;
   }
 }
 
 function closePreview() {
+  previewEpoch += 1;
   elements.previewDialog.close();
   elements.previewBody.replaceChildren();
   elements.openOriginal.removeAttribute("href");
@@ -628,7 +749,8 @@ elements.previewClose.addEventListener("click", closePreview);
 elements.previewDialog.addEventListener("click", (event) => {
   if (event.target === elements.previewDialog) closePreview();
 });
-elements.characterBack.addEventListener("click", () => navigate("/characters"));
+elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
+elements.gameSelector.addEventListener("change", () => navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${window.location.pathname.includes("characters") ? "characters" : "media"}`));
 elements.modelLoad.addEventListener("click", loadCharacterModel);
 elements.modelReset.addEventListener("click", resetCharacterModel);
 elements.characterModel.addEventListener("progress", (event) => {
@@ -653,7 +775,7 @@ elements.primaryNav.addEventListener("click", (event) => {
 document.querySelector(".brand").addEventListener("click", (event) => {
   if (!state.tokens) return;
   event.preventDefault();
-  navigate("/media");
+  navigate(gamePath("media"));
 });
 window.addEventListener("popstate", renderRoute);
 window.addEventListener("storage", (event) => {

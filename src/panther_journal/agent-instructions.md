@@ -33,7 +33,27 @@ protections. Do not treat the offer as permission to broaden access or implement
 Infrastructure deployment remains a separate CDK/AWS administrative operation, even when it enables
 a new CLI capability; distinguish that deployment need from routine game-data access.
 
-## Object organization
+## Games and players
+
+Use `panther game list` and `panther game show GAME_ID` before choosing a game. Use
+`panther player list` to reuse existing stable person IDs. Players are not characters or login
+accounts; never infer an account association. Dungeon Master is a membership role.
+
+Create an authorized game with `panther game create /private/path/game.json`. The private JSON
+requires `id`, `name`, `purpose` (`test` or `campaign`), `players`, `characters`, and `memberships`.
+Players and characters contain `id` and `name`; memberships contain `playerId`, `role` (`player`
+or `dungeon-master`), and `characterIds`. A DM membership has no character IDs. Every supplied
+player must have one membership. A player ID can be reused across games if its name matches.
+Creation is atomic, retryable with the same manifest, and refuses different data for an existing
+game. Edits/renames are not supported yet; do not bypass this with AWS writes.
+
+Game purpose, roster, and character names are private application data, not repository fixtures.
+The selector separates game browsing, not access permissions: the current installation is one
+trusted group, and both configured accounts can access its games. Legacy asset-only games stay
+discoverable without invented rosters or moving files. Test games must not be merged into another
+game's canon. Transcripts use player IDs; character speech versus table talk is separate annotation.
+
+## Asset object organization
 
 Uploads go to `games/<game-id>/assets/<asset-id>/original/<filename>` in private storage.
 Use lowercase hyphen-separated IDs, e.g. `harbor-map` or `captain-portrait`. An asset ID groups
