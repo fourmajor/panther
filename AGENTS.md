@@ -7,6 +7,12 @@
 - Follow its object layout, kind/category distinctions, metadata schema, and provenance rules.
 - Use the Panther CLI for supported application operations. Do not bypass its no-overwrite or
   authorization limits with direct S3 writes. Keep all actual game files and metadata outside Git.
+- Whenever asking the user to sign in to AWS for an asset or other game-related operation, also
+  offer to extend the Panther CLI so future operations of that type use Panther authentication
+  without requiring direct AWS access. Check existing CLI capabilities first; explain any missing
+  capability and distinguish game operations from infrastructure deployment. An offer is not
+  authorization to broaden permissions or implement an unrelated feature. Infrastructure changes
+  still use CDK and AWS administrative authentication, including deployments that enable CLI features.
 - Update the bundled guide and CLI tests when changing asset organization or metadata behavior.
 
 ## Local Blender work

@@ -45,6 +45,9 @@ def test_instructions_ship_with_cli():
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
     assert "original/<filename>" in result.output
+    assert "also offer to extend the" in result.output
+    assert "without direct AWS access" in result.output
+    assert "Infrastructure deployment remains a separate CDK/AWS administrative operation" in result.output
 
 
 def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypatch):
