@@ -5,6 +5,7 @@ import sys
 import types
 import base64
 import hashlib
+import struct
 
 import pytest
 from pathlib import Path
@@ -62,9 +63,18 @@ class FakeS3:
 
     def get_object(self, *, Key, **_kwargs):
         try:
-            return {"Body": io.BytesIO(self.objects[Key]["Body"])}
+            data = self.objects[Key]["Body"]
+            return {"Body": io.BytesIO(data), "ETag": '"' + hashlib.md5(data).hexdigest() + '"'}
         except KeyError as error:
             raise FakeClientError("NoSuchKey") from error
+
+    def put_object(self, *, Key, Body, ContentType, IfNoneMatch=None, IfMatch=None, **_kwargs):
+        if IfNoneMatch == "*" and Key in self.objects:
+            raise FakeClientError("PreconditionFailed")
+        if IfMatch and self.get_object(Key=Key)["ETag"] != IfMatch:
+            raise FakeClientError("PreconditionFailed")
+        self.objects[Key] = {"Body": Body, "ContentType": ContentType}
+        return {"ETag": self.get_object(Key=Key)["ETag"]}
 
     def head_object(self, *, Key, **_kwargs):
         try:
@@ -264,13 +274,170 @@ def test_real_signer_binds_length_checksum_and_conditional_write(monkeypatch):
     from urllib.parse import parse_qs, urlparse
 
     signer = boto3.client(
-        "s3", region_name="us-west-2", config=Config(signature_version="s3v4"),
-        aws_access_key_id="TESTONLY", aws_secret_access_key="test-only-not-a-real-secret",
+        "s3",
+        region_name="us-west-2",
+        config=Config(signature_version="s3v4"),
+        aws_access_key_id="TESTONLY",
+        aws_secret_access_key="test-only-not-a-real-secret",
     )
     module, _ = load_media_api(monkeypatch)
     module.s3 = signer
     result = response_body(module.handler(upload_event(), None))
     query = parse_qs(urlparse(result["url"]).query)
     signed = set(query["X-Amz-SignedHeaders"][0].split(";"))
-    assert {"content-length", "content-type", "if-none-match", "x-amz-checksum-sha256",
-            "x-amz-meta-panther", "x-amz-meta-kind", "x-amz-meta-uploaded-by"} <= signed
+    assert {
+        "content-length",
+        "content-type",
+        "if-none-match",
+        "x-amz-checksum-sha256",
+        "x-amz-meta-panther",
+        "x-amz-meta-kind",
+        "x-amz-meta-uploaded-by",
+    } <= signed
+
+
+PROFILE_KEY = "games/example-game/characters/example-character/profile.json"
+NEW_WEB = "games/example-game/assets/new-model/original/model.glb"
+NEW_SOURCE = "games/example-game/assets/new-model/original/model.blend"
+
+
+def publication(module, client, **updates):
+    module.MODEL_PUBLISHERS = {"owner", "dm"}
+    client.objects[NEW_WEB] = {
+        "Body": struct.pack("<4sII", b"glTF", 2, 12),
+        "ContentType": "model/gltf-binary",
+    }
+    client.objects[NEW_SOURCE] = {"Body": b"blend", "ContentType": "application/octet-stream"}
+    body = {
+        "gameId": "example-game",
+        "characterId": "example-character",
+        "webKey": NEW_WEB,
+        "sourceKey": NEW_SOURCE,
+        "expectedRevision": client.get_object(Key=PROFILE_KEY)["ETag"],
+        "reason": "Replace prototype with tested model",
+    }
+    body.update(updates)
+    return {
+        "routeKey": "PUT /character-model",
+        "body": json.dumps(body),
+        "requestContext": {
+            "authorizer": {"jwt": {"claims": {"sub": "user-id", "cognito:username": "owner"}}}
+        },
+    }
+
+
+def test_profile_read_has_revision_and_no_signed_urls(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    response = module.handler(
+        event("/character-profile", gameId="example-game", characterId="example-character"), None
+    )
+    assert response["statusCode"] == 200
+    result = response_body(response)
+    assert result["revision"] == client.get_object(Key=PROFILE_KEY)["ETag"]
+    assert result["profile"]["name"] == "Example Character"
+    assert not client.signed_requests
+
+
+def test_publish_preserves_exact_profile_portrait_assets_and_audit(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    before = client.objects[PROFILE_KEY]["Body"]
+    old_assets = dict(client.objects)
+    request = publication(module, client)
+    response = module.handler(request, None)
+    assert response["statusCode"] == 200
+    result = response_body(response)
+    assert client.objects[result["previousProfileKey"]]["Body"] == before
+    profile = result["profile"]
+    assert profile["model"]["posterKey"] == json.loads(before)["model"]["posterKey"]
+    assert profile["model"]["webKey"] == NEW_WEB
+    assert profile["modelPublication"]["actor"] == "user-id"
+    for key, value in old_assets.items():
+        if key != PROFILE_KEY:
+            assert client.objects[key] == value
+    # A stale request can never roll the character back; re-inspection is required.
+    assert module.handler(request, None)["statusCode"] == 409
+    web_response = module.handler(
+        event("/character", gameId="example-game", characterId="example-character"), None
+    )
+    assert NEW_WEB in response_body(web_response)["model"]["url"]
+
+
+@pytest.mark.parametrize(
+    "updates,status",
+    [
+        ({"gameId": "../other"}, 400),
+        ({"characterId": []}, 400),
+        ({"webKey": "games/other/assets/a/original/model.glb"}, 400),
+        ({"sourceKey": PROFILE_KEY}, 400),
+        ({"sourceKey": "games/example-game/assets/x/original/.."}, 400),
+        ({"provenanceKey": "games/example-game/assets/x/original/missing.json"}, 422),
+        ({"reason": ""}, 400),
+        ({"expectedRevision": "stale"}, 409),
+        ({"posterKey": "change-not-authorized"}, 400),
+        ({"sourceKey": None}, 400),
+    ],
+)
+def test_publish_rejects_bad_requests_without_profile_changes(monkeypatch, updates, status):
+    module, client = load_media_api(monkeypatch)
+    before = client.objects[PROFILE_KEY]["Body"]
+    assert module.handler(publication(module, client, **updates), None)["statusCode"] == status
+    assert client.objects[PROFILE_KEY]["Body"] == before
+    assert not any("/history/" in k for k in client.objects)
+
+
+@pytest.mark.parametrize("username", [None, "reader"])
+def test_publish_requires_authorized_username(monkeypatch, username):
+    module, client = load_media_api(monkeypatch)
+    request = publication(module, client)
+    request["requestContext"]["authorizer"]["jwt"]["claims"]["cognito:username"] = username
+    assert module.handler(request, None)["statusCode"] == 403
+    assert not any("/history/" in k for k in client.objects)
+
+
+@pytest.mark.parametrize(
+    "data", [b"not a model!", struct.pack("<4sII", b"glTF", 1, 12), b"x" * (5 * 1024 * 1024 + 1)]
+)
+def test_publish_rejects_invalid_or_oversized_glb(monkeypatch, data):
+    module, client = load_media_api(monkeypatch)
+    request = publication(module, client)
+    client.objects[NEW_WEB]["Body"] = data
+    assert module.handler(request, None)["statusCode"] == 422
+    assert not any("/history/" in k for k in client.objects)
+
+
+def test_publish_concurrent_change_retains_winner_and_snapshot(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    request = publication(module, client)
+    put = client.put_object
+    before = client.objects[PROFILE_KEY]["Body"]
+
+    def racing_put(**kwargs):
+        if kwargs["Key"] == PROFILE_KEY:
+            client.objects[PROFILE_KEY]["Body"] = b'{"winner":true}'
+        return put(**kwargs)
+
+    client.put_object = racing_put
+    assert module.handler(request, None)["statusCode"] == 409
+    assert client.objects[PROFILE_KEY]["Body"] == b'{"winner":true}'
+    assert any(v["Body"] == before for k, v in client.objects.items() if "/history/" in k)
+
+
+def test_existing_history_is_safe_and_history_failure_prevents_switch(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    request = publication(module, client)
+    before = client.objects[PROFILE_KEY]["Body"]
+    history = PROFILE_KEY.replace(
+        "profile.json", f"history/{hashlib.sha256(before).hexdigest()}.json"
+    )
+    client.objects[history] = {"Body": before, "ContentType": "application/json"}
+    assert module.handler(request, None)["statusCode"] == 200
+    assert client.objects[history]["Body"] == before
+    request = publication(module, client)
+    before = client.objects[PROFILE_KEY]["Body"]
+
+    def fail(**_kwargs):
+        raise FakeClientError("AccessDenied")
+
+    client.put_object = fail
+    assert module.handler(request, None)["statusCode"] == 502
+    assert client.objects[PROFILE_KEY]["Body"] == before

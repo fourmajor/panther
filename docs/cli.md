@@ -96,8 +96,41 @@ CDK creates the dedicated public Cognito CLI client, adds its audience to the AP
 publishes `/cli-config.json`, and adds the authenticated upload-signing route. The API signs a
 single private `PutObject` with size, checksum, metadata, and `If-None-Match: *`. Its IAM write
 permission is limited to `games/*/assets/*/original/*` with the conditional header. It cannot delete
-assets or write character profiles. No client AWS credentials or always-on resources are needed.
+assets or arbitrarily edit character profiles. The narrow model-selection operation below is supported.
+No client AWS credentials or always-on resources are needed.
 Object metadata is committed with the file, avoiding partially uploaded sidecar manifests.
+
+## Publish a replacement character model
+
+`panther character list` discovers character IDs. Inspect a character and its revision:
+
+```sh
+panther character show --game example-game --character captain
+```
+
+Upload the editable source, a separately optimized and browser-tested GLB (5 MiB maximum), and
+optional provenance with `panther upload`, using fresh asset IDs/filenames. GLB files imported this
+way live under `original/`, even though they were derived locally. Then publish explicitly:
+
+```sh
+panther character set-model --game example-game --character captain \
+  --web-key games/example-game/assets/captain-v2/original/model.glb \
+  --source-key games/example-game/assets/captain-v2/original/model.blend \
+  --expected-revision '"REVISION_FROM_CHARACTER_SHOW"' \
+  --reason 'Replace the prototype with the tested model'
+```
+
+The owner and DM can publish; other accounts cannot. The API validates same-game assets, file size,
+content type, and GLB header, but does not establish visual quality. The portrait stays unchanged.
+The previous profile is saved immutably under the character's `history/` prefix before a conditional
+profile update. Old model files are never overwritten/deleted. The response includes the new
+revision and `previousProfileKey`; actor, time, and reason are recorded on the profile. A concurrent
+edit returns a conflict: re-inspect it, do not blindly retry. An uncertain network response also
+requires inspection. A failed race may leave an unused history snapshot, which is safe to retain.
+
+This is not yet general character editing, appearance timelines, or a history UI (issue #37).
+
+Implementation reference: [AWS conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
 
 The public configuration contains only public client/endpoint identifiers, never secrets. Do not
 log signed URLs, passwords, or tokens. Credential operations and actual object uploads are runtime

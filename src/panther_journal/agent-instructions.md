@@ -30,10 +30,34 @@ Omitting `--asset` generates a unique ID; record the returned ID rather than gue
 videos, stories, music, and models can all be imported originals. The category and provenance
 describe what they actually represent. Do not mislabel generated material as a factual source.
 
-No overwrite or deletion is supported. For a revision, choose a new asset ID or filename, preserve
+No asset overwrite or deletion is supported. For a revision, choose a new asset ID or filename, preserve
 the previous object, and link it in `sourceKeys`. The CLI does not move or rewrite existing assets.
-It cannot yet upload optimized `derived/web/` representations or edit character profile manifests.
-Do not work around these limits with direct S3 mutations; report the missing capability.
+It cannot upload into `derived/web/`; import a locally optimized GLB under a new `original/` key.
+Use `panther character set-model` for the narrow, authorized model-selection operation below.
+Arbitrary profile editing is not supported. Do not work around limits with direct S3 mutations.
+
+## Publishing a character model
+
+1. Use `panther character list` to discover IDs, then `panther character show --game GAME_ID
+   --character CHARACTER_ID` to inspect the current profile and its exact `revision` token.
+2. Retain and upload the editable source and a separate, tested GLB (at most 5 MiB), using new
+   immutable asset keys and `--kind model-3d`. Upload provenance as a separate document when useful.
+   Inspect exported appearance, fresh-import the GLB, and verify actual browser loading and
+   rotation in the self-hosted test environment before making it current. Header validation in
+   the API is not a rendering or quality check. Keep all game files out of Git and public CI artifacts.
+3. Only when authorized to replace the current model, run `panther character set-model --help`.
+   Supply the uploaded `--web-key`, editable `--source-key`, optional `--provenance-key`, a concise
+   `--reason`, and the exact `--expected-revision` from step 1 (including its embedded quotes).
+   Do not automatically fetch a newer revision and retry a conflict; inspect the concurrent change.
+4. Inspect `panther character show` after success. Verify the old portrait is unchanged and the
+   new model/source keys match. The response records `previousProfileKey`; the exact old profile
+   and all old assets are retained. For uncertain responses, inspect before retrying.
+
+Publishing is limited to the CDK-configured owner/DM usernames. It changes only the model selection
+and publication audit fields, preserves the existing portrait and other character information,
+and resets the viewer to its standard front view. A failed concurrent write may retain an unused
+history snapshot; it must never overwrite a newer profile. This is basic safe model replacement,
+not the full appearance timeline or official portrait/model versioning proposed in issue #37.
 
 ## Kinds and categories
 
@@ -92,7 +116,7 @@ panther upload /outside/repo/harbor.png --game GAME_ID --asset harbor-map \
 ```
 
 Replace `GAME_ID` with a discovered lowercase game slug. Files become browsable in the web media
-library. Metadata links record organization; they do not yet automatically update character pages,
+library. Metadata links record organization; uploads do not automatically update character pages,
 create session records, or add filtering UI. Do not claim otherwise.
 
 ## Reliability and reporting

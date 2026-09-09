@@ -128,7 +128,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 5);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 7);
   template.allResourcesProperties("AWS::ApiGatewayV2::Route", {
     AuthorizationType: "JWT",
   });
@@ -136,6 +136,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     Environment: {
       Variables: Match.objectLike({
         SIGNED_URL_TTL_SECONDS: "300",
+        MODEL_PUBLISHERS: "stu,other_stu",
       }),
     },
     Handler: "index.handler",
@@ -164,6 +165,16 @@ test("media API is JWT protected with limited conditional upload permissions", (
           Resource: Match.anyValue(),
           Condition: { StringEquals: { "s3:if-none-match": "*" } },
           Effect: "Allow",
+        }),
+        Match.objectLike({
+          Action: "s3:PutObject",
+          Resource: { "Fn::Join": ["", Match.arrayWith(["/games/*/characters/*/history/*.json"])] },
+          Condition: { StringEquals: { "s3:if-none-match": "*" } },
+        }),
+        Match.objectLike({
+          Action: "s3:PutObject",
+          Resource: { "Fn::Join": ["", Match.arrayWith(["/games/*/characters/*/profile.json"])] },
+          Condition: { Null: { "s3:if-match": "false" } },
         }),
       ]),
     }),

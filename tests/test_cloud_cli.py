@@ -196,3 +196,48 @@ def test_plaintext_keyring_is_rejected(monkeypatch):
     result = CliRunner().invoke(main, ["login", "--username", "other_stu"])
     assert result.exit_code != 0
     assert "will not save tokens in plaintext" in result.output
+
+
+def test_character_commands_preserve_revision_and_only_publish_requested_fields(setup, monkeypatch):
+    calls = []
+
+    def api(_config, method, route, **kwargs):
+        calls.append((method, route, kwargs))
+        return {"profile": {"id": "captain"}, "revision": '"abc"'}
+
+    monkeypatch.setattr(cloud, "api", api)
+    runner = CliRunner()
+    assert runner.invoke(main, ["character", "list"]).exit_code == 0
+    result = runner.invoke(main, ["character", "show", "--game", "test", "--character", "captain"])
+    assert json.loads(result.output)["revision"] == '"abc"'
+    args = [
+        "character",
+        "set-model",
+        "--game",
+        "test",
+        "--character",
+        "captain",
+        "--web-key",
+        "web",
+        "--source-key",
+        "source",
+        "--reason",
+        "Tested replacement",
+    ]
+    assert runner.invoke(main, args).exit_code != 0
+    result = runner.invoke(main, args + ["--expected-revision", '"abc"'])
+    assert result.exit_code == 0, result.output
+    assert calls[-1] == (
+        "PUT",
+        "/character-model",
+        {
+            "json": {
+                "gameId": "test",
+                "characterId": "captain",
+                "webKey": "web",
+                "sourceKey": "source",
+                "expectedRevision": '"abc"',
+                "reason": "Tested replacement",
+            }
+        },
+    )
