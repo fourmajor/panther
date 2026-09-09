@@ -215,6 +215,21 @@ def test_voice_proposals_separate_people_and_characters_without_inferred_consent
     )
 
 
+def test_context_schema_cannot_select_catalog_paths_or_invent_asset_keys():
+    import jsonschema
+
+    empty = worker.stage_schema("context", {"candidates": []})["properties"]["selectedKeys"]
+    jsonschema.validate([], empty)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(["catalog.players"], empty)
+    bounded = worker.stage_schema("context", {"candidates": [{"key": "exact-key"}]})["properties"][
+        "selectedKeys"
+    ]
+    jsonschema.validate(["exact-key"], bounded)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(["invented-key"], bounded)
+
+
 def test_negation_and_spoken_numbers_are_protected():
     original = raw()
     original["segments"][0]["text"] = "I do not have two keys, Kade."
