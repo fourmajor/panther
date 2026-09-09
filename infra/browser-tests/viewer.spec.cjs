@@ -71,7 +71,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await page.locator('#character-model').scrollIntoViewIfNeeded();
     await page.locator('#model-load').click();
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
-    await expect(viewer).toHaveAttribute('src', /model-2\.glb$/);
+    await expect.poll(() => viewer.evaluate(el => el.src)).toMatch(/model-2\.glb$/);
     const initial = await viewer.evaluate(el => el.getCameraOrbit().theta);
     const area = await viewer.boundingBox();
     await page.mouse.move(area.x + area.width * .6, area.y + area.height * .5);
