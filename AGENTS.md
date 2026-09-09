@@ -9,6 +9,13 @@
   authorization limits with direct S3 writes. Keep all actual game files and metadata outside Git.
 - Update the bundled guide and CLI tests when changing asset organization or metadata behavior.
 
+## Local Blender work
+
+- For local Blender modeling, refinement, or rendering, use the repository skill at
+  `.agents/skills/panther-blender-local/SKILL.md` (invoke as `$panther-blender-local`).
+- The skill and generalized lessons belong in Git; character-specific modeling scripts,
+  references, renders, models, and provenance remain outside the application repository.
+
 ## Change workflow
 
 - Make all repository changes on a branch and deliver them through a pull request.
