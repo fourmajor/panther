@@ -23,6 +23,16 @@ to Panther's source repository.
 5. Prepare a small metadata JSON file outside this repository. Upload with an explicit kind and
    meaningful asset ID, then inspect the returned key with `panther info` to verify the result.
 
+## When an operation is missing
+
+Check existing Panther CLI capabilities before requesting AWS access for game work. Whenever asking
+the user to sign in to AWS for an asset or other game-related operation, also offer to extend the
+Panther CLI so future operations of that type use Panther authentication without direct AWS access.
+Explain the missing capability and retain the existing authorization, no-overwrite, and provenance
+protections. Do not treat the offer as permission to broaden access or implement unrelated features.
+Infrastructure deployment remains a separate CDK/AWS administrative operation, even when it enables
+a new CLI capability; distinguish that deployment need from routine game-data access.
+
 ## Object organization
 
 Uploads go to `games/<game-id>/assets/<asset-id>/original/<filename>` in private storage.
