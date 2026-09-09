@@ -55,7 +55,7 @@ def codex_base():
     ]
 
 
-def preflight(repo):
+def preflight(repo, qa_image="panther-model-qa:local"):
     repo = repo.resolve()
     if not (repo / ".agents/skills/panther-blender-local/SKILL.md").is_file():
         raise click.ClickException("--repo must point to the trusted Panther checkout.")
@@ -72,7 +72,7 @@ def preflight(repo):
     if not blender.is_file():
         raise click.ClickException("Native Blender is required at /Applications/Blender.app.")
     docker = subprocess.run(
-        ["docker", "--context", "desktop-linux", "image", "inspect", "panther-model-qa:local"],
+        ["docker", "--context", "desktop-linux", "image", "inspect", qa_image],
         capture_output=True,
         timeout=20,
     )
@@ -259,7 +259,7 @@ def validate_glb(file):
         raise click.ClickException("Web GLB must embed all textures and buffers.")
 
 
-def process_job(repo, root, blender, config, claim_result):
+def process_job(repo, root, blender, config, claim_result, qa_image="panther-model-qa:local"):
     job, lease = claim_result["job"], claim_result["lease"]
     if job["status"] == "PUBLISHING":
         return cloud.api(
@@ -396,7 +396,7 @@ def process_job(repo, root, blender, config, claim_result):
                     f"type=bind,source={folder},target=/evidence",
                     "-e",
                     "PANTHER_TEST_MODEL_PATH=/evidence/model.glb",
-                    "panther-model-qa:local",
+                    qa_image,
                 ],
                 folder=folder,
                 log=folder / "browser-validation.log",
@@ -544,11 +544,16 @@ def jobs(job_id):
 @click.option("--work-dir", required=True, type=click.Path(path_type=Path))
 @click.option("--once", is_flag=True, help="Process at most one job, then exit.")
 @click.option(
+    "--qa-image",
+    default="panther-model-qa:local",
+    help="QA image; installed workers pin its immutable ID.",
+)
+@click.option(
     "--allow-unsandboxed-blender",
     is_flag=True,
     help="Explicitly authorize generated Blender scripts to run with your macOS user's file access.",
 )
-def worker(repo, work_dir, once, allow_unsandboxed_blender):
+def worker(repo, work_dir, once, qa_image, allow_unsandboxed_blender):
     """Poll Panther while awake; keep private work/checkpoints outside Git."""
     import fcntl  # Local Blender worker is macOS-only; ordinary Panther CLI remains portable.
 
@@ -568,14 +573,16 @@ def worker(repo, work_dir, once, allow_unsandboxed_blender):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise click.ClickException("A worker already owns this directory.")
-        blender = preflight(repo)
+        blender = preflight(repo, qa_image)
         while True:
             config = cloud.configuration()
             claimed = cloud.api(config, "POST", "/model-jobs/claim", json={})
             if claimed.get("job"):
                 click.echo(f"Working on {claimed['job']['jobId']}")
                 try:
-                    click.echo(json.dumps(process_job(repo, root, blender, config, claimed)))
+                    click.echo(
+                        json.dumps(process_job(repo, root, blender, config, claimed, qa_image))
+                    )
                 except Deferred as exc:
                     click.echo(str(exc), err=True)
                 except Exception:

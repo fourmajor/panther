@@ -8,6 +8,8 @@ previous-critique.json. Continue from saved work in this candidate folder after 
 
 Write a self-contained build.py for the local worker to execute in native Blender. Do not run
 Blender inside Codex's sandbox: its macOS GPU initialization is incompatible with that sandbox.
+Resolve all output paths from Path(__file__).resolve().parent. Do not use Blender's // relative
+prefix for the initial save: an unsaved startup scene can resolve it to the filesystem root.
 You may use sandboxed ordinary Python for calculations and data preparation. The build.py must
 produce model.blend (editable, named components, packed textures) and model.glb (self-contained,
 at most 5 MiB, at most 200,000 triangles). Put the character upright on Z, feet at ground level,

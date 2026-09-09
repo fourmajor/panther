@@ -59,7 +59,7 @@ panther model worker --repo /absolute/trusted/panther \
 
 Without `--once`, the worker polls every five minutes while awake. Run only one worker per work
 directory; an OS lock enforces this. A macOS LaunchAgent can run `--once` at five-minute intervals
-after user login. Keep it separate from the GitHub Actions runner. A stopped/asleep laptop is
+after user login. The installer below provides this. Keep it separate from the GitHub Actions runner. A stopped/asleep laptop is
 expected; AWS waits. Do not mount personal directories, AWS/Codex credentials, or the Docker socket
 into browser QA. Only the private candidate directory is mounted; its tests have networking disabled.
 Keep QA screenshots private, never upload them to GitHub Actions artifacts.
@@ -79,6 +79,30 @@ permissions. Credentials remain in the existing local Codex login. Blender runs 
 OpenAI still performs inference remotely under the user's subscription. The CLI/runtime may need
 user reauthentication when that login expires. Subscription capacity is shared with other work.
 No reset redemption, credit purchase, other provider, or API-key fallback is authorized.
+
+### Install the macOS background worker
+
+After merging, deploying, and verifying CLI authentication, use clean `main` matching fetched
+`origin/main`. This creates a fixed source snapshot and non-editable virtual environment in
+`~/Library/Application Support/Panther/model-worker/releases/<commit>`, builds its QA image,
+and pins the image by immutable ID. Working-tree edits and later image-tag changes do not
+change a running release. No AWS credentials are used by the installed worker.
+
+```sh
+.venv/bin/python ops/model-worker/install.py --repo "$PWD" --allow-unsandboxed-blender --start
+```
+
+Omit `--start` to prepare without activating. The user-scoped service is
+`place.panther.model-worker`; it processes at most one job every five minutes while logged in
+and awake. Docker must be running and Panther/Codex must be signed in. Missing prerequisites
+fail before claiming work. Private logs and job checkpoints are under the state directory.
+It neither wakes a sleeping computer nor runs an always-on cloud worker.
+
+Inspect with `launchctl print gui/$(id -u)/place.panther.model-worker`. Stop with
+`launchctl bootout gui/$(id -u)/place.panther.model-worker`; stopping during work lets its lease
+expire for recovery. To upgrade, stop the old service, preserve its plist, and install reviewed
+main again. The installer refuses to overwrite a differing service or incomplete release.
+Old releases and logs are retained for explicit cleanup, not silently deleted.
 
 ## Candidate, checks, and publication
 
