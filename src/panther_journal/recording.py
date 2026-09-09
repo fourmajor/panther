@@ -464,7 +464,7 @@ def upload_one(config, file, record, kind):
     }
     # Existing CLI enforces authentication, streamed SHA-256, exact size, and If-None-Match.
     metadata_path = file.parent / f".upload-{uuid.uuid4().hex}.json"
-    if kind == "transcript":
+    if kind in {"transcript", "raw-transcript", "corrected-transcript"}:
         metadata["sourceKeys"] = [
             f"games/{record.gameId}/assets/{record.id}/original/recording.json"
         ]
@@ -483,7 +483,12 @@ def upload_one(config, file, record, kind):
 @recording.command("upload")
 @click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--transcript", type=click.Path(exists=True, file_okay=False, path_type=Path))
-def upload_recording(folder, transcript):
+@click.option(
+    "--editorial/--no-editorial",
+    default=True,
+    help="Commit a raw transcript to the editorial workflow after upload.",
+)
+def upload_recording(folder, transcript, editorial=True):
     """Upload verified source parts and structured manifest through Panther; keep local copies."""
     record = verified(folder)
     config = cloud.configuration()
@@ -506,7 +511,21 @@ def upload_recording(folder, transcript):
             transcript_files.append(file)
     keys = [upload_one(config, folder / p.file, record, "recording") for p in record.parts]
     manifest_key = upload_one(config, folder / "recording.json", record, "recording-manifest")
-    transcript_keys = [upload_one(config, file, record, "transcript") for file in transcript_files]
+    transcript_keys = [
+        upload_one(config, file, record, "raw-transcript") for file in transcript_files
+    ]
+    editorial_job = None
+    if (
+        transcript
+        and editorial
+        and document.get("artifactType", "raw-transcript") == "raw-transcript"
+    ):
+        editorial_job = cloud.api(
+            config,
+            "POST",
+            "/editorial-jobs",
+            body={"gameId": record.gameId, "rawKey": transcript_keys[0]},
+        )
     click.echo(
         json.dumps(
             {
@@ -514,6 +533,7 @@ def upload_recording(folder, transcript):
                 "sourceKeys": keys,
                 "manifestKey": manifest_key,
                 "transcriptKeys": transcript_keys,
+                "editorialJob": editorial_job,
             },
             indent=2,
         )
@@ -562,9 +582,17 @@ def transcript_lines(raw, part, player_id):
     is_flag=True,
     help="Run offline in Docker with only audio/model inputs; no reference script or chat.",
 )
-def transcribe(folder, model, sole_player, roster, blind):
+@click.option(
+    "--publish/--local-only",
+    default=True,
+    help="Publish completed raw transcript and trigger editorial stages; local-only preserves offline/holdout testing.",
+)
+def transcribe(folder, model, sole_player, roster, blind, publish):
     """Run local Whisper and retain a new JSON/Markdown transcript version, including table chatter."""
     record = verified(folder)
+    from panther_journal.capture_audit import audit
+
+    integrity = audit(folder)
     game = (
         json.loads(roster.read_text())
         if roster
@@ -661,6 +689,8 @@ def transcribe(folder, model, sole_player, roster, blind):
     document = {
         "schemaVersion": 1,
         "entityType": "PlayerTranscript",
+        "artifactType": "raw-transcript",
+        "captureIntegrity": integrity,
         "id": run_id,
         "gameId": record.gameId,
         "sessionId": record.sessionId,
@@ -677,6 +707,8 @@ def transcribe(folder, model, sole_player, roster, blind):
     }
     save_transcript(target, document)
     click.echo(str(target))
+    if publish:
+        upload_recording.callback(folder=folder, transcript=target, editorial=True)
     if not sole_player:
         click.echo(
             "Speakers remain unassigned. Run recording diarize, then attribute with a confirmed speaker map.",

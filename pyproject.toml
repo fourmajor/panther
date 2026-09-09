@@ -37,7 +37,7 @@ panther = "panther_journal.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-panther_journal = ["agent-instructions.md"]
+panther_journal = ["agent-instructions.md", "editorial-plan.json"]
 
 [tool.ruff]
 line-length = 100

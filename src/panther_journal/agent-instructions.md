@@ -64,6 +64,20 @@ game's canon. Transcripts use player IDs; character speech versus table talk is 
 
 ### Session audio and transcripts
 
+Completed raw transcription now publishes and triggers editorial processing by default; use
+`recording transcribe --local-only` when uploads/processing are not intended. `recording upload`
+commits a raw transcript automatically unless `--no-editorial` is specified. `editorial submit`
+can register an existing raw JSON object idempotently. Use `editorial jobs` to inspect progress.
+Use kinds `raw-transcript`, `corrected-transcript`, `novel-chapter`, and the versioned editorial
+stage names for their respective outputs. Raw transcripts, corrected transcripts, novel chapters and video-preproduction artifacts are
+distinct immutable outputs. Corrections retain speakers, timestamps, table talk and evidence.
+Never use adaptations or held-out scripts as factual correction context. Use `extra.contextUse`
+(`evidence` or `exclude`) to classify future context kinds; record source keys and uncertainty.
+Voice casting creates Player/Character-linked proposals, not consent or trained voice models.
+Do not use ordinary recording consent as permission to clone a voice. Failed editorial candidates
+use `editorial-failed-candidate` and must not be treated as accepted transcripts or factual evidence.
+Video planning does not authorize video generation, provider choice, licensing or spending.
+
 Use `panther recording --help` for local FLAC capture/import, transcription, speaker detection,
 attribution, and explicit upload. Obtain recording consent and readiness before opening a microphone.
 Retain source audio, checksums, and all transcript versions outside Git. Never delete the user's

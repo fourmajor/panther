@@ -23,6 +23,14 @@
   from files or conversation memory to generate/correct that first transcript. Compare against
   the script only after preserving the unaltered recognizer output and transcript version.
 
+## Editorial workflows
+
+- Editorial workflows use fresh subscription-backed Codex stages; never replace the raw transcript
+  with corrected or dramatized text. Preserve correction evidence, player IDs, uncertainty and capture
+  warnings. Novel/video artifacts are adaptations, not new factual context. Read
+  `docs/editorial-workflows.md` before changing those pipelines. Video generation remains unauthorized
+  until the user explicitly chooses provider/model, budget and required permissions.
+
 ## Local Blender work
 
 - For local Blender modeling, refinement, or rendering, use the repository skill at

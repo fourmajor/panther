@@ -157,6 +157,7 @@ def test_rerunning_transcription_keeps_versions_and_rejects_character_identity(
         str(model),
         "--roster",
         str(roster),
+        "--local-only",
         "--sole-player",
         "test-person",
     ]
@@ -169,6 +170,41 @@ def test_rerunning_transcription_keeps_versions_and_rejects_character_identity(
     assert result.exit_code != 0
     assert "must be in" in result.output
     assert audio.verified(folder) == record
+
+
+def test_raw_commit_happens_only_after_all_uploads_and_keeps_local_on_failure(
+    tmp_path, monkeypatch
+):
+    folder, record = recording_fixture(tmp_path)
+    version = folder / "transcript-test"
+    version.mkdir()
+    raw = {"recordingId": record.id, "sourceParts": [p.model_dump() for p in record.parts]}
+    (version / "transcript-test.json").write_text(json.dumps(raw))
+    (version / "transcript-test.md").write_text("Synthetic transcript")
+    events = []
+    monkeypatch.setattr(audio.cloud, "configuration", lambda: {})
+
+    def upload(config, file, record, kind):
+        events.append(file.name)
+        return file.name
+
+    def api(config, method, route, **kwargs):
+        if method == "POST":
+            assert events == [
+                "part-0000.flac",
+                "recording.json",
+                "transcript-test.json",
+                "transcript-test.md",
+            ]
+            assert kwargs["body"]["rawKey"] == "transcript-test.json"
+            raise click.ClickException("Simulated network outage")
+        return {}
+
+    monkeypatch.setattr(audio, "upload_one", upload)
+    monkeypatch.setattr(audio.cloud, "api", api)
+    with pytest.raises(click.ClickException, match="outage"):
+        audio.upload_recording.callback(folder=folder, transcript=version, editorial=True)
+    assert json.loads((version / "transcript-test.json").read_text()) == raw
 
 
 def test_attribution_preserves_text_and_rejects_mixed_or_insufficient_speech():
