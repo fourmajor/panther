@@ -74,7 +74,12 @@ distinct immutable outputs. Corrections retain speakers, timestamps, table talk 
 Never use adaptations or held-out scripts as factual correction context. Use `extra.contextUse`
 (`evidence` or `exclude`) to classify future context kinds; record source keys and uncertainty.
 Voice casting creates Player/Character-linked proposals, not consent or trained voice models.
-Do not use ordinary recording consent as permission to clone a voice. Failed editorial candidates
+Editorial ambiguity is resolved automatically: AI revises, re-reviews, records its decisions, and
+continues without routine owner approval. Bounded unresolved quality disagreements produce a labeled
+`accepted-with-notes` working draft; transcript disagreements preserve raw wording. This is not a
+passed review, verified speech, or campaign canon. Retain decision/revision history and publish later
+corrections as new versions. Never bypass source-integrity guards, consent, or the video spending gate.
+Do not use ordinary recording consent as permission to clone a voice. Legacy failed editorial candidates
 use `editorial-failed-candidate` and must not be treated as accepted transcripts or factual evidence.
 Video planning does not authorize video generation, provider choice, licensing or spending.
 
@@ -248,4 +253,6 @@ metadata, not a claim of success based merely on receiving an upload link.
 
 If the connection drops, the upload may have finished. Inspect the intended key with `panther info`
 before retrying or choosing a new key. Never delete originals to resolve a conflict. For an
-ambiguous game, identity, canonical status, replacement, or publication decision, ask the user.
+ambiguous game, identity, canonical status, or destructive replacement outside an authorized workflow,
+ask the user. Within authorized editorial workflows, make and record routine decisions automatically;
+use unclassified/uncertain status rather than inventing identity or asserting canon.

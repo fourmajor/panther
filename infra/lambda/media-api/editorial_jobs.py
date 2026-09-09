@@ -177,7 +177,9 @@ def context_page(game, cursor, cutoff):
     return {"items": items, "cursor": page.get("NextContinuationToken")}
 
 
-def claim(actor):
+def claim(actor, version=1):
+    if type(version) is not int or version < 1:
+        raise ValueError("Invalid worker version")
     now = int(time.time())
     for task in query("TASKS"):
         if (
@@ -187,7 +189,7 @@ def claim(actor):
         ):
             continue
         job = read("RUNS", task["jobId"])
-        if job["status"] in TERMINAL:
+        if job["status"] in TERMINAL or job["workflowVersion"] != version:
             continue
         if job["createdAt"] + 31 * 86400 <= now:
             internal({"jobId": job["jobId"], "operation": "fail"})
@@ -273,14 +275,23 @@ def update(task, body, operation):
         if (
             result.get("jobId") != task["jobId"]
             or result.get("stage") != task["stage"]
-            or result.get("workflowVersion") != PLAN["version"]
+            or result.get("workflowVersion") != read("RUNS", task["jobId"])["workflowVersion"]
             or result.get("videoGenerationAuthorized") is not False
         ):
             raise ValueError("Invalid editorial artifact envelope")
+        accepted = result.get("passed") is True
+        if result["workflowVersion"] >= 2:
+            if result.get("structuralValidation") != "passed" or result.get(
+                "publicationStatus"
+            ) not in {"accepted", "accepted-with-notes"}:
+                raise ValueError("Missing validated publication decision")
+            if result["publicationStatus"] == "accepted" and not accepted:
+                raise ValueError("Failed review cannot claim unconditional acceptance")
+            accepted = True
         expression = "SET #s = :done, #output = :output, leaseUntil = :until"
         values.update(
             {
-                ":done": "DONE" if result.get("passed") is True else "FAILED",
+                ":done": "DONE" if accepted else "FAILED",
                 ":output": ref,
                 ":until": 0,
             }
@@ -376,7 +387,7 @@ def handler(event, _context):
         if claims.get("cognito:username") != "stu":
             return response(403, {"error": "Only the owner's laptop can process stages"})
         if route == "POST /editorial-jobs/claim":
-            return response(200, claim(claims["sub"]))
+            return response(200, claim(claims["sub"], body.get("workflowVersion", 1)))
         operation = route.removeprefix("POST /editorial-jobs/")
         if operation not in {"heartbeat", "defer", "complete"}:
             return response(404, {"error": "Unknown operation"})

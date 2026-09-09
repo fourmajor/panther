@@ -59,6 +59,9 @@ SCHEMA = obj(
         "markdown": TEXT,
         "evidenceIds": STRINGS,
         "uncertainties": STRINGS,
+        "decisions": array(
+            obj({"issue": TEXT, "decision": TEXT, "reason": TEXT, "evidenceIds": STRINGS})
+        ),
         "selectedKeys": STRINGS,
         "shots": array(SHOT),
         "edits": array(
@@ -79,7 +82,9 @@ SCHEMA = obj(
 def stage_schema(stage, inputs):
     schema = copy.deepcopy(SCHEMA)
     if stage == "context":
-        field = schema["properties"]["selectedKeys"]
+        # STRINGS is reused by other fields; do not constrain their shared schema.
+        field = array(copy.deepcopy(TEXT))
+        schema["properties"]["selectedKeys"] = field
         keys = [candidate["key"] for candidate in inputs["candidates"]]
         if keys:
             field["items"]["enum"] = keys
@@ -107,6 +112,13 @@ def agent(folder, stage, inputs, heartbeat):
         "Return the required JSON; use empty arrays for unused fields. Set passed=false on a substantive unresolved "
         "quality failure instead of calling weak output finished. AI review is not human approval. "
         "No video provider/model/budget is approved; no video generation is possible in this workflow.\n"
+        "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
+        "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
+        "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
+        "and disclose inventions separately. When revisionFeedback is supplied, actually revise the deliverable, "
+        "not just its pass flag. Return the COMPLETE replacement, including ALL edits against original raw segments. "
+        "A bounded revision loop follows rejection. An imperfect working draft may proceed with explicit notes, "
+        "but do not claim that an unresolved quality failure passed review.\n"
         + "For developmental/script editing, passed means the critique is complete and actionable; ordinary revision notes do not fail that stage. "
         "At video-preflight, undecided provider and budget are expected approval blockers, not missing planning; list them explicitly. "
         + BRIEFS[stage]
@@ -159,8 +171,122 @@ def agent(folder, stage, inputs, heartbeat):
     if result.is_symlink() or result.stat().st_size > 2 * 1024**2:
         raise ValueError("Invalid stage result file")
     value = json.loads(result.read_text())
-    jsonschema.validate(value, contract)
     return value
+
+
+def autonomous_stage(folder, stage, inputs, heartbeat):
+    """Bounded editorial revisions; deterministic guards remain non-negotiable."""
+    inputs = copy.deepcopy(inputs)
+    history = []
+    calls = 0
+    report = None
+    valid = None
+    candidate = inputs.get("candidate")
+    evidence = inputs.get("context", {})
+    allowed = {"raw", "catalog", *evidence, *inputs.get("priorStages", {})}
+    if stage == "context":
+        allowed.update(c["key"] for c in inputs["candidates"])
+
+    def call(role, data):
+        nonlocal calls
+        calls += 1
+        attempt = folder / f"revision-{calls:02d}-{role}"
+        attempt.mkdir(mode=0o700)
+        try:
+            value = agent(attempt, role, data, heartbeat)
+        except ValueError as exc:
+            history.append({"stage": role, "validationError": str(exc)[:2000]})
+            raise
+        entry = {"stage": role, "result": copy.deepcopy(value)}
+        history.append(entry)
+        try:
+            jsonschema.validate(value, stage_schema(role, data))
+            citations = set(value["evidenceIds"])
+            for decision in value["decisions"]:
+                citations.update(decision["evidenceIds"])
+            if not citations <= allowed:
+                raise ValueError("Unknown evidence citation")
+            if not value["markdown"].strip():
+                raise ValueError("Empty editorial deliverable")
+            if role == "context" and len(set(value["selectedKeys"])) != len(value["selectedKeys"]):
+                raise ValueError("Duplicate context selection")
+            if role == "correction":
+                apply_corrections(data["raw"], value, evidence)
+            if role in {"video-shot-list", "video-storyboards"}:
+                storyboard(value["shots"])
+            if role == "video-storyboards":
+                expected = data["priorStages"]["video-shot-list"]["shots"]
+
+                def identity(shots):
+                    return [(s["shotId"], s["sceneId"], s["durationSeconds"]) for s in shots]
+
+                if identity(value["shots"]) != identity(expected):
+                    raise ValueError("Storyboard must preserve the locked shot sequence")
+        except (ValueError, jsonschema.ValidationError) as exc:
+            entry["validationError"] = str(exc)[:2000]
+            raise ValueError(entry["validationError"]) from exc
+        return value
+
+    for round_number in range(3):
+        try:
+            if round_number and stage in {"corrected-transcript", "novel-chapter"}:
+                role = "correction" if stage == "corrected-transcript" else "novel-proof"
+                revised = call(role, inputs)
+                inputs["priorStages"][role] = revised
+                candidate = (
+                    apply_corrections(inputs["raw"], revised, evidence)
+                    if stage == "corrected-transcript"
+                    else revised["markdown"]
+                )
+                inputs["candidate"] = candidate
+            report = call(stage, inputs)
+            valid = (report, copy.deepcopy(candidate))
+            if report["passed"]:
+                return report, candidate, history, "accepted"
+            inputs["revisionFeedback"] = {
+                "review": report,
+                "instruction": "Resolve these issues autonomously.",
+            }
+        except ValueError as exc:
+            inputs["revisionFeedback"] = {
+                "validationError": str(exc),
+                "instruction": "Repair the invalid output; do not bypass the guard.",
+            }
+
+    if stage in {"correction", "corrected-transcript"}:
+        # Review disagreement must never publish possibly unsupported speech changes.
+        note = "Automatic fallback: retain raw wording because correction/review did not converge after three rounds."
+        fallback = {
+            "passed": False,
+            "title": "Raw wording retained with notes",
+            "markdown": note,
+            "evidenceIds": ["raw"],
+            "uncertainties": [note],
+            "selectedKeys": [],
+            "shots": [],
+            "edits": [],
+            "decisions": [
+                {
+                    "issue": "Unresolved correction review",
+                    "decision": "Preserve original speech",
+                    "reason": note,
+                    "evidenceIds": ["raw"],
+                }
+            ],
+        }
+        return (
+            fallback,
+            apply_corrections(inputs["raw"], fallback, evidence),
+            history,
+            "accepted-with-notes",
+        )
+    if valid is None:
+        # Invalid structures/authentication are not editorial choices. Retry later automatically.
+        raise local.Deferred(
+            "No structurally valid editorial output; retry later without spending or requesting editorial approval."
+        )
+    report, candidate = valid
+    return report, candidate, history, "accepted-with-notes"
 
 
 def fetch(config, reference, folder, name):
@@ -270,7 +396,7 @@ def process(config, root, claim):
             heartbeat()
             if not cursor:
                 break
-        report = agent(
+        report, _, history, publication = autonomous_stage(
             folder, stage, {"raw": raw, "catalog": catalog, "candidates": candidates}, heartbeat
         )
         selected = report["selectedKeys"]
@@ -303,9 +429,11 @@ def process(config, root, claim):
         candidate = (
             apply_corrections(raw, previous["correction"]["payload"], evidence)
             if stage == "corrected-transcript"
+            else previous["novel-proof"]["payload"]["markdown"]
+            if stage == "novel-chapter"
             else None
         )
-        report = agent(
+        report, candidate, history, publication = autonomous_stage(
             folder,
             stage,
             {"raw": raw, "context": evidence, "priorStages": prior, "candidate": candidate},
@@ -319,7 +447,7 @@ def process(config, root, claim):
         if stage == "corrected-transcript":
             payload = {"transcript": candidate, "review": report}
         if stage == "novel-chapter":
-            payload = {"chapter": previous["novel-proof"]["payload"]["markdown"], "review": report}
+            payload = {"chapter": candidate, "review": report}
         if stage == "video-voice-casting":
             payload["voiceProfiles"] = voice_profile_proposals(evidence["catalog"])
         if stage in PLAN["novel"] + PLAN["video"]:
@@ -350,7 +478,7 @@ def process(config, root, claim):
         if stage in PLAN["video"]
         else "unclassified"
     )
-    kind = stage if report["passed"] else "editorial-failed-candidate"
+    kind = stage
     envelope = {
         "schemaVersion": 1,
         "entityType": "EditorialArtifact",
@@ -361,6 +489,9 @@ def process(config, root, claim):
         "stage": stage,
         "artifactType": kind,
         "passed": report["passed"],
+        "publicationStatus": publication,
+        "structuralValidation": "passed",
+        "revisionHistory": history,
         "videoGenerationAuthorized": False,
         "sourceKeys": sources,
         "inputArtifacts": claim["artifacts"],
@@ -379,8 +510,15 @@ def process(config, root, claim):
             f"[{s['start']:.2f}–{s['end']:.2f}] {names.get(s.get('playerId'), 'Unassigned')}: {s['text']}"
             for s in payload["transcript"]["segments"]
         )
-    if not report["passed"]:
-        markdown = "# FAILED REVIEW — candidate only, not an accepted artifact\n\n" + markdown
+    if publication == "accepted-with-notes":
+        markdown = "# Working draft — continued automatically with review notes\n\n" + markdown
+        if stage in {"novel-chapter", "corrected-transcript"}:
+            markdown += "\n\n## Final review\n\n" + report["markdown"]
+    notes = report["uncertainties"] + [
+        f"{d['issue']}: {d['decision']} — {d['reason']}" for d in report["decisions"]
+    ]
+    if notes:
+        markdown += "\n\n## Editorial notes\n\n" + "\n\n".join(notes)
     readable = folder / f"{stage}.md"
     with readable.open("x") as stream:
         stream.write(markdown)
@@ -449,7 +587,9 @@ def worker(work_dir, once):
     config = cloud.configuration()
     with lock(root, "worker.lock"):
         while True:
-            claim = cloud.api(config, "POST", "/editorial-jobs/claim", json={})
+            claim = cloud.api(
+                config, "POST", "/editorial-jobs/claim", json={"workflowVersion": PLAN["version"]}
+            )
             if claim["task"]:
                 try:
                     click.echo(str(process(config, root, claim)))

@@ -40,6 +40,13 @@
 
 ## Change workflow
 
+- Editorial workflows must resolve routine ambiguity autonomously using AI decisions, actual
+  revisions and re-review. Do not stop for owner approval of creative or transcription choices.
+  Preserve raw evidence, decision/revision history and explicit uncertainty; use conservative
+  transcript fallbacks and labeled working drafts when bounded review does not converge. Later
+  owner corrections create new versions. This does not authorize spending, video generation,
+  voice cloning without consent, or bypassing authentication and source-integrity guards.
+
 - Make all repository changes on a branch and deliver them through a pull request.
 - Never push changes directly to `main`.
 - Use the `codex/` branch prefix unless the task requires a different name.
