@@ -40,12 +40,19 @@ Use `panther game list` and `panther game show GAME_ID` before choosing a game. 
 accounts; never infer an account association. Dungeon Master is a membership role.
 
 Create an authorized game with `panther game create /private/path/game.json`. The private JSON
-requires `id`, `name`, `purpose` (`test` or `campaign`), `players`, `characters`, and `memberships`.
+requires `id`, `name`, `purpose` (`test` or `campaign`), `ruleset`, `players`, `characters`, and `memberships`.
+`ruleset` is a short game-system name, including edition or specific hack when known, not rules text.
+It is an extensible string, not a fixed list. Never infer it solely from the campaign title.
 Players and characters contain `id` and `name`; memberships contain `playerId`, `role` (`player`
 or `dungeon-master`), and `characterIds`. A DM membership has no character IDs. Every supplied
 player must have one membership. A player ID can be reused across games if its name matches.
 Creation is atomic, retryable with the same manifest, and refuses different data for an existing
-game. Edits/renames are not supported yet; do not bypass this with AWS writes.
+game. Set only the ruleset with `panther game set-ruleset GAME_ID --ruleset 'SYSTEM NAME'
+--if-unset`, or use `--expected-ruleset 'EXACT OLD VALUE'` for a deliberate correction. Inspect
+`game show` first and after success. Conflicts require inspection, not automatic fresh-value retries.
+Older games can report `ruleset: null`; this means unknown, not a default system. Assigning a ruleset
+to a legacy asset-only game creates only its catalog header, leaving files and rosters untouched.
+Other edits/renames are not supported yet; do not bypass this with AWS writes.
 
 Game purpose, roster, and character names are private application data, not repository fixtures.
 The selector separates game browsing, not access permissions: the current installation is one

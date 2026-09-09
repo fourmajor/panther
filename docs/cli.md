@@ -43,7 +43,24 @@ For agents, read `panther instructions` before organizing or uploading assets. T
 bundled with the installed CLI and available without logging in or accessing this repository.
 It covers categories, extensible kinds, metadata, provenance, and ambiguity handling.
 
-## Upload
+## Game system names
+
+Every new game manifest requires a `ruleset` string: the system name and edition or specific hack,
+not a copy of its rules. Existing/legacy games can have an unknown (`null`) value until assigned.
+
+```sh
+panther game show GAME_ID
+panther game set-ruleset GAME_ID --ruleset 'SYSTEM NAME' --if-unset
+panther game set-ruleset GAME_ID --ruleset 'CORRECTED NAME' --expected-ruleset 'SYSTEM NAME'
+```
+
+Only the ruleset and update-audit fields change. Rosters and assets are preserved. A conflicting
+change is refused; inspect the game before deciding what to do. The system name is also shown
+under the web game's selector. The API still accepts old clients' creation manifests without
+this field for compatibility; new CLI manifests require it. All real assignments remain private
+application data, never CDK seed data or repository examples.
+
+## Uploading files
 
 For session audio, use the [local recording workflow](local-audio.md) and
 `panther recording --help`. It adds lossless capture/import, local transcription and speaker

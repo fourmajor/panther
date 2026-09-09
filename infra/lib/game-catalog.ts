@@ -35,6 +35,10 @@ export class GameCatalog extends Construct {
       actions: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"],
       resources: [table.tableArn],
     }));
+    fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["dynamodb:UpdateItem"], resources: [table.tableArn],
+      conditions: { "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["GAMES"] } },
+    }));
     fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"],
       resources: [props.bucket.bucketArn], conditions: { StringLike: { "s3:prefix": ["games/*"] } } }));
     const integration = new integrations.HttpLambdaIntegration("CatalogIntegration", fn);
@@ -42,5 +46,6 @@ export class GameCatalog extends Construct {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration, authorizer: props.authorizer });
     }
     props.api.addRoutes({ path: "/games", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
+    props.api.addRoutes({ path: "/game/ruleset", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
   }
 }

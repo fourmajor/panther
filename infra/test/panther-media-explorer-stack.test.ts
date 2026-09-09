@@ -54,7 +54,12 @@ test("structured game catalog is retained, on-demand and cannot mutate artwork",
   assert.equal(policies.length, 1);
   const policy = JSON.stringify(policies);
   assert.match(policy, /dynamodb:PutItem/);
-  assert.doesNotMatch(policy, /s3:PutObject|dynamodb:DeleteItem|dynamodb:UpdateItem/);
+  assert.doesNotMatch(policy, /s3:PutObject|dynamodb:DeleteItem/);
+  assert.match(policy, /dynamodb:UpdateItem/);
+  assert.match(policy, /dynamodb:LeadingKeys/);
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "POST /game/ruleset", AuthorizationType: "JWT",
+  });
 });
 
 test("media explorer uses private static hosting and Cognito authentication", () => {
@@ -166,7 +171,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 20);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 21);
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,

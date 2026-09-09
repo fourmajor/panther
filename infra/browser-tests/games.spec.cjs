@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { MODEL_VIEWER_BUNDLE_PATH } = require('../dist/lib/panther-media-explorer-stack');
 
-const games = [{ id: 'campaign-a', name: 'Campaign A', purpose: 'campaign' }, { id: 'test-b', name: 'A Long Test Game Name', purpose: 'test' }];
+const games = [{ id: 'campaign-a', name: 'Campaign A', purpose: 'campaign', ruleset: null }, { id: 'test-b', name: 'A Long Test Game Name', purpose: 'test', ruleset: 'Synthetic System (First Edition)' }];
 const jsonHeaders = { 'access-control-allow-origin': 'https://panther.place' };
 async function fixture(page) {
   const requests = [];
@@ -39,6 +39,7 @@ for (const width of [1280, 390]) {
     const errors=[]; page.on('pageerror', e=>errors.push(e.message));
     await page.goto('https://panther.place/media');
     await expect(page.getByText('campaign-only.flac',{exact:true})).toBeVisible();
+    await expect(page.locator('#game-ruleset')).toHaveText('System not set');
     const selector=page.getByRole('combobox',{name:'Game'});
     await expect(selector).toBeVisible();
     const box=await selector.boundingBox();
@@ -49,6 +50,10 @@ for (const width of [1280, 390]) {
     await expect(page.getByText('test-only.flac',{exact:true})).toBeVisible();
     await expect(page.getByText('campaign-only.flac',{exact:true})).toHaveCount(0);
     await expect(page.locator('#game-purpose')).toContainText('Test game');
+    await expect(page.locator('#game-ruleset')).toHaveText('System: Synthetic System (First Edition)');
+    await expect(page.locator('#game-ruleset')).toBeVisible();
+    const systemBox = await page.locator('#game-ruleset').boundingBox();
+    expect(systemBox.x + systemBox.width).toBeLessThanOrEqual(width);
     await expect(page.locator('#breadcrumbs')).not.toContainText('Campaign A');
     await page.getByRole('link',{name:'Characters',exact:true}).click();
     await expect(page.locator('#player-roster')).toContainText('Test Person — Dungeon Master');
@@ -58,11 +63,15 @@ for (const width of [1280, 390]) {
     await page.reload();
     await expect(selector).toHaveValue('test-b');
     await expect(page.locator('#character-name')).toHaveText('Test Hero');
+    await expect(page.locator('#game-ruleset')).toContainText('Synthetic System (First Edition)');
     await page.goBack();
     await expect(page).toHaveURL('https://panther.place/games/test-b/characters');
     expect(requests.filter(u=>u.pathname==='/characters').every(u=>u.searchParams.get('gameId')==='test-b')).toBe(true);
     expect(errors).toEqual([]);
     await page.screenshot({path:test.info().outputPath(`game-selector-${width}.png`),fullPage:true});
+    await selector.selectOption('campaign-a');
+    await expect(page.locator('#game-ruleset')).toHaveText('System not set');
+    await expect(page.locator('#game-ruleset')).not.toContainText('Synthetic System');
   });
 }
 
