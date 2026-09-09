@@ -47,10 +47,11 @@ The Panther CLI supports private uploads, listing, and metadata inspection using
 as the website—no AWS credentials required. See [CLI setup and usage](docs/cli.md). Agents should
 read `panther instructions` for the bundled organization, categorization, and provenance rules.
 
-`src/panther_journal` is an early prototype of the transcription and narrative-generation pipeline.
-It does not define the full scope of Panther. Reliable session capture, production transcription,
-speaker attribution, richer group collaboration, and the media-production workflows remain to be
-built.
+The CLI also provides an initial local audio workflow: lossless FLAC capture, Whisper transcription,
+local speaker detection, and confirmed player attribution with preserved versions. It is ready for
+controlled testing, not yet validated for reliable game-night transcripts. Richer collaboration,
+transcript correction, and media-production workflows remain in development. The Python package
+also retains the original mock transcription/narrative prototype; it does not define Panther's scope.
 
 ## Scope
 
@@ -74,6 +75,7 @@ data live in the dedicated AWS account and must never be committed to GitHub.
 ## Project Documentation
 
 - [Panther CLI and agent usage](docs/cli.md)
+- [Local recording and player-attributed transcript tests](docs/local-audio.md)
 - [AWS platform architecture](docs/aws-platform-architecture-draft.md)
 - [AWS foundation runbook](docs/aws-foundation-runbook.md)
 - [Audio capture strategy](docs/adr/0001-audio-capture-strategy.md)

@@ -45,6 +45,10 @@ It covers categories, extensible kinds, metadata, provenance, and ambiguity hand
 
 ## Upload
 
+For session audio, use the [local recording workflow](local-audio.md) and
+`panther recording --help`. It adds lossless capture/import, local transcription and speaker
+detection, versioned player attribution, and verified uploads without AWS credentials.
+
 Discover the game ID first:
 
 ```sh
