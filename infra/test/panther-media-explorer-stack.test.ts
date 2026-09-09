@@ -44,6 +44,19 @@ test("model jobs use retained on-demand state and a durable external-worker call
   template.resourceCountIs("AWS::EC2::Instance", 0);
 });
 
+test("structured game catalog is retained, on-demand and cannot mutate artwork", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler: "catalog.handler", Environment: { Variables: Match.objectLike({ CATALOG_EDITORS: "stu,other_stu" }) },
+  });
+  const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("GameCatalog"));
+  assert.equal(policies.length, 1);
+  const policy = JSON.stringify(policies);
+  assert.match(policy, /dynamodb:PutItem/);
+  assert.doesNotMatch(policy, /s3:PutObject|dynamodb:DeleteItem|dynamodb:UpdateItem/);
+});
+
 test("media explorer uses private static hosting and Cognito authentication", () => {
   const template = mediaExplorerTemplate();
 
@@ -153,7 +166,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 16);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 20);
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,

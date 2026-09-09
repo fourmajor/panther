@@ -2,6 +2,10 @@
 
 ## Panther CLI and game assets
 
+- Prefer explicit, versioned structured data types for application facts. Player is a stable
+  person identity, separate from a login account, Character, and a per-game membership/role.
+  Transcripts identify players; in-character speech and table chatter are later annotations,
+  never grounds for changing the speaker's identity or deleting the source utterance.
 - Before organizing or uploading game assets, run `panther instructions`. The guide is bundled in
   `src/panther_journal/agent-instructions.md` and ships with the CLI, not just this repository.
 - Follow its object layout, kind/category distinctions, metadata schema, and provenance rules.

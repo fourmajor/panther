@@ -29,6 +29,11 @@
     </header>
 
     <main>
+      <div class="game-toolbar" id="game-toolbar" hidden>
+        <label for="game-selector">Game</label>
+        <select id="game-selector" aria-label="Game"></select>
+        <span id="game-purpose" class="game-purpose"></span>
+      </div>
       <section class="welcome" id="welcome">
         <p class="eyebrow">Private game archive</p>
         <h1>Your game’s source material and finished stories, together.</h1>
@@ -47,6 +52,7 @@
             <h1>Characters</h1>
           </div>
         </div>
+        <section class="roster" aria-label="Players"><h2>Players</h2><ul id="player-roster"></ul></section>
         <div class="status" id="characters-status" role="status">Loading…</div>
         <div class="character-list" id="character-list" aria-live="polite"></div>
 
@@ -60,7 +66,8 @@
             </div>
           </div>
 
-          <div class="model-layout">
+          <p id="character-no-model" hidden>No portrait or 3D model has been added yet.</p>
+          <div class="model-layout" id="character-model-area">
             <div class="model-stage">
               <model-viewer
                 id="character-model"

@@ -425,7 +425,10 @@ def character_set_model(
 
 def register(group):
     from panther_journal.model_workflow import model
+    from panther_journal.games import game, player
 
     group.add_command(model)
+    group.add_command(game)
+    group.add_command(player)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

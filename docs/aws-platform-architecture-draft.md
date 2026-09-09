@@ -28,15 +28,19 @@ assets live in a dedicated AWS account and are never stored in the application r
 
 ## Scope and Tenancy
 
-The initial deployment supports one gaming group and one game.
+The deployment supports one trusted gaming group and multiple games, including test games.
+One application/domain provides a game selector and game-scoped URLs. A retained on-demand
+DynamoDB catalog stores distinct Game, Player, Character, and GameMembership records. Actual
+rosters remain private data, never CDK seed data or repository content. Player identities are
+independent of login accounts; a DM is a membership role, not a fictional character.
 
 Panther will not initially implement general-purpose multi-tenancy. In particular, it will not
 provide tenant billing, tenant administration, per-tenant infrastructure, or adversarial tenant
 isolation.
 
 The data model and object paths should still carry a `game_id`. This is a low-cost precaution that
-allows another game to be added later without redesigning storage. It does not make the initial
-application multi-tenant.
+allows games to share the application without mixing their assets. This is not adversarial
+multi-tenancy: both configured group accounts currently access all games.
 
 ## High-Level Architecture
 

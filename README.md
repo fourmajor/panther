@@ -54,9 +54,9 @@ built.
 
 ## Scope
 
-Panther initially serves one gaming group and one game. It is not currently intended to be a
-general-purpose multi-tenant service. Data still carries a stable game identifier so another game
-can be added later without reorganizing storage.
+Panther serves one trusted gaming group with multiple selectable games, including explicitly
+marked test games. Players, characters, and per-game memberships are distinct structured records.
+It is not a general-purpose multi-tenant service: the configured group accounts share game access.
 
 Application source and infrastructure code live in this repository. Game content and application
 data live in the dedicated AWS account and must never be committed to GitHub.

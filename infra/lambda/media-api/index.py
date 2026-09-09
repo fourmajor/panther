@@ -104,8 +104,11 @@ def _character_summary(profile, *, game_id, character_id):
 
 def _list_characters(_event):
     characters = []
+    game = _query(_event, "gameId")
+    if game is not None and not _valid_slug(game):
+        return _response(400, {"error": "Invalid game identifier"})
     paginator = s3.get_paginator("list_objects_v2")
-    pages = paginator.paginate(Bucket=BUCKET_NAME, Prefix=ROOT_PREFIX)
+    pages = paginator.paginate(Bucket=BUCKET_NAME, Prefix=f"games/{game}/characters/" if game else ROOT_PREFIX)
     for page in pages:
         for item in page.get("Contents", []):
             match = CHARACTER_PROFILE_PATTERN.fullmatch(item["Key"])

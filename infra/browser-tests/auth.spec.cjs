@@ -24,7 +24,7 @@ async function fixture(context, { remembered = true } = {}) {
       state.apiFailureOnce = false;
       return route.fulfill({ status: 401, json: {}, headers: { 'access-control-allow-origin': 'https://panther.place' } });
     }
-    return route.fulfill({ json: { prefix: 'games/', prefixes: [], objects: [], characters: [] }, headers: { 'access-control-allow-origin': 'https://panther.place' } });
+    return route.fulfill({ json: { games: [{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], prefix: 'games/test-game/', prefixes: [], objects: [], characters: [] }, headers: { 'access-control-allow-origin': 'https://panther.place' } });
   });
   await context.route('https://test.amazoncognito.com/logout*', route => route.fulfill({ contentType: 'text/html', body: 'Signed out of Cognito' }));
   await context.route('https://panther.place/**', async route => {
@@ -87,7 +87,7 @@ for (const width of [1280, 390]) {
     const page = await context.newPage();
     await page.goto('https://panther.place/media');
     await expect(page.locator('#account')).toBeVisible();
-    await expect.poll(() => state.apiTokens.length).toBe(2);
+    await expect.poll(() => state.apiTokens.length).toBe(4);
     expect(state.refreshes).toBe(2);
     expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);
     await context.close();

@@ -30,7 +30,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     page.on('pageerror', error => errors.push(error.message));
     const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Test', summary: 'Synthetic browser fixture, not game data.' };
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
-      json: { character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: localModel ? localModel.length : 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
+      json: { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: localModel ? localModel.length : 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/model-*.glb', route => route.fulfill({
