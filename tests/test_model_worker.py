@@ -13,6 +13,7 @@ from panther_journal.cli import main
 
 
 def test_subscription_environment_never_inherits_provider_or_aws_keys(monkeypatch):
+    monkeypatch.setattr(worker.shutil, "which", lambda name: "/test/codex")
     for name in (
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
