@@ -135,6 +135,10 @@ def finish_capture(folder, header, status):
     from panther_journal.recording_sync import checkpoint
 
     parts = checkpoint(folder, header, final=True, allow_incomplete=status == "interrupted")
+    if not parts:
+        raise click.ClickException(
+            "No valid audio samples captured. Files retained; inspect capture.log."
+        )
     record = Recording(**header, status=status, parts=parts)
     write_new(folder / "recording.json", record.model_dump())
     return record
@@ -158,39 +162,9 @@ def verified(folder):
 
 
 def capture_command(device, folder, seconds, chunk_seconds=30):
-    command = [
-        executable("ffmpeg"),
-        "-hide_banner",
-        "-n",
-        "-f",
-        "avfoundation",
-        "-i",
-        f":{device}",
-        "-map",
-        "0:a:0",
-        "-vn",
-    ]
-    if seconds:
-        command += ["-t", str(seconds)]
-    return command + [
-        "-c:a",
-        "pcm_s24le",
-        "-sample_fmt",
-        "s32",
-        "-f",
-        "segment",
-        "-segment_time",
-        str(chunk_seconds),
-        "-segment_format_options",
-        "flush_packets=1",
-        "-reset_timestamps",
-        "1",
-        "-segment_list",
-        str(folder / "segments.csv"),
-        "-segment_list_type",
-        "csv",
-        str(folder / "capture-pcm" / "part-%04d.wav"),
-    ]
+    from panther_journal.native_capture import binary
+
+    return [binary(), device, str(folder), str(seconds or 0), str(chunk_seconds)]
 
 
 def header(folder, game, session, device):
@@ -215,28 +189,12 @@ def devices():
         raise click.ClickException(
             "Device capture currently supports macOS; import supports other platforms."
         )
-    result = subprocess.run(
-        [
-            executable("ffmpeg"),
-            "-hide_banner",
-            "-f",
-            "avfoundation",
-            "-list_devices",
-            "true",
-            "-i",
-            "",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
-    # AVFoundation lists devices then intentionally exits nonzero with an empty input.
-    audio = result.stderr.split("AVFoundation audio devices:")
-    if len(audio) != 2:
+    from panther_journal.native_capture import binary
+
+    result = subprocess.run([binary(), "--list"], capture_output=True, text=True, timeout=20)
+    if result.returncode:
         raise click.ClickException("Could not list microphones; check macOS permissions.")
-    for line in audio[1].splitlines():
-        if "AVFoundation indev" in line:
-            click.echo(line.split("] ", 1)[-1])
+    click.echo(result.stdout, nl=False)
 
 
 DEFAULT_ROOT = Path.home() / "Library/Application Support/Panther/recordings"
@@ -261,11 +219,14 @@ def start(game, session, device, seconds, output_root, chunk_seconds, sync_enabl
     """Stream to durable short FLAC parts, optionally syncing completed parts in the background."""
     from panther_journal.recording_sync import checkpoint
 
-    if sys.platform != "darwin" or not device or ":" in device:
+    if sys.platform != "darwin" or not device or ":" in device or device.startswith("--"):
         raise click.ClickException("Choose an exact macOS audio device name.")
     executable("ffmpeg")
     executable("ffprobe")
     executable("flac")
+    from panther_journal.native_capture import binary
+
+    binary()  # Fail dependency/build checks before announcing microphone capture.
     folder = private_folder(output_root, game, session)
     metadata = header(folder, game, session, device)
     (folder / "capture-pcm").mkdir(mode=0o700)
@@ -273,7 +234,11 @@ def start(game, session, device, seconds, output_root, chunk_seconds, sync_enabl
     write_new(folder / "capture.json", metadata)
     write_new(
         folder / "capture-settings.json",
-        {"chunkSeconds": chunk_seconds, "syncRequested": sync_enabled},
+        {
+            "chunkSeconds": chunk_seconds,
+            "syncRequested": sync_enabled,
+            "backend": "portaudio-coreaudio",
+        },
     )
     click.echo(
         f"Starting microphone: {device}\nPrivate recording: {folder}\nCtrl+C stops and finalizes. Background sync: {'on' if sync_enabled else 'off'}."
@@ -511,6 +476,8 @@ def upload_recording(folder, transcript, editorial=True):
             transcript_files.append(file)
     keys = [upload_one(config, folder / p.file, record, "recording") for p in record.parts]
     manifest_key = upload_one(config, folder / "recording.json", record, "recording-manifest")
+    if (folder / "capture-health.json").exists():
+        upload_one(config, folder / "capture-health.json", record, "capture-health")
     transcript_keys = [
         upload_one(config, file, record, "raw-transcript") for file in transcript_files
     ]

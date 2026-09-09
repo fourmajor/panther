@@ -180,10 +180,9 @@ def test_real_segmented_capture_writes_before_exit_and_worker_stops_on_eof(tmp_p
     header = audio.header(folder, "synthetic-game", "synthetic-session", "synthetic tone")
     audio.write_new(folder / "capture.json", header)
     (folder / "capture-pcm").mkdir()
-    command = audio.capture_command("unused", folder, None, chunk_seconds=0.5)
-    # Replace only AVFoundation input with a paced synthetic tone. Never open a real microphone.
-    index = command.index("-f")
-    command[index : index + 4] = ["-re", "-f", "lavfi", "-i", "sine=sample_rate=48000"]
+    if sys.platform != "darwin" or not shutil.which("pkg-config"):
+        pytest.skip("Native recorder integration test needs macOS and PortAudio")
+    command = audio.capture_command("--synthetic", folder, None, chunk_seconds=0.5)
     with audio_storage.lock(folder, "capture.lock") as fd:
         child = subprocess.Popen(
             [sys.executable, "-m", "panther_journal.capture_worker", json.dumps(command), str(fd)],
@@ -198,7 +197,7 @@ def test_real_segmented_capture_writes_before_exit_and_worker_stops_on_eof(tmp_p
             while time.monotonic() < deadline and child.poll() is None and not parts:
                 time.sleep(0.1)
                 parts = sync.checkpoint(folder, header)
-            assert parts, "FFmpeg must finalize chunks before capture exits"
+            assert parts, "Native writer must finalize chunks before capture exits"
             assert child.poll() is None
         finally:
             child.stdin.close()  # Simulate loss of the controller, not a graceful q command.
@@ -248,10 +247,7 @@ def test_start_cli_with_synthetic_input_never_opens_a_microphone(tmp_path, monke
     original_command = audio.capture_command
 
     def tone(device, folder, seconds, chunk_seconds):
-        command = original_command("unused", folder, 1.2, 0.5)
-        index = command.index("-f")
-        command[index : index + 4] = ["-re", "-f", "lavfi", "-i", "sine=sample_rate=48000"]
-        return command
+        return original_command("--synthetic", folder, 1.2, 0.5)
 
     monkeypatch.setattr(audio, "capture_command", tone)
     result = CliRunner().invoke(
