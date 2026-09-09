@@ -18,6 +18,10 @@
   authorization to broaden permissions or implement an unrelated feature. Infrastructure changes
   still use CDK and AWS administrative authentication, including deployments that enable CLI features.
 - Update the bundled guide and CLI tests when changing asset organization or metadata behavior.
+- For held-out audio tests, create the initial transcript through `panther recording transcribe
+  --blind`. Keep the reading script outside recording inputs and uploads. Never use script text
+  from files or conversation memory to generate/correct that first transcript. Compare against
+  the script only after preserving the unaltered recognizer output and transcript version.
 
 ## Local Blender work
 

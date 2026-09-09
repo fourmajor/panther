@@ -19,6 +19,7 @@ import click
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from panther_journal import cloud
+from panther_journal.audio_storage import flush_directory, lock, write_json
 
 
 class Part(BaseModel):
@@ -69,8 +70,7 @@ def digest(file):
 
 
 def write_new(file, value):
-    with file.open("x", encoding="utf-8") as stream:
-        json.dump(value, stream, indent=2, allow_nan=False)
+    write_json(file, value)
 
 
 def private_folder(root, game, session):
@@ -87,6 +87,7 @@ def private_folder(root, game, session):
     os.umask(0o077)
     folder = root / f"recording-{uuid.uuid4().hex}"
     folder.mkdir(parents=True, mode=0o700)
+    flush_directory(folder.parent)
     return folder
 
 
@@ -98,6 +99,9 @@ def probe(file):
             "error",
             "-show_streams",
             "-show_format",
+            "-show_frames",
+            "-show_entries",
+            "frame=nb_samples",
             "-of",
             "json",
             str(file),
@@ -112,8 +116,13 @@ def probe(file):
     if len(streams) != 1:
         raise click.ClickException("Expected one audio stream; preserve its original channels.")
     stream = streams[0]
+    # The FLAC encoder's STREAMINFO totals may be absent or span the entire session
+    # when FFmpeg's segment muxer reuses it. Count actual decoded samples per file.
+    samples = sum(int(frame.get("nb_samples", 0)) for frame in data.get("frames", []))
+    if samples <= 0:
+        raise ValueError("No decodable audio samples.")
     return {
-        "duration": float(data["format"]["duration"]),
+        "duration": samples / int(stream["sample_rate"]),
         "sampleRate": int(stream["sample_rate"]),
         "channels": stream["channels"],
         "bitsPerSample": int(
@@ -123,25 +132,9 @@ def probe(file):
 
 
 def finish_capture(folder, header, status):
-    parts, offset = [], 0.0
-    files = sorted(folder.glob("part-*.flac"))
-    for i, file in enumerate(files):
-        if file.name != f"part-{i:04d}.flac" or file.is_symlink():
-            raise click.ClickException("Unexpected recording part; inspect retained files.")
-        subprocess.run(
-            [executable("flac"), "--test", "--silent", str(file)], check=True, timeout=300
-        )
-        details = probe(file)
-        parts.append(
-            {
-                "file": file.name,
-                "start": offset,
-                "size": file.stat().st_size,
-                "sha256": digest(file),
-                **details,
-            }
-        )
-        offset += details["duration"]
+    from panther_journal.recording_sync import checkpoint
+
+    parts = checkpoint(folder, header, final=True, allow_incomplete=status == "interrupted")
     record = Recording(**header, status=status, parts=parts)
     write_new(folder / "recording.json", record.model_dump())
     return record
@@ -164,7 +157,7 @@ def verified(folder):
     return record
 
 
-def capture_command(device, folder, seconds):
+def capture_command(device, folder, seconds, chunk_seconds=30):
     command = [
         executable("ffmpeg"),
         "-hide_banner",
@@ -181,22 +174,22 @@ def capture_command(device, folder, seconds):
         command += ["-t", str(seconds)]
     return command + [
         "-c:a",
-        "flac",
+        "pcm_s24le",
         "-sample_fmt",
         "s32",
-        "-compression_level",
-        "5",
         "-f",
         "segment",
         "-segment_time",
-        "600",
+        str(chunk_seconds),
+        "-segment_format_options",
+        "flush_packets=1",
         "-reset_timestamps",
         "1",
         "-segment_list",
         str(folder / "segments.csv"),
         "-segment_list_type",
         "csv",
-        str(folder / "part-%04d.flac"),
+        str(folder / "capture-pcm" / "part-%04d.wav"),
     ]
 
 
@@ -257,8 +250,17 @@ DEFAULT_ROOT = Path.home() / "Library/Application Support/Panther/recordings"
 )
 @click.option("--seconds", type=click.IntRange(1, 43200), help="Otherwise record until Ctrl+C.")
 @click.option("--output-root", type=click.Path(path_type=Path), default=DEFAULT_ROOT)
-def start(game, session, device, seconds, output_root):
-    """Record in the foreground to ten-minute FLAC parts. Nothing is uploaded automatically."""
+@click.option("--chunk-seconds", type=click.IntRange(10, 600), default=30, show_default=True)
+@click.option(
+    "--sync/--no-sync",
+    "sync_enabled",
+    default=False,
+    help="Sync completed chunks through Panther in the background.",
+)
+def start(game, session, device, seconds, output_root, chunk_seconds, sync_enabled):
+    """Stream to durable short FLAC parts, optionally syncing completed parts in the background."""
+    from panther_journal.recording_sync import checkpoint
+
     if sys.platform != "darwin" or not device or ":" in device:
         raise click.ClickException("Choose an exact macOS audio device name.")
     executable("ffmpeg")
@@ -266,26 +268,88 @@ def start(game, session, device, seconds, output_root):
     executable("flac")
     folder = private_folder(output_root, game, session)
     metadata = header(folder, game, session, device)
+    (folder / "capture-pcm").mkdir(mode=0o700)
+    flush_directory(folder)
     write_new(folder / "capture.json", metadata)
-    click.echo(
-        f"Starting microphone: {device}\nPrivate recording: {folder}\nCtrl+C stops and finalizes. No upload or transcription happens while recording."
+    write_new(
+        folder / "capture-settings.json",
+        {"chunkSeconds": chunk_seconds, "syncRequested": sync_enabled},
     )
-    with (folder / "capture.log").open("x") as log:
+    click.echo(
+        f"Starting microphone: {device}\nPrivate recording: {folder}\nCtrl+C stops and finalizes. Background sync: {'on' if sync_enabled else 'off'}."
+    )
+    with lock(folder, "capture.lock") as lock_fd, (folder / "capture.log").open("x") as log:
         child = subprocess.Popen(
-            capture_command(device, folder, seconds),
+            [
+                sys.executable,
+                "-m",
+                "panther_journal.capture_worker",
+                json.dumps(capture_command(device, folder, seconds, chunk_seconds)),
+                str(lock_fd),
+            ],
             stdin=subprocess.PIPE,
             stdout=log,
             stderr=log,
             start_new_session=True,
+            pass_fds=(lock_fd,),
         )
+        uploader = None
+        if sync_enabled:
+            try:
+                with (folder / "sync.log").open("x") as sync_log:
+                    uploader = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-m",
+                            "panther_journal.cli",
+                            "recording",
+                            "sync",
+                            str(folder),
+                            "--watch",
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=sync_log,
+                        stderr=sync_log,
+                        start_new_session=True,
+                    )
+            except OSError:
+                click.echo(
+                    "Background sync could not start; local capture continues. Use recording sync later.",
+                    err=True,
+                )
         interrupted = False
 
         def request_stop(signum, frame):
             raise KeyboardInterrupt
 
-        previous_handler = signal.signal(signal.SIGTERM, request_stop)
+        previous_handlers = {
+            s: signal.signal(s, request_stop) for s in (signal.SIGTERM, signal.SIGHUP)
+        }
+        checkpoint_count = 0
+        sync_seen = None
         try:
             while child.poll() is None:
+                parts = checkpoint(folder, metadata)
+                if len(parts) != checkpoint_count:
+                    checkpoint_count = len(parts)
+                    click.echo(f"Saved locally: {checkpoint_count} completed chunk(s).")
+                status_file = folder / "sync-status.json"
+                if sync_enabled and status_file.exists():
+                    try:
+                        sync_status = json.loads(status_file.read_text())
+                        if not isinstance(sync_status, dict):
+                            raise ValueError("Invalid sync status")
+                    except (OSError, ValueError):
+                        # Backup progress is advisory; it must never stop microphone capture.
+                        sync_status = {"error": "Unreadable sync status"}
+                    progress = (sync_status.get("partsSynced", 0), sync_status.get("error"))
+                    if progress != sync_seen:
+                        sync_seen = progress
+                        click.echo(
+                            "Cloud sync pending; local capture continues."
+                            if progress[1]
+                            else f"Backed up: {progress[0]} chunk(s)."
+                        )
                 time.sleep(1)
         except KeyboardInterrupt:
             interrupted = True
@@ -296,6 +360,7 @@ def start(game, session, device, seconds, output_root):
                 except BrokenPipeError:
                     pass
         finally:
+            child.stdin.close()  # EOF also closes capture if this controller crashes.
             try:
                 child.wait(timeout=20)
             except subprocess.TimeoutExpired:
@@ -305,23 +370,31 @@ def start(game, session, device, seconds, output_root):
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait()
-            signal.signal(signal.SIGTERM, previous_handler)
-        if child.returncode:
-            raise click.ClickException(
-                f"Capture failed; files retained at {folder}. Inspect capture.log and use recording recover."
-            )
-    result = finish_capture(folder, metadata, "interrupted" if interrupted else "complete")
+            for s, previous in previous_handlers.items():
+                signal.signal(s, previous)
+        result = finish_capture(
+            folder, metadata, "interrupted" if interrupted or child.returncode else "complete"
+        )
     click.echo(f"Saved and verified {len(result.parts)} FLAC part(s): {folder}")
+    if uploader:
+        click.echo(
+            f"Background sync is independent. Resume/check with: panther recording sync '{folder}'"
+        )
+    if child.returncode:
+        raise click.ClickException(
+            "Capture was interrupted; intact audio retained. Inspect capture.log."
+        )
 
 
 @recording.command("recover")
 @click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
 def recover(folder):
-    """Validate intact parts after a stopped capture; never repair, delete or overwrite originals."""
-    if (folder / "recording.json").exists():
-        verified(folder)
-    else:
-        finish_capture(folder, json.loads((folder / "capture.json").read_text()), "interrupted")
+    """Recover a stopped recording; retain any damaged final chunk separately, never delete it."""
+    with lock(folder, "capture.lock"):
+        if (folder / "recording.json").exists():
+            verified(folder)
+        else:
+            finish_capture(folder, json.loads((folder / "capture.json").read_text()), "interrupted")
     click.echo(
         "Recording manifest verified. Inspect capture.log for interruptions or dropped input."
     )
@@ -484,7 +557,12 @@ def transcript_lines(raw, part, player_id):
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Optional saved Panther game-show JSON for offline processing.",
 )
-def transcribe(folder, model, sole_player, roster):
+@click.option(
+    "--blind",
+    is_flag=True,
+    help="Run offline in Docker with only audio/model inputs; no reference script or chat.",
+)
+def transcribe(folder, model, sole_player, roster, blind):
     """Run local Whisper and retain a new JSON/Markdown transcript version, including table chatter."""
     record = verified(folder)
     game = (
@@ -501,35 +579,85 @@ def transcribe(folder, model, sole_player, roster):
     target = folder / run_id
     target.mkdir(mode=0o700)
     write_new(target / "roster-snapshot.json", game)
-    lines = []
-    with (target / "engine.log").open("x") as log:
+    inputs, outputs = target / "asr-input", target / "asr-output"
+    inputs.mkdir(mode=0o700)
+    outputs.mkdir(mode=0o700)
+    # A joined derivative prevents storage chunk boundaries from splitting recognition context.
+    # Hard links stage only the verified FLAC parts, not arbitrary files from this folder.
+    for part in record.parts:
+        os.link(folder / part.file, inputs / part.file)
+    with (inputs / "parts.txt").open("x") as listing:
         for part in record.parts:
-            base = target / Path(part.file).stem
-            subprocess.run(
-                [
-                    executable("whisper-cli"),
-                    "-m",
-                    str(model.resolve()),
-                    "-f",
-                    str((folder / part.file).resolve()),
-                    "-l",
-                    "en",
-                    "-t",
-                    "4",
-                    "-ojf",
-                    "-of",
-                    str(base.resolve()),
-                ],
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=1800,
-            )
-            lines.extend(
-                transcript_lines(
-                    json.loads(base.with_suffix(".json").read_text()), part, sole_player
-                )
-            )
+            listing.write(f"file '{part.file}'\nduration {part.duration:.9f}\n")
+    joined = inputs / "audio.wav"
+    isolation = None
+    with (target / "engine.log").open("x") as log:
+        subprocess.run(
+            [
+                executable("ffmpeg"),
+                "-v",
+                "error",
+                "-n",
+                "-f",
+                "concat",
+                "-safe",
+                "1",
+                "-i",
+                str(inputs / "parts.txt"),
+                "-map",
+                "0:a:0",
+                "-map_metadata",
+                "-1",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                str(joined),
+            ],
+            stdout=log,
+            stderr=log,
+            check=True,
+            timeout=1800,
+        )
+        if blind:
+            from panther_journal import blind_audio
+
+            docker = executable("docker")
+            image = blind_audio.image_id(docker)
+            command = blind_audio.command(docker, image, joined, model, outputs)
+            isolation = blind_audio.manifest(image, digest(joined), digest(model))
+            write_new(target / "blind-inputs.json", isolation)
+        else:
+            command = [
+                executable("whisper-cli"),
+                "-m",
+                str(model.resolve()),
+                "-f",
+                str(joined.resolve()),
+                "-l",
+                "en",
+                "-t",
+                "4",
+                "-ojf",
+                "-of",
+                str((outputs / "transcription").resolve()),
+            ]
+        subprocess.run(command, stdout=log, stderr=log, check=True, timeout=43200)
+    combined = record.parts[0].model_copy(
+        update={"duration": sum(p.duration for p in record.parts)}
+    )
+    lines = transcript_lines(
+        json.loads((outputs / "transcription.json").read_text()), combined, sole_player
+    )
+    for line in lines:
+        line.pop("sourcePart")
+        line["sourceParts"] = [
+            p.file
+            for p in record.parts
+            if p.start < line["end"] and p.start + p.duration > line["start"]
+        ]
     document = {
         "schemaVersion": 1,
         "entityType": "PlayerTranscript",
@@ -545,6 +673,7 @@ def transcribe(folder, model, sole_player, roster):
         "speakerMethod": "declared-single-player" if sole_player else "unassigned",
         "players": game["players"],
         "segments": lines,
+        "isolation": isolation,
     }
     save_transcript(target, document)
     click.echo(str(target))

@@ -54,8 +54,9 @@ def test_capture_targets_exact_device_and_lossless_chunks(tmp_path, monkeypatch)
     monkeypatch.setattr(audio, "executable", lambda name: name)
     command = audio.capture_command("Test USB Microphone", tmp_path, 180)
     assert command[command.index("-i") + 1] == ":Test USB Microphone"
-    assert command[command.index("-c:a") + 1] == "flac"
-    assert command[command.index("-segment_time") + 1] == "600"
+    assert command[command.index("-c:a") + 1] == "pcm_s24le"
+    assert command[command.index("-segment_time") + 1] == "30"
+    assert command[command.index("-segment_format_options") + 1] == "flush_packets=1"
     assert "-ar" not in command and "-ac" not in command
     assert "-n" in command and "-y" not in command
 
@@ -139,6 +140,9 @@ def test_rerunning_transcription_keeps_versions_and_rejects_character_identity(
     monkeypatch.setattr(audio, "executable", lambda name: name)
 
     def run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"synthetic joined WAV")
+            return
         base = Path(command[command.index("-of") + 1])
         base.with_suffix(".json").write_text(
             json.dumps({"transcription": [{"offsets": {"from": 0, "to": 2000}, "text": "Hello"}]})

@@ -69,7 +69,19 @@ attribution, and explicit upload. Obtain recording consent and readiness before 
 Retain source audio, checksums, and all transcript versions outside Git. Never delete the user's
 WAV original after conversion without permission. Upload uses the existing immutable asset layout:
 one recording asset with ordered FLAC parts, its manifest, and uniquely named transcript versions.
+Capture defaults to 30-second chunks with durable closed-part checkpoints. Use `--sync` only when
+background upload is authorized; network/auth failures must not interrupt recording. Use
+`panther recording sync RECORDING_DIR` to finish/retry backup, and verify success rather than
+assuming that locally saved audio is already in the cloud. Keep local files. Intermediate
+checkpoints do not mean a recording is complete. Recovery can exclude a damaged uncheckpointed
+final chunk while retaining it locally and reporting the omission; never claim zero audio loss.
 Generated transcripts are `unclassified` and unreviewed, not automatically canonical sources.
+
+For a test with a held-out reading script, use `recording transcribe --blind` and keep the script
+outside recordings and uploads. Its isolated recognizer receives only audio and model weights,
+not chat history, roster prompts, or reference text. Do not substitute agent-written transcription
+or use remembered script wording to correct the initial output. Freeze the raw output and first
+transcript version before comparing with the script; corrections require a new version.
 
 `--sole-player` is a user declaration valid only for a genuinely single-person recording. For groups,
 use local `recording diarize` and a confirmed anonymous-speaker-label to player-ID map with
