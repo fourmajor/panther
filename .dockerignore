@@ -1,0 +1,17 @@
+**
+!infra/
+!infra/package.json
+!infra/package-lock.json
+!infra/tsconfig.json
+!infra/bin/**
+!infra/lib/**
+!infra/test/**
+!infra/browser-tests/**
+!infra/lambda/**
+!web/
+!web/media-explorer/**
+!ops/
+!ops/model-worker/
+!ops/model-worker/Dockerfile
+**/__pycache__/**
+**/*.pyc

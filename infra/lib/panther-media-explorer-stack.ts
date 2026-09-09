@@ -27,6 +27,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
+import { ModelProcessing } from "./model-processing";
 
 const MEDIA_USERS = ["stu", "other_stu"] as const;
 
@@ -306,6 +307,7 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
+    new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     for (const route of ["/objects", "/object-url", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,

@@ -23,6 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2",
+  "moto[dynamodb,s3]>=5.1,<6",
   "ruff==0.15.16"
 ]
 openai = [
