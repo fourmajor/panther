@@ -52,6 +52,11 @@ def service_definition(release, state, image, home):
     }
 
 
+def service_path(state, home, start):
+    # LaunchAgents are automatically loaded at login, even without an explicit bootstrap.
+    return (home / "Library/LaunchAgents" if start else state) / f"{LABEL}.plist"
+
+
 def install(repo, state, authorized, start):
     if sys.platform != "darwin" or not authorized:
         raise SystemExit("macOS and explicit --allow-unsandboxed-blender authorization required.")
@@ -102,9 +107,8 @@ def install(repo, state, authorized, start):
         )
         ready.write_text(json.dumps({"commit": sha, "qaImage": image}, indent=2))
     image = json.loads(ready.read_text())["qaImage"]
-    agent_dir = Path.home() / "Library/LaunchAgents"
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    plist = agent_dir / f"{LABEL}.plist"
+    plist = service_path(state, Path.home(), start)
+    plist.parent.mkdir(parents=True, exist_ok=True)
     service = f"gui/{os.getuid()}/{LABEL}"
     # Do not interrupt active work or silently replace another loaded release.
     loaded = subprocess.run(["launchctl", "print", service], capture_output=True)
