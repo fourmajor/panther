@@ -1,7 +1,7 @@
 """Structured game records; a player identity does not imply a Panther login account."""
 
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Slug = str
 
@@ -29,9 +29,17 @@ class GameMembership(BaseModel):
 
 class GameSetup(NamedEntity):
     purpose: Literal["campaign", "test"]
+    ruleset: str = Field(min_length=1, max_length=120)
     players: list[Player] = Field(default_factory=list, max_length=20)
     characters: list[Character] = Field(default_factory=list, max_length=20)
     memberships: list[GameMembership] = Field(default_factory=list, max_length=20)
+
+    @field_validator("ruleset")
+    @classmethod
+    def ruleset_name(cls, value):
+        if value != value.strip() or any(ord(c) < 32 for c in value):
+            raise ValueError("Ruleset must be a name without surrounding whitespace or controls")
+        return value
 
     @model_validator(mode="after")
     def references(self):

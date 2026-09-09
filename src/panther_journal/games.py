@@ -49,6 +49,33 @@ def player():
     """Inspect structured player identities, distinct from characters and accounts."""
 
 
+@game.command("set-ruleset")
+@click.argument("game_id")
+@click.option("--ruleset", required=True, help="Game system name and edition, not rule text.")
+@click.option("--if-unset", is_flag=True, help="Only assign when no ruleset is recorded yet.")
+@click.option(
+    "--expected-ruleset", help="Exact currently recorded value; refuse concurrent changes."
+)
+def set_ruleset(game_id, ruleset, if_unset, expected_ruleset):
+    """Set only a game's ruleset name, preserving roster and assets."""
+    if if_unset == (expected_ruleset is not None):
+        raise click.UsageError("Choose exactly one of --if-unset or --expected-ruleset.")
+    if not 1 <= len(ruleset) <= 120:
+        raise click.BadParameter("Ruleset must contain 1–120 characters.")
+    try:
+        GameSetup.ruleset_name(ruleset)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    body = {
+        "gameId": cloud.slug(game_id),
+        "ruleset": ruleset,
+        "expectedRuleset": None if if_unset else expected_ruleset,
+    }
+    click.echo(
+        json.dumps(cloud.api(cloud.configuration(), "POST", "/game/ruleset", json=body), indent=2)
+    )
+
+
 @player.command("list")
 def list_players():
     click.echo(json.dumps(cloud.api(cloud.configuration(), "GET", "/players"), indent=2))

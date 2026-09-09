@@ -4,6 +4,7 @@ const elements = {
   gameToolbar: document.querySelector("#game-toolbar"),
   gameSelector: document.querySelector("#game-selector"),
   gamePurpose: document.querySelector("#game-purpose"),
+  gameRuleset: document.querySelector("#game-ruleset"),
   playerRoster: document.querySelector("#player-roster"),
   account: document.querySelector("#account"),
   authError: document.querySelector("#auth-error"),
@@ -384,6 +385,7 @@ async function selectGame(requested, epoch) {
     elements.characterList.replaceChildren();
     elements.characterProfile.hidden = true;
     elements.playerRoster.replaceChildren();
+    elements.gameRuleset.textContent = "";
     elements.characterModel.removeAttribute("src");
     closePreview();
   }
@@ -402,6 +404,7 @@ async function selectGame(requested, epoch) {
     }
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
+  elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
   return true;
 }
 

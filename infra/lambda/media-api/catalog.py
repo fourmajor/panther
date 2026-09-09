@@ -19,11 +19,14 @@ EDITORS = set(os.environ.get("CATALOG_EDITORS", "").split(","))
 
 
 def clean(record):
-    return {
+    result = {
         k: int(v) if isinstance(v, Decimal) else v
         for k, v in record.items()
         if k not in {"pk", "sk", "fingerprint"}
     }
+    if result.get("entityType") == "Game":
+        result.setdefault("ruleset", None)
+    return result
 
 
 def read(pk, sk):
@@ -56,17 +59,24 @@ def name(value):
 
 
 def validate(body):
-    if not isinstance(body, dict) or set(body) != {
+    required = {
         "id",
         "name",
         "purpose",
         "players",
         "characters",
         "memberships",
-    }:
+    }
+    if (
+        not isinstance(body, dict)
+        or not required <= set(body)
+        or set(body) - required - {"ruleset"}
+    ):
         raise ValueError("Expected id, name, purpose, players, characters, memberships")
     identifier(body["id"])
     name(body["name"])
+    if "ruleset" in body:
+        name(body["ruleset"])
     if body["purpose"] not in ("test", "campaign"):
         raise ValueError("Purpose must be test or campaign")
     for field in ("players", "characters", "memberships"):
@@ -126,6 +136,7 @@ def games():
                         "name": game_id.replace("-", " ").title(),
                         "purpose": "campaign",
                         "legacy": True,
+                        "ruleset": None,
                     },
                 )
     return sorted(found.values(), key=lambda g: (g["purpose"] == "test", g["name"].casefold()))
@@ -157,7 +168,7 @@ def create(body, actor):
     fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
     existing = read("GAMES", body["id"])
     if existing:
-        if existing["fingerprint"] != fingerprint:
+        if existing.get("fingerprint") != fingerprint:
             return media._response(409, {"error": "Game exists; creation never overwrites it"})
         return detail(body["id"])
     now = datetime.now(timezone.utc).isoformat()
@@ -168,6 +179,7 @@ def create(body, actor):
             "entityType": "Game",
             "schemaVersion": 1,
             **{k: body[k] for k in ("id", "name", "purpose")},
+            "ruleset": body.get("ruleset"),
             "fingerprint": fingerprint,
             "createdAt": now,
             "createdBy": actor,
@@ -238,6 +250,57 @@ def create(body, actor):
     return detail(body["id"])
 
 
+def set_ruleset(body, actor):
+    if not isinstance(body, dict) or set(body) != {"gameId", "ruleset", "expectedRuleset"}:
+        raise ValueError("Expected gameId, ruleset and expectedRuleset")
+    game_id, ruleset = identifier(body["gameId"]), name(body["ruleset"])
+    expected = body["expectedRuleset"]
+    if expected is not None:
+        name(expected)
+    existing = read("GAMES", game_id)
+    now = datetime.now(timezone.utc).isoformat()
+    if existing is None:
+        legacy = next((g for g in games() if g["id"] == game_id), None)
+        if legacy is None:
+            return media._response(404, {"error": "Game not found"})
+        if expected is not None:
+            return media._response(409, {"error": "Ruleset changed; inspect before retrying"})
+        # Adopt only the legacy game header; never move assets or fabricate its roster.
+        table.put_item(
+            Item={
+                **legacy,
+                "pk": "GAMES",
+                "sk": game_id,
+                "schemaVersion": 1,
+                "ruleset": ruleset,
+                "createdAt": now,
+                "createdBy": actor,
+                "updatedAt": now,
+                "updatedBy": actor,
+            },
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+    else:
+        if existing.get("ruleset") != expected:
+            return media._response(409, {"error": "Ruleset changed; inspect before retrying"})
+        # Update only these fields; preserve even concurrently added unrelated attributes.
+        condition = "attribute_exists(pk) AND (#r = :old"
+        condition += " OR attribute_not_exists(#r))" if expected is None else ")"
+        table.update_item(
+            Key={"pk": "GAMES", "sk": game_id},
+            UpdateExpression="SET #r = :new, updatedAt = :now, updatedBy = :actor",
+            ConditionExpression=condition,
+            ExpressionAttributeNames={"#r": "ruleset"},
+            ExpressionAttributeValues={
+                ":old": expected,
+                ":new": ruleset,
+                ":now": now,
+                ":actor": actor,
+            },
+        )
+    return detail(game_id)
+
+
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     # One trusted group today: every configured account can read every game. A selector is not an ACL.
@@ -251,13 +314,18 @@ def handler(event, _context):
             return detail(media._query(event, "gameId"))
         if route == "GET /players":
             return media._response(200, {"players": [clean(p) for p in query("PLAYERS")]})
-        if route == "POST /games":
+        if route in ("POST /games", "POST /game/ruleset"):
             raw = event.get("body") or ""
             if len(raw) > 24000:
                 raise ValueError("Game setup is too large")
             if event.get("isBase64Encoded"):
                 raw = base64.b64decode(raw, validate=True)
-            return create(json.loads(raw), claims["sub"])
+            body = json.loads(raw)
+            return (
+                create(body, claims["sub"])
+                if route == "POST /games"
+                else set_ruleset(body, claims["sub"])
+            )
         return media._response(404, {"error": "Unknown catalog operation"})
     except (ValueError, TypeError, KeyError):
         return media._response(400, {"error": "Invalid structured game/roster; inspect the schema"})
