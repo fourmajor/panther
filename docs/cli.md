@@ -17,9 +17,27 @@ The password prompt is hidden. Use the same password as the website. Authenticat
 required initial password change are supported. Session tokens are saved in macOS Keychain,
 Windows Credential Manager, or a supported Linux credential store, not a plaintext config file.
 On Linux, enable/unlock Secret Service or KWallet first. There is deliberately no plaintext fallback.
-Passwords are never saved. Sessions refresh automatically for up to seven days; sign in again
-when prompted. `panther logout` removes local tokens and revokes the refresh token. Already issued
+Passwords are never saved. New sessions refresh automatically for up to **3,650 days (10 years)**,
+the Cognito maximum. Refresh credentials rotate on use and the CLI saves replacements in the OS
+credential store. Update older CLI installations (`pipx upgrade panther-journal`) before deployment
+of rotation, then sign in once to obtain the longer lifetime; existing sessions keep their original
+expiration. Revocation, account disablement, or removal of local credentials can end sign-in sooner.
+`panther logout` removes local tokens and revokes the refresh token. Already issued
 API tokens can remain valid until their expiry (up to one hour).
+
+The web app remembers sign-in with a Secure, HttpOnly, SameSite cookie, renews automatically after
+an hour or a browser restart, and keeps long-lived refresh credentials out of JavaScript storage.
+The cookie is renewed for up to 400 days at each successful refresh, subject to browser limits;
+it does not extend Cognito's original 10-year lifetime. Clearing cookies, private browsing, browser
+eviction policies, long inactivity, or signing out can require another login. These are trusted-device
+defaults: sign out on shared computers. Logout clears other open Panther tabs and revokes the
+remembered session; if the network is down it stays locally signed out and offers a revocation retry.
+
+These Panther sessions are separate from AWS deployment SSO. See the
+[AWS runbook](aws-foundation-runbook.md#long-lived-sign-in-and-session-limits).
+
+References: [Cognito refresh/rotation limits](https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-the-refresh-token.html),
+[browser cookie lifetime limits](https://developer.chrome.com/blog/cookie-max-age-expires).
 
 For agents, read `panther instructions` before organizing or uploading assets. The full guide is
 bundled with the installed CLI and available without logging in or accessing this repository.

@@ -1,6 +1,7 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import test from "node:test";
+import assert from "node:assert/strict";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
 function mediaExplorerTemplate(): Template {
@@ -128,10 +129,12 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 7);
-  template.allResourcesProperties("AWS::ApiGatewayV2::Route", {
-    AuthorizationType: "JWT",
-  });
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 10);
+  for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
+    const route = resource.Properties.RouteKey;
+    assert.equal(resource.Properties.AuthorizationType,
+      ["POST /auth/session", "POST /auth/refresh", "POST /auth/logout"].includes(route) ? "NONE" : "JWT");
+  }
   template.hasResourceProperties("AWS::Lambda::Function", {
     Environment: {
       Variables: Match.objectLike({
@@ -182,6 +185,31 @@ test("media API is JWT protected with limited conditional upload permissions", (
   template.hasResourceProperties("AWS::Cognito::UserPoolClient", {
     ClientName: "panther-cli",
     GenerateSecret: false,
-    ExplicitAuthFlows: Match.arrayWith(["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]),
+    ExplicitAuthFlows: ["ALLOW_USER_PASSWORD_AUTH"],
+  });
+});
+
+test("remembered sign-in uses maximum rotating refresh sessions and an uncached first-party cookie path", () => {
+  const template = mediaExplorerTemplate();
+  template.allResourcesProperties("AWS::Cognito::UserPoolClient", {
+    AccessTokenValidity: 60, IdTokenValidity: 60, RefreshTokenValidity: 3650 * 24 * 60,
+    TokenValidityUnits: { AccessToken: "minutes", IdToken: "minutes", RefreshToken: "minutes" },
+    RefreshTokenRotation: { Feature: "ENABLED", RetryGracePeriodSeconds: 60 },
+    EnableTokenRevocation: true,
+  });
+  for (const resource of Object.values(template.findResources("AWS::Cognito::UserPoolClient"))) {
+    assert.ok(!resource.Properties.ExplicitAuthFlows?.includes("ALLOW_REFRESH_TOKEN_AUTH"));
+  }
+  template.hasResourceProperties("AWS::CloudFront::Distribution", {
+    DistributionConfig: Match.objectLike({ CacheBehaviors: Match.arrayWith([Match.objectLike({
+      PathPattern: "/auth/*", ViewerProtocolPolicy: "https-only",
+      CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+      OriginRequestPolicyId: "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+      AllowedMethods: Match.arrayWith(["POST"]),
+    })]) }),
+  });
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Environment: { Variables: Match.objectLike({ SITE_ORIGIN: "https://panther.place", WEB_CLIENT_ID: Match.anyValue() }) },
+    Timeout: 15, MemorySize: 128,
   });
 });

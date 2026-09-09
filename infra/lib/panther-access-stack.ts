@@ -100,7 +100,7 @@ export class PantherAccessStack extends Stack {
         name: "PantherAdministrator",
         description: "Administrative access to the Panther AWS account",
         managedPolicies: ["arn:aws:iam::aws:policy/AdministratorAccess"],
-        sessionDuration: "PT4H",
+        sessionDuration: "PT12H",
       },
     );
 
@@ -156,7 +156,7 @@ export class PantherAccessStack extends Stack {
         name: "PantherAssetUploader",
         description: "Manage private Panther game assets without administrative access",
         inlinePolicy: uploaderPolicy.toJSON(),
-        sessionDuration: "PT8H",
+        sessionDuration: "PT12H",
       },
     );
 

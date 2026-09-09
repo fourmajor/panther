@@ -230,3 +230,38 @@ infrastructure workflow.
 Use ordinary CDK deployments for the certificate, application aliases, and every subsequent DNS
 change. The domain stack is deliberately located in `us-east-1` because its CloudFront certificate
 must live there. This is the documented exception to the default `us-west-2` region.
+
+## Long-lived sign-in and session limits
+
+Panther application sign-in and AWS administrative SSO are different systems. CDK configures both
+Panther Cognito clients with 3,650-day rotating refresh tokens and one-hour API tokens. The web
+app uses a first-party HttpOnly cookie through uncached `/auth/*` Lambda routes; the CLI uses the
+OS credential store. Existing sign-ins do not gain extra lifetime retroactively. Update the CLI
+before deploying rotation, then sign in once again to receive the new lifetime. Do not lengthen
+individual bearer API tokens or disable revocation to avoid login prompts.
+
+CDK configures both Panther AWS permission sets with the supported maximum `PT12H` role session.
+Deploy `PantherAccess` with its existing `administratorEmail`, `identityCenterInstanceArn`, and
+`identityStoreId` context values; inspect the diff to ensure that no user or assignment is recreated.
+Use the modern AWS CLI `sso_session` profile configuration so role credentials and SSO tokens can
+renew within the underlying interactive SSO session. Never create permanent access keys as a workaround.
+
+The underlying Identity Center **user interactive session** supports a maximum of **90 days**.
+This is a documented manual exception: AWS exposes that setting in the Identity Center console,
+not in the public SSO Admin API/CloudFormation/CDK resource schema checked for this change.
+`PutApplicationSessionConfiguration` controls background-session application status, not this duration.
+Do not call private console endpoints or confuse permission-set lifetime with interactive-session lifetime.
+
+The account owner must open IAM Identity Center in `us-west-2`, select **Settings → Authentication →
+Session duration → Configure**, set **User interactive sessions** to **90 days** (129,600 minutes),
+and save. This affects new sessions only. Then run `aws sso login --profile panther-sso-admin` again.
+That fresh login is required before deploying a duration change when the current credentials are
+already expired. The same requirement applies to the first long-lived Panther application login.
+
+Long-lived sign-ins are intended for trusted personal devices. Signing out/revoking sessions,
+disabling an account, clearing credentials/cookies, or browser retention limits can end them earlier.
+There is no always-on session server, database, NAT gateway, or new fixed compute charge.
+
+References: [Identity Center interactive sessions](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-interactive-sessions.html),
+[permission-set limits](https://docs.aws.amazon.com/singlesignon/latest/userguide/howtosessionduration.html),
+[AWS CLI session prerequisites](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-session-duration-prereqs-considerations.html).

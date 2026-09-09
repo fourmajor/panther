@@ -12,6 +12,10 @@ to Panther's source repository.
 2. Sign in interactively with `panther login --username YOUR_USERNAME`. Do not put passwords in
    arguments, environment variables, chat, scripts, or logs. Tokens belong in the OS credential
    store. Stop for the human when credentials or MFA are needed; never borrow another user's login.
+   New sign-ins can renew automatically for up to 3,650 days, with rotating refresh credentials.
+   Keep the CLI current; do not disable rotation or move credentials into plaintext to avoid login.
+   Older sessions need one fresh sign-in to receive the longer lifetime. AWS deployment SSO is
+   separate from this application login and cannot be extended with a Panther password.
 3. Discover existing game IDs with `panther ls --json`. Confirm which game the user means if unclear.
 4. Inspect relevant folders with `panther ls games/GAME_ID/assets/ --json` and existing metadata
    with `panther info OBJECT_KEY`. Reuse existing game, character, session, asset, and tag identifiers

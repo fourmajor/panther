@@ -4,6 +4,7 @@ import {
   CfnOutput,
   CustomResource,
   Duration,
+  Fn,
   RemovalPolicy,
   Stack,
   StackProps,
@@ -201,12 +202,14 @@ export class PantherMediaExplorerStack extends Stack {
     const userPoolClient = userPool.addClient("WebClient", {
       userPoolClientName: "panther-media-explorer-web",
       generateSecret: false,
+      authFlows: { userSrp: true },
       preventUserExistenceErrors: true,
       enableTokenRevocation: true,
       authSessionValidity: Duration.minutes(3),
       accessTokenValidity: Duration.hours(1),
       idTokenValidity: Duration.hours(1),
-      refreshTokenValidity: Duration.days(7),
+      refreshTokenValidity: Duration.days(3650),
+      refreshTokenRotationGracePeriod: Duration.seconds(60),
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE],
@@ -222,12 +225,14 @@ export class PantherMediaExplorerStack extends Stack {
     const cliClient = userPool.addClient("CliClient", {
       userPoolClientName: "panther-cli",
       generateSecret: false,
+      disableOAuth: true,
       authFlows: { userPassword: true },
       preventUserExistenceErrors: true,
       enableTokenRevocation: true,
       accessTokenValidity: Duration.hours(1),
       idTokenValidity: Duration.hours(1),
-      refreshTokenValidity: Duration.days(7),
+      refreshTokenValidity: Duration.days(3650),
+      refreshTokenRotationGracePeriod: Duration.seconds(60),
     });
     const mediaApiFunction = new lambda.Function(this, "MediaApiFunction", {
       runtime: lambda.Runtime.PYTHON_3_13,
@@ -320,6 +325,41 @@ export class PantherMediaExplorerStack extends Stack {
       methods: [apigwv2.HttpMethod.POST],
       integration: mediaIntegration,
       authorizer,
+    });
+
+    // Remembered web sessions use a first-party HttpOnly cookie, not persistent
+    // browser JavaScript storage. These public routes authenticate with the
+    // refresh credential and reject requests from any other Origin.
+    const webSessionLogs = new logs.LogGroup(this, "WebSessionLogGroup", {
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const webSession = new lambda.Function(this, "WebSessionFunction", {
+      runtime: lambda.Runtime.PYTHON_3_13,
+      architecture: lambda.Architecture.ARM_64,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/web-session"), {
+        exclude: ["**/__pycache__/**", "**/*.pyc"],
+      }),
+      timeout: Duration.seconds(15),
+      memorySize: 128,
+      logGroup: webSessionLogs,
+      environment: {
+        WEB_CLIENT_ID: userPoolClient.userPoolClientId,
+        SITE_ORIGIN: siteUrl,
+        COGNITO_DOMAIN: userPoolDomain.baseUrl(),
+      },
+    });
+    const sessionIntegration = new apigwv2Integrations.HttpLambdaIntegration("WebSessionIntegration", webSession);
+    for (const route of ["/auth/session", "/auth/refresh", "/auth/logout"]) {
+      mediaApi.addRoutes({ path: route, methods: [apigwv2.HttpMethod.POST], integration: sessionIntegration });
+    }
+    distribution.addBehavior("/auth/*", new origins.HttpOrigin(Fn.select(2, Fn.split("/", mediaApi.apiEndpoint))), {
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      responseHeadersPolicy,
     });
 
     const passwordParameterPrefix = "/panther/media-explorer/users";
