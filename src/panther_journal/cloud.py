@@ -428,11 +428,15 @@ def register(group):
     from panther_journal.games import game, player
     from panther_journal.recording import recording
     from panther_journal.recording_sync import sync
+    from panther_journal.editorial import editorial
+    from panther_journal.capture_audit import audit_command
 
     group.add_command(model)
     group.add_command(game)
     group.add_command(player)
     group.add_command(recording)
+    group.add_command(editorial)
     recording.add_command(sync)
+    recording.add_command(audit_command)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

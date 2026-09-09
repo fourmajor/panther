@@ -44,6 +44,27 @@ test("model jobs use retained on-demand state and a durable external-worker call
   template.resourceCountIs("AWS::EC2::Instance", 0);
 });
 
+test("editorial workflow has separate review stages, parallel adaptations, and no video execution", () => {
+  const template = mediaExplorerTemplate();
+  const machines = Object.entries(template.findResources("AWS::StepFunctions::StateMachine"))
+    .filter(([id]) => id.startsWith("EditorialProcessing"));
+  assert.equal(machines.length, 1);
+  const definition = JSON.stringify(machines);
+  for (const stage of ["corrected-transcript", "novel-developmental-edit", "novel-continuity",
+    "video-storyboards", "video-generation-packets", "video-preflight", "VideoGenerationNotAuthorized"]) {
+    assert.ok(definition.includes(stage), stage);
+  }
+  assert.match(definition, /Parallel/);
+  assert.match(definition, /lambda:invoke.waitForTaskToken/);
+  assert.doesNotMatch(definition, /bedrock:|sagemaker:|ecs:|GenerateVideo/);
+  const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("EditorialProcessing")));
+  assert.doesNotMatch(policies, /s3:PutObject|bedrock:|sagemaker:/);
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "POST /editorial-jobs", AuthorizationType: "JWT",
+  });
+});
+
 test("structured game catalog is retained, on-demand and cannot mutate artwork", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::Lambda::Function", {
@@ -171,7 +192,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 21);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 28);
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,

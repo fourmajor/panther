@@ -1,9 +1,11 @@
 # Local recording and player-attributed transcripts
 
-The first implementation is an explicit CLI workflow, not an automatic cloud job. Capture works
+Recording and recognition use the CLI. Capture works
 offline. Whisper.cpp and pyannote Community-1 run locally; no paid inference or audio uploads to
-model providers. Uploading to Panther is explicit (`--sync` during capture, or `recording sync`
-afterward). The web app browses
+model providers. Audio backup uses `--sync` during capture or `recording sync` afterward.
+Transcription now publishes the completed raw transcript and triggers the
+[editorial workflows](editorial-workflows.md) by default; use `--local-only` to defer publication.
+The web app browses
 uploaded files; it does not yet offer transcript editing or playback synchronized with speakers.
 
 ## Storage and identity
@@ -60,13 +62,15 @@ process; keep its terminal open. Ctrl+C finalizes the recording.
 ```sh
 panther recording start --game GAME_ID --session SESSION_ID --device 'EXACT MICROPHONE NAME' --sync
 panther recording transcribe RECORDING_DIR --model /private/path/ggml-small.bin --sole-player PLAYER_ID --blind
-panther recording upload RECORDING_DIR --transcript TRANSCRIPT_DIR
+panther recording audit RECORDING_DIR
 ```
 
 `--sole-player` is the user's declaration, not speaker recognition. Only use it if that person is
 the only speaker throughout. Read the transcript and listen to the original before calling it
 accurate. Recording device enumeration and public-audio smoke tests do not validate real microphone
 capture or game-night attribution. Capture logs remain private; check for dropped input or errors.
+The TONOR test reproduced missing input buffers in FFmpeg's macOS capture path; see the
+[capture investigation](audio-capture-investigation.md). An audit warning is not repaired audio.
 `recording recover` validates intact parts after an interruption, preserving a corrupt final part
 outside the recovered manifest with an explicit report. It does not repair that tail or establish
 that no sound was missed. Corruption of an already-checkpointed part is a hard error. No source
@@ -146,7 +150,7 @@ Use their normal table voice and seating. These introductions help map anonymous
 people; they are not permanent voiceprints or a guarantee of future recognition.
 
 ```sh
-panther recording transcribe RECORDING_DIR --model /private/path/ggml-small.bin
+panther recording transcribe RECORDING_DIR --model /private/path/ggml-small.bin --local-only
 panther recording diarize RECORDING_DIR --speakers NUMBER_ACTUALLY_PRESENT
 panther recording attribute TRANSCRIPT_DIR --diarization SPEAKER_RUN/diarization.json --mapping /private/path/speaker-map.json
 panther recording upload RECORDING_DIR --transcript ATTRIBUTED_TRANSCRIPT_DIR

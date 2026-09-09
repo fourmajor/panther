@@ -29,6 +29,7 @@ import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 import { ModelProcessing } from "./model-processing";
 import { GameCatalog } from "./game-catalog";
+import { EditorialProcessing } from "./editorial-processing";
 
 const MEDIA_USERS = ["stu", "other_stu"] as const;
 
@@ -310,6 +311,7 @@ export class PantherMediaExplorerStack extends Stack {
     );
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer });
+    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     for (const route of ["/objects", "/object-url", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,
