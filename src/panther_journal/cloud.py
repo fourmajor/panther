@@ -108,13 +108,12 @@ def remember(result, username, config, refresh_token=None):
 def token(config):
     session = saved_session()
     if not session or session.get("clientId") != config["clientId"]:
-        raise click.ClickException("Sign in first: panther login --username other_stu")
+        raise click.ClickException("Sign in first: panther login --username YOUR_USERNAME")
     if session["expiresAt"] <= time.time() + 60:
         try:
-            result = cognito(config).initiate_auth(
+            result = cognito(config).get_tokens_from_refresh_token(
                 ClientId=config["clientId"],
-                AuthFlow="REFRESH_TOKEN_AUTH",
-                AuthParameters={"REFRESH_TOKEN": session["refreshToken"]},
+                RefreshToken=session["refreshToken"],
             )["AuthenticationResult"]
             session = remember(result, session["username"], config, session["refreshToken"])
         except (BotoCoreError, ClientError, KeyError):

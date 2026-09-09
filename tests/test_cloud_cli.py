@@ -61,7 +61,22 @@ def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypa
             }
         }
 
-    client = SimpleNamespace(initiate_auth=initiate, revoke_token=lambda **_kwargs: None)
+    def refresh(**kwargs):
+        assert kwargs == {"ClientId": "test", "RefreshToken": "refresh"}
+        calls.append(kwargs)
+        return {
+            "AuthenticationResult": {
+                "IdToken": "rotated-id-token",
+                "RefreshToken": "rotated-refresh",
+                "ExpiresIn": 3600,
+            }
+        }
+
+    client = SimpleNamespace(
+        initiate_auth=initiate,
+        get_tokens_from_refresh_token=refresh,
+        revoke_token=lambda **_kwargs: None,
+    )
     monkeypatch.setattr(cloud, "cognito", lambda _config: client)
     result = CliRunner().invoke(
         main, ["login", "--username", "other_stu"], input="secret-password\n"
@@ -72,8 +87,9 @@ def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypa
     session = json.loads(store.value)
     session["expiresAt"] = time.time() - 10
     store.value = json.dumps(session)
-    assert cloud.token(config) == "secret-id-token"
-    assert calls[-1]["AuthFlow"] == "REFRESH_TOKEN_AUTH"
+    assert cloud.token(config) == "rotated-id-token"
+    assert calls[-1]["RefreshToken"] == "refresh"
+    assert json.loads(store.value)["refreshToken"] == "rotated-refresh"
     assert CliRunner().invoke(main, ["logout"]).exit_code == 0
     assert store.value is None
 

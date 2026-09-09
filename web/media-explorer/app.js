@@ -51,6 +51,66 @@ const state = {
   nextCursor: null,
   tokens: readTokens(),
 };
+let refreshingSession = null;
+let sessionEpoch = 0;
+const LOGOUT_MARKER = "panther.signed-out";
+
+function logoutPending() {
+  try { return localStorage.getItem(LOGOUT_MARKER) === "true"; } catch { return false; }
+}
+
+function markLogout(pending) {
+  try {
+    if (pending) localStorage.setItem(LOGOUT_MARKER, "true");
+    else localStorage.removeItem(LOGOUT_MARKER);
+  } catch { /* Private browsing may disable storage; HttpOnly cookie still works. */ }
+}
+
+function withSessionLock(action) {
+  // Serialize cookie rotation and logout across tabs where Web Locks is available.
+  return navigator.locks ? navigator.locks.request("panther-session", action) : action();
+}
+
+async function sessionRequest(path, body = {}) {
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST", credentials: "same-origin",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw new Error("Could not renew sign-in. Check your connection and try again.");
+  }
+  if (response.status === 401) {
+    clearSession();
+    showWelcome("Please sign in again.");
+    throw new Error("Session expired");
+  }
+  if (!response.ok) throw new Error("Sign-in service temporarily unavailable. Please retry.");
+  return response.json();
+}
+
+async function ensureSession({ force = false } = {}) {
+  if (logoutPending()) {
+    clearSession();
+    throw new Error("Signed out. Sign in to continue.");
+  }
+  if (!force && tokensAreCurrent(state.tokens) && !state.tokens.refresh_token) return;
+  if (refreshingSession) return refreshingSession;
+  const epoch = sessionEpoch;
+  refreshingSession = withSessionLock(async () => {
+    if (logoutPending() || epoch !== sessionEpoch) throw new Error("Session expired");
+    // Migrate old per-tab refresh credentials into the HttpOnly cookie once.
+    const legacy = state.tokens?.refresh_token;
+    const tokens = await sessionRequest(legacy ? "/auth/session" : "/auth/refresh",
+      legacy ? { refreshToken: legacy } : {});
+    if (epoch !== sessionEpoch || logoutPending()) throw new Error("Session expired");
+    if (!tokensAreCurrent(tokens)) throw new Error("Invalid sign-in response. Please retry.");
+    storeTokens(tokens);
+  }).finally(() => { refreshingSession = null; });
+  return refreshingSession;
+}
 
 function base64Url(bytes) {
   return btoa(String.fromCharCode(...bytes))
@@ -94,12 +154,21 @@ function tokensAreCurrent(tokens) {
 }
 
 function storeTokens(tokens) {
-  state.tokens = tokens;
-  sessionStorage.setItem("panther.tokens", JSON.stringify(tokens));
+  // Only the short-lived ID credential belongs in page-readable, per-tab storage.
+  state.tokens = { id_token: tokens.id_token };
+  sessionStorage.setItem("panther.tokens", JSON.stringify(state.tokens));
 }
 
 function clearSession() {
+  sessionEpoch += 1;
   state.tokens = null;
+  state.charactersLoaded = false;
+  state.mediaLoaded = false;
+  state.currentCharacter = null;
+  elements.characterModel.src = null;
+  elements.previewBody.replaceChildren();
+  if (elements.previewDialog.open) elements.previewDialog.close();
+  elements.username.textContent = "Signed out";
   sessionStorage.removeItem("panther.tokens");
   sessionStorage.removeItem("panther.oauth");
 }
@@ -137,27 +206,31 @@ async function completeLogin() {
     throw new Error("The sign-in response could not be verified. Please try again.");
   }
 
-  const body = new URLSearchParams({
-    client_id: config.clientId,
-    code,
-    code_verifier: saved.verifier,
-    grant_type: "authorization_code",
-    redirect_uri: config.redirectUri,
-  });
-  const response = await fetch(`${config.cognitoDomain}/oauth2/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!response.ok) throw new Error("Sign-in did not complete. Please try again.");
-
-  storeTokens(await response.json());
+  // Exchange the code server-side so the refresh credential never reaches JS.
+  const tokens = await withSessionLock(() => sessionRequest("/auth/session", {
+    code, codeVerifier: saved.verifier,
+  }));
+  if (!tokensAreCurrent(tokens)) throw new Error("Sign-in did not complete. Please try again.");
+  markLogout(false);
+  storeTokens(tokens);
   sessionStorage.removeItem("panther.oauth");
   window.history.replaceState({}, "", saved.returnPath || "/media");
 }
 
-function logout() {
+async function logout() {
+  markLogout(true);
   clearSession();
+  showWelcome("Signing out…");
+  try {
+    await withSessionLock(() => sessionRequest("/auth/logout"));
+  } catch (error) {
+    if (error.message !== "Session expired") {
+      showWelcome("Signed out locally. Could not revoke the remembered sign-in; reconnect and retry sign-out.");
+      elements.logout.hidden = false;
+      elements.account.hidden = false;
+      return;
+    }
+  }
   const parameters = new URLSearchParams({
     client_id: config.clientId,
     logout_uri: config.redirectUri,
@@ -166,14 +239,19 @@ function logout() {
 }
 
 async function api(path, parameters = {}) {
+  await ensureSession();
   const url = new URL(path, config.apiUrl);
   for (const [key, value] of Object.entries(parameters)) {
     if (value) url.searchParams.set(key, value);
   }
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     headers: { authorization: `Bearer ${state.tokens.id_token}` },
   });
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
+    await ensureSession({ force: true });
+    response = await fetch(url, { headers: { authorization: `Bearer ${state.tokens.id_token}` } });
+  }
+  if (response.status === 401) {
     clearSession();
     showWelcome("Your session has expired. Please sign in again.");
     throw new Error("Session expired");
@@ -409,7 +487,7 @@ function resetCharacterModel() {
 }
 
 async function renderRoute() {
-  if (!tokensAreCurrent(state.tokens)) return;
+  try { await ensureSession(); } catch (error) { showWelcome(error.message); return; }
   showApplicationChrome();
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
@@ -573,11 +651,22 @@ elements.primaryNav.addEventListener("click", (event) => {
   navigate(link.getAttribute("href"));
 });
 document.querySelector(".brand").addEventListener("click", (event) => {
-  if (!tokensAreCurrent(state.tokens)) return;
+  if (!state.tokens) return;
   event.preventDefault();
   navigate("/media");
 });
 window.addEventListener("popstate", renderRoute);
+window.addEventListener("storage", (event) => {
+  if (event.key === LOGOUT_MARKER && event.newValue === "true") {
+    clearSession();
+    showWelcome("Signed out.");
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.tokens) {
+    ensureSession().catch(error => showWelcome(error.message));
+  }
+});
 
 async function start() {
   if (!config?.apiUrl || !config?.clientId || !config?.cognitoDomain || !config?.redirectUri) {
@@ -586,15 +675,10 @@ async function start() {
   }
   try {
     await completeLogin();
-    if (!tokensAreCurrent(state.tokens)) {
-      clearSession();
-      showWelcome();
-      return;
-    }
+    await ensureSession();
     await renderRoute();
   } catch (error) {
-    clearSession();
-    window.history.replaceState({}, "", "/");
+    // Offline/5xx failures must not discard a valid remembered session or route.
     showWelcome(error.message);
   }
 }
