@@ -92,7 +92,8 @@ change a running release. No AWS credentials are used by the installed worker.
 .venv/bin/python ops/model-worker/install.py --repo "$PWD" --allow-unsandboxed-blender --start
 ```
 
-Omit `--start` to prepare without activating. The user-scoped service is
+Omit `--start` to prepare without activating. Its plist stays in the private state directory,
+outside macOS LaunchAgents, so it cannot auto-start at a later login. The user-scoped service is
 `place.panther.model-worker`; it processes at most one job every five minutes while logged in
 and awake. Docker must be running and Panther/Codex must be signed in. Missing prerequisites
 fail before claiming work. Private logs and job checkpoints are under the state directory.

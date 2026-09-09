@@ -32,6 +32,14 @@ def test_installer_requires_explicit_native_permission(tmp_path, monkeypatch):
     assert not (tmp_path / "state").exists()
 
 
+def test_preparation_cannot_autostart_at_next_login(tmp_path):
+    state, home = tmp_path / "private", tmp_path / "home"
+    assert installer.service_path(state, home, False) == state / f"{installer.LABEL}.plist"
+    assert installer.service_path(state, home, True) == (
+        home / "Library/LaunchAgents" / f"{installer.LABEL}.plist"
+    )
+
+
 def test_installer_refuses_unreviewed_branch_before_writing(tmp_path, monkeypatch):
     monkeypatch.setattr(installer.sys, "platform", "darwin")
     monkeypatch.setattr(installer, "output", lambda args: "codex/unmerged")
