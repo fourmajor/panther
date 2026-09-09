@@ -223,7 +223,7 @@ def process(config, root, claim):
     def heartbeat():
         nonlocal last_heartbeat
         if time.monotonic() - last_heartbeat >= 60:
-            cloud.api(config, "POST", "/editorial-jobs/heartbeat", body=lease)
+            cloud.api(config, "POST", "/editorial-jobs/heartbeat", json=lease)
             last_heartbeat = time.monotonic()
 
     heartbeat()
@@ -370,7 +370,7 @@ def process(config, root, claim):
     upload(config, readable, job, kind, category, sources, suffix)
     key = upload(config, output, job, kind, category, sources, suffix)
     heartbeat()
-    cloud.api(config, "POST", "/editorial-jobs/complete", body={**lease, "outputKey": key})
+    cloud.api(config, "POST", "/editorial-jobs/complete", json={**lease, "outputKey": key})
     return folder
 
 
@@ -390,7 +390,7 @@ def submit(game, raw_key):
                 cloud.configuration(),
                 "POST",
                 "/editorial-jobs",
-                body={"gameId": game, "rawKey": raw_key},
+                json={"gameId": game, "rawKey": raw_key},
             ),
             indent=2,
         )
@@ -432,7 +432,7 @@ def worker(work_dir, once):
     config = cloud.configuration()
     with lock(root, "worker.lock"):
         while True:
-            claim = cloud.api(config, "POST", "/editorial-jobs/claim", body={})
+            claim = cloud.api(config, "POST", "/editorial-jobs/claim", json={})
             if claim["task"]:
                 try:
                     click.echo(str(process(config, root, claim)))
@@ -441,7 +441,7 @@ def worker(work_dir, once):
                         config,
                         "POST",
                         "/editorial-jobs/defer",
-                        body={
+                        json={
                             "jobId": claim["job"]["jobId"],
                             "stage": claim["task"]["stage"],
                             "lease": claim["lease"],

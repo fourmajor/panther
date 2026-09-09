@@ -196,7 +196,7 @@ def test_raw_commit_happens_only_after_all_uploads_and_keeps_local_on_failure(
                 "transcript-test.json",
                 "transcript-test.md",
             ]
-            assert kwargs["body"]["rawKey"] == "transcript-test.json"
+            assert kwargs["json"]["rawKey"] == "transcript-test.json"
             raise click.ClickException("Simulated network outage")
         return {}
 
