@@ -242,6 +242,7 @@ export class PantherMediaExplorerStack extends Stack {
       environment: {
         ASSET_BUCKET_NAME: privateAssets.bucketName,
         SIGNED_URL_TTL_SECONDS: "300",
+        MODEL_PUBLISHERS: "stu,other_stu",
       },
     });
     mediaApiFunction.addToRolePolicy(
@@ -269,6 +270,17 @@ export class PantherMediaExplorerStack extends Stack {
       }),
     );
 
+    mediaApiFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:PutObject"],
+      resources: [privateAssets.arnForObjects("games/*/characters/*/history/*.json")],
+      conditions: { StringEquals: { "s3:if-none-match": "*" } },
+    }));
+    mediaApiFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:PutObject"],
+      resources: [privateAssets.arnForObjects("games/*/characters/*/profile.json")],
+      conditions: { Null: { "s3:if-match": "false" } },
+    }));
+
     const authorizer = new apigwv2Authorizers.HttpJwtAuthorizer(
       "CognitoAuthorizer",
       `https://cognito-idp.${this.region}.${this.urlSuffix}/${userPool.userPoolId}`,
@@ -289,7 +301,7 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
-    for (const route of ["/objects", "/object-url", "/characters", "/character"]) {
+    for (const route of ["/objects", "/object-url", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,
         methods: [apigwv2.HttpMethod.GET],
@@ -297,6 +309,12 @@ export class PantherMediaExplorerStack extends Stack {
         authorizer,
       });
     }
+    mediaApi.addRoutes({
+      path: "/character-model",
+      methods: [apigwv2.HttpMethod.PUT],
+      integration: mediaIntegration,
+      authorizer,
+    });
     mediaApi.addRoutes({
       path: "/uploads",
       methods: [apigwv2.HttpMethod.POST],

@@ -361,6 +361,69 @@ def info(key):
     click.echo(json.dumps(result, indent=2))
 
 
+@click.group()
+def character():
+    """Inspect characters and publish a tested web model without deleting history."""
+
+
+@character.command("list")
+def character_list():
+    """List characters as JSON."""
+    click.echo(json.dumps(api(configuration(), "GET", "/characters"), indent=2))
+
+
+@character.command("show")
+@click.option("--game", required=True)
+@click.option("--character", "character_id", required=True)
+def character_show(game, character_id):
+    """Show the profile and revision token, without signed URLs."""
+    click.echo(
+        json.dumps(
+            api(
+                configuration(),
+                "GET",
+                "/character-profile",
+                params={
+                    "gameId": slug(game),
+                    "characterId": slug(character_id),
+                },
+            ),
+            indent=2,
+        )
+    )
+
+
+@character.command("set-model")
+@click.option("--game", required=True)
+@click.option("--character", "character_id", required=True)
+@click.option(
+    "--web-key", required=True, help="Already uploaded, browser-tested GLB (at most 5 MiB)."
+)
+@click.option("--source-key", required=True, help="Already uploaded editable source model.")
+@click.option("--provenance-key", help="Already uploaded provenance document.")
+@click.option(
+    "--expected-revision",
+    required=True,
+    help="Exact revision from character show, including quotes.",
+)
+@click.option("--reason", required=True, help="Why this model is becoming the current model.")
+def character_set_model(
+    game, character_id, web_key, source_key, provenance_key, expected_revision, reason
+):
+    """Publish a model; preserve the portrait, previous profile, and all old assets."""
+    body = {
+        "gameId": slug(game),
+        "characterId": slug(character_id),
+        "webKey": web_key,
+        "sourceKey": source_key,
+        "expectedRevision": expected_revision,
+        "reason": reason,
+    }
+    if provenance_key:
+        body["provenanceKey"] = provenance_key
+    click.echo(json.dumps(api(configuration(), "PUT", "/character-model", json=body), indent=2))
+
+
 def register(group):
-    for command in (login, logout, upload, list_assets, info, instructions):
+    for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

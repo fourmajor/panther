@@ -1,6 +1,10 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 const path = require('node:path');
+const syntheticModel = require('./synthetic-model.cjs');
+// Optional local-only QA inside the owned Docker test environment. Never commit
+// a game model or upload this run's screenshots to GitHub.
+const localModel = process.env.PANTHER_TEST_MODEL_PATH && fs.readFileSync(process.env.PANTHER_TEST_MODEL_PATH);
 const { App } = require('aws-cdk-lib');
 const { Template } = require('aws-cdk-lib/assertions');
 const { PantherMediaExplorerStack, MODEL_VIEWER_BUNDLE_PATH } = require('../dist/lib/panther-media-explorer-stack');
@@ -14,13 +18,20 @@ const policy = Object.values(Template.fromStack(stack).findResources('AWS::Cloud
   .Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-  test(`portrait and 3D load control fit the viewer at ${viewport.width}px`, async ({ page }) => {
+  test(`published model loads, rotates, resets and preserves fallback at ${viewport.width}px`, async ({ page }, testInfo) => {
+    test.setTimeout(90000);
     await page.setViewportSize(viewport);
     const errors = [];
+    let version = 1;
+    let broken = false;
     page.on('pageerror', error => errors.push(error.message));
     const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Test', summary: 'Synthetic browser fixture, not game data.' };
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
-      json: { character, model: { url: 'https://test.s3.amazonaws.com/model.glb', size: 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
+      json: { character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
+      headers: { 'access-control-allow-origin': 'https://panther.place' },
+    }));
+    await page.route('https://test.s3.amazonaws.com/model-*.glb', route => route.fulfill({
+      status: broken ? 404 : 200, contentType: 'model/gltf-binary', body: broken ? Buffer.from('missing') : (localModel || syntheticModel(version)),
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/portrait.svg', route => route.fulfill({
@@ -50,5 +61,33 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     // overflow content into view and conceal the exact regression being tested.
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, { x: button.x + button.width / 2, y: button.y + button.height / 2 })).toBe('model-load');
     expect(errors).toEqual([]);
+    await page.locator('#model-load').click();
+    await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
+    await expect(page.locator('#model-reset')).toBeEnabled();
+    await expect(page.locator('#model-fallback')).toBeHidden();
+    // A new profile selection must request the new immutable URL after refresh.
+    version = 2;
+    await page.reload();
+    await page.locator('#character-model').scrollIntoViewIfNeeded();
+    await page.locator('#model-load').click();
+    await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => viewer.evaluate(el => el.src)).toMatch(/model-2\.glb$/);
+    const initial = await viewer.evaluate(el => el.getCameraOrbit().theta);
+    const area = await viewer.boundingBox();
+    await page.mouse.move(area.x + area.width * .6, area.y + area.height * .5);
+    await page.mouse.down();
+    await page.mouse.move(area.x + area.width * .3, area.y + area.height * .5, { steps: 20 });
+    await page.mouse.up();
+    await expect.poll(() => viewer.evaluate(el => el.getCameraOrbit().theta)).not.toBeCloseTo(initial, 1);
+    await testInfo.attach('rotated-model', { body: await viewer.screenshot(), contentType: 'image/png' });
+    await page.locator('#model-reset').click();
+    await expect.poll(() => viewer.evaluate(el => el.getCameraOrbit().theta)).toBeCloseTo(initial, 2);
+    expect(errors).toEqual([]);
+    broken = true; version = 3;
+    await page.reload();
+    await page.locator('#model-load').click();
+    await expect(page.locator('#model-fallback')).toBeVisible();
+    await expect(page.locator('#fallback-poster')).toBeVisible();
+    await expect(page.locator('#model-reset')).toBeDisabled();
   });
 }
