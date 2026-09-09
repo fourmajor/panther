@@ -1,6 +1,12 @@
 # ADR 0001: Audio Capture Strategy for Speaker-Attributed TTRPG Sessions
 
-Status: Accepted
+Status: Historical; superseded for the current single-microphone experiment
+
+Update (2026-09-09): The current plan tests one USB conference microphone, local Whisper.cpp,
+and local Community-1 diarization before deciding whether additional microphones are necessary.
+See [the current audio workflow](../local-audio.md). The old prices and attribution percentages
+below were not measured Panther results and must not be treated as validated estimates or current
+purchasing guidance. No paid cloud inference or standalone backup recorder is part of this test.
 
 Date: 2026-06-05
 

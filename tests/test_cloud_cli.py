@@ -44,6 +44,8 @@ def test_instructions_ship_with_cli():
     assert "sourceKeys" in result.output
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
+    assert "recording attribute" in result.output
+    assert "never infer identities" in result.output
     assert "original/<filename>" in result.output
     assert "also offer to extend the" in result.output
     assert "without direct AWS access" in result.output

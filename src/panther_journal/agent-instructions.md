@@ -55,6 +55,22 @@ game's canon. Transcripts use player IDs; character speech versus table talk is 
 
 ## Asset object organization
 
+### Session audio and transcripts
+
+Use `panther recording --help` for local FLAC capture/import, transcription, speaker detection,
+attribution, and explicit upload. Obtain recording consent and readiness before opening a microphone.
+Retain source audio, checksums, and all transcript versions outside Git. Never delete the user's
+WAV original after conversion without permission. Upload uses the existing immutable asset layout:
+one recording asset with ordered FLAC parts, its manifest, and uniquely named transcript versions.
+Generated transcripts are `unclassified` and unreviewed, not automatically canonical sources.
+
+`--sole-player` is a user declaration valid only for a genuinely single-person recording. For groups,
+use local `recording diarize` and a confirmed anonymous-speaker-label to player-ID map with
+`recording attribute`. Confirm names by listening to introductions; never infer identities from
+character dialogue, cluster numbering, or another run. Unknown and overlapping speech stays
+unassigned. Keep table chatter and mark speech context separately. Preserve every earlier version.
+See `docs/local-audio.md` for setup, consent, evaluation, and current conservative alignment limits.
+
 Uploads go to `games/<game-id>/assets/<asset-id>/original/<filename>` in private storage.
 Use lowercase hyphen-separated IDs, e.g. `harbor-map` or `captain-portrait`. An asset ID groups
 closely related files, not every file in a whole campaign. Preserve the original filename when useful.
