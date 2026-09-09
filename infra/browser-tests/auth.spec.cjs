@@ -19,7 +19,7 @@ async function fixture(context, { remembered = true } = {}) {
   const state = { refreshes: 0, exchanges: [], revocations: 0, failure: 0, apiFailureOnce: false, apiTokens: [] };
   if (remembered) await context.addCookies([{ name: COOKIE, value: 'synthetic-cookie', domain: 'panther.place', path: '/', httpOnly: true, secure: true, sameSite: 'Strict', expires: Math.floor(Date.now()/1000) + 34560000 }]);
   await context.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
-    state.apiTokens.push(route.request().headers().authorization);
+    state.apiTokens.push((await route.request().allHeaders()).authorization);
     if (state.apiFailureOnce) {
       state.apiFailureOnce = false;
       return route.fulfill({ status: 401, json: {}, headers: { 'access-control-allow-origin': 'https://panther.place' } });
@@ -30,7 +30,7 @@ async function fixture(context, { remembered = true } = {}) {
   await context.route('https://panther.place/**', async route => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname.startsWith('/auth/')) {
-      const headers = route.request().headers();
+      const headers = await route.request().allHeaders();
       expect(route.request().method()).toBe('POST');
       expect(headers.origin).toBe('https://panther.place');
       expect(headers['content-type']).toBe('application/json');
