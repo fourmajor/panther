@@ -524,7 +524,7 @@ def upload_recording(folder, transcript, editorial=True):
             config,
             "POST",
             "/editorial-jobs",
-            body={"gameId": record.gameId, "rawKey": transcript_keys[0]},
+            json={"gameId": record.gameId, "rawKey": transcript_keys[0]},
         )
     click.echo(
         json.dumps(

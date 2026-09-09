@@ -243,10 +243,20 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
         if route == "/editorial-context":
             return {"items": [], "cursor": None}
         if route.endswith("complete"):
-            completed.append(kwargs["body"])
+            completed.append(kwargs["json"])
         return {"ok": True}
 
-    monkeypatch.setattr(worker.cloud, "api", api)
+    # Exercise cloud.api and Requests' real forwarding boundary, not just a permissive API mock.
+    from types import SimpleNamespace
+    from urllib.parse import urlparse
+    import requests
+
+    def transport(self, method, url, *, headers, timeout, allow_redirects, json=None, params=None):
+        result = api({}, method, urlparse(url).path, json=json, params=params)
+        return SimpleNamespace(status_code=200, json=lambda: result)
+
+    monkeypatch.setattr(requests.Session, "request", transport)
+    monkeypatch.setattr(worker.cloud, "token", lambda config: "synthetic-test-token")
     monkeypatch.setattr(
         worker, "fetch", lambda config, ref, *args: copy.deepcopy(storage[ref["key"]])
     )
@@ -297,7 +307,7 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
     artifacts = {}
     for stage in STAGES:
         worker.process(
-            {},
+            {"apiUrl": "https://synthetic.invalid"},
             tmp_path,
             {
                 "job": job,
