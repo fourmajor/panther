@@ -33,8 +33,25 @@ Future workflows require a new version instead of silently changing an execution
 
 The versioned plan is bundled in the CLI and used by CDK. Every row below is one or more named
 Step Functions callback states, not one giant prompt. Each stage gets a fresh AI session and saves
-JSON provenance plus a readable Markdown artifact. Only passed correction review unlocks the two
-independent adaptation branches. A failed review stops publication/advancement; it is not approval.
+JSON provenance plus a readable Markdown artifact. Version 2 resolves routine editorial uncertainty
+autonomously. Rejection triggers actual revision and fresh review, not a human approval request.
+The corrected transcript then unlocks the two independent adaptation branches.
+
+Each stage has at most three rounds. Transcript-review failures rerun the correction specialist
+against the immutable raw text; chapter-review failures rerun the proof/revision specialist on the
+actual manuscript. Each revised candidate is reviewed again. Generic stages revise their own output
+using feedback. All outputs preserve a structured decision ledger and revision history. After three
+rounds, a structurally valid working draft continues as `accepted-with-notes`, without pretending its
+review `passed`. Transcript disagreement instead preserves raw wording, with explicit uncertainty.
+Invalid structures, citations, or locked shot sequences cannot be accepted. They retry later when no
+valid candidate exists. Credentials, subscription limits and infrastructure failures remain real
+operational constraints, not editorial decisions. No routine ambiguity requires owner approval.
+
+`publicationStatus` is distinct from the review's honest `passed` result. Every artifact remains
+AI-reviewed/unverified, never automatically canonical. Readers can request corrections later; retain
+the originals and publish new versions. Version-aware leases keep old workers from claiming new jobs.
+Resubmit the same raw key after a workflow-version upgrade to create a separate run while preserving
+the old execution and artifacts. Previously failed v1 runs are not silently mutated or restarted.
 
 | Branch | Ordered artifacts |
 | --- | --- |
@@ -125,6 +142,9 @@ professional practice, not certification that an AI produces publishable work.
 
 Each AI stage is fresh, structured and least-privilege, following
 [Codex non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
+The autonomous revision prompts also apply [OpenAI's model guidance](https://developers.openai.com/api/docs/guides/latest-model)
+on explicit initiative and concrete verification. Panther enforces bounded loops and source guards
+in code; prompting alone is not a guarantee of correctness.
 Shell, apps, web, multi-agent and image tools are disabled. Trusted Python performs downloads,
 validation and uploads. Codex uses the existing ChatGPT login, never API keys or a paid fallback.
 AI inference still occurs at OpenAI under the subscription; the worker and artifact processing are

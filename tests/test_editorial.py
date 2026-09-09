@@ -55,7 +55,9 @@ def queued(m, stage="context"):
         {"operation": "dispatch", "jobId": job["jobId"], "stage": stage, "taskToken": "PRIVATE"},
         None,
     )
-    return job, unpack(request(m, "POST /editorial-jobs/claim"))
+    return job, unpack(
+        request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]})
+    )
 
 
 def test_submission_is_idempotent_and_rejects_adaptation_and_cross_game(editorial):
@@ -93,7 +95,9 @@ def test_complete_only_same_run_checked_artifact_and_no_video_authorization(edit
     envelope = {
         "jobId": job["jobId"],
         "stage": "context",
-        "workflowVersion": 1,
+        "workflowVersion": PLAN["version"],
+        "publicationStatus": "accepted",
+        "structuralValidation": "passed",
         "passed": True,
         "videoGenerationAuthorized": True,
     }
@@ -292,6 +296,7 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
             "markdown": "Synthetic manuscript",
             "evidenceIds": ["raw", "catalog"],
             "uncertainties": [],
+            "decisions": [],
             "selectedKeys": [],
             "shots": [],
             "edits": [],
@@ -345,3 +350,191 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
         is False
     )
     assert all(storage[f"{stage}.json"]["videoGenerationAuthorized"] is False for stage in STAGES)
+    assert all(storage[f"{stage}.json"]["publicationStatus"] == "accepted" for stage in STAGES)
+
+
+def report(**changes):
+    return {
+        "passed": True,
+        "title": "Synthetic",
+        "markdown": "Working text",
+        "evidenceIds": ["raw"],
+        "uncertainties": [],
+        "decisions": [],
+        "selectedKeys": [],
+        "shots": [],
+        "edits": [],
+        **changes,
+    }
+
+
+def test_review_revises_actual_transcript_and_preserves_history(tmp_path, monkeypatch):
+    original = raw()
+    original["segments"].append({**original["segments"][0], "start": 3, "end": 4})
+    edit = {
+        "segmentIndex": 0,
+        "before": original["segments"][0]["text"],
+        "after": "Ask Captain Cade. I have 13 left.",
+        "reason": "Roster spelling",
+        "evidenceIds": ["catalog"],
+    }
+    proposal = report(edits=[edit])
+    initial = apply_corrections(original, proposal, {"catalog"})
+    calls = []
+
+    def ai(folder, stage, inputs, heartbeat):
+        calls.append(stage)
+        if stage == "correction":
+            assert inputs["revisionFeedback"]["review"]["passed"] is False
+            return report(edits=[edit, {**edit, "segmentIndex": 1}])
+        consistent = all("Cade" in s["text"] for s in inputs["candidate"]["segments"])
+        return report(
+            passed=consistent, markdown="Fix all occurrences" if not consistent else "Consistent"
+        )
+
+    monkeypatch.setattr(worker, "agent", ai)
+    result, candidate, history, status = worker.autonomous_stage(
+        tmp_path,
+        "corrected-transcript",
+        {
+            "raw": original,
+            "context": {"catalog": {}},
+            "candidate": initial,
+            "priorStages": {"correction": proposal},
+        },
+        lambda: None,
+    )
+    assert calls == ["corrected-transcript", "correction", "corrected-transcript"]
+    assert result["passed"] and status == "accepted"
+    assert history[0]["result"]["passed"] is False
+    assert all("Cade" in s["text"] for s in candidate["segments"])
+    assert all("Kade" in s["text"] for s in original["segments"])
+
+
+def test_chapter_review_revises_manuscript_not_just_pass_flag(tmp_path, monkeypatch):
+    seen = []
+
+    def ai(folder, stage, inputs, heartbeat):
+        if stage == "novel-proof":
+            return report(markdown="Revised complete chapter")
+        seen.append(inputs["candidate"])
+        return report(passed=inputs["candidate"].startswith("Revised"))
+
+    monkeypatch.setattr(worker, "agent", ai)
+    result, candidate, history, status = worker.autonomous_stage(
+        tmp_path,
+        "novel-chapter",
+        {
+            "raw": raw(),
+            "context": {"catalog": {}},
+            "candidate": "Original chapter",
+            "priorStages": {},
+        },
+        lambda: None,
+    )
+    assert seen == ["Original chapter", "Revised complete chapter"]
+    assert candidate == "Revised complete chapter" and status == "accepted"
+    assert len(history) == 3
+
+
+@pytest.mark.parametrize(
+    "stage", ["correction", "corrected-transcript", "novel-chapter", "video-preflight"]
+)
+def test_persistent_disagreement_continues_honestly_with_notes(tmp_path, monkeypatch, stage):
+    monkeypatch.setattr(
+        worker, "agent", lambda *args: report(passed=False, markdown="Needs improvement")
+    )
+    original = raw()
+    result, candidate, history, status = worker.autonomous_stage(
+        tmp_path,
+        stage,
+        {
+            "raw": original,
+            "context": {"catalog": {}},
+            "candidate": original if stage == "corrected-transcript" else "Chapter",
+            "priorStages": {},
+        },
+        lambda: None,
+    )
+    assert status == "accepted-with-notes" and not result["passed"]
+    assert len(history) == (5 if stage in {"corrected-transcript", "novel-chapter"} else 3)
+    if stage in {"correction", "corrected-transcript"}:
+        assert candidate["segments"] == original["segments"]
+        assert not candidate["corrections"]
+
+
+def test_invalid_ai_edits_cannot_escape_guards(tmp_path, monkeypatch):
+    original = raw()
+    invalid = report(
+        edits=[
+            {
+                "segmentIndex": 0,
+                "before": original["segments"][0]["text"],
+                "after": "Ask Captain Cade. I have 30 left.",
+                "reason": "Guess",
+                "evidenceIds": ["catalog"],
+            }
+        ]
+    )
+    monkeypatch.setattr(worker, "agent", lambda *args: invalid)
+    result, _, history, status = worker.autonomous_stage(
+        tmp_path,
+        "correction",
+        {"raw": original, "context": {"catalog": {}}, "priorStages": {}},
+        lambda: None,
+    )
+    assert result["edits"] == [] and status == "accepted-with-notes"
+    assert all("Numerical" in h["validationError"] for h in history)
+
+
+def test_invalid_output_defers_automatically_instead_of_accepting(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "agent", lambda *args: report(evidenceIds=["invented-source"]))
+    with pytest.raises(worker.local.Deferred):
+        worker.autonomous_stage(
+            tmp_path, "novel-draft", {"raw": raw(), "priorStages": {}}, lambda: None
+        )
+
+
+def test_context_schema_does_not_constrain_other_string_fields():
+    import jsonschema
+
+    schema = worker.stage_schema("context", {"candidates": []})
+    jsonschema.validate(
+        report(evidenceIds=["raw", "catalog"], uncertainties=["Ambiguous name"]), schema
+    )
+
+
+def test_old_worker_cannot_claim_new_workflow(editorial):
+    job, claimed = queued(editorial)
+    lease = {"jobId": job["jobId"], "stage": "context", "lease": claimed["lease"]}
+    unpack(request(editorial, "POST /editorial-jobs/defer", lease))
+    editorial.table.update_item(
+        Key={"pk": "TASKS", "sk": f"{job['jobId']}:context"},
+        UpdateExpression="SET notBefore = :zero",
+        ExpressionAttributeValues={":zero": 0},
+    )
+    assert unpack(request(editorial, "POST /editorial-jobs/claim"))["task"] is None
+    assert unpack(
+        request(editorial, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]})
+    )["task"]
+
+
+def test_cloud_accepts_notes_without_falsifying_review(editorial):
+    job, claim = queued(editorial)
+    key = f"games/test-game/assets/editorial-{job['jobId'][:32]}-notes/original/context.json"
+    envelope = {
+        "jobId": job["jobId"],
+        "stage": "context",
+        "workflowVersion": PLAN["version"],
+        "passed": False,
+        "publicationStatus": "accepted",
+        "structuralValidation": "passed",
+        "videoGenerationAuthorized": False,
+    }
+    body = {"jobId": job["jobId"], "stage": "context", "lease": claim["lease"], "outputKey": key}
+    put(editorial, key, json.dumps(envelope).encode(), "application/json")
+    assert request(editorial, "POST /editorial-jobs/complete", body)["statusCode"] == 400
+    envelope["publicationStatus"] = "accepted-with-notes"
+    put(editorial, key, json.dumps(envelope).encode(), "application/json")
+    assert unpack(request(editorial, "POST /editorial-jobs/complete", body))["ok"]
+    assert editorial.read("TASKS", f"{job['jobId']}:context")["status"] == "DONE"
