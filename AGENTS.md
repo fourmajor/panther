@@ -102,6 +102,10 @@
 
 ## Cost posture
 
+- Model-workflow AI runs through Codex CLI on the owner's laptop using ChatGPT subscription
+  authentication. Never introduce API-key inference, paid generation providers, automatic credit
+  purchases, or usage-reset redemption as a fallback. Pause/checkpoint on limits. AWS coordinates
+  jobs and stores data; the agent and Blender run locally, while OpenAI hosts the model inference.
 - Prefer architectures with near-zero compute cost while Panther is inactive.
 - Avoid always-on infrastructure such as NAT Gateways, EC2 instances, load balancers, conventional
   provisioned databases, and persistent hosted CI runners unless explicitly justified and approved.

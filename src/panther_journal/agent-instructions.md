@@ -52,6 +52,34 @@ Arbitrary profile editing is not supported. Do not work around limits with direc
 
 ## Publishing a character model
 
+### Automatic generation from turnaround references
+
+Use `panther model references MANIFEST.json` to commit a complete, typed reference revision.
+This commit is the automatic generation trigger; ordinary image uploads do not start jobs.
+The private manifest has `kind: character-turnaround`, `gameId`, `characterId`, `appearanceId`,
+`revisionId`, `expectedRevision` from `panther character show`, and `views` mapping these exact
+labels to eight distinct immutable uploaded image keys: `front`, `front-right`, `right`,
+`back-right`, `back`, `back-left`, `left`, `front-left`. Use PNG, JPEG, or WebP, at most 8 MiB
+per view, uploaded with Panther's SHA-256 checksum. Upload reference images with kind
+`character-turnaround-view`, character associations, and the view label in `extra` when possible.
+Do not infer view labels from filenames without inspecting images. A contact sheet must be
+prepared as eight separately labeled images before registering it. Keep manifests outside Git.
+
+Register only a coherent set depicting the intended current appearance. Until appearance
+timelines are implemented, an existing profile without an appearance ID uses `original`;
+alternate or hypothetical appearances must not replace it. A revision commits exact inputs
+and triggers once; new images use new immutable keys and a new revision ID. Repeating the same
+commit is idempotent. Preserve previous reference sets. Use `panther model jobs` to inspect work.
+
+The owner-authorized local worker uses Codex CLI with ChatGPT subscription auth, native Blender,
+fresh-import checks, private self-hosted browser QA, and an independent visual review. No AWS
+credentials are needed for game operations. Never fall back to API keys, paid providers, credit
+purchases, or usage resets. Limits pause/checkpoint work. Routine human quality review is not
+required; failed candidates remain unpublished and a newer reference set supersedes older jobs.
+The full operational instructions are in `docs/local-model-workflow.md` in the trusted repository.
+
+### Selecting an already-created model
+
 1. Use `panther character list` to discover IDs, then `panther character show --game GAME_ID
    --character CHARACTER_ID` to inspect the current profile and its exact `revision` token.
 2. Retain and upload the editable source and a separate, tested GLB (at most 5 MiB), using new

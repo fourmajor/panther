@@ -20,6 +20,30 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("model jobs use retained on-demand state and a durable external-worker callback", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResource("AWS::DynamoDB::Table", {
+    DeletionPolicy: "Retain",
+    Properties: Match.objectLike({ BillingMode: "PAY_PER_REQUEST",
+      StreamSpecification: { StreamViewType: "NEW_AND_OLD_IMAGES" } }),
+  });
+  template.hasResourceProperties("AWS::StepFunctions::StateMachine", {
+    StateMachineType: "STANDARD", DefinitionString: Match.anyValue(),
+  });
+  const definition = JSON.stringify(template.findResources("AWS::StepFunctions::StateMachine"));
+  assert.match(definition, /lambda:invoke.waitForTaskToken/);
+  assert.match(definition, /2592000/);
+  template.hasResourceProperties("AWS::Lambda::EventSourceMapping", {
+    StartingPosition: "TRIM_HORIZON", FunctionResponseTypes: ["ReportBatchItemFailures"],
+    BisectBatchOnFunctionError: true,
+  });
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler: "model_jobs.handler", Environment: { Variables: Match.objectLike({ MODEL_WORKERS: "stu" }) },
+  });
+  template.resourceCountIs("AWS::EC2::NatGateway", 0);
+  template.resourceCountIs("AWS::EC2::Instance", 0);
+});
+
 test("media explorer uses private static hosting and Cognito authentication", () => {
   const template = mediaExplorerTemplate();
 
@@ -129,7 +153,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 10);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 16);
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,

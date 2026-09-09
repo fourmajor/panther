@@ -5,6 +5,9 @@ const syntheticModel = require('./synthetic-model.cjs');
 // Optional local-only QA inside the owned Docker test environment. Never commit
 // a game model or upload this run's screenshots to GitHub.
 const localModel = process.env.PANTHER_TEST_MODEL_PATH && fs.readFileSync(process.env.PANTHER_TEST_MODEL_PATH);
+if (localModel && (localModel.length > 5 * 1024 * 1024 || localModel.toString('ascii', 0, 4) !== 'glTF')) {
+  throw new Error('Private workflow candidate must be a GLB within the viewer size budget');
+}
 const { App } = require('aws-cdk-lib');
 const { Template } = require('aws-cdk-lib/assertions');
 const { PantherMediaExplorerStack, MODEL_VIEWER_BUNDLE_PATH } = require('../dist/lib/panther-media-explorer-stack');
@@ -27,7 +30,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     page.on('pageerror', error => errors.push(error.message));
     const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Test', summary: 'Synthetic browser fixture, not game data.' };
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
-      json: { character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
+      json: { character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: localModel ? localModel.length : 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/model-*.glb', route => route.fulfill({
@@ -63,6 +66,10 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     expect(errors).toEqual([]);
     await page.locator('#model-load').click();
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
+    const dimensions = await viewer.evaluate(el => {
+      const d = el.getDimensions(); return [d.x, d.y, d.z];
+    });
+    expect(dimensions.every(value => Number.isFinite(value) && value > 0)).toBe(true);
     await expect(page.locator('#model-reset')).toBeEnabled();
     await expect(page.locator('#model-fallback')).toBeHidden();
     // A new profile selection must request the new immutable URL after refresh.

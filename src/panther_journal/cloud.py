@@ -424,5 +424,8 @@ def character_set_model(
 
 
 def register(group):
+    from panther_journal.model_workflow import model
+
+    group.add_command(model)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)
