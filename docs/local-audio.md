@@ -13,6 +13,11 @@ uploaded files; it does not yet offer transcript editing or playback synchronize
 - Preserve captured audio as lossless FLAC at the input sample rate and channel count, in ordered
   30-second parts by default. The recording manifest records exact checksums, lengths, format,
   and offsets from decoded sample counts, not potentially incomplete FLAC duration headers.
+- Capture uses native PortAudio/Core Audio, not FFmpeg's AVFoundation input. A preallocated,
+  bounded native queue separates the real-time microphone callback from disk I/O; Python and
+  lossless encoding never run on that callback. Overflow, underflow, timestamp discontinuity,
+  queue exhaustion, device stalls and write failures stop with an explicit error, retaining
+  the sound already captured. Nothing pads missing sound or silently switches microphones.
 - Capture encodes 24-bit integer PCM. This is not a bit-perfect archive of hypothetical floating
   point or 32-bit source input. The initial USB microphone test is ordinary integer PCM speech.
   Active capture writes PCM WAV chunks under `capture-pcm/`; each closed chunk is independently
@@ -32,7 +37,12 @@ uploaded files; it does not yet offer transcript editing or playback synchronize
 
 ## Setup on the owner's Mac
 
-Install FFmpeg, FLAC, and whisper.cpp using Homebrew. Supply a real local Whisper model to
+Install PortAudio, pkg-config, FFmpeg, FLAC, and whisper.cpp using Homebrew, plus Apple's command-line
+developer tools (for `clang`). Panther compiles its bundled C recorder once into a source-hash-named
+private cache under `~/Library/Application Support/Panther/audio-capture`. Device discovery and
+capture both use exact Core Audio input names; ambiguous/missing names fail without a default fallback.
+Compilation does not open the microphone. No Python audio package or cloud service is required.
+Supply a real local Whisper model to
 `--model`; test-weight placeholders are not transcription models. The small multilingual model
 is a starting point, not a guarantee of accuracy for fictional names or overlapping speech.
 
@@ -69,12 +79,14 @@ panther recording audit RECORDING_DIR
 the only speaker throughout. Read the transcript and listen to the original before calling it
 accurate. Recording device enumeration and public-audio smoke tests do not validate real microphone
 capture or game-night attribution. Capture logs remain private; check for dropped input or errors.
-The TONOR test reproduced missing input buffers in FFmpeg's macOS capture path; see the
-[capture investigation](audio-capture-investigation.md). An audit warning is not repaired audio.
+The old TONOR test reproduced missing input buffers in FFmpeg's macOS capture path; the native
+replacement avoids that path. See the [capture investigation](audio-capture-investigation.md).
+An audit warning is not repaired audio. New capture health reports retain callback continuity,
+sample counts, queue high-water mark and explicit error codes; they accompany final cloud backups.
 `recording recover` validates intact parts after an interruption, preserving a corrupt final part
 outside the recovered manifest with an explicit report. It does not repair that tail or establish
 that no sound was missed. Corruption of an already-checkpointed part is a hard error. No source
-file is automatically deleted. A controller-pipe watchdog closes FFmpeg if its controller dies;
+file is automatically deleted. A controller-pipe watchdog closes the native recorder if its controller dies;
 capture/recovery locks also remain held by the writer until it exits.
 
 ## Crash resilience and background sync
@@ -83,7 +95,11 @@ Audio streams to the local filesystem continuously. `--chunk-seconds` accepts 10
 default 30. Closed PCM chunks are independently FLAC-encoded, decoded/validated, flushed with
 `fsync` (plus macOS `F_FULLFSYNC`),
 and described by atomically published immutable JSON checkpoints. A growing filename or stable
-file size is not treated as proof of completion: only closed entries in FFmpeg's journal qualify.
+file size is not treated as proof of completion: only closed entries in the capture journal qualify.
+Native active WAV headers are updated as samples arrive, and files are durably flushed roughly
+once a second and at chunk boundaries. The native callback never waits for those writes. Its queue
+holds 128 buffers (up to 8,192 frames each; approximately 3 MiB per channel). A full queue is an error,
+not permission to discard unreported sound. A forced kill can still leave an incomplete tail.
 
 `--sync` starts a separate local uploader, checking about every 30 seconds. It uploads only
 completed audio and checkpoints through Panther's existing authenticated, checksum-protected,

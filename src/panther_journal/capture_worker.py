@@ -1,4 +1,4 @@
-"""Close FFmpeg cleanly if the recording controller quits, crashes, or closes its pipe."""
+"""Close the native recorder if the controller quits, crashes, or closes its pipe."""
 
 import json
 import select

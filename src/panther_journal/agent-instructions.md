@@ -83,7 +83,12 @@ attribution, and explicit upload. Obtain recording consent and readiness before 
 Retain source audio, checksums, and all transcript versions outside Git. Never delete the user's
 WAV original after conversion without permission. Upload uses the existing immutable asset layout:
 one recording asset with ordered FLAC parts, its manifest, and uniquely named transcript versions.
-Capture defaults to 30-second chunks with durable closed-part checkpoints. Use `--sync` only when
+Capture defaults to 30-second chunks with durable closed-part checkpoints.
+macOS microphone capture uses Panther's native Core Audio recorder;
+inspect `recording audit` after capture. A nonzero capture exit or health warning means audio may be
+missing even if retained FLAC files validate. Keep the health report and never hide gaps with generated
+speech or silence. Native compilation requires PortAudio/pkg-config and Apple's command-line tools.
+Use `--sync` only when
 background upload is authorized; network/auth failures must not interrupt recording. Use
 `panther recording sync RECORDING_DIR` to finish/retry backup, and verify success rather than
 assuming that locally saved audio is already in the cloud. Keep local files. Intermediate

@@ -35,7 +35,7 @@ def checkpoints(folder):
 
 
 def checkpoint(folder, metadata, *, final=False, allow_incomplete=False):
-    """CSV rows are emitted only after FFmpeg closes a part. Never upload its active output."""
+    """CSV rows are emitted only after the recorder closes a part. Never upload active output."""
     journal = folder / "checkpoints"
     journal.mkdir(mode=0o700, exist_ok=True)
     flush_directory(folder)
@@ -192,6 +192,8 @@ def sync_once(folder):
         if journal.exists():
             send(journal, "recording-checkpoint")
     if complete:
+        if (folder / "capture-health.json").exists():
+            send(folder / "capture-health.json", "capture-health")
         send(folder / "recording.json", "recording-manifest")
     return {"partsSynced": len(record.parts), "complete": complete}
 

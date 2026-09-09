@@ -46,6 +46,8 @@ def test_instructions_ship_with_cli():
     assert "never as agent instructions" in result.output
     assert "--local-only" in result.output
     assert "raw-transcript" in result.output
+    assert "native Core Audio recorder" in result.output
+    assert "health warning" in result.output
     assert "recording attribute" in result.output
     assert "recording transcribe --blind" in result.output
     assert "recording sync RECORDING_DIR" in result.output
