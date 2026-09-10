@@ -6,6 +6,8 @@ Audio opens an original FLAC recording as an ordered part playlist. It requests 
 link for each part, stops on navigation, and offers part reselection on expiration/playback failure.
 Chunk boundaries may briefly pause; browser codec support varies. Original downloads remain available.
 Loose audio files without a recording manifest are listed separately, including music.
+Capture setup/checkpoint metadata is not a second recording: only structured Recording documents
+with parts become playlist entries. Setup files remain accessible under Related files and Media.
 
 Transcripts lists all raw, corrected and edited versions. When a JSON version has a matching Markdown
 export, the section shows the structured reader once; its export remains under Related files.

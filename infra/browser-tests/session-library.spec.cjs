@@ -13,11 +13,12 @@ const flac=Buffer.from('ZkxhQwAAACICQAJAAAAAAASVAfQA8AAAAAAAAAAAAAAAAAAAAAAAAAAA
 const assets=[
   [part,'recording',[], 'audio/flac'],[part2,'recording',[],'audio/flac'],
   [recording,'recording-manifest',[part,part2],'application/json'],
+  [recording.replace('recording.json','capture.json'),'recording-manifest',[],'application/json'],
   [raw,'raw-transcript',[recording],'application/json'],
   [raw.replace('.json','.md'),'raw-transcript',[recording],'text/markdown'],
   [corrected,'corrected-transcript',[raw],'application/json'],
   [video,'video-comparison',[corrected],'video/mp4'],
-].map(([key,kind,sourceKeys,contentType])=>({key,kind,sourceKeys,contentType,name:key.split('/').at(-1),size:100,lastModified:'2026-01-01T12:00:00Z',metadata:{title:kind,sessionId:'session-one'}}));
+].map(([key,kind,sourceKeys,contentType])=>({key,kind,sourceKeys,contentType,recording:key===recording?{partCount:2,status:'interrupted'}:undefined,name:key.split('/').at(-1),size:100,lastModified:'2026-01-01T12:00:00Z',metadata:{title:kind,sessionId:'session-one'}}));
 
 async function fixture(page) {
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'stu'}))+'.test'})));
@@ -118,7 +119,8 @@ test('original FLAC decodes, plays, advances to the next part and stops on close
   await expect(page.locator('#preview-body [role="status"]')).toContainText('Part 2 of 2');
   await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeGreaterThan(0);
   await page.evaluate(()=>{window.testAudio=document.querySelector('audio');});
-  await page.getByRole('button',{name:'Close preview'}).click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#preview-dialog')).not.toBeVisible();
   expect(await page.evaluate(()=>window.testAudio.paused)).toBe(true);
 });
 
