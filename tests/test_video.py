@@ -303,6 +303,54 @@ def test_unknown_pricing_units_block_inference(monkeypatch):
         fal.price("veo-3.1-fast")
 
 
+@pytest.mark.parametrize("unit", ["seconds", "tokens", "1000 tokens"])
+def test_seedance_requires_exact_token_unit(monkeypatch, unit):
+    fal = object.__new__(v.Fal)
+    monkeypatch.setattr(fal, "request", lambda *a, **k: {"prices": [{
+        "endpoint_id": v.PROFILES["seedance-2.0"]["endpoint"],
+        "unit": unit, "currency": "USD", "unit_price": "0.014",
+    }]})
+    if unit == "1000 tokens":
+        assert fal.price("seedance-2.0") == Decimal("0.014")
+    else:
+        with pytest.raises(click.ClickException, match="billing units"):
+            fal.price("seedance-2.0")
+
+
+def test_seedance_token_quote_fixed_payload_and_durable_budget(setup):
+    fal = setup
+    fal.rate = Decimal("0.014")
+    quote = v.quote(fal, "seedance-2.0")
+    assert quote["estimatedTokens"] == 172800
+    assert quote["conservativeEstimateUsd"] == "2.4272"
+    assert quote["reserveCents"] == 304
+    assert quote["unit"] == "1000 tokens"
+    value = manifest()
+    value["shots"][0].update(model="seedance-2.0", maxAttempts=1)
+    plan = v.prepare(value, fal)["planId"]
+    result = CliRunner().invoke(main, ["video", "approve", plan,
+                                      "--models-and-rights-approved", "--auto-topup-disabled"])
+    assert result.exit_code == 0
+    fal.rate = Decimal("0.02")
+    with pytest.raises(click.ClickException, match="Pricing increased"):
+        v.submit(plan, "scene-veo", 1, "", fal)
+    assert not fal.posts
+    fal.rate = Decimal("0.014")
+    attempt = v.submit(plan, "scene-veo", 1, "", fal)
+    assert v.submit(plan, "scene-veo", 1, "", fal) == attempt
+    assert len(fal.posts) == 1
+    assert fal.posts[0][0] == v.QUEUE + "/bytedance/seedance-2.0/text-to-video"
+    assert fal.posts[0][1]["json"] == {
+        "prompt": "A fictional harbor at dusk.", "duration": "8", "resolution": "720p",
+        "aspect_ratio": "16:9", "generate_audio": True, "bitrate_mode": "standard",
+    }
+    v.poll(attempt["attemptId"], fal)
+    with v.database() as db:
+        assert v.totals(db)["reservedLifetimeUsd"] == "3.04"
+    with pytest.raises(click.ClickException, match="not allowed"):
+        v.submit(plan, "scene-veo", 2, "No retries authorized", fal)
+
+
 def test_plan_integrity_and_adapter_settings_are_pinned(setup, monkeypatch):
     fal = setup
     plan = approved(fal)

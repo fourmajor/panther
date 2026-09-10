@@ -37,17 +37,27 @@ ledger, so agents must never use it to recover a previously established but lost
 
 ## Bounded initial profiles
 
-Both profiles produce a single eight-second 16:9 clip with native generated audio, no reference
+All profiles produce a single eight-second 16:9 clip with native generated audio, no reference
 uploads, voice cloning, voice controls, automatic prompt rewriting or multi-shot expansion:
 
 | CLI model | fal endpoint | Settings |
 | --- | --- | --- |
 | `veo-3.1-fast` | `fal-ai/veo3.1/fast` | 720p, 8s, audio on, auto-fix off |
 | `kling-3-pro` | `fal-ai/kling-video/v3/pro/text-to-video` | Pro profile, 8s, audio on, one prompt |
+| `seedance-2.0` | `bytedance/seedance-2.0/text-to-video` | Standard model, 720p, 8s, audio on, standard bitrate |
 
-These are supported adapters, **not authorization to run either model**. Additional models need
-reviewed input and billing adapters. Compute/token-priced models such as Seedance are deliberately
-not accepted as though one output second equaled one billing unit.
+These are supported adapters, **not authorization to run any model**. Additional models need
+reviewed input and billing adapters. Unknown units fail closed; token units are never treated as seconds.
+
+Seedance's live pricing API on 2026-09-09 returns **$0.014 per 1,000 tokens**. Its
+[settings and pricing](https://fal.ai/models/bytedance/seedance-2.0/text-to-video) define tokens as
+width × height × duration × 24 / 1024: this fixed 1280×720, eight-second profile estimates 172,800
+tokens, or $2.4192. The page also quotes a slightly higher $0.3034/second; Panther takes the higher
+estimate ($2.4272), adds 25% headroom, then rounds up to a **$3.04 reservation**. This is not a
+provider-enforced maximum. Audio has no separate multiplier. Duration/aspect ratio are never auto;
+reference input, higher resolutions, Fast/Mini variants and arbitrary arguments are not supported.
+Old Veo/Kling plans and all lifetime reservations remain intact; adding this adapter does not reset
+the ledger or authorize another attempt. Seedance needs its own explicit model approval.
 
 On 2026-09-09, fal's live base-price API returned $0.15/second for Veo and $0.14/second for Kling.
 [Veo's settings-aware page](https://fal.ai/models/fal-ai/veo3.1/fast) lists $0.15/second with audio
