@@ -46,7 +46,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x+bounds.width).toBeLessThanOrEqual(viewport.width);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-    await testInfo.attach('portrait-only-page',{body:await page.screenshot({fullPage:true}),contentType:'image/png'});
+    const screenshot = testInfo.outputPath('portrait-only-page.png');
+    await page.screenshot({path:screenshot,fullPage:true});
+    await testInfo.attach('portrait-only-page',{path:screenshot,contentType:'image/png'});
   });
   test(`published model loads, rotates, resets and preserves fallback at ${viewport.width}px`, async ({ page }, testInfo) => {
     test.setTimeout(90000);
