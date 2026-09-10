@@ -186,6 +186,8 @@ function clearSession() {
   clearNovel();
   clearLibrary();
   elements.characterModel.src = null;
+  document.getElementById("character-assets-list").replaceChildren();
+  document.getElementById("character-assets-status").textContent = "";
   elements.previewBody.replaceChildren();
   if (elements.previewDialog.open) elements.previewDialog.close();
   elements.username.textContent = "Signed out";
@@ -527,6 +529,8 @@ function configureCharacter(profile) {
 
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
+  document.getElementById("character-assets-list").replaceChildren();
+  document.getElementById("character-assets-status").textContent = "Loading associated assets…";
   elements.characterList.hidden = true;
   elements.characterProfile.hidden = true;
   elements.charactersStatus.hidden = false;
@@ -537,6 +541,7 @@ async function loadCharacter(gameId, characterId) {
     configureCharacter(profile);
     elements.characterProfile.hidden = false;
     elements.charactersStatus.hidden = true;
+    void loadCharacterAssets(gameId, characterId, epoch);
   } catch (error) {
     if (epoch !== routeEpoch) return;
     const character = state.gameDetail?.characters.find(c => c.id === characterId);
@@ -544,11 +549,34 @@ async function loadCharacter(gameId, characterId) {
       configureCharacter({ character: { ...character, title: "Character", summary: "" } });
       elements.characterProfile.hidden = false;
       elements.charactersStatus.hidden = true;
+      void loadCharacterAssets(gameId, characterId, epoch);
       return;
     }
     if (error.message !== "Session expired") {
       elements.charactersStatus.textContent = error.message;
     }
+  }
+}
+
+async function loadCharacterAssets(gameId, characterId, epoch) {
+  const status = document.getElementById("character-assets-status");
+  const list = document.getElementById("character-assets-list");
+  const current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
+  try {
+    const assets = await allAssets(gameId);
+    if (!current()) return;
+    const matching = assets.filter(a => sameGameKey(a.key) && Array.isArray(a.metadata?.characterIds) && a.metadata.characterIds.includes(characterId));
+    matching.sort((a,b) => b.lastModified.localeCompare(a.lastModified));
+    list.replaceChildren();
+    for (const asset of matching) {
+      const li = document.createElement("li");
+      li.append(assetLink(asset), document.createTextNode(` · ${asset.kind}`));
+      list.append(li);
+    }
+    status.textContent = matching.length ? "Assets explicitly tagged with this character, across all media types and versions."
+      : "No assets have been tagged with this character yet. Untagged appearances are not inferred.";
+  } catch (error) {
+    if (current()) status.textContent = `${error.message}. Use Refresh assets to retry.`;
   }
 }
 
@@ -600,7 +628,7 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel|audio|transcripts)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel|audio|transcripts|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -617,7 +645,7 @@ async function renderRoute() {
   }
   if (epoch !== routeEpoch) return;
   const section = gameRoute?.[2] || window.location.pathname.slice(1);
-  if (["audio", "transcripts"].includes(section)) {
+  if (["audio", "transcripts", "videos"].includes(section)) {
     setActiveNavigation(section);
     elements.characters.hidden = true;
     elements.explorer.hidden = true;
@@ -763,7 +791,7 @@ async function previewFile(file) {
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
-    if (result.contentType.startsWith("audio/")) attachMediaRecovery(elements.previewBody.firstChild, file.key, () => epoch === previewEpoch);
+    if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, file.key, () => epoch === previewEpoch);
     void renderAssetLinks(file.key, epoch);
     if (structured) {
       const detail = await api("/asset-document", {gameId: state.gameId, key: file.key});
@@ -805,19 +833,19 @@ function novelView(details) {
 
 // A deliberately small prose-Markdown renderer. Raw HTML, images, and links stay inert text;
 // nothing from an AI artifact is ever assigned to innerHTML or fetched as a remote resource.
-function proseInline(parent, text) {
+function proseInline(parent, text, references) {
   for (const part of text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g)) {
     const strong = part.startsWith("**") && part.endsWith("**");
     const emphasis = !strong && ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_")));
     if (strong || emphasis) {
       const el = document.createElement(strong ? "strong" : "em");
-      el.textContent = part.slice(strong ? 2 : 1, strong ? -2 : -1);
+      linkedProse(el, part.slice(strong ? 2 : 1, strong ? -2 : -1), references);
       parent.append(el);
-    } else parent.append(document.createTextNode(part));
+    } else linkedProse(parent, part, references);
   }
 }
 
-function proseMarkdown(parent, markdown) {
+function proseMarkdown(parent, markdown, references) {
   parent.replaceChildren();
   for (const block of markdown.trim().split(/\n\s*\n/)) {
     if (!block) continue;
@@ -825,8 +853,75 @@ function proseMarkdown(parent, markdown) {
     const separator = /^(?:\*\s*){3,}$|^-{3,}$/.test(block.trim());
     const quote = block.startsWith("> ");
     const el = document.createElement(separator ? "hr" : heading ? `h${Math.min(heading[1].length + 1, 6)}` : quote ? "blockquote" : "p");
-    if (!separator) proseInline(el, heading ? heading[2] : quote ? block.replace(/^> ?/gm, "") : block);
+    if (!separator) proseInline(el, heading ? heading[2] : quote ? block.replace(/^> ?/gm, "") : block, references);
     parent.append(el);
+  }
+}
+
+// Typed destinations, not artifact-supplied URLs. Add a resolver when a new data type has a page.
+function narrativeReferences(chapter, assets, chapters) {
+  const characters = state.gameDetail.characters || [];
+  const resolvers = {
+    character: target => {
+      const c = characters.find(c => c.id === target.id);
+      if (!c || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(c.id)) return null;
+      return {identity: `character:${c.id}`, make: text => {
+        const a = document.createElement("a"); a.href = gamePath(`characters/${c.id}`); a.textContent = text; a.title = `Character: ${c.name}`;
+        a.addEventListener("click", e => {
+          if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault(); navigate(a.getAttribute("href"));
+        });
+        return a;
+      }};
+    },
+    asset: target => {
+      const asset = assets.find(a => a.key === target.key && sameGameKey(a.key));
+      return asset ? {identity: `asset:${asset.key}`, make: text => assetLink(asset, text)} : null;
+    },
+    chapter: target => chapters.some(c => c.id === target.id && /^[a-f0-9]{64}$/.test(c.id))
+      ? {identity: `chapter:${target.id}`, make: text => novelLink(text, target.id)} : null,
+  };
+  const names = new Map();
+  const add = (text, target, explicit = false) => {
+    if (typeof text !== "string" || text !== text.trim() || text.length < 2 || text.length > 160 || /[\n\r<>\[\]*_`]/.test(text)) return;
+    if (!target || (target.gameId && target.gameId !== state.gameId)) return;
+    const resolve = Object.hasOwn(resolvers, target.type) && resolvers[target.type];
+    const destination = resolve && resolve(target);
+    if (!destination) return;
+    const previous = names.get(text);
+    if (previous?.explicit && !explicit) return;
+    if (!previous || (explicit && !previous.explicit)) names.set(text, {...destination, explicit});
+    else if (previous.identity !== destination.identity) names.set(text, {explicit, ambiguous: true});
+  };
+  for (const c of characters) add(c.name, {type:"character", id:c.id});
+  for (const a of assets) add(a.metadata?.title, {type:"asset", key:a.key});
+  const declared = chapter.readerReferences;
+  if (declared?.schemaVersion === 1 && Array.isArray(declared.mentions) && declared.mentions.length <= 200) {
+    for (const mention of declared.mentions) if (mention) add(mention.text, mention.target, true);
+  }
+  // Keep ambiguous longer names in the matcher so they cannot turn into a shorter false match.
+  const labels = [...names.keys()].filter(text => chapter.markdown.includes(text)).sort((a,b) => b.length - a.length);
+  const pattern = labels.map(text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return {names, pattern: pattern ? new RegExp(`(?<![\\p{L}\\p{N}_])(?:${pattern})(?![\\p{L}\\p{N}_])`, "gu") : null};
+}
+
+function linkedProse(parent, text, references) {
+  if (!references?.pattern) { parent.append(document.createTextNode(text)); return; }
+  // Existing raw Markdown links/code/HTML remain inert, even when their labels match known names.
+  for (const part of text.split(/(!?\[[^\]]*\]\([^)]*\)|`[^`]*`|<[^>]*>)/g)) {
+    if (/^(?:!?\[|`|<)/.test(part)) { parent.append(document.createTextNode(part)); continue; }
+    let end = 0;
+    references.pattern.lastIndex = 0;
+    for (const match of part.matchAll(references.pattern)) {
+      parent.append(document.createTextNode(part.slice(end, match.index)));
+      const reference = references.names.get(match[0]);
+      if (reference.ambiguous) parent.append(document.createTextNode(match[0]));
+      else {
+        const a = reference.make(match[0]); a.classList.add("narrative-link"); parent.append(a);
+      }
+      end = match.index + match[0].length;
+    }
+    parent.append(document.createTextNode(part.slice(end)));
   }
 }
 
@@ -929,6 +1024,13 @@ async function loadNovel(chapterId, epoch) {
     novelView(false);
     novel.reader.hidden = false;
     novel.status.hidden = true;
+    // Link enrichment is optional: a catalog outage must not prevent reading the manuscript.
+    proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, [], chapters));
+    void allAssets(gameId).then(assets => {
+      if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters));
+    }).catch(() => {
+      if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Refresh chapters to retry."; }
+    });
     const index = ordered.findIndex(c => c.sessionId === chapter.sessionId);
     if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id));
     if (index >= 0 && index < ordered.length - 1) novel.pagination.append(novelLink(`${ordered[index + 1].title} →`, ordered[index + 1].id));
@@ -987,7 +1089,7 @@ async function loadLibrary(section, epoch) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
-  document.getElementById("library-title").textContent = section === "audio" ? "Audio" : "Transcripts";
+  document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
   status.textContent = "Loading session assets…";
   try {
     const assets = await allAssets(gameId);
@@ -996,19 +1098,21 @@ async function loadLibrary(section, epoch) {
     const keys = new Set(assets.map(a => a.key));
     const selected = assets.filter(a => section === "audio"
       ? a.recording?.partCount > 0 || ((a.contentType.startsWith("audio/") || /\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name)) && !manifests.has(a.key.split("/")[3]))
+      : section === "videos" ? a.contentType.startsWith("video/") || /\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name)
       : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
         && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     status.textContent = selected.length
-      ? section === "audio" ? "Original recordings. Chunked sessions play in order; originals are retained." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
-      : `No ${section === "audio" ? "recordings" : "transcripts"} yet for this game.`;
+      ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
+        : section === "audio" ? "Original recordings. Chunked sessions play in order; originals are retained." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
+      : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
     for (const asset of selected) {
       const card = document.createElement("article"); card.className = "novel-card session-card";
       const heading = document.createElement("h2");
       const label = section === "audio" && asset.kind === "recording-manifest" ? `Recording · ${asset.metadata?.sessionId || asset.name}` : asset.metadata?.title || asset.name;
       heading.append(assetLink(asset, label));
       const kind = document.createElement("p");
-      kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
+      kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${section === "videos" ? "Video" : asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
       const date = document.createElement("p"); date.textContent = new Date(asset.lastModified).toLocaleString();
       card.append(heading, kind, date); list.append(card);
     }
@@ -1145,7 +1249,8 @@ function renderStructuredAsset(asset, epoch) {
 }
 
 document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
-novel.refresh.addEventListener("click", renderRoute);
+novel.refresh.addEventListener("click", () => { assetIndex = null; void renderRoute(); });
+document.getElementById("character-assets-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 novel.back.addEventListener("click", () => navigate(gamePath("novel")));
 novel.read.addEventListener("click", () => novelView(false));
 novel["show-details"].addEventListener("click", () => novelView(true));

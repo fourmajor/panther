@@ -1,4 +1,41 @@
-# Audio, transcripts and asset connections
+# Audio, videos, transcripts and asset connections
+
+**Videos** lists all actual video files in the selected game, regardless of kind: episodes,
+comparison clips, and silly videos share the same browser player and provenance links.
+Planning documents are not presented as completed videos. Browsing never starts paid generation.
+Playback depends on browser codec support; the original file remains downloadable.
+
+Character profiles show **Featuring this character**, covering every asset type and historical
+version explicitly tagged with its ID in `metadata.characterIds`. Names, player identity and input
+provenance do not imply an appearance. Untagged historical assets stay unassociated until explicitly
+catalogued; this view does not invent tags or overwrite them. Refresh assets reloads the catalog.
+
+Novel prose has quiet, dotted-underlined links that inherit the text color, with stronger hover and
+keyboard-focus states. Exact, case-sensitive, whole-name mentions of current catalog characters and
+unique asset titles link automatically. Duplicate titles/names remain plain text; no fuzzy matching,
+first-name extraction or character-from-player inference occurs. This is a read-time navigation aid,
+not a claim of historical identity, canon or derivation. Names spanning Markdown formatting boundaries
+are left plain. Link enrichment never changes the manuscript or its clean download.
+
+Optional `payload.readerReferences` on a novel JSON artifact can explicitly disambiguate a name or
+associate an alias with a typed destination, separate from prose and editorial notes:
+
+```json
+{"schemaVersion":1,"mentions":[
+  {"text":"the navigator","target":{"type":"character","id":"example-character"}},
+  {"text":"the harbor chart","target":{"type":"asset","key":"games/example-game/assets/chart-a/original/chart.png"}}
+]}
+```
+
+At most 200 mentions are accepted; each label is 2–160 characters. A mention applies to each exact
+occurrence in a plain-text span, including emphasis, but not arbitrary Markdown links/code/HTML.
+Only existing, same-game `character`, `asset`, and `chapter` targets resolve (chapter uses its job ID).
+Optional target `gameId` must equal the selected game. Explicit references override automatic names;
+conflicting explicit references stay unlinked. Unknown types and unavailable targets stay plain text.
+Future entities extend the typed resolver registry when their data model and pages exist, not by
+accepting artifact-supplied URLs. Existing chapters need no migration or regeneration for automatic
+links. The current editorial worker does not yet generate optional alias annotations.
+If the asset catalog is unavailable, the story remains readable with a visible retry notice.
 
 Choose a game, then **Audio** or **Transcripts**. Both sections use existing private immutable
 assets; no conversion, generation, transcription or new workflow is started by browsing.

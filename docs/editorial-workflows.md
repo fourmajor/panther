@@ -115,7 +115,11 @@ The dedicated CDK-managed Lambda can only read the existing editorial table and 
 It validates game/run identity and pinned checksum/size before displaying content. No new database,
 scheduled polling, workflow mutation or always-on compute is introduced. The initial renderer
 supports prose paragraphs, headings, emphasis, quotations and scene breaks, and treats HTML,
-images and links as inert text. Generated illustrations are deferred to
+images and arbitrary Markdown links as inert text. Known character names and unique asset titles
+receive subtle internal navigation links; optional typed `payload.readerReferences` can disambiguate
+aliases without changing prose. See [asset-library.md](asset-library.md) for the versioned contract
+and limitations. These are reader projections, not changes to the editorial stage plan or evidence.
+Generated illustrations are deferred to
 [issue #52](https://github.com/fourmajor/panther/issues/52).
 
 The broader library enhancements (book/volume organization, saved reading progress and richer

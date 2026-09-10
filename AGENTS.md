@@ -31,6 +31,11 @@
 
 ## Editorial workflows
 
+- Character appearances use explicit asset `characterIds`, not player or provenance inference.
+  Narrative navigation uses typed same-game references with subtle reading styles. Keep annotations
+  separate from manuscript text; ambiguous names remain unlinked. New entity pages should extend the
+  reader's typed resolver, never permit arbitrary artifact-supplied URLs.
+
 - Editorial workflows use fresh subscription-backed Codex stages; never replace the raw transcript
   with corrected or dramatized text. Preserve correction evidence, player IDs, uncertainty and capture
   warnings. Novel/video artifacts are adaptations, not new factual context. Read

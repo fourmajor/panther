@@ -54,6 +54,9 @@ def chapter(job):
         "reviewStatus": artifact.get("reviewStatus", "ai-reviewed-unverified"),
         "notice": notice,
         "markdown": prose,
+        # Optional typed mentions are separate from prose. The reader resolves only known,
+        # same-game targets; arbitrary URLs and unknown future target types never become links.
+        "readerReferences": artifact["payload"].get("readerReferences"),
         "details": {
             "review": artifact["payload"].get("review", {}),
             "revisionHistory": artifact.get("revisionHistory", []),
@@ -108,7 +111,10 @@ def handler(event, _context):
             result = chapter(job)
             if result:
                 chapters.append(
-                    {k: v for k, v in result.items() if k not in {"markdown", "details"}}
+                    {
+                        k: v for k, v in result.items()
+                        if k not in {"markdown", "details", "readerReferences"}
+                    }
                 )
         cursor = None
         if page.get("LastEvaluatedKey"):

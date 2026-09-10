@@ -256,6 +256,9 @@ Use `--metadata /outside/repo/asset.json`. Supported fields:
 - `description`: short factual description, not an invented backstory.
 - `category`: one of the categories above; defaults to `unclassified`.
 - `characterIds`: list of known character slugs, not display names.
+  Tag every character actually depicted or discussed so its profile can list the asset, across
+  portraits, video, stories, transcripts and future kinds. Do not infer presence from player identity
+  or upstream inputs. Preserve explicit associations when creating new versions.
 - `sessionId`: known session slug; omit when not session-specific or unknown.
 - `tags`: reusable lowercase hyphenated slugs; no redundant filename extensions.
 - `sourceKeys`: exact existing object keys from this game for source material or earlier revisions.
