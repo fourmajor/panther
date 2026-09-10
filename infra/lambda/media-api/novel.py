@@ -49,7 +49,7 @@ def chapter(job):
         "sessionId": job["sessionId"],
         "title": title,
         "createdAt": job["createdAt"],
-        "publishedAt": int(published["LastModified"].timestamp()),
+        "publishedAt": int(jobs.media._asset_created_at(published).timestamp()),
         "publicationStatus": artifact["publicationStatus"],
         "reviewStatus": artifact.get("reviewStatus", "ai-reviewed-unverified"),
         "notice": notice,

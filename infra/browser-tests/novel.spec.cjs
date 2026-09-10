@@ -257,3 +257,18 @@ test('character assets use tags across kinds, not names or provenance; refresh e
   await expect(page.locator('#character-profile')).not.toBeVisible();
   await expect(page.locator('#character-assets-list')).not.toContainText('Tagged video');
 });
+
+test('migrated metadata refreshes character associations without changing the file URL',async({page})=>{
+  await fixture(page); let migrated=false;
+  const key='games/campaign-a/assets/chart-a/original/map.png';
+  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[{
+    key, name:'map.png', contentType:'image/png', kind:'map', sourceKeys:[], lastModified:'2026-01-01T00:00:00Z',
+    metadata:{schemaVersion:1,title:'Harbor chart',category:'reference',characterIds:migrated?['mira']:[],tags:[],sourceKeys:[],extra:{relationshipRole:'finished'}}
+  }],cursor:null}}));
+  await page.goto(`${origin}/games/campaign-a/characters/mira`);
+  await expect(page.locator('#character-assets-list a')).toHaveCount(0);
+  migrated=true; await page.getByRole('button',{name:'Refresh assets'}).click();
+  const link=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href',`/games/campaign-a/media?asset=${encodeURIComponent(key)}`);
+});

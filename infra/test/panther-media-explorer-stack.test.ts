@@ -42,6 +42,23 @@ test("completed recording sets trigger a separate durable laptop playback workfl
   template.hasResourceProperties("AWS::Lambda::Function", { Handler: "playback_jobs.handler" });
 });
 
+test("metadata migrations are owner-authenticated and use a serialized copy-only role", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: "POST /asset-migrations", AuthorizationType: "JWT"});
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler: "asset_migrations.handler", ReservedConcurrentExecutions: 1,
+  });
+  const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("AssetMigrations"));
+  assert.equal(policies.length, 1);
+  const statements = policies[0][1].Properties.PolicyDocument.Statement;
+  const writes = statements.filter((s: any) => JSON.stringify(s.Action).includes("s3:PutObject"));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].Condition.StringEquals["s3:x-amz-metadata-directive"], "REPLACE");
+  assert.ok(writes[0].Condition.StringLike["s3:x-amz-copy-source"]);
+  assert.doesNotMatch(JSON.stringify(statements), /s3:Delete|s3:\*/);
+});
+
 test("model jobs use retained on-demand state and a durable external-worker callback", () => {
   const template = mediaExplorerTemplate();
   template.hasResource("AWS::DynamoDB::Table", {
@@ -229,7 +246,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 37);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 38);
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

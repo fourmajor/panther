@@ -114,7 +114,7 @@ def submit(body):
         "workflowVersion": PLAN["version"],
         "status": "SUBMITTED",
         "createdAt": int(time.time()),
-        "contextCutoff": int(head["LastModified"].timestamp()),
+        "contextCutoff": int(media._asset_created_at(head).timestamp()),
         "videoGenerationAuthorized": False,
     }
     try:
@@ -138,10 +138,11 @@ def context_page(game, cursor, cutoff):
         if (
             not key.endswith((".json", ".md", ".txt"))
             or not 0 < item["Size"] <= 256 * 1024
-            or item["LastModified"].timestamp() > cutoff
         ):
             continue
         ref, head = asset(key, game)
+        if media._asset_created_at(head).timestamp() > cutoff:
+            continue
         stored = head.get("Metadata", {})
         details = json.loads(base64.b64decode(stored.get("panther", "e30=")))
         extra = details.get("extra", {})
@@ -171,7 +172,7 @@ def context_page(game, cursor, cutoff):
                     **ref,
                     "kind": kind,
                     "metadata": details,
-                    "lastModified": item["LastModified"].isoformat(),
+                    "lastModified": media._asset_created_at(head).isoformat(),
                 }
             )
     return {"items": items, "cursor": page.get("NextContinuationToken")}

@@ -2,6 +2,19 @@
 
 ## Panther CLI and game assets
 
+- Evolving standards require migrations, not permanent legacy exceptions. Whenever an asset/data
+  contract or organizational rule changes, update producers and validators, provide a versioned,
+  repeatable migration, backfill all affected existing data, verify the full inventory, and remove
+  obsolete compatibility branches before calling the change complete. Apply this to every game,
+  not only new uploads or the current test fixture. Temporary rollout compatibility must have an
+  explicit removal step; do not leave non-compliant assets as a supported alternative format.
+  Preserve original bytes, prior metadata/revisions and exact provenance in recoverable history.
+  Use Panther-authenticated migration operations with dry runs, conflict guards and audit records,
+  not ad hoc S3 writes. Unknown facts stay explicitly unknown; never invent identity, consent,
+  canon, or derivation to pass validation. Report any genuinely unresolvable records as migration
+  blockers rather than quietly exempting them. Keep private inventories and migration reports out
+  of Git; commit migration code, schema changes, tests and reusable operational instructions.
+
 - Recording chunks are grouped by a structured chunk-set identity. Only an explicitly completed,
   server-verified uploaded set triggers the playback workflow, never individual uploads or a quiet
   period. Assemble listening derivatives in the separate laptop workflow, not the uploader. Browser

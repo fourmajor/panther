@@ -93,6 +93,7 @@ class FakeS3:
 
 
 def load_media_api(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     fake_s3 = FakeS3()
     boto3 = types.ModuleType("boto3")
     boto3.client = lambda _service, **_kwargs: fake_s3
@@ -207,7 +208,7 @@ def test_upload_signs_size_checksum_metadata_and_no_overwrite(monkeypatch):
     assert params["Metadata"]["uploaded-by"] == "example-user"
     metadata = json.loads(base64.b64decode(params["Metadata"]["panther"]))
     assert metadata["category"] == "reference"
-    assert metadata["extra"] == {"creator": "DM"}
+    assert metadata["extra"] == {"creator": "DM", "relationshipRole": "finished"}
     assert expiry == 300
 
 
