@@ -31,6 +31,14 @@ QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
+    "seedance-2.0-image": {
+        "endpoint": "bytedance/seedance-2.0/image-to-video",
+        "floor": "0.014",
+        "multiplier": "1",
+        "unit": "1000 tokens",
+        "source": "https://fal.ai/models/bytedance/seedance-2.0/image-to-video",
+        "imageField": "image_url",
+    },
     "veo-3.1-fast-image": {
         "endpoint": "fal-ai/veo3.1/fast/image-to-video",
         "floor": "0.15",
@@ -252,7 +260,7 @@ def quote(fal, model):
     rate = max(number(profile["floor"]), base * number(profile["multiplier"]))
     estimate = rate * 8
     details = {}
-    if model == "seedance-2.0":
+    if model in {"seedance-2.0", "seedance-2.0-image"}:
         # Fixed 16:9 720p, 8s, no reference video: fal's documented output-token formula.
         # The live unit is *1000* tokens, never output seconds. Also honor the slightly
         # higher published 720p per-second approximation before adding 25% headroom.
@@ -349,7 +357,7 @@ def payload(shot):
         body.update(duration="8", shot_type="customize")
         if shot["model"].endswith("-image"):
             body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.
-    elif shot["model"] == "seedance-2.0":
+    elif shot["model"] in {"seedance-2.0", "seedance-2.0-image"}:
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
     else:
         fail("Unsupported model profile.")
