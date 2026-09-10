@@ -964,16 +964,21 @@ function chapterDetails(chapter, versions) {
     li.append(novelLink(`${index === 0 ? "Latest" : "Earlier"} · ${chapterDate(version)} · ${version.title}${version.id === chapter.id ? " (viewing)" : ""}`, version.id));
     versionList.append(li);
   }
-  const sourceTitle = document.createElement("h3"); sourceTitle.textContent = "Source artifacts";
-  const sources = document.createElement("div"); sources.className = "novel-sources";
-  const keys = new Set([chapter.details.rawReference?.key, ...(chapter.details.sourceKeys || []), chapter.details.artifact?.key]);
-  for (const key of keys) {
-    if (typeof key !== "string" || !key.startsWith(`games/${state.gameId}/assets/`)) continue;
-    const button = document.createElement("button"); button.className = "quiet-button";
-    button.textContent = key.split("/").at(-1); button.title = key;
-    button.addEventListener("click", () => previewFile({key, name: button.textContent}));
-    sources.append(button);
-  }
+  const sourceTitle = document.createElement("h3"); sourceTitle.textContent = "Connected assets";
+  const sources = document.createElement("div"); sources.className = "novel-connections asset-links";
+  sources.textContent = "Loading finished assets…";
+  const gameId = state.gameId, epoch = routeEpoch;
+  void allAssets(gameId).then(assets => {
+    if (epoch !== routeEpoch || state.gameId !== gameId || currentChapter !== chapter || !state.tokens) return;
+    sources.replaceChildren();
+    const key = chapter.details.artifact?.key;
+    if (!assets.some(a => a.key === key)) { sources.textContent = "Chapter connections are not indexed yet."; return; }
+    const connections = finishedAssetConnections(assets, key, gameId);
+    appendFinishedConnections(sources, connections);
+    if (connections.incomplete) sources.append("Some recorded connections are unavailable.");
+  }).catch(() => {
+    if (epoch === routeEpoch && state.gameId === gameId && state.tokens) sources.textContent = "Connections unavailable. Refresh chapters to retry.";
+  });
   const provenance = document.createElement("details");
   const label = document.createElement("summary"); label.textContent = "Full provenance and revision history";
   const data = document.createElement("pre"); data.textContent = JSON.stringify(chapter.details, null, 2);
@@ -1127,6 +1132,106 @@ async function loadLibrary(section, epoch) {
   }
 }
 
+// A read-time projection only: never rewrite the exact stored sourceKeys graph.
+function finishedAssetConnections(assets, key, gameId) {
+  const valid = k => typeof k === "string" && k.startsWith(`games/${gameId}/assets/`)
+    && !k.split("/").includes("..") && !/[\\\x00-\x1f]/.test(k);
+  const index = new Map(assets.filter(a => valid(a.key)).map(a => [a.key, a]));
+  const aliases = new Map(), recordingParts = new Map();
+  const bind = (child, parent) => {
+    if (!index.has(child) || child === parent) return;
+    if (!recordingParts.has(child)) recordingParts.set(child, new Set());
+    recordingParts.get(child).add(parent);
+  };
+  for (const a of index.values()) {
+    if (!(a.recording?.partCount > 0)) continue;
+    const prefix = a.key.slice(0, a.key.lastIndexOf("/") + 1);
+    for (const part of a.sourceKeys || []) {
+      if (part.startsWith(prefix) && /^part-\d{4}\.flac$/.test(part.slice(prefix.length))) bind(part, a.key);
+    }
+  }
+  for (const a of index.values()) {
+    if (a.playback && index.get(a.playback.recordingKey)?.recording?.partCount > 0) {
+      bind(a.key, a.playback.recordingKey);
+      bind(a.playback.audioKey, a.playback.recordingKey);
+    }
+  }
+  for (const [child, parents] of recordingParts) if (parents.size === 1) aliases.set(child, [...parents][0]);
+  const transcripts = new Set(["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"]);
+  for (const a of index.values()) {
+    if (a.key.endsWith(".md") && (transcripts.has(a.kind) || a.kind === "novel-chapter")) {
+      const json = index.get(a.key.slice(0, -3) + ".json");
+      if (json?.kind === a.kind && !json.lineageWarning) aliases.set(a.key, json.key);
+    }
+  }
+  const canonical = k => aliases.get(k) || k;
+  const stages = new Set(["context", "correction", "capture-health", "recording-checkpoint", "recording-manifest",
+    "recording-playback-manifest", "novel-brief", "novel-options", "novel-outline", "novel-draft",
+    "novel-developmental-edit", "novel-revision", "novel-continuity", "novel-line-copyedit", "novel-proof",
+    "video-treatment", "video-screenplay", "video-script-edit", "video-shooting-script", "video-breakdown",
+    "video-design", "video-reference-plan", "video-voice-casting", "video-blocking", "video-shot-list",
+    "video-storyboards", "video-generation-packets", "video-edit-sound-vfx", "video-production-plan", "video-preflight"]);
+  const finished = a => {
+    if (!a || a.lineageWarning || a.metadata?.extra?.relationshipRole === "intermediate") return false;
+    if (a.recording?.partCount > 0) return true;
+    if (stages.has(a.kind) || a.kind?.startsWith("editorial-") || a.kind?.includes("provenance")) return false;
+    if (a.metadata?.extra?.relationshipRole === "finished") return true;
+    return transcripts.has(a.kind) || ["novel-chapter", "novel", "story", "portrait", "map", "document", "game-context", "model-3d", "music"].includes(a.kind)
+      || /^(audio|video|image)\//.test(a.contentType || "")
+      || /\.(mp3|flac|wav|m4a|ogg|mp4|webm|mov|m4v|png|jpg|jpeg|webp|gif|glb|blend|pdf)$/i.test(a.name || "");
+  };
+  const inputs = new Map(), outputs = new Map();
+  const edge = (map, from, to) => { if (!map.has(from)) map.set(from, new Set()); map.get(from).add(to); };
+  let incomplete = false;
+  for (const a of index.values()) {
+    for (const source of a.sourceKeys || []) {
+      if (!valid(source)) continue;
+      if (!index.has(source)) { incomplete = true; continue; }
+      const from = canonical(a.key), to = canonical(source);
+      if (from === to) continue;
+      edge(inputs, from, to); edge(outputs, to, from);
+    }
+  }
+  const label = a => {
+    const type = a.recording?.partCount > 0 ? "Audio"
+      : ["transcript", "raw-transcript"].includes(a.kind) ? "Original transcript"
+      : ["corrected-transcript", "edited-transcript"].includes(a.kind) ? "Corrected transcript"
+      : a.kind === "novel-chapter" ? "Novel chapter"
+      : (a.contentType || "").startsWith("video/") ? "Video" : a.kind?.replaceAll("-", " ") || "Asset";
+    const title = a.metadata?.title;
+    return title && title !== a.kind && title !== a.name ? title : `${type}${a.metadata?.sessionId ? " · " + a.metadata.sessionId : ""}`;
+  };
+  const root = canonical(key);
+  const walk = graph => {
+    const visited = new Set([root]), found = new Map(), pending = [...(graph.get(root) || [])];
+    while (pending.length) {
+      const next = pending.pop();
+      if (visited.has(next)) continue;
+      visited.add(next);
+      const a = index.get(next);
+      if (finished(a)) found.set(next, {...a, connectionLabel: label(a)});
+      else for (const neighbor of graph.get(next) || []) pending.push(neighbor);
+    }
+    return [...found.values()].sort((a,b) => a.connectionLabel.localeCompare(b.connectionLabel) || a.key.localeCompare(b.key));
+  };
+  return {inputs: walk(inputs), outputs: walk(outputs), incomplete};
+}
+
+function appendFinishedConnections(host, connections) {
+  for (const [title, records] of [["Inputs", connections.inputs], ["Outputs", connections.outputs]]) {
+    const heading = document.createElement("h3"); heading.textContent = title;
+    const list = document.createElement("ul"); list.dataset.connections = title.toLowerCase();
+    for (const record of records) {
+      const li = document.createElement("li"), jobId = record.metadata?.extra?.jobId;
+      li.append(record.kind === "novel-chapter" && /^[a-f0-9]{64}$/.test(jobId || "")
+        ? novelLink(record.connectionLabel, jobId) : assetLink(record, record.connectionLabel));
+      list.append(li);
+    }
+    if (!records.length) { const li = document.createElement("li"); li.textContent = `No finished ${title.toLowerCase()} recorded.`; list.append(li); }
+    host.append(heading, list);
+  }
+}
+
 async function renderAssetLinks(key, epoch) {
   const host = document.getElementById("asset-links"), gameId = state.gameId;
   const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
@@ -1137,26 +1242,19 @@ async function renderAssetLinks(key, epoch) {
     const item = assets.find(a => a.key === key);
     if (!item) { host.textContent = "This asset is not in the current catalog. Refresh to retry."; return; }
     host.replaceChildren();
-    const inputs = (item.sourceKeys || []).filter(sameGameKey);
-    const outputs = assets.filter(a => a.sourceKeys?.includes(key));
-    for (const [title, records] of [["Inputs", inputs.map(k => assets.find(a => a.key === k) || {key:k, name:`Unavailable or unindexed · ${k.split("/").at(-1)}`} )], ["Outputs", outputs]]) {
-      const heading = document.createElement("h3"); heading.textContent = title;
-      const list = document.createElement("ul");
-      for (const record of records) { const li = document.createElement("li"); li.append(assetLink(record)); list.append(li); }
-      if (!records.length) { const li = document.createElement("li"); li.textContent = `No ${title.toLowerCase()} recorded.`; list.append(li); }
-      host.append(heading, list);
-    }
+    const connections = finishedAssetConnections(assets, key, gameId);
+    appendFinishedConnections(host, connections);
     const companions = assets.filter(a => a.key !== key && a.key.split("/")[3] === key.split("/")[3]);
     if (companions.length) {
       const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("ul");
-      summary.textContent = "Related files in this asset";
+      summary.textContent = "Technical files and original exports";
       for (const asset of companions) { const li = document.createElement("li"); li.append(assetLink(asset)); list.append(li); }
       details.append(summary, list); host.append(details);
     }
     const warnings = assets.filter(a => a.lineageWarning).length;
-    if (warnings) { const warning = document.createElement("p"); warning.textContent = `${warnings} asset(s) have incomplete structured provenance; output links may be incomplete.`; host.append(warning); }
+    if (warnings || connections.incomplete) { const warning = document.createElement("p"); warning.textContent = "Some provenance is missing or unreadable; finished-asset connections may be incomplete."; host.append(warning); }
     const note = document.createElement("p"); note.className = "status";
-    note.textContent = "Recorded relationships, not proof of factual accuracy. Historical missing links are not inferred."; host.append(note);
+    note.textContent = "Finished assets only. Processing steps are omitted; full provenance is retained. Connections do not establish factual accuracy."; host.append(note);
   } catch (error) { if (current()) host.textContent = `Connections unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
@@ -1235,7 +1333,7 @@ function renderStructuredAsset(asset, epoch) {
         copies.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
         if (!copies.length) {
           audio.hidden = true;
-          status.textContent = "Continuous playback has not been prepared yet. It is produced after the uploaded chunk set is marked complete and the laptop workflow runs. Lossless originals remain under Inputs.";
+          status.textContent = "Continuous playback has not been prepared yet. It is produced after the uploaded chunk set is marked complete and the laptop workflow runs. Lossless originals remain under Technical files and original exports.";
           return;
         }
         const copy = copies[0].playback;

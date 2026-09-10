@@ -40,6 +40,36 @@ async function fixture(page) {
   });
 }
 
+for (const width of [1280,390]) test(`chapter Details connects finished assets at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000}); await fixture(page);
+  const prefix='games/campaign-a/assets/';
+  const raw=prefix+'raw/original/raw.json', corrected=prefix+'corrected/original/corrected.json';
+  const proof=prefix+'proof/original/novel-proof.json', chapter=prefix+'chapter/original/novel-chapter.json';
+  const assets=[[raw,'raw-transcript',[]],[corrected,'corrected-transcript',[raw]],
+    [proof,'novel-proof',[corrected]],[chapter,'novel-chapter',[proof]]].map(([key,kind,sourceKeys])=>
+    ({key,kind,sourceKeys,name:key.split('/').at(-1),metadata:{title:kind},contentType:'application/json'}));
+  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets,cursor:null}}));
+  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],
+    markdown:'A finished chapter.', details:{review:{},artifact:{key:chapter},sourceKeys:[proof],rawReference:{key:raw}}}}));
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await page.getByRole('button',{name:'Details',exact:true}).click();
+  const links=page.locator('#novel-details [data-connections]');
+  await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
+  expect((await links.allTextContents()).join('\n')).not.toContain('novel-proof');
+  const link=links.getByRole('link',{name:'Corrected transcript',exact:true});
+  // Details is a normal document: reach its below-the-fold connections with user scrolling,
+  // then verify hit-testing (no forced clicks or scrolling a clipped element into place).
+  for (let scrolls=0; scrolls<5 && (await link.boundingBox()).y>900; scrolls++) {
+    const before=(await link.boundingBox()).y;
+    await page.mouse.wheel(0,350);
+    await expect.poll(async()=> (await link.boundingBox()).y).toBeLessThan(before-1);
+  }
+  await accessibleInViewport(link,width);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`chapter-connections-${width}.png`),fullPage:true});
+  await expect(page.getByText('Full provenance and revision history',{exact:true})).toBeVisible();
+});
+
 async function accessibleInViewport(locator, width) {
   await expect(locator).toBeVisible();
   const box=await locator.boundingBox();

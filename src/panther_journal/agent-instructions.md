@@ -65,7 +65,7 @@ game's canon. Transcripts use player IDs; character speech versus table talk is 
 ### Inputs and outputs for every asset
 
 Every derived asset records its exact immutable inputs in `sourceKeys`. Panther displays those
-Inputs and derives Outputs by finding assets that reference it; never edit old originals to attach
+as finished-asset Inputs and derives Outputs by tracing their recorded connections; never edit old originals to attach
 mutable output lists. Assets with no known inputs explicitly show no inputs recorded. Do not invent
 links from matching names, sessions or characters. Same-asset files are related files, not assumed
 inputs/outputs. Preserve earlier versions and link the earlier version when it was actually used.
@@ -74,6 +74,17 @@ For large provenance sets that exceed compact metadata, retain the complete `sou
 discard the complete lineage. Existing recording manifests link their ordered parts, and editorial
 documents retain their actual stage inputs. The web catalog reads these explicit fields and scopes
 all links to the selected game. Missing or unreadable historical provenance is labeled incomplete.
+
+The normal Inputs/Outputs lists show finished assets, not esoteric workflow steps. The reader traces
+through manifests, context selection, correction proposals, drafts, proofs and shot planning to the
+next finished asset on each recorded path. Original/corrected transcripts, session audio, videos,
+novel chapters and ordinary finished artwork/documents remain linked. Explicitly associated audio
+parts and listening copies appear as one Audio entry; paired transcript/novel JSON and Markdown
+exports appear once. Original exports and technical files remain in a separate collapsed section.
+Keep exact `sourceKeys`; do not delete intermediate provenance to simplify the UI. For a new kind
+with no established reader classification, use `extra.relationshipRole: finished` or `intermediate`
+to clarify its role. Unknown technical formats are not presumed finished. Known internal workflow
+kinds stay hidden even if mistagged finished. This is a display role, not canonical/verified status.
 
 The Audio section plays recordings continuously through a single MP3 listening copy,
 not a playlist that switches FLAC files at chunk boundaries. Lossless parts remain the sources. The
