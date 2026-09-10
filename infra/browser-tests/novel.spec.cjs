@@ -55,7 +55,7 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
   await page.getByRole('button',{name:'Details',exact:true}).click();
   const links=page.locator('#novel-details [data-connections]');
   await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
-  await expect(links).not.toContainText('novel-proof');
+  expect((await links.allTextContents()).join('\n')).not.toContain('novel-proof');
   const link=links.getByRole('link',{name:'Corrected transcript',exact:true});
   await accessibleInViewport(link,width);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);

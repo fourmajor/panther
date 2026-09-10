@@ -225,7 +225,8 @@ for (const width of [1280,390]) test(`finished connections hide workflow interna
   await connections.getByRole('link',{name:'Corrected transcript · session-one'}).click();
   await expect(connections.getByRole('link')).toHaveText(['Original transcript · session-one','Novel chapter · session-one','Video · session-one']);
   await expect(connections.getByRole('link',{name:'Novel chapter · session-one'})).toHaveAttribute('href',`/games/test-game/novel/${'c'.repeat(64)}`);
-  for (const text of ['novel-proof','video-shot-list','correction.json','playback-v1','part-0000']) await expect(connections).not.toContainText(text);
+  const connectionText=(await connections.allTextContents()).join('\n');
+  for (const text of ['novel-proof','video-shot-list','correction.json','playback-v1','part-0000']) expect(connectionText).not.toContain(text);
   await page.screenshot({path:test.info().outputPath(`finished-connections-${width}.png`),fullPage:true});
   await connections.getByRole('link',{name:'Video · session-one'}).click();
   await expect(page.locator('#preview-body video')).toBeVisible();
