@@ -21,6 +21,35 @@ const policy = Object.values(Template.fromStack(stack).findResources('AWS::Cloud
   .Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`portrait-only character remains usable at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Swashbuckler', summary: 'Synthetic portrait-only fixture.' };
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
+      json: { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null, character, model:null, poster:{url:'https://test.s3.amazonaws.com/portrait.svg'} },
+      headers: {'access-control-allow-origin':'https://panther.place'},
+    }));
+    await page.route('https://test.s3.amazonaws.com/portrait.svg', route => route.fulfill({ contentType:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1536"><rect width="1024" height="1536" fill="tan"/></svg>' }));
+    await page.route('https://panther.place/**', route => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
+      const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname, '../../web/media-explorer', ['/app.js','/styles.css'].includes(pathname) ? pathname.slice(1) : 'index.html');
+      return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html',headers:{'content-security-policy':policy}});
+    });
+    await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'test'}))+'.test'})));
+    await page.goto('https://panther.place/characters/test-game/test-character');
+    const portrait = page.locator('#character-portrait-only');
+    await expect(portrait).toBeVisible();
+    await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);
+    await expect(page.locator('#model-load')).toBeHidden();
+    await expect(page.getByText('Portrait ready. No 3D model has been published yet.', {exact:true})).toBeVisible();
+    const bounds = await portrait.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x+bounds.width).toBeLessThanOrEqual(viewport.width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+    const screenshot = testInfo.outputPath('portrait-only-page.png');
+    await page.screenshot({path:screenshot,fullPage:true});
+    await testInfo.attach('portrait-only-page',{path:screenshot,contentType:'image/png'});
+  });
   test(`published model loads, rotates, resets and preserves fallback at ${viewport.width}px`, async ({ page }, testInfo) => {
     test.setTimeout(90000);
     await page.setViewportSize(viewport);

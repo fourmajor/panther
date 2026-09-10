@@ -40,12 +40,18 @@ export class GameCatalog extends Construct {
       conditions: { "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["GAMES"] } },
     }));
     fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"],
-      resources: [props.bucket.bucketArn], conditions: { StringLike: { "s3:prefix": ["games/*"] } } }));
+      resources: [props.bucket.bucketArn] }));
+    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:GetObject"],
+      resources: [props.bucket.arnForObjects("games/*/content/*"), props.bucket.arnForObjects("games/*/catalog/assets/*")] }));
+    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:PutObject"],
+      resources: [props.bucket.arnForObjects("games/*/characters/*/profile.json")],
+      conditions: { StringEquals: { "s3:if-none-match": "*" } } }));
     const integration = new integrations.HttpLambdaIntegration("CatalogIntegration", fn);
     for (const route of ["/games", "/game", "/players"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration, authorizer: props.authorizer });
     }
     props.api.addRoutes({ path: "/games", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
     props.api.addRoutes({ path: "/game/ruleset", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
+    props.api.addRoutes({ path: "/character-profile", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
   }
 }

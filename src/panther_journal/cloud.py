@@ -392,6 +392,17 @@ def character_show(game, character_id):
     )
 
 
+@character.command("create-profile")
+@click.argument("manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def character_create_profile(manifest):
+    """Initialize an existing roster character with a portrait; never overwrite a profile."""
+    try:
+        body = json.loads(manifest.read_text())
+    except (ValueError, OSError):
+        raise click.ClickException("Cannot read the character profile manifest.")
+    click.echo(json.dumps(api(configuration(), "POST", "/character-profile", json=body), indent=2))
+
+
 @character.command("set-model")
 @click.option("--game", required=True)
 @click.option("--character", "character_id", required=True)

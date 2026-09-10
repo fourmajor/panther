@@ -724,3 +724,5 @@ model-viewer,
     transition-duration: 0.01ms !important;
   }
 }
+.character-portrait-only { display: block; max-width: min(100%, 32rem); max-height: 75vh; object-fit: contain; border-radius: 0.5rem; }
+.character-portrait-only[hidden] { display: none; }

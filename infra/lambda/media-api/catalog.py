@@ -301,6 +301,67 @@ def set_ruleset(body, actor):
     return detail(game_id)
 
 
+def create_character_profile(body, actor):
+    """Initialize a roster character without inventing identity or replacing history."""
+    if not isinstance(body, dict) or set(body) != {
+        "gameId",
+        "characterId",
+        "title",
+        "summary",
+        "portraitKey",
+    }:
+        raise ValueError("Invalid character profile")
+    game, character = identifier(body["gameId"]), identifier(body["characterId"])
+    roster = read(f"GAME#{game}", f"CHARACTER#{character}")
+    if not roster:
+        return media._response(404, {"error": "Character is not in this game's roster"})
+    title = name(body["title"])
+    summary = media._text(body["summary"], maximum=1000)
+    portrait = body["portraitKey"]
+    if (
+        not summary
+        or not isinstance(portrait, str)
+        or not portrait.startswith(f"games/{game}/assets/")
+    ):
+        raise ValueError("Invalid portrait or summary")
+    if not media._asset_metadata(
+        portrait,
+        maximum=media.MAX_POSTER_BYTES,
+        expected_types={"image/png", "image/jpeg", "image/webp", "image/avif"},
+    ):
+        return media._response(422, {"error": "Portrait unavailable or exceeds limits"})
+    head = media.s3.head_object(Bucket=media.BUCKET_NAME, Key=portrait)
+    metadata = json.loads(
+        base64.b64decode(head.get("Metadata", {}).get("panther", "e30="), validate=True)
+    )
+    if not isinstance(metadata, dict):
+        raise ValueError("Invalid portrait metadata")
+    if character not in metadata.get("characterIds", []):
+        return media._response(422, {"error": "Portrait must explicitly name this character"})
+    profile = {
+        "schemaVersion": 1,
+        "gameId": game,
+        "id": character,
+        "name": roster["name"],
+        "title": title,
+        "summary": summary,
+        "model": {"posterKey": portrait},
+        "profilePublication": {
+            "actor": actor,
+            "publishedAt": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    key = f"games/{game}/characters/{character}/profile.json"
+    result = media.s3.put_object(
+        Bucket=media.BUCKET_NAME,
+        Key=key,
+        Body=json.dumps(profile).encode(),
+        ContentType="application/json",
+        IfNoneMatch="*",
+    )
+    return media._response(201, {"profile": profile, "revision": result["ETag"]})
+
+
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     # One trusted group today: every configured account can read every game. A selector is not an ACL.
@@ -314,13 +375,15 @@ def handler(event, _context):
             return detail(media._query(event, "gameId"))
         if route == "GET /players":
             return media._response(200, {"players": [clean(p) for p in query("PLAYERS")]})
-        if route in ("POST /games", "POST /game/ruleset"):
+        if route in ("POST /games", "POST /game/ruleset", "POST /character-profile"):
             raw = event.get("body") or ""
             if len(raw) > 24000:
                 raise ValueError("Game setup is too large")
             if event.get("isBase64Encoded"):
                 raw = base64.b64decode(raw, validate=True)
             body = json.loads(raw)
+            if route == "POST /character-profile":
+                return create_character_profile(body, claims["sub"])
             return (
                 create(body, claims["sub"])
                 if route == "POST /games"

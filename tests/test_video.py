@@ -1,6 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 import json
+import base64
+import hashlib
+import struct
+import zlib
 from threading import Barrier
 
 import click
@@ -60,6 +64,93 @@ def manifest():
     }
 
 
+def image_manifest(tmp_path, monkeypatch):
+    def chunk(kind, data):
+        return (
+            struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1280, 720, 8, 2, 0, 0, 0))
+    data += chunk(b"IDAT", zlib.compress((b"\x00" + b"\x11\x22\x33" * 1280) * 720)) + chunk(
+        b"IEND", b""
+    )
+    path = tmp_path / "frame.png"
+    path.write_bytes(data)
+    ref = {
+        "path": str(path),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "key": "games/synthetic-game/assets/frame/original/frame.png",
+    }
+    m = manifest()
+    m["sourceKeys"] = [ref["key"]]
+    m["characterIds"] = ["hero"]
+    m["shots"][0].update(model="veo-3.1-fast-image", image=ref, maxAttempts=1)
+    monkeypatch.setattr(v.cloud, "configuration", lambda: {})
+    monkeypatch.setattr(
+        v.cloud,
+        "api",
+        lambda *a, **kw: {
+            "size": len(data),
+            "contentType": "image/png",
+            "sha256": base64.b64encode(hashlib.sha256(data).digest()).decode(),
+        },
+    )
+    return m, path
+
+
+def test_image_plan_pins_local_and_cloud_bytes_without_uploading_or_spending(
+    setup, tmp_path, monkeypatch
+):
+    m, path = image_manifest(tmp_path, monkeypatch)
+    plan_id = v.prepare(m, setup)["planId"]
+    assert setup.posts == []
+    assert (
+        CliRunner()
+        .invoke(
+            main,
+            ["video", "approve", plan_id, "--models-and-rights-approved", "--auto-topup-disabled"],
+        )
+        .exit_code
+        == 0
+    )
+    attempt = v.submit(plan_id, "scene-veo", 1, "", setup)
+    assert attempt["reservedUsd"] == "1.50"
+    assert setup.posts[0][0].endswith("/fast/image-to-video")
+    assert setup.posts[0][1]["json"]["image_url"].startswith("data:image/png;base64,")
+    with v.database() as db:
+        assert "data:image" not in db.execute("SELECT content FROM attempts").fetchone()[0]
+    path.write_bytes(b"changed")
+    # An existing attempt remains idempotent even when local inputs later disappear.
+    assert v.submit(plan_id, "scene-veo", 1, "", setup)["attemptId"] == attempt["attemptId"]
+
+
+def test_changed_image_fails_before_reservation(setup, tmp_path, monkeypatch):
+    m, path = image_manifest(tmp_path, monkeypatch)
+    plan = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
+    path.write_bytes(b"changed")
+    with pytest.raises(click.ClickException, match="changed"):
+        v.submit(plan, "scene-veo", 1, "", setup)
+    assert not setup.posts
+    with v.database() as db:
+        assert v.totals(db)["reservationCents"] == 0
+
+
+def test_image_reference_must_match_cloud_and_have_bounded_profile(setup, tmp_path, monkeypatch):
+    m, _ = image_manifest(tmp_path, monkeypatch)
+    monkeypatch.setattr(v.cloud, "api", lambda *a, **kw: {})
+    with pytest.raises(click.ClickException, match="immutable Panther"):
+        v.prepare(m, setup)
+    m["shots"][0]["model"] = "kling-3-pro-image"
+    assert "aspect_ratio" not in v.payload(m["shots"][0])
+    assert v.payload(m["shots"][0])["start_image_url"] == m["shots"][0]["image"]
+    m["shots"][0]["model"] = "veo-3.1-fast"
+    with pytest.raises(click.ClickException, match="text profiles forbid"):
+        v.validate_manifest(m)
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(v, "ROOT", tmp_path / "private-video")
@@ -86,6 +177,14 @@ def test_prepare_never_generates_and_approval_is_explicit(setup):
         v.submit(plan["planId"], "scene-veo", 1, "", fal)
     assert CliRunner().invoke(main, ["video", "approve", plan["planId"]]).exit_code != 0
     assert fal.posts == []
+
+
+def test_standalone_comparison_does_not_invent_a_game_session(setup):
+    value = manifest()
+    value["sessionId"] = None
+    assert v.prepare(value, setup)["approved"] is False
+    metadata = v.upload_metadata(value, "scene-veo", "endpoint", "request", "plan", "attempt", 150, "0"*64)
+    assert "sessionId" not in metadata
 
 
 def test_initialization_never_resets_lifetime_reservations(setup):
@@ -306,10 +405,20 @@ def test_unknown_pricing_units_block_inference(monkeypatch):
 @pytest.mark.parametrize("unit", ["seconds", "tokens", "1000 tokens"])
 def test_seedance_requires_exact_token_unit(monkeypatch, unit):
     fal = object.__new__(v.Fal)
-    monkeypatch.setattr(fal, "request", lambda *a, **k: {"prices": [{
-        "endpoint_id": v.PROFILES["seedance-2.0"]["endpoint"],
-        "unit": unit, "currency": "USD", "unit_price": "0.014",
-    }]})
+    monkeypatch.setattr(
+        fal,
+        "request",
+        lambda *a, **k: {
+            "prices": [
+                {
+                    "endpoint_id": v.PROFILES["seedance-2.0"]["endpoint"],
+                    "unit": unit,
+                    "currency": "USD",
+                    "unit_price": "0.014",
+                }
+            ]
+        },
+    )
     if unit == "1000 tokens":
         assert fal.price("seedance-2.0") == Decimal("0.014")
     else:
@@ -328,8 +437,9 @@ def test_seedance_token_quote_fixed_payload_and_durable_budget(setup):
     value = manifest()
     value["shots"][0].update(model="seedance-2.0", maxAttempts=1)
     plan = v.prepare(value, fal)["planId"]
-    result = CliRunner().invoke(main, ["video", "approve", plan,
-                                      "--models-and-rights-approved", "--auto-topup-disabled"])
+    result = CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     assert result.exit_code == 0
     fal.rate = Decimal("0.02")
     with pytest.raises(click.ClickException, match="Pricing increased"):
@@ -341,8 +451,12 @@ def test_seedance_token_quote_fixed_payload_and_durable_budget(setup):
     assert len(fal.posts) == 1
     assert fal.posts[0][0] == v.QUEUE + "/bytedance/seedance-2.0/text-to-video"
     assert fal.posts[0][1]["json"] == {
-        "prompt": "A fictional harbor at dusk.", "duration": "8", "resolution": "720p",
-        "aspect_ratio": "16:9", "generate_audio": True, "bitrate_mode": "standard",
+        "prompt": "A fictional harbor at dusk.",
+        "duration": "8",
+        "resolution": "720p",
+        "aspect_ratio": "16:9",
+        "generate_audio": True,
+        "bitrate_mode": "standard",
     }
     v.poll(attempt["attemptId"], fal)
     with v.database() as db:

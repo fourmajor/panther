@@ -70,6 +70,33 @@ Money is rounded upward to integer cents, with nonfinite/negative/unknown values
 
 ## Prepare and explicitly approve
 
+### Image-anchored comparisons
+
+The additional bounded profiles `veo-3.1-fast-image` and `kling-3-pro-image` use
+`fal-ai/veo3.1/fast/image-to-video` and `fal-ai/kling-video/v3/pro/image-to-video` respectively.
+They retain eight seconds, native synthetic audio, the same lifetime ledger, serialized submissions,
+and no automatic retries. Veo uses 720p; Kling's Pro endpoint controls its output resolution.
+These profiles do not add voice cloning, reference videos, multiple shots, or arbitrary arguments.
+They require explicit approval to send the specific reference images to fal in addition to model/spend approval.
+
+Add `image: {"path": "/private/path/frame.png", "sha256": "64-lowercase-hex-digits", "key":
+"games/synthetic-game/assets/frame/original/frame.png"}` to an image-profile shot. The source key
+must also occur in the manifest's `sourceKeys`. Use a complete 16:9 starting frame, not a portrait
+that the provider will crop: PNG, RGB/RGBA 8-bit non-interlaced, 1280×720 through 3840×2160, up to
+8 MiB. Prepare verifies decoded PNG integrity and exact bytes against Panther's stored checksum.
+Submit rechecks local bytes before reserving, then sends a base64 data URI with the paid request.
+No extra public file hosting, expiring S3 link, or separate provider upload is needed. The ledger
+pins file descriptors/checksums rather than duplicating image data. Never delete the private inputs.
+Optional manifest `characterIds` tags explicitly depicted characters on the downloaded video metadata.
+Set `sessionId: null` for standalone screen tests with no real session association; never invent a
+session ID just to choose a storage folder. Such outputs use the ordinary shared-game media library.
+
+On 2026-09-10 the live image-endpoint base rates matched the text endpoints ($0.15/s Veo, $0.14/s
+Kling). The existing conservative audio/headroom calculation reserves $1.50 and $2.10 respectively;
+these are safeguards, not binding charges. Preparation/submission always checks current pricing.
+References: [Veo image API](https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video/api),
+[Kling image API](https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api).
+
 Synthetic example only; save actual game manifests outside Git. Source keys identify the existing
 same-game preproduction/source artifacts; the CLI does not fetch or automatically send those files
 to fal. Only the explicitly reviewed prompt and fixed settings go to the provider.

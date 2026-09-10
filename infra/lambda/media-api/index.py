@@ -183,6 +183,16 @@ def _character(event):
     web_key = model.get("webKey")
     poster_key = model.get("posterKey")
     game_prefix = f"games/{game_id}/"
+    # A portrait-only profile is a complete usable page while a model is being built.
+    if web_key is None:
+        if not isinstance(poster_key, str) or not poster_key.startswith(game_prefix):
+            return _response(422, {"error": "Character portrait is invalid"})
+        poster_metadata = _asset_metadata(poster_key, maximum=MAX_POSTER_BYTES,
+            expected_types={"image/avif", "image/jpeg", "image/png", "image/webp"})
+        if not poster_metadata:
+            return _response(422, {"error": "Character portrait is unavailable"})
+        return _response(200, {"character": {**summary, "summary": description}, "model": None,
+                               "poster": {**poster_metadata, "url": _signed_asset(poster_key)}})
     if not all(
         isinstance(key, str) and key.startswith(game_prefix) for key in (web_key, poster_key)
     ):

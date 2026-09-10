@@ -156,6 +156,18 @@ def test_lists_character_manifests_without_asset_urls(monkeypatch):
     }
 
 
+def test_portrait_only_character_can_be_viewed(monkeypatch):
+    module, fake = load_media_api(monkeypatch)
+    key = "games/example-game/characters/example-character/profile.json"
+    profile = json.loads(fake.objects[key]["Body"])
+    profile["model"] = {"posterKey": profile["model"]["posterKey"]}
+    fake.objects[key]["Body"] = json.dumps(profile).encode()
+    response = module.handler(event("/character", gameId="example-game", characterId="example-character"), None)
+    assert response["statusCode"] == 200
+    assert response_body(response)["model"] is None
+    assert response_body(response)["poster"]["url"]
+
+
 def test_character_model_uses_short_lived_urls_and_enforces_metadata(monkeypatch):
     module, _fake_s3 = load_media_api(monkeypatch)
 

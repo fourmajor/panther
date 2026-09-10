@@ -1,4 +1,5 @@
 import importlib
+import base64
 import json
 import sys
 from pathlib import Path
@@ -54,6 +55,52 @@ def setup(game="test-game"):
             {"playerId": "person-b", "role": "dungeon-master", "characterIds": []},
         ],
     }
+
+
+def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, monkeypatch):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    portrait = "games/test-game/assets/portrait/original/portrait.png"
+    fake = Mock()
+    fake.head_object.return_value = {
+        "ContentLength": 10,
+        "ContentType": "image/png",
+        "Metadata": {
+            "panther": base64.b64encode(json.dumps({"characterIds": ["hero"]}).encode()).decode()
+        },
+    }
+    fake.put_object.return_value = {"ETag": '"initial"'}
+    monkeypatch.setattr(catalog.media, "s3", fake)
+    body = {
+        "gameId": "test-game",
+        "characterId": "hero",
+        "title": "Swashbuckler",
+        "summary": "A swashbuckler with a rapier.",
+        "portraitKey": portrait,
+    }
+    result = request(catalog, "POST /character-profile", body)
+    assert result["statusCode"] == 201
+    profile = json.loads(result["body"])["profile"]
+    assert profile["name"] == "Hero" and profile["model"] == {"posterKey": portrait}
+    assert fake.put_object.call_args.kwargs["IfNoneMatch"] == "*"
+    assert (
+        request(catalog, "POST /character-profile", body, username="outsider")["statusCode"] == 403
+    )
+    assert (
+        request(catalog, "POST /character-profile", {**body, "characterId": "unknown"})[
+            "statusCode"
+        ]
+        == 404
+    )
+    assert (
+        request(
+            catalog,
+            "POST /character-profile",
+            {**body, "portraitKey": portrait.replace("test-game", "other-game")},
+        )["statusCode"]
+        == 400
+    )
+    fake.head_object.return_value["Metadata"] = {}
+    assert request(catalog, "POST /character-profile", body)["statusCode"] == 422
 
 
 def request(m, route, body=None, username="stu", game="test-game"):
@@ -130,9 +177,16 @@ def test_catalog_rejects_unapproved_account(catalog):
 def put_indexed_fixture(catalog, key, body):
     import base64
     import hashlib
+
     storage = catalog.media.s3
-    target = storage.reserve(key, "map", {"characterIds": [], "extra": {"relationshipRole": "finished"}},
-        base64.b64encode(hashlib.sha256(body).digest()).decode(), len(body), "2020-01-01T00:00:00+00:00")
+    target = storage.reserve(
+        key,
+        "map",
+        {"characterIds": [], "extra": {"relationshipRole": "finished"}},
+        base64.b64encode(hashlib.sha256(body).digest()).decode(),
+        len(body),
+        "2020-01-01T00:00:00+00:00",
+    )
     storage.raw.put_object(Bucket="test-assets", Key=target, Body=body)
 
 

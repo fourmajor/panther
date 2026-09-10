@@ -244,6 +244,18 @@ def test_plaintext_keyring_is_rejected(monkeypatch):
     assert "will not save tokens in plaintext" in result.output
 
 
+def test_character_profile_creation_uses_authenticated_api(setup, monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(cloud, "api", lambda config, method, route, **kw: calls.append((method, route, kw)) or {"revision": '"new"'})
+    manifest = tmp_path / "profile.json"
+    body = {"gameId": "test", "characterId": "captain", "title": "Navigator", "summary": "A navigator.",
+            "portraitKey": "games/test/assets/portrait/original/portrait.png"}
+    manifest.write_text(json.dumps(body))
+    result = CliRunner().invoke(main, ["character", "create-profile", str(manifest)])
+    assert result.exit_code == 0, result.output
+    assert calls == [("POST", "/character-profile", {"json": body})]
+
+
 def test_character_commands_preserve_revision_and_only_publish_requested_fields(setup, monkeypatch):
     calls = []
 
