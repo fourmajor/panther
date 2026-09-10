@@ -44,13 +44,14 @@ The owner's standing production policy (2026-09-10) is:
 | Shot use | Model through fal | Text-only CLI profile | Image-anchored CLI profile |
 | --- | --- | --- | --- |
 | Default / other shots | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
-| Dialogue | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
+| Dialogue | MiniMax H3 Max (not Turbo) | `h3-max` | `h3-max-image` |
 | City / urban establishing shots | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
 | Battle / action | Kling 3 Pro | `kling-3-pro` | `kling-3-pro-image` |
 
 Select per shot, not per whole film. Action takes precedence over city setting; dialogue close-ups
-between action beats use Veo. For an inseparable mixed shot, choose Kling if action drives the shot,
-otherwise Veo, and record why. Agents must write the explicit profile into each new manifest;
+between action beats use H3 Max, as does dialogue in a city. For an inseparable mixed shot, choose
+Kling if action drives the shot, H3 Max if dialogue drives it, otherwise Veo, and record why.
+H3 Max supersedes the earlier Veo dialogue preference. Agents must write the explicit profile into each new manifest;
 the CLI still requires `model` and does not infer scene types or silently default a missing field.
 These preferences do not authorize new paid requests, reference sharing, extra attempts, automatic
 fallbacks or model upgrades. Owner-approved comparison experiments may intentionally use other
@@ -110,7 +111,8 @@ until September 14, then $0.08/second. The bounded quote takes the greater of li
 or the regular $0.08/second rate, then adds 25% headroom: **$0.80 reserved per eight-second
 attempt**, despite the current expected $0.16 bill. This avoids relying on an expiring promotion.
 The [API schema](https://fal.ai/models/minimax/h3-max/image-to-video/api) is the payload reference.
-This adapter does not change the Veo/Kling production policy or authorize additional comparisons.
+H3 Max is the selected dialogue model under the production policy above. Adapter availability
+does not authorize new spending or additional comparisons.
 
 `seedance-2.0-image` uses `bytedance/seedance-2.0/image-to-video`, with exactly one
 checksum-pinned starting PNG in `image_url`, explicit 16:9/720p/eight seconds, native audio and

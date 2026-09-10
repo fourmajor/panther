@@ -136,9 +136,9 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
-H3 Max comparisons use `h3-max-image`: one approved pinned starting frame, eight seconds at
+H3 Max image shots use `h3-max-image`: one approved pinned starting frame, eight seconds at
 768P with native audio, safety checking on and prompt expansion disabled. This is H3 Max, not
-Turbo, and is only for owner-approved experiments; Veo/Kling remain the production choices.
+Turbo; it is the selected dialogue model. Existing spending and reference-sharing approvals still apply.
 Use `h3-max` for text-only comparisons with the same settings, explicit 16:9 and no reference image.
 The guard reserves the regular rate plus headroom, even during promotional pricing.
 For a lost result, `panther video reconcile-unavailable ATTEMPT_ID` verifies the original account,
@@ -147,10 +147,12 @@ It retains the full reservation and audit trail, records outcome unknown/output 
 forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
 
 Standing production selection policy: default to **Veo 3.1 Fast through fal**, explicitly for
-dialogue and city/urban establishing shots. Use **Kling 3 Pro through fal for battle/action**.
-Select per shot: action in a city uses Kling; dialogue close-ups between combat beats use Veo.
-For an inseparable mixed shot, use Kling if action drives the shot, otherwise Veo; record the reason.
-Use explicit `veo-3.1-fast` / `kling-3-pro` manifest profiles, or their `-image` variants when using
+city/urban establishing shots. Use **MiniMax H3 Max (not Turbo) through fal for dialogue** and
+**Kling 3 Pro through fal for battle/action**. H3 Max replaces the earlier Veo dialogue preference.
+Select per shot: action in a city uses Kling; dialogue close-ups between combat beats use H3 Max,
+including dialogue in a city. For an inseparable mixed shot, use Kling if action drives the shot,
+H3 Max if dialogue drives it, otherwise Veo; record the reason.
+Use explicit `veo-3.1-fast` / `h3-max` / `kling-3-pro` manifest profiles, or their `-image` variants when using
 an approved starting image. The CLI does not automatically classify shots or fill a missing model.
 This policy guides post-preproduction plan preparation; it does not change the provider-neutral
 editorial worker or authorize spending, reference sharing, model upgrades or failure fallbacks.
