@@ -78,7 +78,9 @@ Metadata-only edits that would change location are rejected; those require anoth
 migration, not a silently stale folder. Ordinary metadata edits and content revisions keep their
 existing authorization and no-overwrite guards.
 
-The small S3 catalog avoids an additional database. There is no NAT gateway, provisioned concurrency,
+The small S3 catalog needs no database for lookups. A separate, tiny on-demand DynamoDB table holds
+the migration safety lock only; it has no provisioned capacity or automatic expiration.
+There is no NAT gateway, provisioned concurrency,
 daemon or always-on cloud worker. Lookups incur S3 requests during use. Retained original versions and
 the organized copies temporarily/permanently add storage; preservation is deliberate, not free storage.
 
@@ -124,6 +126,13 @@ For sources without a stored SHA-256, S3 calculates it on that exact version's c
 original version pin and verify downloaded bytes in the rollout audit. Checksums are not inferred from
 ETags. A copy failure retains the original; a conflicting locator/version stops the plan for inspection.
 Never replace expected versions automatically. No file content is accepted by this migration endpoint.
+
+The lock is released after a completed request (including validation failures), but retained after a
+timeout, unexpected exception or ambiguous service failure. Never automatically expire or steal it:
+an outstanding S3 copy can outlive its caller. If locked, stop the plan and inspect Lambda logs, the
+lock's start time and exact source/destination versions/checksums. Only after confirming there are no
+outstanding writes may an explicitly reviewed recovery operation conditionally remove that exact
+owner's lock. Do not delete the table, discard the report or blindly rerun with new version pins.
 
 Before retirement, rollback is a CDK switch to original readers; stop new indexed uploads first and
 account for them before rollback. After retirement, do not just switch modes: retained versions need

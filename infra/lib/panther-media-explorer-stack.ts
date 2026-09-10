@@ -17,6 +17,7 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cognito from "aws-cdk-lib/aws-cognito";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -323,6 +324,11 @@ export class PantherMediaExplorerStack extends Stack {
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: RemovalPolicy.DESTROY,
     });
+    const migrationLock = new dynamodb.Table(this, "AssetMigrationLock", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
     const migrations = new lambda.Function(this, "AssetMigrations", {
       runtime: lambda.Runtime.PYTHON_3_13,
       architecture: lambda.Architecture.ARM_64,
@@ -331,11 +337,11 @@ export class PantherMediaExplorerStack extends Stack {
         exclude: ["**/__pycache__/**", "**/*.pyc"],
       }),
       timeout: Duration.seconds(25), memorySize: 256,
-      // Serializes all metadata writers; create-only uploads cannot replace an existing object.
-      reservedConcurrentExecutions: 1,
       logGroup: migrationLogs,
-      environment: { ASSET_BUCKET_NAME: privateAssets.bucketName },
+      environment: { ASSET_BUCKET_NAME: privateAssets.bucketName,
+        MIGRATION_LOCK_TABLE: migrationLock.tableName },
     });
+    migrationLock.grant(migrations, "dynamodb:PutItem", "dynamodb:DeleteItem");
     migrations.addToRolePolicy(new iam.PolicyStatement({
       actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:GetObjectVersionTagging"],
       resources: [privateAssets.arnForObjects("games/*")],
@@ -353,8 +359,9 @@ export class PantherMediaExplorerStack extends Stack {
     mediaApi.addRoutes({ path: "/asset-migrations", methods: [apigwv2.HttpMethod.POST],
       integration: new apigwv2Integrations.HttpLambdaIntegration("AssetMigrationsIntegration", migrations), authorizer });
     migrations.addToRolePolicy(new iam.PolicyStatement({
+      // HEAD/GetObject on an absent destination needs bucket-level ListBucket to return
+      // 404 instead of 403. A prefix condition cannot match a HEAD request.
       actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn],
-      conditions: { StringLike: { "s3:prefix": ["games/*"] } },
     }));
     migrations.addToRolePolicy(new iam.PolicyStatement({
       actions: ["s3:PutObject"], resources: [privateAssets.arnForObjects("games/*/catalog/assets/*")],

@@ -3,6 +3,7 @@ import copy
 import importlib
 import json
 import sys
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
 import pytest
@@ -16,6 +17,7 @@ def service(monkeypatch):
     monkeypatch.setitem(sys.modules, "index", media)
     monkeypatch.delitem(sys.modules, "asset_migrations", raising=False)
     module = importlib.import_module("asset_migrations")
+    monkeypatch.setattr(module, "exclusive", lambda: nullcontext({"complete": False}))
     key = "games/example-game/assets/example-model/derived/web/model.glb"
     s3.objects[key]["VersionId"] = "version-one"
     s3.objects[key]["Metadata"] = {"uploaded-by": "original-actor"}
@@ -86,6 +88,20 @@ def test_owner_only_versioning_required_and_lineage_cannot_be_dropped(service):
     s3.objects[body['key']]['Metadata']['panther'] = base64.b64encode(json.dumps({'sourceKeys': ['games/example-game/assets/source/original/a.png']}).encode()).decode()
     assert call(service, {**body, 'dryRun': False})['statusCode'] == 400
     assert not s3.copies
+
+
+def test_handler_releases_only_definite_results_and_never_locks_for_nonowner(service, monkeypatch):
+    module, _, _ = service
+    state = {"complete": False}
+    monkeypatch.setattr(module, "exclusive", lambda: nullcontext(state))
+    assert call(service)["statusCode"] == 200
+    assert state["complete"]
+    state["complete"] = False
+    monkeypatch.setattr(module, "_handle", lambda *_: {"statusCode": 503})
+    assert call(service)["statusCode"] == 503
+    assert not state["complete"]
+    monkeypatch.setattr(module, "exclusive", lambda: pytest.fail("Unauthorized lock attempt"))
+    assert call(service, username="other_stu")["statusCode"] == 403
 
 
 def test_new_uploads_get_explicit_current_metadata(monkeypatch):

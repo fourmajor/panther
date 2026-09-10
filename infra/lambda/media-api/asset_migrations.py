@@ -9,6 +9,7 @@ import re
 from botocore.exceptions import ClientError
 import index as media
 import asset_metadata
+from migration_lock import exclusive
 
 
 def validate(body):
@@ -67,12 +68,24 @@ def handler(event, _context):
     if claims.get("cognito:username") != "stu" or not claims.get("sub"):
         return media._response(403, {"error": "Owner sign-in required for asset migrations"})
     try:
+        with exclusive() as lock:
+            result = _handle(event, claims)
+            lock["complete"] = result["statusCode"] < 500
+            return result
+    except ClientError:
+        return media._response(503, {"error": "Migration locked or unavailable; inspect the previous operation before retrying"})
+
+
+def _handle(event, claims):
+    try:
         raw = event.get("body", "")
         if event.get("isBase64Encoded"):
             raw = base64.b64decode(raw, validate=True).decode()
         if len(raw) > 32 * 1024:
             raise ValueError("Migration request too large")
         body = json.loads(raw)
+        if not isinstance(body, dict):
+            raise ValueError("Migration must be an object")
         if event.get("routeKey") == "POST /asset-storage-migrations":
             import storage_migrations
             return media._response(200, storage_migrations.handle(body, claims, media))
@@ -113,7 +126,7 @@ def handler(event, _context):
             return media._response(200, {"key": key, "status": "ready", "versionId": version, "migrationId": migration_id,
                                          "before": {"kind": old.get("kind"), "metadata": previous},
                                          "after": {"kind": body["kind"], "metadata": body["metadata"]}})
-        # This dedicated Lambda has reserved concurrency=1. It is the ONLY metadata writer;
+        # This dedicated Lambda holds a fail-closed mutex. It is the ONLY metadata writer;
         # ordinary uploads remain create-only. Source version pinning keeps file bytes exact.
         args = {field: head[field] for field in ("ContentType", "CacheControl", "ContentDisposition", "ContentEncoding", "ContentLanguage", "Expires", "WebsiteRedirectLocation", "StorageClass") if field in head}
         result = media.s3.copy_object(Bucket=media.BUCKET_NAME, Key=key,
