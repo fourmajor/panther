@@ -70,12 +70,15 @@ auto-submit preproduction packets, or replace subscription-backed planning with 
 ### Video model selection policy
 
 Owner-selected on 2026-09-10, based on the reviewed comparison clips. Use **Veo 3.1 Fast through
-fal by default**, explicitly including dialogue and city/urban establishing shots. Use **Kling 3 Pro
-through fal for battle/action shots**. These are production preferences, not universal quality claims.
+fal by default**, explicitly including city/urban establishing shots. Use **MiniMax H3 Max
+(not Turbo) through fal for dialogue**, and **Kling 3 Pro through fal for battle/action shots**.
+H3 Max supersedes the earlier Veo dialogue preference. These are production preferences, not
+universal quality claims.
 
 Apply the choice per shot: action in a city still uses Kling; a dialogue close-up between combat
-beats uses Veo. For an inseparable mixed shot, use Kling when battle/action drives the shot,
-otherwise Veo. Record the selected model and rationale in the production plan. New model versions,
+beats uses H3 Max, including dialogue in a city. For an inseparable mixed shot, use Kling when
+battle/action drives the shot, H3 Max when dialogue drives it, otherwise Veo. Record the selected
+model and rationale in the production plan. New model versions,
 comparison experiments and deliberate exceptions require an explicit owner choice; do not silently
 substitute another model on failure.
 

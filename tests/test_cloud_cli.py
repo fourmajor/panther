@@ -74,10 +74,14 @@ def test_instructions_ship_with_cli():
     assert "without direct AWS access" in result.output
     assert "Infrastructure deployment remains a separate CDK/AWS administrative operation" in result.output
     assert "panther video --help" in result.output
-    assert "H3 Max comparisons use `h3-max-image`" in result.output
+    assert "H3 Max image shots use `h3-max-image`" in result.output
     assert "panther video reconcile-unavailable ATTEMPT_ID" in result.output
     assert "default to **Veo 3.1 Fast through fal**" in result.output
-    assert "dialogue and city/urban establishing shots" in result.output
+    assert "city/urban establishing shots" in result.output
+    assert "MiniMax H3 Max (not Turbo) through fal for dialogue" in result.output
+    assert "dialogue close-ups between combat beats use H3 Max" in result.output
+    assert "H3 Max replaces the earlier Veo dialogue preference" in result.output
+    assert "dialogue close-ups between combat beats use Veo" not in result.output
     assert "Kling 3 Pro through fal for battle/action" in result.output
     assert "action in a city uses Kling" in result.output
     assert "does not automatically classify shots" in result.output
