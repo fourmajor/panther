@@ -215,7 +215,7 @@ test("media explorer uses private static hosting and Cognito authentication", ()
       SecurityHeadersConfig: Match.objectLike({
         ContentSecurityPolicy: Match.objectLike({
           ContentSecurityPolicy: Match.stringLikeRegexp(
-            "frame-ancestors 'none'.*script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-F7kvx28zBT3UUQL/hTOYst\\+55RSmqyCY3muSCYmt6A4='",
+            "connect-src 'self' blob: https://\\*\\.amazonaws\\.com https://\\*\\.amazoncognito\\.com; frame-ancestors 'none'.*img-src 'self' data: blob: https://\\*\\.amazonaws\\.com;.*script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-F7kvx28zBT3UUQL/hTOYst\\+55RSmqyCY3muSCYmt6A4='",
           ),
           Override: true,
         }),

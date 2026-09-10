@@ -54,6 +54,21 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     test.setTimeout(90000);
     await page.setViewportSize(viewport);
     const errors = [];
+    const textureErrors = [];
+    page.on('console', message => {
+      if (/Content Security Policy|violates.*directive|load texture/i.test(message.text())) textureErrors.push(message.text());
+    });
+    // Exercise both GLTF loader paths: ImageBitmap fetch and HTMLImageElement.
+    // A colored material without an embedded image cannot catch texture CSP failures.
+    if (viewport.width === 390) await page.addInitScript(() => { window.createImageBitmap = undefined; });
+    const texturePng = Buffer.from(await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 4;
+      const context = canvas.getContext('2d'); context.fillStyle = '#c52018'; context.fillRect(0, 0, 4, 4);
+      return canvas.toDataURL('image/png').split(',')[1];
+    }), 'base64');
+    const modelBytes = localModel || syntheticModel(1, texturePng);
+    const gltf = JSON.parse(modelBytes.subarray(20, 20 + modelBytes.readUInt32LE(12)));
+    const expectedTextures = (gltf.materials || []).filter(material => material.pbrMetallicRoughness?.baseColorTexture).length;
     let version = 1;
     let broken = false;
     page.on('pageerror', error => errors.push(error.message));
@@ -63,7 +78,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/model-*.glb', route => route.fulfill({
-      status: broken ? 404 : 200, contentType: 'model/gltf-binary', body: broken ? Buffer.from('missing') : (localModel || syntheticModel(version)),
+      status: broken ? 404 : 200, contentType: 'model/gltf-binary', body: broken ? Buffer.from('missing') : modelBytes,
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/portrait.svg', route => route.fulfill({
@@ -95,6 +110,24 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     expect(errors).toEqual([]);
     await page.locator('#model-load').click();
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
+    if (!localModel) expect(expectedTextures).toBeGreaterThan(0);
+    expect(await viewer.evaluate(el => el.model.materials.filter(material => material.pbrMetallicRoughness.baseColorTexture.texture).length)).toBe(expectedTextures);
+    expect(textureErrors).toEqual([]);
+    if (!localModel) {
+      const redPixels = await viewer.evaluate(async el => {
+        const image = new Image(); image.src = el.toDataURL('image/png'); await image.decode();
+        const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+        const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 80 && pixels[i] > pixels[i + 1] * 2 && pixels[i] > pixels[i + 2] * 2 && pixels[i + 3] > 200) count++;
+        return count;
+      });
+      expect(redPixels).toBeGreaterThan(100);
+    }
+    const initialScreenshot = testInfo.outputPath('textured-model.png');
+    await viewer.screenshot({ path: initialScreenshot });
+    await testInfo.attach('textured-model', { path: initialScreenshot, contentType: 'image/png' });
     const dimensions = await viewer.evaluate(el => {
       const d = el.getDimensions(); return [d.x, d.y, d.z];
     });

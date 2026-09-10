@@ -68,6 +68,15 @@ expected; AWS waits. Do not mount personal directories, AWS/Codex credentials, o
 into browser QA. Only the private candidate directory is mounted; its tests have networking disabled.
 Keep QA screenshots private, never upload them to GitHub Actions artifacts.
 
+Browser QA must validate embedded texture loading, not just the model-viewer `loaded` flag.
+A GLB can load successfully with white surfaces after CSP blocks its embedded image blobs.
+The viewer tests compare declared base-color textures with loaded materials, check CSP/texture
+errors, and verify colored pixels using an embedded-image synthetic fixture. Desktop exercises
+ImageBitmap fetch; mobile exercises the HTML image fallback. Both `connect-src` and `img-src`
+need local `blob:` permission; script policy stays unchanged. Inspect the private candidate's
+desktop/mobile screenshots before claiming visual readiness. Rebuild/reinstall the pinned QA
+image after changing these tests or the hosting policy.
+
 The native execution flag is an explicit authorization gate, not a default sandbox bypass.
 Blender 5.2.1 crashes during macOS GPU initialization inside Codex's sandbox. Codex therefore
 writes a build script in its sandbox; the separately authorized worker runs that script in
