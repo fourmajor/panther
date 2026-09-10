@@ -37,6 +37,27 @@ ledger, so agents must never use it to recover a previously established but lost
 
 ## Bounded initial profiles
 
+### Production model selection
+
+The owner's standing production policy (2026-09-10) is:
+
+| Shot use | Model through fal | Text-only CLI profile | Image-anchored CLI profile |
+| --- | --- | --- | --- |
+| Default / other shots | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
+| Dialogue | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
+| City / urban establishing shots | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
+| Battle / action | Kling 3 Pro | `kling-3-pro` | `kling-3-pro-image` |
+
+Select per shot, not per whole film. Action takes precedence over city setting; dialogue close-ups
+between action beats use Veo. For an inseparable mixed shot, choose Kling if action drives the shot,
+otherwise Veo, and record why. Agents must write the explicit profile into each new manifest;
+the CLI still requires `model` and does not infer scene types or silently default a missing field.
+These preferences do not authorize new paid requests, reference sharing, extra attempts, automatic
+fallbacks or model upgrades. Owner-approved comparison experiments may intentionally use other
+models. Historical comparison manifests and actual generation metadata remain unchanged.
+
+### Supported comparison adapters
+
 All profiles produce a single eight-second 16:9 clip with native generated audio, no reference
 uploads, voice cloning, voice controls, automatic prompt rewriting or multi-shot expansion:
 

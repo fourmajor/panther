@@ -67,6 +67,26 @@ The separate, explicitly gated local `panther video` fal comparison CLI is docum
 [fal-video-comparison.md](fal-video-comparison.md). It does not change this workflow definition,
 auto-submit preproduction packets, or replace subscription-backed planning with paid inference.
 
+### Video model selection policy
+
+Owner-selected on 2026-09-10, based on the reviewed comparison clips. Use **Veo 3.1 Fast through
+fal by default**, explicitly including dialogue and city/urban establishing shots. Use **Kling 3 Pro
+through fal for battle/action shots**. These are production preferences, not universal quality claims.
+
+Apply the choice per shot: action in a city still uses Kling; a dialogue close-up between combat
+beats uses Veo. For an inseparable mixed shot, use Kling when battle/action drives the shot,
+otherwise Veo. Record the selected model and rationale in the production plan. New model versions,
+comparison experiments and deliberate exceptions require an explicit owner choice; do not silently
+substitute another model on failure.
+
+This policy guides agents preparing executable video plans after preproduction. The existing
+automated editorial stages remain provider-neutral and stop at `READY_FOR_VIDEO_DISCUSSION`;
+this documentation change does not add an automatic router or alter an in-flight workflow.
+Use the exact CLI profiles in [fal-video-comparison.md](fal-video-comparison.md#production-model-selection).
+Model preference is not spending or reference-sharing approval: all existing plan approval,
+rights/consent checks, attempt limits and lifetime budget safeguards still apply. Preserve historical
+comparison plans and their actual model provenance; do not relabel or regenerate older clips.
+
 Storyboards are real, safe SVG blocking diagrams derived from structured shot positions and colors,
 not finished concept illustrations. The animatic is a timed shot manifest, not a rendered film.
 Missing character/environment plates are documented dependencies with preparation instructions,

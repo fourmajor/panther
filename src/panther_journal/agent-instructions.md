@@ -136,6 +136,17 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
+Standing production selection policy: default to **Veo 3.1 Fast through fal**, explicitly for
+dialogue and city/urban establishing shots. Use **Kling 3 Pro through fal for battle/action**.
+Select per shot: action in a city uses Kling; dialogue close-ups between combat beats use Veo.
+For an inseparable mixed shot, use Kling if action drives the shot, otherwise Veo; record the reason.
+Use explicit `veo-3.1-fast` / `kling-3-pro` manifest profiles, or their `-image` variants when using
+an approved starting image. The CLI does not automatically classify shots or fill a missing model.
+This policy guides post-preproduction plan preparation; it does not change the provider-neutral
+editorial worker or authorize spending, reference sharing, model upgrades or failure fallbacks.
+Other models require an explicit owner-directed exception/comparison. Preserve historical plans
+and actual model provenance; never relabel old videos to match today's preference.
+
 Use `panther video --help` and the trusted `docs/fal-video-comparison.md` for the separate local
 comparison integration. `video check` checks live pricing and balance without generation;
 `video budget status` reports lifetime reservations, **not** measured provider spend. The $50
