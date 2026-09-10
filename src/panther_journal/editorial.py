@@ -15,7 +15,7 @@ import uuid
 import click
 import jsonschema
 
-from panther_journal import cloud, model_workflow as local
+from panther_journal import cloud, generation_metadata as generation, model_workflow as local
 from panther_journal.audio_storage import lock, write_json
 from panther_journal.editorial_contract import (
     PLAN,
@@ -310,6 +310,7 @@ def upload(config, file, job, kind, category, source_keys, run_suffix):
             "sessionId": job["sessionId"],
             "sourceKeys": source_keys[:2],
             "extra": {
+                "generation": generation.subscription(),
                 "jobId": job["jobId"],
                 "sha256": checksum,
                 "artifactType": kind,

@@ -384,6 +384,37 @@ def test_regular_and_admin_keys_are_separate_and_errors_do_not_expose_them(monke
     assert calls[1][1]["allow_redirects"] is False
 
 
+@pytest.mark.parametrize("events,more,valid", [
+    ([{"request_id":"a", "endpoint_id":"model", "cost_total":1.344}], False, True),
+    ([{"request_id":"a", "endpoint_id":"model", "cost_total":0}], False, True),
+    ([], False, True),
+    ([], True, False),
+    ([{"request_id":"a", "endpoint_id":"model", "cost_total":-1}], False, False),
+    ([{"request_id":"foreign", "endpoint_id":"model", "cost_total":1}], False, False),
+    ([{"request_id":"a", "endpoint_id":"model", "cost_total":"NaN"}], False, False),
+])
+def test_billing_events_are_read_only_request_matched_and_fail_closed(monkeypatch, events, more, valid):
+    from types import SimpleNamespace
+    calls = []
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return SimpleNamespace(status_code=200, json=lambda: {"billing_events":events, "has_more":more})
+    monkeypatch.setattr(v.requests, "Session", Session)
+    monkeypatch.setattr(v.cloud, "credential_store", lambda: SimpleNamespace(get_password=lambda *_: "SYNTHETIC-BILLING"))
+    if valid:
+        result = v.Fal.billing_events(["a"])
+        assert (result.get("a") or {}).get("amount") == (str(events[0]["cost_total"]) if events else None)
+    else:
+        with pytest.raises(click.ClickException):
+            v.Fal.billing_events(["a"])
+    assert calls[0][0] == v.PLATFORM + "/models/billing-events"
+    assert calls[0][1]["params"]["request_id"] == "a"
+    assert calls[0][1]["allow_redirects"] is False
+
+
 def test_unknown_pricing_units_block_inference(monkeypatch):
     fal = object.__new__(v.Fal)
     monkeypatch.setattr(
@@ -628,6 +659,7 @@ def test_media_delivery_host_allowlist(url):
 def test_download_preserves_original_and_writes_upload_metadata_without_credentials(
     setup, monkeypatch
 ):
+    monkeypatch.setattr(v.Fal, "billing_events", lambda ids: {})
     fal = setup
     plan = approved(fal)
     attempt = v.submit(plan, "scene-veo", 1, "", fal)

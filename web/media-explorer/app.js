@@ -788,6 +788,7 @@ async function previewFile(file) {
   const epoch = ++previewEpoch;
   elements.previewTitle.textContent = file.name;
   elements.previewBody.textContent = "Preparing preview…";
+  document.getElementById("asset-generation").replaceChildren();
   document.getElementById("asset-links").textContent = "Loading connections…";
   elements.previewDetails.textContent = formatBytes(file.size);
   elements.openOriginal.removeAttribute("href");
@@ -796,6 +797,7 @@ async function previewFile(file) {
   try {
     const result = await api("/object-url", { key: file.key });
     if (epoch !== previewEpoch) return;
+    renderGeneration(document.getElementById("asset-generation"), result.metadata);
     // Physical folders may change; connections/readers use the API's stable asset identity.
     const assetRef = result.key || file.key;
     const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
@@ -823,6 +825,33 @@ function closePreview() {
   elements.previewBody.replaceChildren();
   elements.openOriginal.removeAttribute("href");
   document.getElementById("asset-links").replaceChildren();
+  document.getElementById("asset-generation").replaceChildren();
+}
+
+function renderGeneration(host, metadata) {
+  const g = metadata?.extra?.generation;
+  host.replaceChildren();
+  const heading = document.createElement("h3"); heading.textContent = "Generation details";
+  const list = document.createElement("dl");
+  const row = (label, value) => {
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = label; dd.textContent = value; list.append(dt, dd);
+  };
+  if (!g || g.schemaVersion !== 1) { host.append(heading, "Generation details unavailable."); return; }
+  const methods = {ai:"AI-generated", "ai-assisted":"AI-assisted", procedural:"Software-generated", capture:"Recorded", human:"Human-created", unknown:"Unknown"};
+  const locations = {local:"Local computer", remote:"Provider-hosted", "not-applicable":"Not applicable", unknown:"Unknown"};
+  row("Creation", methods[g.method] || "Unknown");
+  row("Model", g.model || (["human", "capture", "procedural"].includes(g.method) ? "Not applicable" : "Unknown / not recorded"));
+  row("Provider", g.provider || "Not recorded");
+  row("Inference ran", locations[g.inference] || "Unknown / not recorded");
+  if (g.execution) row("Processing ran", locations[g.execution] || "Unknown");
+  if (g.tool) row("Tools", g.tool);
+  const cost = g.cost || {};
+  if (["billed", "estimated"].includes(cost.status) && /^\d{1,9}(\.\d{1,9})?$/.test(cost.amount) && /^[A-Z]{3}$/.test(cost.currency)) {
+    row("Generation cost", `${cost.currency} ${cost.amount} · ${cost.status === "billed" ? "Billed" : "Estimate, not a charge"}`);
+  } else row("Generation cost", {subscription:"Subscription-covered · no per-asset charge recorded", "not-applicable":"No metered generation charge · hardware/storage excluded", unknown:"Unknown / not reconciled"}[cost.status] || "Unknown / not reconciled");
+  if (g.evidence) row("Evidence", g.evidence);
+  host.append(heading, list);
 }
 
 const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", "manuscript",
@@ -1186,12 +1215,14 @@ function chapterDetails(chapter, versions) {
   }
   const sourceTitle = document.createElement("h3"); sourceTitle.textContent = "Connected assets";
   const sources = document.createElement("div"); sources.className = "novel-connections asset-links";
+  const creation = document.createElement("section"); creation.className = "generation-details";
   sources.textContent = "Loading finished assets…";
   const gameId = state.gameId, epoch = routeEpoch;
   void allAssets(gameId).then(assets => {
     if (epoch !== routeEpoch || state.gameId !== gameId || currentChapter !== chapter || !state.tokens) return;
     sources.replaceChildren();
     const key = chapter.details.artifact?.key;
+    renderGeneration(creation, assets.find(a => a.key === key)?.metadata);
     if (!assets.some(a => a.key === key)) { sources.textContent = "Chapter connections are not indexed yet."; return; }
     const connections = finishedAssetConnections(assets, key, gameId);
     appendFinishedConnections(sources, connections);
@@ -1203,7 +1234,7 @@ function chapterDetails(chapter, versions) {
   const label = document.createElement("summary"); label.textContent = "Full provenance and revision history";
   const data = document.createElement("pre"); data.textContent = JSON.stringify(chapter.details, null, 2);
   provenance.append(label, data);
-  novel.details.replaceChildren(heading, summary, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
+  novel.details.replaceChildren(heading, summary, creation, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
 }
 
 async function loadNovel(chapterId, epoch) {

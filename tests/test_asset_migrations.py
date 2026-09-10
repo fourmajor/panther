@@ -36,7 +36,8 @@ def service(monkeypatch):
     body = {"schemaVersion": 1, "key": key, "expectedVersionId": "version-one", "kind": "model-3d",
             "reason": "Bring metadata to the current standard", "metadata": {
                 "schemaVersion": 1, "title": "Example model", "category": "reference", "characterIds": [],
-                "tags": [], "sourceKeys": [], "extra": {"relationshipRole": "finished"}}}
+                "tags": [], "sourceKeys": [], "extra": {"relationshipRole": "finished",
+                "generation": {"schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}}}}}
     import storage_layout
     s3.resolve = lambda _key: storage_layout.location(key, body["kind"], body["metadata"])
     return module, s3, body

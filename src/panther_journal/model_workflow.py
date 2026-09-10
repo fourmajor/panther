@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import click
 import requests
-from panther_journal import cloud
+from panther_journal import cloud, generation_metadata as generation
 
 VIEWS = ("front", "front-right", "right", "back-right", "back", "back-left", "left", "front-left")
 RESULT_SCHEMA = {
@@ -206,7 +206,8 @@ def upload_file(config, file, job, attempt):
         "title": file.name,
         "category": "reference",
         "characterIds": [job["characterId"]],
-        "extra": {"jobId": job["jobId"], "sha256": checksum, "appearanceId": job["appearanceId"]},
+        "extra": {"jobId": job["jobId"], "sha256": checksum, "appearanceId": job["appearanceId"],
+                  "generation": generation.subscription("Codex CLI + Blender")},
     }
     # Remote existence is checked without treating permission/network errors as absence.
     try:

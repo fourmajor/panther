@@ -345,6 +345,22 @@ A transcript is not automatically reviewed; an AI portrait is not automatically 
 
 ## Metadata contract (version 1)
 
+Every asset has `extra.generation` (schemaVersion 1). Include all known creation facts:
+`method` (ai, ai-assisted, procedural, capture, human, unknown), actual `model` version,
+`provider`, `inference` and `execution` (local, remote, unknown, not-applicable), and `tool`.
+Codex running on a laptop does NOT mean local inference: OpenAI hosts inference; Blender and
+coordination run locally. Never label the assistant/tool name as the image model if not reported.
+Required `cost.status` is billed, estimated, subscription, not-applicable or unknown. Only
+billed/estimated records contain decimal-string `amount` and ISO `currency`, with short `evidence`
+at generation level. Subscription-covered is not a $0 invoice. Reservations are NEVER charges.
+Keep unknown historical facts explicit; do not guess origin from appearance, format or filename.
+The safe unknown record is `{"schemaVersion":1,"method":"unknown","cost":{"status":"unknown"}}`.
+Details describe this creation operation, not cumulative upstream spend; avoid double-counting
+paired exports. See `docs/generation-metadata.md` for examples and the all-game versioned backfill.
+Use `panther video costs` for request-matched billing, and `panther assets generation-plan --facts
+FACTS.json --output NEW_PLAN.json` followed by the ordinary dry-run/apply migration. Never modify
+the spending ledger or regenerate an asset merely to fill metadata.
+
 Use `--metadata /outside/repo/asset.json`. Supported fields:
 
 - `title`: concise human-readable name; defaults to the filename stem.

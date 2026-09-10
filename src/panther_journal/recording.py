@@ -18,7 +18,7 @@ from typing import Literal
 import click
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from panther_journal import cloud
+from panther_journal import cloud, generation_metadata as generation
 from panther_journal.audio_storage import flush_directory, lock, write_json
 
 
@@ -427,6 +427,18 @@ def upload_one(config, file, record, kind, *, source_keys=None):
         "category": "canonical-source" if kind == "recording" else "unclassified",
         "extra": {"recordingId": record.id, "chunkSetId": record.id, "sha256": sha},
     }
+    creation = generation.unknown()
+    if kind in {"recording-playback", "recording-playback-manifest"}:
+        creation = generation.local("FFmpeg")
+    elif kind in {"raw-transcript", "transcript"}:
+        # The original transcript retains the model checksum. Do not infer its model version.
+        creation = generation.local("whisper.cpp", method="ai")
+    elif kind == "recording":
+        # Imports may have been captured elsewhere; a local upload does not establish origin.
+        capture = json.loads((file.parent / "capture.json").read_text()) if (file.parent / "capture.json").is_file() else {}
+        if capture.get("device") and capture["device"] != "import":
+            creation = generation.local("Panther recorder", method="capture")
+    metadata["extra"]["generation"] = creation
     # Existing CLI enforces authentication, streamed SHA-256, exact size, and If-None-Match.
     metadata_path = file.parent / f".upload-{uuid.uuid4().hex}.json"
     if kind in {"transcript", "raw-transcript", "corrected-transcript"}:

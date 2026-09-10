@@ -54,6 +54,7 @@ def validate(body):
         raise ValueError("Explicit same-game sourceKeys required; keep large provenance in its document")
     if not isinstance(details.get("extra"), dict):
         raise ValueError("Explicit extra metadata required")
+    asset_metadata.validate_generation(details["extra"].get("generation"))
     if details["extra"].get("relationshipRole") not in {"finished", "intermediate"}:
         raise ValueError("Explicit finished/intermediate relationshipRole required")
     if (asset_metadata.internal(body["kind"]) and not (body["kind"] == "recording-manifest" and key.endswith("/recording.json"))

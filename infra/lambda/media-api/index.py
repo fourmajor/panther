@@ -584,6 +584,10 @@ def _upload(event):
         return _response(400, {"error": "Metadata extra must be an object"})
     import asset_metadata
     metadata = asset_metadata.defaults(kind, metadata, filename, content_type)
+    try:
+        asset_metadata.validate_generation(metadata["extra"]["generation"])
+    except ValueError as error:
+        return _response(400, {"error": str(error)})
     if metadata["extra"]["relationshipRole"] not in {"finished", "intermediate"}:
         return _response(400, {"error": "Invalid relationshipRole"})
     if (asset_metadata.internal(kind) and not (kind == "recording-manifest" and filename == "recording.json")

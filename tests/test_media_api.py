@@ -235,7 +235,8 @@ def test_upload_signs_size_checksum_metadata_and_no_overwrite(monkeypatch):
     assert params["Metadata"]["uploaded-by"] == "example-user"
     metadata = json.loads(base64.b64decode(params["Metadata"]["panther"]))
     assert metadata["category"] == "reference"
-    assert metadata["extra"] == {"creator": "DM", "relationshipRole": "finished"}
+    assert metadata["extra"] == {"creator": "DM", "relationshipRole": "finished",
+                                 "generation": {"schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}}}
     assert expiry == 300
 
 

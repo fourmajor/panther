@@ -48,11 +48,14 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
   const assets=[[raw,'raw-transcript',[]],[corrected,'corrected-transcript',[raw]],
     [proof,'novel-proof',[corrected]],[chapter,'novel-chapter',[proof]]].map(([key,kind,sourceKeys])=>
     ({key,kind,sourceKeys,name:key.split('/').at(-1),metadata:{title:kind},contentType:'application/json'}));
+  assets.find(a=>a.key===chapter).metadata.extra={generation:{schemaVersion:1,method:'ai-assisted',provider:'OpenAI',inference:'remote',execution:'local',tool:'Codex CLI',cost:{status:'subscription'}}};
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets,cursor:null}}));
   await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],
     markdown:'A finished chapter.', details:{review:{},artifact:{key:chapter},sourceKeys:[proof],rawReference:{key:raw}}}}));
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await page.getByRole('button',{name:'Details',exact:true}).click();
+  await expect(page.locator('#novel-details .generation-details')).toContainText('Subscription-covered');
+  await expect(page.locator('#novel-prose')).not.toContainText('Subscription-covered');
   const links=page.locator('#novel-details [data-connections]');
   await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
   expect((await links.allTextContents()).join('\n')).not.toContain('novel-proof');

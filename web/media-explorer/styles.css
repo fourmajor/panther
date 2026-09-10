@@ -150,6 +150,12 @@ main {
 .novel-details pre { white-space: pre-wrap; font-size: .8rem; }
 .novel-details details { margin-top: 2rem; }
 .novel-details summary { cursor: pointer; }
+.generation-details { padding: 1rem; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.generation-details h3 { margin: 0 0 .75rem; font-size: 1rem; }
+.generation-details dl { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(0, 3fr); gap: .5rem 1rem; margin: 0; font-size: .85rem; }
+.generation-details dt { color: var(--muted); }
+.generation-details dd { margin: 0; }
+@media (max-width: 480px) { .generation-details dl { grid-template-columns: 1fr; gap: .25rem; } .generation-details dd { margin-bottom: .5rem; } }
 .novel-pagination { justify-content: space-between; border-top: 1px solid var(--line); padding-top: 1.5rem; overflow-wrap: anywhere; }
 .roster { margin-bottom: 2rem; color: var(--muted); }
 .roster ul { padding-left: 1.25rem; line-height: 1.8; }

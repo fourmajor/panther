@@ -33,7 +33,8 @@ def store(monkeypatch):
 def metadata(**extra):
     return {"schemaVersion": 1, "title": "Synthetic fixture", "category": "reference",
             "characterIds": [], "tags": [], "sourceKeys": [],
-            "extra": {"relationshipRole": "finished"}, **extra}
+            "extra": {"relationshipRole": "finished", "generation": {
+                "schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}}}, **extra}
 
 
 REF = "games/example/assets/source-v1/original/source.flac"
