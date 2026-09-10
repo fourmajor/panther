@@ -30,7 +30,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     page.on('pageerror', error => errors.push(error.message));
     const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Test', summary: 'Synthetic browser fixture, not game data.' };
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
-      json: { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: localModel ? localModel.length : 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
+      json: { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null, character, model: { url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: localModel ? localModel.length : 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/model-*.glb', route => route.fulfill({
@@ -75,10 +75,13 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     // A new profile selection must request the new immutable URL after refresh.
     version = 2;
     await page.reload();
+    await page.waitForFunction(() => customElements.get('model-viewer') && document.querySelector('#character-poster').naturalHeight > 0);
     await page.locator('#character-model').scrollIntoViewIfNeeded();
     await page.locator('#model-load').click();
+    // Confirm the fresh URL before checking render completion. Software WebGL in the
+    // isolated runner may keep the page busy beyond the default five-second poll budget.
+    await expect.poll(() => viewer.evaluate(el => el.src), { timeout: 30000 }).toMatch(/model-2\.glb$/);
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
-    await expect.poll(() => viewer.evaluate(el => el.src)).toMatch(/model-2\.glb$/);
     const initial = await viewer.evaluate(el => el.getCameraOrbit().theta);
     const area = await viewer.boundingBox();
     await page.mouse.move(area.x + area.width * .6, area.y + area.height * .5);
