@@ -5,6 +5,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import click
 from click.testing import CliRunner
 
 from panther_journal import cloud
@@ -242,6 +243,18 @@ def test_plaintext_keyring_is_rejected(monkeypatch):
     result = CliRunner().invoke(main, ["login", "--username", "other_stu"])
     assert result.exit_code != 0
     assert "will not save tokens in plaintext" in result.output
+
+
+def test_api_accepts_created_but_not_pending_or_redirect(setup, monkeypatch):
+    monkeypatch.setattr(cloud, "token", lambda config: "synthetic")
+    result = {"profile": {"id": "hero"}, "revision": '"new"'}
+    for status in (200, 201):
+        monkeypatch.setattr(cloud.requests, "request", lambda *a, **kw: SimpleNamespace(status_code=status, json=lambda: result))
+        assert cloud.api({"apiUrl":"https://api.example"}, "POST", "/character-profile") == result
+    for status in (202, 204, 302):
+        monkeypatch.setattr(cloud.requests, "request", lambda *a, **kw: SimpleNamespace(status_code=status, json=lambda: result))
+        with pytest.raises(click.ClickException, match="Unexpected Panther"):
+            cloud.api({"apiUrl":"https://api.example"}, "POST", "/character-profile")
 
 
 def test_character_profile_creation_uses_authenticated_api(setup, monkeypatch, tmp_path):
