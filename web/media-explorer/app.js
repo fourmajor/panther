@@ -184,6 +184,7 @@ function clearSession() {
   state.mediaLoaded = false;
   state.currentCharacter = null;
   clearNovel();
+  clearLibrary();
   elements.characterModel.src = null;
   elements.previewBody.replaceChildren();
   if (elements.previewDialog.open) elements.previewDialog.close();
@@ -281,6 +282,7 @@ async function api(path, parameters = {}) {
 }
 
 function showWelcome(message = "") {
+  clearLibrary();
   elements.gameToolbar.hidden = true;
   elements.welcome.hidden = false;
   elements.explorer.hidden = true;
@@ -591,12 +593,14 @@ function resetCharacterModel() {
 
 async function renderRoute() {
   const epoch = ++routeEpoch;
+  clearLibrary();
+  closePreview();
   elements.novel.hidden = true;
   clearNovel();
   try { await ensureSession(); } catch (error) { showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel|audio|transcripts)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -612,6 +616,14 @@ async function renderRoute() {
     return;
   }
   if (epoch !== routeEpoch) return;
+  const section = gameRoute?.[2] || window.location.pathname.slice(1);
+  if (["audio", "transcripts"].includes(section)) {
+    setActiveNavigation(section);
+    elements.characters.hidden = true;
+    elements.explorer.hidden = true;
+    await loadLibrary(section, epoch);
+    return;
+  }
   if (window.location.pathname === "/novel" || gameRoute?.[2] === "novel") {
     setActiveNavigation("novel");
     elements.characters.hidden = true;
@@ -640,6 +652,8 @@ async function renderRoute() {
     state.mediaLoaded = true;
     await loadPrefix(state.currentPrefix);
   }
+  const key = new URLSearchParams(location.search).get("asset");
+  if (epoch === routeEpoch && sameGameKey(key)) await previewFile({key, name: key.split("/").at(-1)});
 }
 
 function fileGlyph(name) {
@@ -725,18 +739,21 @@ function previewElement(contentType, url, title) {
     return audio;
   }
   const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "");
   frame.src = url;
   frame.title = title;
   return frame;
 }
 
 async function previewFile(file) {
+  for (const media of elements.previewBody.querySelectorAll("audio, video")) media.pause();
   const epoch = ++previewEpoch;
   elements.previewTitle.textContent = file.name;
   elements.previewBody.textContent = "Preparing preview…";
+  document.getElementById("asset-links").textContent = "Loading connections…";
   elements.previewDetails.textContent = formatBytes(file.size);
   elements.openOriginal.removeAttribute("href");
-  elements.previewDialog.showModal();
+  if (!elements.previewDialog.open) elements.previewDialog.showModal();
 
   try {
     const result = await api("/object-url", { key: file.key });
@@ -744,6 +761,13 @@ async function previewFile(file) {
     elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
+    if (result.contentType.startsWith("audio/")) attachMediaRecovery(elements.previewBody.firstChild, file.key, () => epoch === previewEpoch);
+    void renderAssetLinks(file.key, epoch);
+    if (file.key.endsWith(".json") && sameGameKey(file.key)) {
+      const detail = await api("/asset-document", {gameId: state.gameId, key: file.key});
+      if (epoch !== previewEpoch) return;
+      renderStructuredAsset(detail, epoch);
+    }
   } catch (error) {
     if (epoch !== previewEpoch) return;
     elements.previewBody.textContent = error.message;
@@ -752,9 +776,11 @@ async function previewFile(file) {
 
 function closePreview() {
   previewEpoch += 1;
+  for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.removeAttribute("src"); media.load(); }
   elements.previewDialog.close();
   elements.previewBody.replaceChildren();
   elements.openOriginal.removeAttribute("href");
+  document.getElementById("asset-links").replaceChildren();
 }
 
 const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", "manuscript",
@@ -911,6 +937,202 @@ async function loadNovel(chapterId, epoch) {
   }
 }
 
+let assetIndex = null;
+function sameGameKey(key) {
+  return typeof key === "string" && key.startsWith(`games/${state.gameId}/assets/`)
+    && !key.split("/").includes("..") && !/[\x00-\x1f]/.test(key);
+}
+
+function clearLibrary() {
+  document.getElementById("session-library").hidden = true;
+  document.getElementById("library-list").replaceChildren();
+  if (!state.tokens) assetIndex = null;
+}
+
+async function allAssets(gameId) {
+  if (assetIndex?.gameId === gameId) return assetIndex.promise;
+  const entry = {gameId};
+  entry.promise = (async () => {
+    const assets = []; let cursor = null; const seen = new Set();
+    do {
+      const page = await api("/assets", {gameId, cursor});
+      if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
+      assets.push(...page.assets);
+      cursor = page.cursor;
+      if (cursor && (seen.has(cursor) || seen.size >= 200)) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return assets;
+  })().catch(error => { if (assetIndex === entry) assetIndex = null; throw error; });
+  assetIndex = entry;
+  return entry.promise;
+}
+
+function assetLink(asset, label) {
+  const link = document.createElement("a");
+  link.href = `${gamePath("media")}?asset=${encodeURIComponent(asset.key)}`;
+  link.textContent = label || asset.metadata?.title || asset.name || asset.key.split("/").at(-1);
+  link.title = asset.key;
+  link.addEventListener("click", event => {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); void previewFile({key: asset.key, name: link.textContent, size: asset.size});
+  });
+  return link;
+}
+
+async function loadLibrary(section, epoch) {
+  const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
+  const status = document.getElementById("library-status"), list = document.getElementById("library-list");
+  document.getElementById("session-library").hidden = false;
+  document.getElementById("library-title").textContent = section === "audio" ? "Audio" : "Transcripts";
+  status.textContent = "Loading session assets…";
+  try {
+    const assets = await allAssets(gameId);
+    if (!current()) return;
+    const manifests = new Set(assets.filter(a => a.kind === "recording-manifest").map(a => a.key.split("/")[3]));
+    const selected = assets.filter(a => section === "audio"
+      ? a.kind === "recording-manifest" || ((a.contentType.startsWith("audio/") || /\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name)) && !manifests.has(a.key.split("/")[3]))
+      : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind));
+    selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
+    status.textContent = selected.length
+      ? section === "audio" ? "Original recordings. Chunked sessions play in order; originals are retained." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
+      : `No ${section === "audio" ? "recordings" : "transcripts"} yet for this game.`;
+    for (const asset of selected) {
+      const card = document.createElement("article"); card.className = "novel-card session-card";
+      const heading = document.createElement("h2");
+      const label = section === "audio" && asset.kind === "recording-manifest" ? `Recording · ${asset.metadata?.sessionId || asset.name}` : asset.metadata?.title || asset.name;
+      heading.append(assetLink(asset, label));
+      const kind = document.createElement("p");
+      kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
+      const date = document.createElement("p"); date.textContent = new Date(asset.lastModified).toLocaleString();
+      card.append(heading, kind, date); list.append(card);
+    }
+  } catch (error) {
+    if (current()) status.textContent = `${error.message}. Use Refresh to retry.`;
+  }
+}
+
+async function renderAssetLinks(key, epoch) {
+  const host = document.getElementById("asset-links"), gameId = state.gameId;
+  const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
+  if (!sameGameKey(key)) { host.textContent = "Connections are available for game assets."; return; }
+  try {
+    const assets = await allAssets(gameId);
+    if (!current()) return;
+    const item = assets.find(a => a.key === key);
+    if (!item) { host.textContent = "This asset is not in the current catalog. Refresh to retry."; return; }
+    host.replaceChildren();
+    const inputs = (item.sourceKeys || []).filter(sameGameKey);
+    const outputs = assets.filter(a => a.sourceKeys?.includes(key));
+    for (const [title, records] of [["Inputs", inputs.map(k => assets.find(a => a.key === k) || {key:k, name:`Unavailable or unindexed · ${k.split("/").at(-1)}`} )], ["Outputs", outputs]]) {
+      const heading = document.createElement("h3"); heading.textContent = title;
+      const list = document.createElement("ul");
+      for (const record of records) { const li = document.createElement("li"); li.append(assetLink(record)); list.append(li); }
+      if (!records.length) { const li = document.createElement("li"); li.textContent = `No ${title.toLowerCase()} recorded.`; list.append(li); }
+      host.append(heading, list);
+    }
+    const companions = assets.filter(a => a.key !== key && a.key.split("/")[3] === key.split("/")[3]);
+    if (companions.length) {
+      const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("ul");
+      summary.textContent = "Related files in this asset";
+      for (const asset of companions) { const li = document.createElement("li"); li.append(assetLink(asset)); list.append(li); }
+      details.append(summary, list); host.append(details);
+    }
+    const warnings = assets.filter(a => a.lineageWarning).length;
+    if (warnings) { const warning = document.createElement("p"); warning.textContent = `${warnings} asset(s) have incomplete structured provenance; output links may be incomplete.`; host.append(warning); }
+    const note = document.createElement("p"); note.className = "status";
+    note.textContent = "Recorded relationships, not proof of factual accuracy. Historical missing links are not inferred."; host.append(note);
+  } catch (error) { if (current()) host.textContent = `Connections unavailable: ${error.message}. Close and reopen to retry.`; }
+}
+
+function detailBlock(title, value) {
+  const details = document.createElement("details"), summary = document.createElement("summary"), pre = document.createElement("pre");
+  summary.textContent = title; pre.textContent = JSON.stringify(value, null, 2); details.append(summary, pre); return details;
+}
+
+function timestamp(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "Unknown time";
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2,"0")}`;
+}
+
+function attachMediaRecovery(audio, key, current) {
+  audio.preload = "metadata";
+  const warning = document.createElement("p"), retry = document.createElement("button");
+  warning.hidden = true; warning.className = "error";
+  retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Refresh playback link";
+  warning.append("Playback failed or the link expired. Refresh the link, or download the original if this browser cannot decode it. ", retry);
+  audio.after(warning);
+  audio.addEventListener("error", () => { if (current()) warning.hidden = false; });
+  retry.addEventListener("click", async () => {
+    const time = audio.currentTime;
+    try {
+      const result = await api("/object-url", {key});
+      if (!current()) return;
+      audio.src = result.url;
+      audio.addEventListener("loadedmetadata", () => { if (current()) audio.currentTime = time; }, {once:true});
+      warning.hidden = true;
+    } catch { if (current()) warning.hidden = false; }
+  });
+}
+
+function renderStructuredAsset(asset, epoch) {
+  const doc = asset.document;
+  if (!doc) { elements.previewBody.textContent = "Structured preview unavailable. Use Open original; the source is unchanged."; return; }
+  const host = document.createElement("div"); host.className = "structured-asset";
+  const transcript = doc.entityType === "PlayerTranscript" ? doc : doc.stage === "corrected-transcript" ? doc.payload?.transcript : null;
+  if (transcript && Array.isArray(transcript.segments)) {
+    const notice = document.createElement("p"); notice.className = "novel-notice";
+    notice.textContent = `${doc.stage === "corrected-transcript" ? "Corrected / edited transcript" : "Raw transcript"} · ${doc.reviewStatus || "unreviewed"}. Speakers identify players, not characters.`;
+    host.append(notice);
+    if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
+    const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
+    for (const segment of transcript.segments) {
+      const line = document.createElement("section"); line.className = "transcript-segment";
+      const heading = document.createElement("h3"), text = document.createElement("p");
+      heading.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)} · ${people.get(segment.playerId) || segment.playerId || "Unassigned speaker"}`;
+      text.textContent = typeof segment.text === "string" ? segment.text : "[Missing text]";
+      line.append(heading, text);
+      const annotations = Object.fromEntries(Object.entries(segment).filter(([k]) => !["start","end","text","playerId"].includes(k)));
+      if (Object.keys(annotations).length) line.append(detailBlock("Evidence and annotations", annotations));
+      host.append(line);
+    }
+    if (doc.payload?.review) host.append(detailBlock("Correction review", doc.payload.review));
+  } else if (doc.entityType === "Recording" && Array.isArray(doc.parts)) {
+    const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} original parts. Part boundaries may have a brief playback gap.`;
+    const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
+    const status = document.createElement("p"); status.setAttribute("role", "status");
+    const parts = document.createElement("div"); parts.className = "recording-parts";
+    host.append(notice, audio, status, parts);
+    let selected = -1, request = 0;
+    const playPart = async (index, autoplay = false) => {
+      const part = doc.parts[index], serial = ++request;
+      if (!part || typeof part.file !== "string" || !/^part-[0-9]{4}\.flac$/.test(part.file)) return;
+      const key = asset.key.slice(0,asset.key.lastIndexOf("/")+1) + part.file;
+      audio.pause(); status.textContent = `Loading part ${index+1}…`;
+      try {
+        const result = await api("/object-url", {key});
+        if (epoch !== previewEpoch || request !== serial) return;
+        selected = index; audio.src = result.url;
+        status.textContent = `Part ${index+1} of ${doc.parts.length} · session ${timestamp(part.start)}`;
+        for (const [i,button] of [...parts.children].entries()) button.setAttribute("aria-pressed", String(i === index));
+        if (autoplay) await audio.play();
+      } catch (error) { if (epoch === previewEpoch && request === serial) status.textContent = `${error.message}. Choose the part again to retry.`; }
+    };
+    doc.parts.forEach((part,index) => {
+      const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button";
+      button.textContent = `Part ${index+1} · ${timestamp(part.start)}`;
+      button.addEventListener("click", () => playPart(index)); parts.append(button);
+    });
+    audio.addEventListener("ended", () => { if (selected+1 < doc.parts.length && epoch === previewEpoch) void playPart(selected+1,true); });
+    audio.addEventListener("error", () => { status.textContent = "Playback failed or link expired. Select this part again to refresh; original FLAC files are available under Inputs."; });
+    void playPart(0);
+  } else {
+    const pre = document.createElement("pre"); pre.textContent = JSON.stringify(doc,null,2); host.append(pre);
+  }
+  elements.previewBody.replaceChildren(host);
+}
+
+document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 novel.refresh.addEventListener("click", renderRoute);
 novel.back.addEventListener("click", () => navigate(gamePath("novel")));
 novel.read.addEventListener("click", () => novelView(false));

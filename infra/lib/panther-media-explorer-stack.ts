@@ -312,7 +312,7 @@ export class PantherMediaExplorerStack extends Stack {
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer });
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
-    for (const route of ["/objects", "/object-url", "/characters", "/character", "/character-profile"]) {
+    for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,
         methods: [apigwv2.HttpMethod.GET],

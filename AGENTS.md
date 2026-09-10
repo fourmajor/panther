@@ -2,6 +2,12 @@
 
 ## Panther CLI and game assets
 
+- Every derived asset must record its exact immutable inputs using `sourceKeys`; large structured
+  provenance can additionally use `inputArtifacts` keyed references in its JSON document. Asset
+  views expose Inputs and reverse-linked Outputs across media types. Never overwrite inputs, guess
+  missing historical lineage, or duplicate mutable output lists onto source assets. Preserve related
+  exports/parts under their asset identity, distinct from directional derivation relationships.
+
 - Prefer explicit, versioned structured data types for application facts. Player is a stable
   person identity, separate from a login account, Character, and a per-game membership/role.
   Transcripts identify players; in-character speech and table chatter are later annotations,

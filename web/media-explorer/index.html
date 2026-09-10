@@ -20,6 +20,8 @@
       </a>
       <nav class="primary-nav" id="primary-nav" aria-label="Panther sections" hidden>
         <a href="/characters">Characters</a>
+        <a href="/audio">Audio</a>
+        <a href="/transcripts">Transcripts</a>
         <a href="/novel">Novel</a>
         <a href="/media">Media</a>
       </nav>
@@ -140,6 +142,15 @@
         </div>
       </section>
 
+      <section id="session-library" hidden aria-label="Session library">
+        <div class="explorer-heading">
+          <div><p class="eyebrow">The session record</p><h1 id="library-title"></h1></div>
+          <button class="quiet-button" id="library-refresh" type="button">Refresh</button>
+        </div>
+        <p id="library-status" class="status" role="status"></p>
+        <div id="library-list" class="novel-list"></div>
+      </section>
+
       <section class="explorer" id="explorer" hidden>
         <div class="explorer-heading">
           <div>
@@ -165,6 +176,7 @@
         <button class="icon-button" id="preview-close" type="button" aria-label="Close preview">×</button>
       </div>
       <div class="preview-body" id="preview-body"></div>
+      <section id="asset-links" class="asset-links" aria-label="Asset connections"></section>
       <div class="preview-footer">
         <span id="preview-details"></span>
         <a class="quiet-button link-button" id="open-original" target="_blank" rel="noreferrer">Open original</a>
