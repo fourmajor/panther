@@ -73,7 +73,16 @@ def handler(event, _context):
         if len(raw) > 32 * 1024:
             raise ValueError("Migration request too large")
         body = json.loads(raw)
+        if event.get("routeKey") == "POST /asset-storage-migrations":
+            import storage_migrations
+            return media._response(200, storage_migrations.handle(body, claims, media))
+        if media.STORAGE_MODE == "prepare":
+            raise ValueError("Metadata edits are frozen during the storage migration")
         key, encoded = validate(body)
+        if media.STORAGE_MODE == "indexed":
+            import storage_layout
+            if storage_layout.location(key, body["kind"], body["metadata"]) != media.s3.resolve(key):
+                raise ValueError("Organization changes require a storage migration, not a metadata-only edit")
         head = media.s3.head_object(Bucket=media.BUCKET_NAME, Key=key, ChecksumMode="ENABLED")
         version = head.get("VersionId")
         if not version or version == "null":

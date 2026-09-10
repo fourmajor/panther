@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(): Template {
-  const app = new App();
+function mediaExplorerTemplate(storageMode = "original"): Template {
+  const app = new App({context: {assetStorageMode: storageMode}});
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     env: {
       account: "123456789012",
@@ -42,7 +42,7 @@ test("completed recording sets trigger a separate durable laptop playback workfl
   template.hasResourceProperties("AWS::Lambda::Function", { Handler: "playback_jobs.handler" });
 });
 
-test("metadata migrations are owner-authenticated and use a serialized copy-only role", () => {
+test("asset migrations are authenticated, serialized, conditional, and retain object versions", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: "POST /asset-migrations", AuthorizationType: "JWT"});
   template.hasResourceProperties("AWS::Lambda::Function", {
@@ -53,10 +53,39 @@ test("metadata migrations are owner-authenticated and use a serialized copy-only
   assert.equal(policies.length, 1);
   const statements = policies[0][1].Properties.PolicyDocument.Statement;
   const writes = statements.filter((s: any) => JSON.stringify(s.Action).includes("s3:PutObject"));
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   assert.equal(writes[0].Condition.StringEquals["s3:x-amz-metadata-directive"], "REPLACE");
   assert.ok(writes[0].Condition.StringLike["s3:x-amz-copy-source"]);
-  assert.doesNotMatch(JSON.stringify(statements), /s3:Delete|s3:\*/);
+  assert.equal(writes[1].Condition.StringEquals["s3:if-none-match"], "*");
+  const deletes = statements.filter((s: any) => JSON.stringify(s.Action).includes("s3:Delete"));
+  assert.equal(deletes.length, 1);
+  assert.equal(deletes[0].Action, "s3:DeleteObject");
+  assert.equal(deletes[0].Condition.Null["s3:if-match"], "false");
+  assert.doesNotMatch(JSON.stringify(statements), /s3:DeleteObjectVersion|s3:\*/);
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "POST /asset-storage-migrations", AuthorizationType: "JWT",
+  });
+});
+
+test("indexed storage is consistent across readers and only permits create-only organized uploads", () => {
+  const template = mediaExplorerTemplate("indexed");
+  const handlers = new Set(["index.handler", "asset_migrations.handler", "editorial_jobs.handler",
+    "novel.handler", "model_jobs.handler", "playback_jobs.handler", "catalog.handler"]);
+  for (const fn of Object.values(template.findResources("AWS::Lambda::Function"))) {
+    if (handlers.has(fn.Properties.Handler) && fn.Properties.Environment?.Variables?.ASSET_BUCKET_NAME) {
+      assert.equal(fn.Properties.Environment.Variables.ASSET_STORAGE_MODE, "indexed");
+      handlers.delete(fn.Properties.Handler);
+    }
+  }
+  assert.equal(handlers.size, 0);
+  const policy = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .find(([id]) => id.startsWith("MediaApiFunction"))![1];
+  const statements = policy.Properties.PolicyDocument.Statement;
+  const uploads = statements.filter((s: any) => JSON.stringify(s.Resource).includes("/content/"));
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].Condition.StringEquals["s3:if-none-match"], "*");
+  assert.match(JSON.stringify(uploads[0].Resource), /catalog\/assets/);
+  assert.doesNotMatch(JSON.stringify(statements), /assets\/\*\/original/);
 });
 
 test("model jobs use retained on-demand state and a durable external-worker callback", () => {
@@ -246,7 +275,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 38);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 39);
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

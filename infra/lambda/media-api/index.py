@@ -18,6 +18,11 @@ s3 = boto3.client("s3", config=Config(signature_version="s3v4"))
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 BUCKET_NAME = os.environ["ASSET_BUCKET_NAME"]
+STORAGE_MODE = os.environ.get("ASSET_STORAGE_MODE", "original")
+raw_s3 = s3
+if STORAGE_MODE == "indexed":
+    from asset_storage import Storage
+    s3 = Storage(raw_s3, BUCKET_NAME)
 SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "300"))
 ROOT_PREFIX = "games/"
 CHARACTER_PROFILE_PATTERN = re.compile(
@@ -438,6 +443,8 @@ def _object_url(event):
         return _response(400, {"error": "Invalid object key"})
 
     try:
+        if STORAGE_MODE == "indexed":
+            key = s3.reference_for(key)
         metadata = s3.head_object(Bucket=BUCKET_NAME, Key=key, ChecksumMode="ENABLED")
     except ClientError as error:
         if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
@@ -454,6 +461,7 @@ def _object_url(event):
         {
             "key": key,
             "contentType": metadata.get("ContentType", "application/octet-stream"),
+            "storageKey": s3.resolve(key) if STORAGE_MODE == "indexed" else key,
             "size": metadata.get("ContentLength", 0),
             "versionId": metadata.get("VersionId"),
             "etag": metadata.get("ETag"),
@@ -470,6 +478,8 @@ def _object_url(event):
 
 
 def _upload(event):
+    if STORAGE_MODE == "prepare":
+        return _response(503, {"error": "Asset storage migration in progress; keep local files and retry later"})
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     uploader = claims.get("sub")
     if not isinstance(uploader, str) or not re.fullmatch(r"[a-zA-Z0-9-]{1,128}", uploader):
@@ -592,6 +602,12 @@ def _upload(event):
             400, {"error": "Metadata is too large; upload long notes as another asset"}
         )
     key = f"games/{game}/assets/{asset}/original/{filename}"
+    storage_key = key
+    if STORAGE_MODE == "indexed":
+        try:
+            storage_key = s3.reserve(key, kind, metadata, checksum, size, object_metadata["asset-created-at"])
+        except ValueError as error:
+            return _response(409, {"error": str(error)})
     headers = {
         "Content-Type": content_type,
         "Content-Length": str(size),
@@ -616,6 +632,7 @@ def _upload(event):
         200,
         {
             "key": key,
+            "storageKey": storage_key,
             "url": url,
             "headers": headers,
             "expiresIn": SIGNED_URL_TTL_SECONDS,

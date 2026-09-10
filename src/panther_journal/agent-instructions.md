@@ -220,18 +220,40 @@ character dialogue, cluster numbering, or another run. Unknown and overlapping s
 unassigned. Keep table chatter and mark speech context separately. Preserve every earlier version.
 See `docs/local-audio.md` for setup, consent, evaluation, and current conservative alignment limits.
 
-Uploads go to `games/<game-id>/assets/<asset-id>/original/<filename>` in private storage.
+Asset references use `games/<game-id>/assets/<asset-id>/original/<filename>`.
+They are stable identities, not a physical folder recommendation. Layout version 2 stores bytes under
+`games/<game-id>/content/`: character portraits/references/models under `characters/<character-id>/`,
+session audio/transcripts/chapters/videos under `sessions/<session-id>/`, and shared/unknown-session
+material under `library/`. Workflow intermediates are grouped separately by job and stage. New finished
+types use `media/<kind>`; new technical types use `processing/<kind>`. Never invent a session or
+character association to choose a folder. Multiple-character media is stored once and linked by metadata.
+The server's shared path builder chooses the destination for all uploads; never bypass it with a
+hand-built S3 key. `panther info` distinguishes the stable `key` from the physical `storageKey`.
+Follow `docs/asset-storage.md` in the trusted repository for the staged migration status; do not assume
+layout 2 is active merely because these instructions have been installed.
+
+Use `panther assets reorganize PLAN --report NEW_REPORT.jsonl` to dry-run the version-pinned storage
+plan; `--apply` copies bytes, current metadata and a location catalog entry while retaining originals.
+Only after indexed readers and all games have been verified, `--retire --apply` hides former physical
+keys with recoverable delete markers, never deletion of original versions. Copy and retirement are
+separate owner-only operations; both default to dry runs. This requires a CDK-coordinated upload freeze
+and reader cutover, not routine AWS access for game work. Keep plans/reports private and immutable.
+Every new and migrated asset must use the same catalog; a missing locator is an error, not permission
+to fall back to an old file layout. Preserve `sourceKeys` and exact document bytes when moving storage.
+
 Use lowercase hyphen-separated IDs, e.g. `harbor-map` or `captain-portrait`. An asset ID groups
 closely related files, not every file in a whole campaign. Preserve the original filename when useful.
 Omitting `--asset` generates a unique ID; record the returned ID rather than guessing it later.
 
-`original/` means the file as first imported, **not** that it is canonical or human-created. Generated
+`original/` in the reference means the file as first imported, **not** that it is canonical or human-created. Generated
 videos, stories, music, and models can all be imported originals. The category and provenance
 describe what they actually represent. Do not mislabel generated material as a factual source.
 
 No file-content overwrite or deletion is supported. The controlled metadata migration above is the
 only metadata-update path; ordinary uploads stay create-only. For a content revision, choose a new asset ID or filename, preserve
-the previous object, and link it in `sourceKeys`. The CLI does not move or rewrite existing assets.
+the previous object, and link it in `sourceKeys`. Only the controlled reorganization operation moves storage;
+it never rewrites an existing asset's content. Metadata edits that imply a different folder require a
+storage migration, not a silent mismatch between metadata and organization.
 It cannot upload into `derived/web/`; import a locally optimized GLB under a new `original/` key.
 Use `panther character set-model` for the narrow, authorized model-selection operation below.
 Arbitrary profile editing is not supported. Do not work around limits with direct S3 mutations.

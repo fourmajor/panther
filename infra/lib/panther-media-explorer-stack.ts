@@ -52,6 +52,13 @@ export class PantherMediaExplorerStack extends Stack {
   constructor(scope: Construct, id: string, props: PantherMediaExplorerStackProps) {
     super(scope, id, props);
 
+    // One bounded rollout: original -> prepare (uploads frozen) -> indexed.
+    // Remove the first two modes after all games pass the migration audit.
+    const storageMode = this.node.tryGetContext("assetStorageMode") ?? "original";
+    if (!["original", "prepare", "indexed"].includes(storageMode)) {
+      throw new Error("assetStorageMode must be original, prepare, or indexed");
+    }
+
     const certificate = acm.Certificate.fromCertificateArn(
       this,
       "DomainCertificate",
@@ -274,7 +281,9 @@ export class PantherMediaExplorerStack extends Stack {
     mediaApiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["s3:PutObject"],
-        resources: [privateAssets.arnForObjects("games/*/assets/*/original/*")],
+        resources: (storageMode === "indexed"
+          ? ["games/*/content/*", "games/*/catalog/assets/*"]
+          : ["games/*/assets/*/original/*"]).map(p => privateAssets.arnForObjects(p)),
         conditions: { StringEquals: { "s3:if-none-match": "*" } },
       }),
     );
@@ -333,18 +342,38 @@ export class PantherMediaExplorerStack extends Stack {
     }));
     migrations.addToRolePolicy(new iam.PolicyStatement({
       actions: ["s3:PutObject", "s3:PutObjectTagging"],
-      resources: [privateAssets.arnForObjects("games/*/assets/*")],
+      resources: [privateAssets.arnForObjects("games/*/assets/*"), privateAssets.arnForObjects("games/*/content/*")],
       conditions: {
-        StringLike: { "s3:x-amz-copy-source": `${privateAssets.bucketName}/games/*/assets/*` },
+        StringLike: { "s3:x-amz-copy-source": [
+          `${privateAssets.bucketName}/games/*/assets/*`, `${privateAssets.bucketName}/games/*/content/*`,
+        ] },
         StringEquals: { "s3:x-amz-metadata-directive": "REPLACE" },
       },
     }));
     mediaApi.addRoutes({ path: "/asset-migrations", methods: [apigwv2.HttpMethod.POST],
       integration: new apigwv2Integrations.HttpLambdaIntegration("AssetMigrationsIntegration", migrations), authorizer });
+    migrations.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn],
+      conditions: { StringLike: { "s3:prefix": ["games/*"] } },
+    }));
+    migrations.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:PutObject"], resources: [privateAssets.arnForObjects("games/*/catalog/assets/*")],
+      conditions: { StringEquals: { "s3:if-none-match": "*" } },
+    }));
+    // Adds delete markers only. DeleteObjectVersion is deliberately never granted.
+    migrations.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:DeleteObject"], resources: [privateAssets.arnForObjects("games/*/assets/*")],
+      conditions: { Null: { "s3:if-match": "false" } },
+    }));
+    mediaApi.addRoutes({ path: "/asset-storage-migrations", methods: [apigwv2.HttpMethod.POST],
+      integration: new apigwv2Integrations.HttpLambdaIntegration("AssetStorageMigrationsIntegration", migrations), authorizer });
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer });
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
+    for (const child of this.node.findAll()) {
+      if (child instanceof lambda.Function) child.addEnvironment("ASSET_STORAGE_MODE", storageMode);
+    }
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,
