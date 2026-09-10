@@ -1,8 +1,8 @@
 # Organized asset storage (layout version 2)
 
-Status: implemented for a staged migration; **not activated merely by merging this code**.
-The production rollout must inventory every game, backfill every asset, verify readers, and retire
-the former physical keys before this change is complete. Do not leave a second supported layout.
+Status: layout 2 is active and unconditional. All 90 pre-existing assets across both games were
+migrated and verified on 2026-09-10. Old physical entries have recoverable delete markers; original
+versions remain retained. New assets use the same catalog and path builder.
 
 ## File organization
 
@@ -84,57 +84,43 @@ There is no NAT gateway, provisioned concurrency,
 daemon or always-on cloud worker. Lookups incur S3 requests during use. Retained original versions and
 the organized copies temporarily/permanently add storage; preservation is deliberate, not free storage.
 
-## Safe production rollout
+## Completed rollout and evidence
 
-This rollout is controlled through CDK's temporary `assetStorageMode` context: `original`, `prepare`,
-then `indexed`. The default remains `original` only until the complete migration is verified.
-All asset-reading Lambdas receive the same mode, including novel, character/model, editorial, audio,
-catalog and metadata endpoints. Never switch individual readers independently.
+The initial rollout froze ordinary uploads, waited for old signed upload links to expire, inventoried
+every game, and pinned all 90 source versions. Its private plan applied current structured metadata
+while copying exact original bytes. Every destination and catalog entry was checked against full-file
+SHA-256, original size, headers, tags, uploader, creation time and compact provenance. The original
+profile/history records and workflow checksum pins remained unchanged.
 
-1. Review/merge the PR after local tests and self-hosted Playwright. Confirm no active local workflow
-   stage is uploading. Keep all local files and worker state; do not regenerate outputs or spend money.
-2. Confirm account/region, preview and deploy **only** `PantherMediaExplorer` through CDK with
-   `--context assetStorageMode=prepare`. This freezes ordinary uploads and metadata edits, but continues
-   reading originals. Wait out the 300-second maximum previously issued upload URL lifetime, then take
-   a fresh inventory. Do not cut over with an in-flight copy or unaccounted newly uploaded file.
-3. Inventory every game with `panther assets catalog`; pin `panther info` versions. Use one private
-   schemaVersion-1 plan in the metadata-migration format. Include complete current metadata, exact
-   existing provenance and factual reasons. Unknown facts stay explicitly unknown. Validate all target
-   keys for collisions with the shared path builder. Keep game plans/evidence outside Git.
-4. Dry-run `panther assets reorganize PLAN --report NEW_REPORT.jsonl`, then apply that exact plan with
-   `--apply`. The serialized owner-only endpoint copies an exact source VersionId, preserves content
-   headers/uploader/tags/date, verifies destination size/checksum, then publishes its locator. It never
-   overwrites an unrelated destination. Retrying the exact plan resumes without a second copy. The old
-   current object remains throughout this phase. Inventory/copy all assets, including technical files,
-   older models and failed editorial candidates—not just currently featured media.
-5. Verify a bijection between the inventory and catalog entries, all target bytes/checksums/metadata,
-   all source references and profile/workflow pins. Then preview and deploy the same stack with
-   `--context assetStorageMode=indexed`. Verify authenticated catalogs, actual downloads and browser
-   character models, continuous audio, raw/corrected transcripts, novel and video readers. Existing
-   local worker releases need no key rewrite: they already use stable references through Panther.
-6. Dry-run the same plan with `--retire`, then `--retire --apply` only after those checks pass. This
-   adds conditional [S3 delete markers](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-deletes.html)
-   at the old physical keys; it **never deletes a source VersionId**. The catalog retains that exact
-   historical source version for recovery. Re-inventory S3: no current payloads may remain in the old
-   asset prefix. Verify the entire live catalog again and preserve private cloud migration reports.
-7. Remove `original`/`prepare` rollout code and old-prefix copy/retirement permissions in a follow-up
-   PR, make indexed storage unconditional, and update this status/runbook. This is a required completion
-   step, not optional cleanup. Do not report the reorganization complete before this and all backfills.
+After the indexed-reader cutover, all 90 files were downloaded through Panther and their checksums
+compared with the original downloads. Live checks covered character model/portrait delivery, continuous
+audio, raw/corrected transcripts, novel chapters, videos, and finished-asset connections. Only then
+were the former physical entries hidden with conditional delete markers. A second complete S3 audit
+confirmed no current payloads remained under the old prefix and every original VersionId survived.
+
+Private plans, per-operation reports, downloaded-byte checksums and audit results stay outside Git.
+Final game-specific reports are intermediate `migration-report` assets, not ordinary reading material.
+The initial engine and its synthetic tests remain under `ops/migrations/layout-v2/` for auditability.
+Its temporary CLI command/API route, old-prefix write/delete permissions, and original/prepare modes
+are retired, not supported alternatives. CDK rejects the old `assetStorageMode` context.
+
+## Future organization changes and recovery
+
+Use a new versioned Panther migration and reviewed CDK rollout for a future physical layout change.
+Keep dry runs, exact version pins, conflict guards, durable reports, complete all-game backfills,
+verified reader cutover and removal of temporary permissions. Do not restore the historical modes,
+rewrite immutable evidence, or edit a completed workflow's checksum references to make an audit pass.
+Metadata-only edits through `panther assets migrate` cannot silently change an asset's folder.
 
 The API uses [version-pinned S3 copies and SHA-256](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html).
-For sources without a stored SHA-256, S3 calculates it on that exact version's copy; preserve the
-original version pin and verify downloaded bytes in the rollout audit. Checksums are not inferred from
-ETags. A copy failure retains the original; a conflicting locator/version stops the plan for inspection.
-Never replace expected versions automatically. No file content is accepted by this migration endpoint.
+Checksums are not inferred from ETags. For sources without a stored checksum, verify actual downloaded
+bytes. Retained versions and their exact original location/version pins provide recovery evidence.
+Do not switch readers back to the old prefix: its current entries are delete markers. Recovery needs
+an explicitly reviewed Panther/CDK migration, not guessed reuploads or irreversible version deletion.
 
-The lock is released after a completed request (including validation failures), but retained after a
-timeout, unexpected exception or ambiguous service failure. Never automatically expire or steal it:
-an outstanding S3 copy can outlive its caller. If locked, stop the plan and inspect Lambda logs, the
-lock's start time and exact source/destination versions/checksums. Only after confirming there are no
-outstanding writes may an explicitly reviewed recovery operation conditionally remove that exact
-owner's lock. Do not delete the table, discard the report or blindly rerun with new version pins.
-
-Before retirement, rollback is a CDK switch to original readers; stop new indexed uploads first and
-account for them before rollback. After retirement, do not just switch modes: retained versions need
-an explicit, reviewed recovery migration. Never recreate missing files with guessed metadata, overwrite
-immutable raw transcripts or edit an old Step Functions execution to make an audit pass.
+The metadata-migration mutex is released after a completed request (including validation failures),
+but retained after a timeout, unexpected exception or ambiguous service failure. Never automatically
+expire or steal it: an outstanding S3 copy can outlive its caller. If locked, stop the plan and inspect
+Lambda logs, the lock's start time and exact source/destination versions/checksums. Only after confirming
+there are no outstanding writes may an explicitly reviewed recovery operation conditionally remove
+that exact owner's lock. Do not delete the table, discard reports or blindly retry with new version pins.

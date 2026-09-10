@@ -229,15 +229,11 @@ types use `media/<kind>`; new technical types use `processing/<kind>`. Never inv
 character association to choose a folder. Multiple-character media is stored once and linked by metadata.
 The server's shared path builder chooses the destination for all uploads; never bypass it with a
 hand-built S3 key. `panther info` distinguishes the stable `key` from the physical `storageKey`.
-Follow `docs/asset-storage.md` in the trusted repository for the staged migration status; do not assume
-layout 2 is active merely because these instructions have been installed.
-
-Use `panther assets reorganize PLAN --report NEW_REPORT.jsonl` to dry-run the version-pinned storage
-plan; `--apply` copies bytes, current metadata and a location catalog entry while retaining originals.
-Only after indexed readers and all games have been verified, `--retire --apply` hides former physical
-keys with recoverable delete markers, never deletion of original versions. Copy and retirement are
-separate owner-only operations; both default to dry runs. This requires a CDK-coordinated upload freeze
-and reader cutover, not routine AWS access for game work. Keep plans/reports private and immutable.
+Layout 2 is now unconditional. The initial migration's temporary reorganization command, endpoint,
+old-prefix write permissions and storage-mode switches have been retired. For future organization
+changes, extend Panther with a new versioned migration and CDK-coordinated rollout; do not re-enable
+the old deployment mode or bypass the catalog. See `docs/asset-storage.md` in the trusted repository.
+Keep private plans/reports immutable; original versions remain recoverable history, not a fallback.
 Every new and migrated asset must use the same catalog; a missing locator is an error, not permission
 to fall back to an old file layout. Preserve `sourceKeys` and exact document bytes when moving storage.
 
@@ -251,9 +247,9 @@ describe what they actually represent. Do not mislabel generated material as a f
 
 No file-content overwrite or deletion is supported. The controlled metadata migration above is the
 only metadata-update path; ordinary uploads stay create-only. For a content revision, choose a new asset ID or filename, preserve
-the previous object, and link it in `sourceKeys`. Only the controlled reorganization operation moves storage;
-it never rewrites an existing asset's content. Metadata edits that imply a different folder require a
-storage migration, not a silent mismatch between metadata and organization.
+the previous object, and link it in `sourceKeys`. Moving existing storage requires a new reviewed
+versioned migration; it must never rewrite existing content. Metadata edits that imply a different
+folder require that migration, not a silent mismatch between metadata and organization.
 It cannot upload into `derived/web/`; import a locally optimized GLB under a new `original/` key.
 Use `panther character set-model` for the narrow, authorized model-selection operation below.
 Arbitrary profile editing is not supported. Do not work around limits with direct S3 mutations.

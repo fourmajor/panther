@@ -6,10 +6,11 @@ verify every record, and remove obsolete runtime compatibility. Keep a private r
 facts. Unknown is a valid explicit state, not permission to fabricate metadata or exempt a record.
 Repository instructions apply this policy to future schema and organizational changes as well.
 
-For the physical S3 reorganization, see [asset-storage.md](asset-storage.md). It uses the same private
-version-pinned metadata plan with `panther assets reorganize`, a separate copy/cutover/retirement process,
-and stable asset references. Do not run the metadata-only migration first against a storage plan: that
-would change its expected source versions. The storage copy applies the approved metadata at the same time.
+The initial physical S3 reorganization is documented in [asset-storage.md](asset-storage.md).
+It applied current metadata during the verified copy/cutover/retirement process. Its temporary command
+and endpoint are retired; all assets now use the location catalog. Future physical moves require a
+new versioned migration. Do not run metadata edits against an outstanding storage plan: they would
+change its expected source versions.
 
 ## Metadata migration v1
 
@@ -42,6 +43,8 @@ metadata writer. Ordinary upload permissions remain
 create-only. It rejects unversioned objects, accepts no replacement bytes, preserves existing compact
 lineage, checks source existence, and copies the exact source VersionId back to its key with new
 metadata. Existing file bytes, references, original uploader, tags and content headers are preserved.
+Only organized `content/` payloads can be copied. Location-catalog creation and old-prefix deletion
+permissions are no longer granted to this endpoint. Routing-changing metadata edits are rejected.
 Previous S3 versions are retained without an expiration lifecycle; the new version records the actor,
 time, previous version and migration ID. This requires storage for retained versions, plus small
 request/Lambda costs while running, but no always-on compute. Current bucket encryption is SSE-S3.

@@ -42,21 +42,6 @@ def migrate(plan, apply, report):
     run_migrations(plan, apply, report, "/asset-migrations")
 
 
-@assets.command("reorganize")
-@click.argument("plan", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--apply", is_flag=True, help="Apply the inspected storage plan; otherwise dry-run only.")
-@click.option("--retire", is_flag=True, help="After cutover verification, hide old physical keys with recoverable delete markers.")
-@click.option("--report", required=True, type=click.Path(path_type=Path))
-def reorganize(plan, apply, retire, report):
-    """Copy pinned assets into the enforced layout without changing their references.
-
-    Uses the same schemaVersion-1 plan as metadata migrations. Copying retains the old keys.
-    Retirement is a separate post-cutover operation; earlier S3 versions are never deleted.
-    No direct AWS authentication is needed for this owner-only game operation.
-    """
-    run_migrations(plan, apply, report, "/asset-storage-migrations", {"action": "retire" if retire else "copy"})
-
-
 def run_migrations(plan, apply, report, endpoint, extra=None):
     try:
         document = json.loads(plan.read_text())

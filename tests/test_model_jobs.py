@@ -43,6 +43,9 @@ def broker(monkeypatch):
         for module in ("index", "model_jobs"):
             monkeypatch.delitem(sys.modules, module, raising=False)
         m = importlib.import_module("model_jobs")
+        # These test the job broker against a storage facade; indexed byte routing has
+        # its own versioned S3 integration tests, independent of the job state machine.
+        m.media.s3 = m.media.raw_s3
         yield m
 
 
