@@ -59,10 +59,13 @@ the old execution and artifacts. Previously failed v1 runs are not silently muta
 | Novel | Editorial brief → alternative approaches and voice bible → outline/scene beats → full draft → developmental critique → full revision → continuity/style audit → line/copyedit and style sheet → digital reading proof → final chapter and independent review |
 | Screen | Treatment → screenplay → script critique → revised numbered shooting script → production breakdown → design/cinematography bible → reference-asset registry → voice casting → blocking/coverage → shot list → schematic storyboards and timed animatic plan → AI generation packets → edit/sound/VFX plan → schedule/dependencies/budget worksheet/postproduction plan → independent preflight |
 
-Video's final state is `READY_FOR_VIDEO_DISCUSSION`. There is **no video generation state, provider
-SDK, payment path, image-generation tool, voice clone, or mechanism to approve spending**. Provider,
+Video's final state is `READY_FOR_VIDEO_DISCUSSION`. The automated editorial pipeline has **no video
+generation state, payment path, image-generation tool, voice clone, or mechanism to approve spending**. Provider,
 model, reference generation, rights, voice/music permissions and spend cap must be discussed first.
 Passing preflight means a planning package is ready to review, not permission to produce it.
+The separate, explicitly gated local `panther video` fal comparison CLI is documented in
+[fal-video-comparison.md](fal-video-comparison.md). It does not change this workflow definition,
+auto-submit preproduction packets, or replace subscription-backed planning with paid inference.
 
 Storyboards are real, safe SVG blocking diagrams derived from structured shot positions and colors,
 not finished concept illustrations. The animatic is a timed shot manifest, not a rendered film.

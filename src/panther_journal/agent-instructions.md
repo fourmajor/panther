@@ -83,6 +83,37 @@ Do not use ordinary recording consent as permission to clone a voice. Legacy fai
 use `editorial-failed-candidate` and must not be treated as accepted transcripts or factual evidence.
 Video planning does not authorize video generation, provider choice, licensing or spending.
 
+### Explicit fal video comparisons
+
+Use `panther video --help` and the trusted `docs/fal-video-comparison.md` for the separate local
+comparison integration. `video check` checks live pricing and balance without generation;
+`video budget status` reports lifetime reservations, **not** measured provider spend. The $50
+ledger is shared across every plan on this laptop. Never erase, relocate or reset it to regain
+budget, use another machine to bypass it, or invoke fal generation outside this guard.
+
+Prepare a version-1 manifest with `gameId`, `sessionId`, same-game immutable `sourceKeys` and
+`shots` (each has `id`, supported `model`, `prompt`, and `maxAttempts`, at most three). Keep it
+outside Git. `video prepare` saves a quoted plan but does not authorize or submit it. Only record
+`video approve` declarations after the owner explicitly approves the listed models/prompts/rights
+and confirms auto-top-up is disabled for the same dedicated fal account. Recording consent is
+not voice-cloning consent. The initial bounded profiles accept text only, native audio, 16:9 and
+eight-second output; no uploaded portraits, real-voice references or arbitrary provider arguments.
+
+`video submit` submits exactly one approved attempt. Repeat its exact identifiers after a CLI
+interruption to inspect the same attempt, never create a fresh plan as a retry. An uncertain
+submission keeps its full reservation and blocks new generation. Known request IDs can be polled
+without submitting again. Completed and failed requests retain their reservations conservatively;
+do not claim these reservations are settled charges or refunds. Manual retries require a reason
+and a new separately reserved attempt within both limits. No automatic top-ups, provider switches,
+refund assumptions or paid retries are allowed.
+
+`video download` preserves the provider-original MP4 plus upload-ready metadata outside Git.
+Review it before selecting a take. Use ordinary `panther upload` with kind `video-comparison`,
+category `creative-reimagining` and the generated metadata when publication is authorized. Preserve
+the original, request ID, exact prompts in the private plan/ledger, model and settings, reservation,
+checksum and source links. Generated clips are adaptations, not new factual campaign context.
+The administrator key is used only for GET billing checks; the lower-scope key handles generation.
+
 Use `panther recording --help` for local FLAC capture/import, transcription, speaker detection,
 attribution, and explicit upload. Obtain recording consent and readiness before opening a microphone.
 Retain source audio, checksums, and all transcript versions outside Git. Never delete the user's
