@@ -7,8 +7,9 @@ link for each part, stops on navigation, and offers part reselection on expirati
 Chunk boundaries may briefly pause; browser codec support varies. Original downloads remain available.
 Loose audio files without a recording manifest are listed separately, including music.
 
-Transcripts lists all raw, corrected and edited versions, including structured JSON and Markdown
-exports. The JSON reader retains player identity, timestamps, original/correction annotations,
+Transcripts lists all raw, corrected and edited versions. When a JSON version has a matching Markdown
+export, the section shows the structured reader once; its export remains under Related files.
+Standalone Markdown versions are still listed. The JSON reader retains player identity, timestamps, original/correction annotations,
 capture integrity and uncertainty. It renders text, never HTML supplied by an asset. A corrected
 transcript is not presumed human-verified. This is a reader, not an in-place editing interface.
 
