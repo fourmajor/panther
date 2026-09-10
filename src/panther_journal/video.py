@@ -26,7 +26,7 @@ LIMIT_CENTS = 5000
 PLATFORM = "https://api.fal.ai/v1"
 QUEUE = "https://queue.fal.run"
 # Reviewed bounded text-to-video profiles only. Do not accept arbitrary model arguments,
-# compute-priced models, voice references, multi-shot expansion or automatic prompt rewriting.
+# unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
     "veo-3.1-fast": {
         "endpoint": "fal-ai/veo3.1/fast",
@@ -39,6 +39,13 @@ PROFILES = {
         "floor": "0.21",
         "multiplier": "1.5",
         "source": "https://fal.ai/models/fal-ai/kling-video/v3/pro/text-to-video",
+    },
+    "seedance-2.0": {
+        "endpoint": "bytedance/seedance-2.0/text-to-video",
+        "floor": "0.014",
+        "multiplier": "1",
+        "unit": "1000 tokens",
+        "source": "https://fal.ai/models/bytedance/seedance-2.0/text-to-video",
     },
 }
 
@@ -211,7 +218,7 @@ class Fal:
         if (
             len(matches) != 1
             or matches[0].get("currency") != "USD"
-            or matches[0].get("unit") != "seconds"
+            or matches[0].get("unit") != PROFILES[model].get("unit", "seconds")
         ):
             fail("Unknown currency or billing units; refusing to estimate or generate.")
         price = number(matches[0]["unit_price"])
@@ -227,14 +234,23 @@ def quote(fal, model):
     # a multiplier (Kling); use the higher reviewed rate, then reserve another 25% headroom.
     rate = max(number(profile["floor"]), base * number(profile["multiplier"]))
     estimate = rate * 8
+    details = {}
+    if model == "seedance-2.0":
+        # Fixed 16:9 720p, 8s, no reference video: fal's documented output-token formula.
+        # The live unit is *1000* tokens, never output seconds. Also honor the slightly
+        # higher published 720p per-second approximation before adding 25% headroom.
+        tokens = Decimal(1280 * 720 * 8 * 24) / 1024
+        estimate = max(rate * tokens / 1000, Decimal("0.3034") * 8)
+        details = {"estimatedTokens": int(tokens), "width": 1280, "height": 720, "fps": 24}
     return {
         "baseUnitPriceUsd": str(base),
         "conservativeEstimateUsd": str(estimate),
         "reserveCents": cents(estimate * Decimal("1.25")),
         "quotedAt": int(time.time()),
         "source": profile["source"],
-        "unit": "seconds",
+        "unit": profile.get("unit", "seconds"),
         "durationSeconds": 8,
+        **details,
     }
 
 
@@ -280,8 +296,12 @@ def payload(shot):
     body = {"prompt": shot["prompt"], "aspect_ratio": "16:9", "generate_audio": True}
     if shot["model"] == "veo-3.1-fast":
         body.update(duration="8s", resolution="720p", auto_fix=False)
-    else:
+    elif shot["model"] == "kling-3-pro":
         body.update(duration="8", shot_type="customize")
+    elif shot["model"] == "seedance-2.0":
+        body.update(duration="8", resolution="720p", bitrate_mode="standard")
+    else:
+        fail("Unsupported model profile.")
     return body
 
 
