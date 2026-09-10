@@ -607,6 +607,10 @@ def _upload(event):
 def handler(event, _context):
     route_key = event.get("routeKey", "")
     try:
+        if route_key in {"GET /assets", "GET /asset-document"}:
+            import asset_library
+            import sys
+            return asset_library.handle(event, sys.modules[__name__])
         if route_key == "GET /character-profile":
             return _character_profile(event)
         if route_key == "PUT /character-model":

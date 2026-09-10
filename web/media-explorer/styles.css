@@ -86,6 +86,7 @@ button {
 
 .primary-nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
 }
@@ -559,11 +560,18 @@ model-viewer,
 
 .preview-header {
   border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
 }
+
+.preview-header > div { min-width: 0; flex: 1; }
+.preview-header .icon-button { flex-shrink: 0; }
 
 .preview-header h2 {
   overflow: hidden;
-  max-width: 75vw;
+  max-width: 100%;
   margin: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -613,6 +621,27 @@ model-viewer,
 .link-button {
   color: inherit;
   text-decoration: none;
+}
+
+.session-card a, .asset-links a { color: var(--accent); overflow-wrap: anywhere; }
+.session-card h2 { font-size: 1.45rem; line-height: 1.4; }
+.asset-links { padding: 1rem 1.25rem; overflow-wrap: anywhere; border-top: 1px solid var(--line); }
+.asset-links h3 { margin: .7rem 0; }
+.asset-links ul { padding-left: 1.3rem; line-height: 1.8; }
+.structured-asset { width: 100%; padding: clamp(1rem, 3vw, 2rem); line-height: 1.65; overflow-wrap: anywhere; }
+.structured-asset pre { white-space: pre-wrap; font-size: .8rem; }
+.structured-asset audio { display: block; width: 100%; margin: 1rem 0; }
+.structured-asset summary { cursor: pointer; color: var(--muted); }
+.transcript-segment { padding: 1rem 0; border-top: 1px solid var(--line); }
+.transcript-segment h3 { font-size: .85rem; color: var(--accent); }
+.transcript-segment p { white-space: pre-wrap; }
+.recording-parts { display: flex; flex-wrap: wrap; gap: .5rem; }
+.recording-parts [aria-pressed="true"] { border-color: var(--accent); }
+@media (max-width: 800px) {
+  .masthead { flex-wrap: wrap; gap: .5rem; }
+  .primary-nav { order: 3; width: 100%; padding: .5rem 0; }
+  .primary-nav a { padding: .55rem .6rem; }
+  .explorer-heading { align-items: start; gap: .75rem; flex-wrap: wrap; }
 }
 
 [hidden] {

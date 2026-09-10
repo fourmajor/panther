@@ -62,6 +62,24 @@ game's canon. Transcripts use player IDs; character speech versus table talk is 
 
 ## Asset object organization
 
+### Inputs and outputs for every asset
+
+Every derived asset records its exact immutable inputs in `sourceKeys`. Panther displays those
+Inputs and derives Outputs by finding assets that reference it; never edit old originals to attach
+mutable output lists. Assets with no known inputs explicitly show no inputs recorded. Do not invent
+links from matching names, sessions or characters. Same-asset files are related files, not assumed
+inputs/outputs. Preserve earlier versions and link the earlier version when it was actually used.
+For large provenance sets that exceed compact metadata, retain the complete `sourceKeys` and/or
+`inputArtifacts` (a map of named references with `key`) in a structured JSON artifact; do not silently
+discard the complete lineage. Existing recording manifests link their ordered parts, and editorial
+documents retain their actual stage inputs. The web catalog reads these explicit fields and scopes
+all links to the selected game. Missing or unreadable historical provenance is labeled incomplete.
+
+The Audio section plays original recordings in the browser, including ordered FLAC parts. The
+Transcripts section lists raw and corrected/edited versions separately. Structured readers preserve
+player attribution, timestamps, capture warnings, correction evidence and uncertainty; they never
+rewrite source assets. Browser format support varies; retain the original download fallback.
+
 ### Session audio and transcripts
 
 Completed raw transcription now publishes and triggers editorial processing by default; use
