@@ -46,7 +46,14 @@ test("asset migrations are authenticated, serialized, conditional, and retain ob
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: "POST /asset-migrations", AuthorizationType: "JWT"});
   template.hasResourceProperties("AWS::Lambda::Function", {
-    Handler: "asset_migrations.handler", ReservedConcurrentExecutions: 1,
+    Handler: "asset_migrations.handler", ReservedConcurrentExecutions: Match.absent(),
+    Environment: { Variables: Match.objectLike({ MIGRATION_LOCK_TABLE: Match.anyValue() }) },
+  });
+  template.hasResource("AWS::DynamoDB::Table", {
+    DeletionPolicy: "Retain", Properties: Match.objectLike({
+      BillingMode: "PAY_PER_REQUEST", TimeToLiveSpecification: Match.absent(),
+      KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }],
+    }),
   });
   const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
     .filter(([id]) => id.startsWith("AssetMigrations"));

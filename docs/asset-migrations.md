@@ -35,8 +35,10 @@ after application. An uncertain request must reuse the exact plan; its durable m
 retrying an already-applied entry harmless. A conflict stops the batch; never replace the expected
 version automatically. No content or workflow generation occurs during metadata migration.
 
-The owner-only Cognito endpoint runs in a dedicated CDK Lambda with reserved concurrency one. It is
-the sole metadata writer, serializing version checks and copies. Ordinary upload permissions remain
+The owner-only Cognito endpoint runs in a dedicated CDK Lambda with a retained, on-demand DynamoDB
+mutex. Conditional acquisition serializes version checks and copies without reserved concurrency
+(which cannot be configured within this account's initial concurrency quota). It is the sole
+metadata writer. Ordinary upload permissions remain
 create-only. It rejects unversioned objects, accepts no replacement bytes, preserves existing compact
 lineage, checks source existence, and copies the exact source VersionId back to its key with new
 metadata. Existing file bytes, references, original uploader, tags and content headers are preserved.
