@@ -47,6 +47,121 @@ class FakeFal:
         return {"video": {"url": "https://v3.fal.media/files/synthetic.mp4"}}
 
 
+def test_h3_image_profile_is_bounded_and_reserves_regular_not_promo_price(setup, tmp_path, monkeypatch):
+    m, _ = image_manifest(tmp_path, monkeypatch)
+    m["shots"][0]["model"] = "h3-max-image"
+    setup.rate = Decimal("0.0125")
+    q = v.quote(setup, "h3-max-image")
+    assert q["reserveCents"] == 80
+    assert q["conservativeEstimateUsd"] == "0.64"
+    setup.rate = Decimal("0.10")
+    assert v.quote(setup, "h3-max-image")["reserveCents"] == 160
+    setup.rate = Decimal("0.0125")
+    plan = v.prepare(m, setup)["planId"]
+    assert not setup.posts
+    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    attempt = v.submit(plan, "scene-veo", 1, "", setup)
+    assert attempt["reservedUsd"] == "0.80"
+    endpoint, request = setup.posts[0]
+    assert endpoint == v.QUEUE + "/minimax/h3-max/image-to-video"
+    body = request["json"]
+    assert body.pop("image_url").startswith("data:image/png;base64,")
+    assert body == {"prompt": m["shots"][0]["prompt"], "duration": 8, "resolution": "768P",
+                    "prompt_expansion_mode": "disabled", "enable_safety_checker": True, "sync_mode": False}
+    assert v.generation.fal("minimax/h3-max/image-to-video", "r")["model"] == "MiniMax H3 Max (post-trained by fal)"
+
+
+def missing_result_attempt(setup, monkeypatch):
+    p = v.prepare(manifest(), setup)["planId"]
+    CliRunner().invoke(main, ["video", "approve", p, "--models-and-rights-approved", "--auto-topup-disabled"])
+    attempt = v.submit(p, "scene-veo", 1, "", setup)
+    def request(method, url, **kwargs):
+        assert method == "GET"
+        if url.endswith("/status"):
+            return {"status": setup.status, "request_id": "synthetic-request"}
+        assert kwargs["completed_result"] is True
+        raise v.UnavailableResult()
+    monkeypatch.setattr(setup, "request", request)
+    monkeypatch.setattr(setup, "billing_events", lambda ids: {"synthetic-request": {"endpoint": "fal-ai/veo3.1/fast", "amount": "0"}}, raising=False)
+    return attempt
+
+
+def test_h3_text_profile_uses_same_budget_without_image(setup):
+    m = manifest()
+    m["shots"][0].update(model="h3-max", maxAttempts=1)
+    setup.rate = Decimal("0.0125")
+    plan = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    a = v.submit(plan, "scene-veo", 1, "", setup)
+    assert a["reservedUsd"] == "0.80"
+    endpoint, req = setup.posts[0]
+    assert endpoint == v.QUEUE + "/minimax/h3-max/text-to-video"
+    assert req["json"] == {"prompt": m["shots"][0]["prompt"], "duration": 8, "resolution": "768P",
+                           "aspect_ratio": "16:9", "prompt_expansion_mode": "disabled",
+                           "enable_safety_checker": True, "sync_mode": False}
+    assert v.generation.fal("minimax/h3-max/text-to-video", "r")["model"] == "MiniMax H3 Max (post-trained by fal)"
+
+
+def test_reconcile_missing_result_keeps_full_reservation_and_audit(setup, monkeypatch):
+    a = missing_result_attempt(setup, monkeypatch)
+    with v.database() as db:
+        before = dict(db.execute("SELECT * FROM attempts").fetchone())
+    with pytest.raises(click.ClickException, match="Reservation retained"):
+        v.poll(a["attemptId"], setup)
+    result = v.reconcile_unavailable(a["attemptId"], setup)
+    assert result["state"] == "UNAVAILABLE"
+    assert result["reservedUsd"] == a["reservedUsd"]
+    with v.database() as db:
+        after = dict(db.execute("SELECT * FROM attempts").fetchone())
+        content = json.loads(after["content"])
+        audit = content.pop("reconciliation")
+        assert content == json.loads(before["content"])
+        assert audit["previousContentSha256"] == hashlib.sha256(before["content"].encode()).hexdigest()
+        assert audit["billingEvent"]["amount"] == "0"
+        assert v.totals(db)["reservationCents"] == before["reserved_cents"]
+    assert v.reconcile_unavailable(a["attemptId"], setup) == result
+    with pytest.raises(click.ClickException, match="cannot be retried"):
+        v.submit(a["planId"], "scene-veo", 2, "try again", setup)
+    # A distinct approved shot may run only after verified closure, without recovering funds.
+    new = manifest()
+    new["shots"][0]["id"] = "independent-shot"
+    plan = v.prepare(new, setup)["planId"]
+    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    monkeypatch.setattr(setup, "request", FakeFal.request.__get__(setup))
+    assert v.submit(plan, "independent-shot", 1, "", setup)["state"] == "SUBMITTED"
+    with v.database() as db:
+        assert v.totals(db)["reservationCents"] == 300
+
+
+@pytest.mark.parametrize("problem", ["pending", "unknown", "account", "request", "billing-missing", "billing-endpoint", "billing-nonzero", "available", "changed"])
+def test_reconcile_unavailable_fails_closed(setup, monkeypatch, problem):
+    a = missing_result_attempt(setup, monkeypatch)
+    if problem == "pending":
+        setup.status = "IN_PROGRESS"
+    elif problem == "unknown":
+        v.update_attempt(a["attemptId"], "UNKNOWN", {})
+    elif problem == "account":
+        setup.account = "different-account"
+    elif problem == "request":
+        monkeypatch.setattr(setup, "request", lambda *a, **k: {"status": "COMPLETED", "request_id": "wrong"})
+    elif problem.startswith("billing"):
+        event = {"endpoint": "wrong" if problem == "billing-endpoint" else "fal-ai/veo3.1/fast", "amount": "1" if problem == "billing-nonzero" else "0"}
+        monkeypatch.setattr(setup, "billing_events", lambda ids: {} if problem == "billing-missing" else {"synthetic-request": event})
+    elif problem == "available":
+        monkeypatch.setattr(setup, "request", lambda *a, **k: {"status": "COMPLETED", "request_id": "synthetic-request"})
+    elif problem == "changed":
+        def billing(ids):
+            v.update_attempt(a["attemptId"], "FAILED", {"concurrent": True})
+            return {"synthetic-request": {"endpoint": "fal-ai/veo3.1/fast", "amount": "0"}}
+        monkeypatch.setattr(setup, "billing_events", billing)
+    with pytest.raises(click.ClickException):
+        v.reconcile_unavailable(a["attemptId"], setup)
+    with v.database() as db:
+        row = db.execute("SELECT * FROM attempts").fetchone()
+        assert row["state"] != "UNAVAILABLE"
+        assert v.totals(db)["reservationCents"] > 0
+
+
 def manifest():
     return {
         "schemaVersion": 1,
@@ -504,6 +619,18 @@ def test_post_rejection_never_gets_terminal_result_treatment():
         fal.request(
             "POST", v.QUEUE + "/bytedance/seedance-2.0/image-to-video", completed_result=True
         )
+
+
+@pytest.mark.parametrize("method,completed,exception", [
+    ("POST", True, click.ClickException), ("GET", False, click.ClickException),
+    ("GET", True, v.UnavailableResult),
+])
+def test_404_only_recognized_for_completed_result_get(method, completed, exception):
+    from types import SimpleNamespace
+    fal = object.__new__(v.Fal)
+    fal.session = SimpleNamespace(request=lambda *a, **kw: SimpleNamespace(status_code=404))
+    with pytest.raises(exception):
+        fal.request(method, v.QUEUE + "/minimax/h3-max/image-to-video", completed_result=completed)
 
 
 @pytest.mark.parametrize("unit", ["seconds", "tokens", "1000 tokens"])

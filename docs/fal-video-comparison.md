@@ -93,6 +93,25 @@ Money is rounded upward to integer cents, with nonfinite/negative/unknown values
 
 ### Image-anchored comparisons
 
+`h3-max` uses `minimax/h3-max/text-to-video` for the same bounded settings below, with explicit
+16:9 and no reference image. This allows a like-for-like comparison with earlier text-only city
+shots. It shares the same regular-price reservation and lifetime ledger, not a separate budget.
+
+`h3-max-image` uses `minimax/h3-max/image-to-video` (H3 Max, not Turbo), one pinned starting
+PNG, eight seconds, `768P`, integral native audio, `prompt_expansion_mode: disabled`, safety
+checker enabled and synchronous/base64 output disabled. There are no end frames, voice references,
+extra provider arguments or retries beyond the approved manifest. The source frame supplies the
+canvas. The original prompt and any provider-returned expanded prompt remain in private attempt
+history; do not treat provider rewriting as owner-authored content.
+
+On 2026-09-10 the live pricing API reports the 480p base of $0.0125/second. The
+[model page](https://fal.ai/models/minimax/h3-max/image-to-video) quotes 768p at $0.02/second
+until September 14, then $0.08/second. The bounded quote takes the greater of live base × 1.6
+or the regular $0.08/second rate, then adds 25% headroom: **$0.80 reserved per eight-second
+attempt**, despite the current expected $0.16 bill. This avoids relying on an expiring promotion.
+The [API schema](https://fal.ai/models/minimax/h3-max/image-to-video/api) is the payload reference.
+This adapter does not change the Veo/Kling production policy or authorize additional comparisons.
+
 `seedance-2.0-image` uses `bytedance/seedance-2.0/image-to-video`, with exactly one
 checksum-pinned starting PNG in `image_url`, explicit 16:9/720p/eight seconds, native audio and
 standard bitrate. No end frame, voice reference, auto duration, higher resolution or arbitrary
@@ -177,6 +196,16 @@ charges) with the separate read-only-use admin key. Downloads include known mode
 attempt the same billing lookup; unavailable costs remain unknown. This does not alter the ledger,
 release reservations or recover blocked requests. See [generation metadata](generation-metadata.md).
 
+- `panther video reconcile-unavailable ATTEMPT_ID` is a separate explicit recovery operation,
+  not a generation retry. It only accepts acknowledged submissions, verifies the original billing
+  account and pinned endpoint, a live `COMPLETED` status with the exact request ID, HTTP 404 from
+  the verified result URL, and an exact request/endpoint-matched zero-charge billing event. Any
+  missing, ambiguous, nonzero or conflicting evidence fails closed. It records `UNAVAILABLE`,
+  not success/failure, keeping every existing content field, an audit record and the full lifetime
+  reservation. A conflict guard rejects concurrent changes. Uncertain submissions (`UNKNOWN` /
+  `SUBMITTING`) remain blocked. No lost video is invented, no budget is released and the unavailable
+  attempt cannot be retried. Independently approved new shots can proceed after this verified
+  terminal closure. Why the result disappeared remains unknown; do not infer retention or refunds.
 - A verified queue `COMPLETED` result may return HTTP 422 with typed
   `content_policy_violation` or `no_media_generated` errors. Poll records these as `FAILED`,
   retaining the entire reservation and safe error type only. Unknown/malformed errors and

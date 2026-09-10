@@ -32,6 +32,19 @@ QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
+    "h3-max": {
+        "endpoint": "minimax/h3-max/text-to-video",
+        "floor": "0.08",
+        "multiplier": "1.6",
+        "source": "https://fal.ai/models/minimax/h3-max/text-to-video",
+    },
+    "h3-max-image": {
+        "endpoint": "minimax/h3-max/image-to-video",
+        "floor": "0.08",
+        "multiplier": "1.6",
+        "source": "https://fal.ai/models/minimax/h3-max/image-to-video",
+        "imageField": "image_url",
+    },
     "seedance-2.0-image": {
         "endpoint": "bytedance/seedance-2.0/image-to-video",
         "floor": "0.014",
@@ -82,6 +95,10 @@ def fail(message):
 
 class TerminalModelRejection(Exception):
     """A typed rejection from a verified, completed queue result, not an uncertain POST."""
+
+
+class UnavailableResult(Exception):
+    """HTTP 404 only on a verified completed result GET; not proof of success or failure."""
 
 
 def number(value):
@@ -262,6 +279,8 @@ class Fal:
             response = self.session.request(
                 method, url, timeout=(10, 30), allow_redirects=False, **kwargs
             )
+            if completed_result and method == "GET" and response.status_code == 404:
+                raise UnavailableResult()
             if completed_result and method == "GET" and response.status_code == 422:
                 body = response.json()
                 details = body.get("detail") if isinstance(body, dict) else None
@@ -415,6 +434,13 @@ def payload(shot):
             body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.
     elif shot["model"] in {"seedance-2.0", "seedance-2.0-image"}:
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
+    elif shot["model"] in {"h3-max", "h3-max-image"}:
+        # Native audio is integral; canvas follows the pinned image. No prompt rewrite.
+        body = {"prompt": shot["prompt"], "duration": 8, "resolution": "768P",
+                "prompt_expansion_mode": "disabled", "enable_safety_checker": True,
+                "sync_mode": False}
+        if shot["model"] == "h3-max":
+            body["aspect_ratio"] = "16:9"
     else:
         fail("Unsupported model profile.")
     if "image" in shot:
@@ -639,7 +665,7 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         if previous:
             return summary(previous)
         if db.execute(
-            "SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED')"
+            "SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')"
         ).fetchone():
             fail("An outstanding or uncertain request must be resolved before another submission.")
         if ordinal > 1:
@@ -649,6 +675,8 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
             ).fetchone()
             if not prior or not reason.strip():
                 fail("Retries require the previous attempt and an explicit reason.")
+            if prior["state"] == "UNAVAILABLE":
+                fail("Unavailable results cannot be retried; inspect provider history first.")
         if totals(db)["reservationCents"] + reserve > LIMIT_CENTS:
             fail("The $50 total budget cannot cover this attempt.")
         db.execute(
@@ -691,7 +719,7 @@ def poll(attempt_id, fal):
         if not row:
             fail("Unknown attempt.")
         data = json.loads(row["content"])
-        if row["state"] in {"COMPLETED", "FAILED"}:
+        if row["state"] in {"COMPLETED", "FAILED", "UNAVAILABLE"}:
             return summary(row)
         if not data.get("requestId") or not data.get("urls"):
             fail(
@@ -716,9 +744,59 @@ def poll(attempt_id, fal):
         return update_attempt(
             attempt_id, "FAILED", {"providerError": True, "providerErrorTypes": exc.args[0]}
         )
+    except UnavailableResult:
+        fail("Completed result is unavailable (HTTP 404). Reservation retained; use reconcile-unavailable only with verified completion and billing.")
     if not isinstance(result.get("video"), dict) or not isinstance(result["video"].get("url"), str):
         fail("Completed response has no video. Reservation retained; inspect before retrying.")
     return update_attempt(attempt_id, "COMPLETED", {"result": result})
+
+
+def reconcile_unavailable(attempt_id, fal):
+    """Close a known completed, zero-billed request with lost output; never release money."""
+    with database() as db:
+        row = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+        if not row:
+            fail("Unknown attempt.")
+        if row["state"] == "UNAVAILABLE":
+            return summary(row)
+        if row["state"] not in {"SUBMITTED", "IN_QUEUE", "IN_PROGRESS"}:
+            fail("Only acknowledged submissions can be reconciled; uncertain submissions stay blocked.")
+        original_state, original_content = row["state"], row["content"]
+        data = json.loads(original_content)
+        plan, _ = read_plan(db, row["plan_id"])
+        shot = next(s for s in plan["manifest"]["shots"] if s["id"] == row["shot"])
+        endpoint = PROFILES[shot["model"]]["endpoint"]
+        if data.get("endpoint") != endpoint or not data.get("requestId") or not data.get("urls"):
+            fail("Missing or conflicting pinned request identity; reservation retained.")
+    if fal.billing()["account"] != plan["billingAccount"]:
+        fail("Billing account changed; reservation retained.")
+    rid = data["requestId"]
+    status = fal.request("GET", queue_url(data["urls"]["status"], rid, endpoint, "status"))
+    if status.get("request_id") != rid or status.get("status") != "COMPLETED":
+        fail("Request is not verifiably completed; reservation retained.")
+    try:
+        fal.request("GET", queue_url(data["urls"]["response"], rid, endpoint, "response"),
+                    completed_result=True)
+    except UnavailableResult:
+        pass
+    else:
+        fail("Result is available; use poll/download instead of reconciliation.")
+    event = fal.billing_events([rid]).get(rid)
+    if not event or event.get("endpoint") != endpoint or number(event.get("amount")) != 0:
+        fail("Exact zero-charge billing evidence required; reservation retained.")
+    evidence = {"schemaVersion": 1, "verifiedAt": int(time.time()), "requestId": rid,
+                "endpoint": endpoint, "queueStatus": "COMPLETED", "resultHttpStatus": 404,
+                "billingEvent": event, "previousState": original_state,
+                "previousContentSha256": hashlib.sha256(original_content.encode()).hexdigest(),
+                "outcome": "output-unavailable-success-or-failure-unknown",
+                "reservationRetained": True}
+    with database() as db:
+        row = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+        if row["state"] != original_state or row["content"] != original_content:
+            fail("Attempt changed during verification; no reconciliation applied.")
+        db.execute("UPDATE attempts SET state='UNAVAILABLE',content=? WHERE id=?",
+                   (canonical({**data, "reconciliation": evidence}), attempt_id))
+        return summary(db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone())
 
 
 def media_url(url):
@@ -987,3 +1065,10 @@ def poll_command(attempt_id):
 def download_command(attempt_id):
     """Keep the original MP4 and upload-ready metadata privately; no generation or S3 write."""
     click.echo(json.dumps(download(attempt_id), indent=2))
+
+
+@video.command("reconcile-unavailable")
+@click.argument("attempt_id")
+def reconcile_unavailable_command(attempt_id):
+    """Verify completed + missing result + zero bill; keep reservation and audit history."""
+    click.echo(json.dumps(reconcile_unavailable(attempt_id, Fal()), indent=2))
