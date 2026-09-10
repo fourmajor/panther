@@ -499,6 +499,13 @@ function configureCharacter(profile) {
   elements.characterSummary.textContent = character.summary;
   document.querySelector("#character-model-area").hidden = !model;
   document.querySelector("#character-no-model").hidden = Boolean(model);
+  const portraitOnly = document.querySelector("#character-portrait-only");
+  portraitOnly.hidden = Boolean(model) || !poster;
+  portraitOnly.removeAttribute("src");
+  document.querySelector("#character-no-model").textContent = poster
+    ? "Portrait ready. No 3D model has been published yet."
+    : "No portrait or 3D model has been added yet.";
+  if (!model && poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
   if (!model) { state.currentCharacter = null; return; }
   elements.characterPoster.src = poster.url;
   elements.characterPoster.alt = `Portrait of ${character.name}`;

@@ -256,6 +256,23 @@ Arbitrary profile editing is not supported. Do not work around limits with direc
 
 ## Publishing a character model
 
+### Initialize a character portrait page
+
+For a character already in the structured game roster but lacking a profile, upload an explicitly
+character-tagged portrait, then use `panther character create-profile /private/path/profile.json`.
+The JSON contains `gameId`, `characterId`, `title`, `summary`, and `portraitKey`. Names come from the
+roster, not the manifest. Use only known facts in title/summary. This authenticated, create-only
+operation never replaces an existing profile; inspect `character show` after an uncertain response.
+The page displays its portrait while no model is published. Model registration/publication follows
+the normal workflow below. Initializing a page does not assert new campaign canon or create a player.
+
+Image-anchored fal comparisons additionally support `veo-3.1-fast-image` and `kling-3-pro-image`.
+Read the trusted comparison runbook before using them. Each shot pins one same-game uploaded PNG
+via `image` with absolute private `path`, hex `sha256`, and stable `key` also in `sourceKeys`.
+Obtain permission to send those images to fal. These are explicit opt-in profiles; existing text-only
+plans still send no references. Keep the same $50 ledger, no automatic retries or voice cloning.
+Use manifest `characterIds` for characters actually depicted; do not infer from input associations.
+
 ### Automatic generation from turnaround references
 
 Use `panther model references MANIFEST.json` to commit a complete, typed reference revision.

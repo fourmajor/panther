@@ -20,6 +20,16 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("roster character profile initialization is authenticated and create-only", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", { RouteKey: "POST /character-profile", AuthorizationType: "JWT" });
+  const policies = Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id]) => id.startsWith("GameCatalog"));
+  const writes = policies.flatMap(([, p]) => p.Properties.PolicyDocument.Statement).filter((s: any) => s.Action === "s3:PutObject");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].Condition.StringEquals["s3:if-none-match"], "*");
+  assert.match(JSON.stringify(writes[0].Resource), /characters/);
+});
+
 test("completed recording sets trigger a separate durable laptop playback workflow", () => {
   const template = mediaExplorerTemplate();
   const machines = Object.entries(template.findResources("AWS::StepFunctions::StateMachine"))
@@ -146,7 +156,7 @@ test("structured game catalog is retained, on-demand and cannot mutate artwork",
   assert.equal(policies.length, 1);
   const policy = JSON.stringify(policies);
   assert.match(policy, /dynamodb:PutItem/);
-  assert.doesNotMatch(policy, /s3:PutObject|dynamodb:DeleteItem/);
+  assert.doesNotMatch(policy, /s3:DeleteObject|dynamodb:DeleteItem/);
   assert.match(policy, /dynamodb:UpdateItem/);
   assert.match(policy, /dynamodb:LeadingKeys/);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -278,7 +288,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 38);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 39);
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

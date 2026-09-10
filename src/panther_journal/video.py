@@ -5,15 +5,18 @@ This is not an editorial-worker fallback and never runs from a Step Functions ca
 
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import sqlite3
+import struct
 import time
 from urllib.parse import urlsplit
 import uuid
+import zlib
 
 import click
 import requests
@@ -25,9 +28,23 @@ ROOT = Path.home() / "Library/Application Support/Panther/video-comparison"
 LIMIT_CENTS = 5000
 PLATFORM = "https://api.fal.ai/v1"
 QUEUE = "https://queue.fal.run"
-# Reviewed bounded text-to-video profiles only. Do not accept arbitrary model arguments,
+# Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
+    "veo-3.1-fast-image": {
+        "endpoint": "fal-ai/veo3.1/fast/image-to-video",
+        "floor": "0.15",
+        "multiplier": "1",
+        "source": "https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video",
+        "imageField": "image_url",
+    },
+    "kling-3-pro-image": {
+        "endpoint": "fal-ai/kling-video/v3/pro/image-to-video",
+        "floor": "0.21",
+        "multiplier": "1.5",
+        "source": "https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video",
+        "imageField": "start_image_url",
+    },
     "veo-3.1-fast": {
         "endpoint": "fal-ai/veo3.1/fast",
         "floor": "0.15",
@@ -256,7 +273,12 @@ def quote(fal, model):
 
 def validate_manifest(value):
     fields = {"schemaVersion", "gameId", "sessionId", "sourceKeys", "shots"}
-    if not isinstance(value, dict) or set(value) != fields or value["schemaVersion"] != 1:
+    if (
+        not isinstance(value, dict)
+        or not fields <= set(value)
+        or set(value) - fields - {"characterIds"}
+        or value["schemaVersion"] != 1
+    ):
         fail("Expected a version-1 video comparison manifest; see docs/fal-video-comparison.md.")
     for name in ("gameId", "sessionId"):
         identifier(value[name])
@@ -276,8 +298,17 @@ def validate_manifest(value):
     if not isinstance(value["shots"], list) or not 1 <= len(value["shots"]) <= 20:
         fail("Provide 1–20 explicitly bounded comparison shots.")
     seen = set()
+    characters = value.get("characterIds", [])
+    if not isinstance(characters, list) or len(characters) > 20:
+        fail("Invalid character associations.")
+    for character in characters:
+        identifier(character)
     for shot in value["shots"]:
-        if not isinstance(shot, dict) or set(shot) != {"id", "model", "prompt", "maxAttempts"}:
+        if (
+            not isinstance(shot, dict)
+            or not {"id", "model", "prompt", "maxAttempts"} <= set(shot)
+            or set(shot) - {"id", "model", "prompt", "maxAttempts", "image"}
+        ):
             fail(
                 "Each shot requires id, model, prompt and maxAttempts; arbitrary provider arguments are forbidden."
             )
@@ -285,6 +316,23 @@ def validate_manifest(value):
         if shot["id"] in seen or shot["model"] not in PROFILES:
             fail("Duplicate shot or unsupported model profile.")
         seen.add(shot["id"])
+        if bool(PROFILES[shot["model"]].get("imageField")) != ("image" in shot):
+            fail("Image profiles require exactly one pinned image; text profiles forbid it.")
+        if "image" in shot:
+            ref = shot["image"]
+            if (
+                not isinstance(ref, dict)
+                or set(ref) != {"path", "sha256", "key"}
+                or ref["key"] not in sources
+            ):
+                fail("Image needs an absolute private path, SHA-256, and same-game source key.")
+            if (
+                not isinstance(ref["path"], str)
+                or not Path(ref["path"]).is_absolute()
+                or not isinstance(ref["sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", ref["sha256"])
+            ):
+                fail("Invalid image path or checksum.")
         if not isinstance(shot["prompt"], str) or not 1 <= len(shot["prompt"].strip()) <= 2500:
             fail("Prompts must contain 1–2500 characters.")
         if type(shot["maxAttempts"]) is not int or not 1 <= shot["maxAttempts"] <= 3:
@@ -294,19 +342,84 @@ def validate_manifest(value):
 
 def payload(shot):
     body = {"prompt": shot["prompt"], "aspect_ratio": "16:9", "generate_audio": True}
-    if shot["model"] == "veo-3.1-fast":
+    if shot["model"] in {"veo-3.1-fast", "veo-3.1-fast-image"}:
         body.update(duration="8s", resolution="720p", auto_fix=False)
-    elif shot["model"] == "kling-3-pro":
+    elif shot["model"] in {"kling-3-pro", "kling-3-pro-image"}:
         body.update(duration="8", shot_type="customize")
+        if shot["model"].endswith("-image"):
+            body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.
     elif shot["model"] == "seedance-2.0":
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
     else:
         fail("Unsupported model profile.")
+    if "image" in shot:
+        # Pin the descriptor, not an expiring URL or megabytes of duplicated private data.
+        body[PROFILES[shot["model"]]["imageField"]] = dict(shot["image"])
     return body
+
+
+def reference_bytes(ref, *, verify_cloud=False):
+    path = Path(ref["path"]).resolve()
+    if any((parent / ".git").exists() for parent in (path.parent, *path.parents)):
+        fail("Game image references must stay outside Git.")
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(8 * 1024 * 1024 + 1)
+    except OSError:
+        fail("Pinned reference image is unavailable.")
+    if len(data) > 8 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != ref["sha256"]:
+        fail("Pinned reference image changed or exceeds 8 MiB.")
+    if len(data) < 33 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        fail("Reference images must be PNG files.")
+    width, height = struct.unpack(">II", data[16:24])
+    if (
+        not 1280 <= width <= 3840
+        or not 720 <= height <= 2160
+        or abs(width / height - 16 / 9) > 0.02
+    ):
+        fail("Reference image must be 16:9, at least 1280x720, and at most 3840x2160.")
+    # Decode bounded RGB/RGBA PNG data before reserving money. No image processing,
+    # arbitrary URLs or extra image dependencies are required for this narrow adapter.
+    try:
+        if data[24] != 8 or data[25] not in {2, 6} or data[26:29] != b"\x00\x00\x00":
+            raise ValueError()
+        offset, compressed, ended = 8, bytearray(), False
+        while offset < len(data):
+            size = struct.unpack(">I", data[offset : offset + 4])[0]
+            kind = data[offset + 4 : offset + 8]
+            chunk = data[offset + 8 : offset + 8 + size]
+            checksum = struct.unpack(">I", data[offset + 8 + size : offset + 12 + size])[0]
+            if zlib.crc32(kind + chunk) != checksum:
+                raise ValueError()
+            if kind == b"IDAT":
+                compressed.extend(chunk)
+            offset += size + 12
+            if kind == b"IEND":
+                ended = size == 0 and offset == len(data)
+                break
+        expected = height * (1 + width * (3 if data[25] == 2 else 4))
+        decoder = zlib.decompressobj()
+        pixels = decoder.decompress(compressed, expected + 1)
+        if not ended or len(pixels) != expected or not decoder.eof or decoder.unused_data:
+            raise ValueError()
+    except (ValueError, struct.error, zlib.error):
+        fail("Reference PNG is corrupt or uses an unsupported format; no money reserved.")
+    if verify_cloud:
+        remote = cloud.api(cloud.configuration(), "GET", "/object-url", params={"key": ref["key"]})
+        if (
+            remote.get("sha256") != base64.b64encode(hashlib.sha256(data).digest()).decode()
+            or remote.get("size") != len(data)
+            or remote.get("contentType") != "image/png"
+        ):
+            fail("Local reference does not match its immutable Panther source.")
+    return data
 
 
 def prepare(value, fal):
     validate_manifest(value)
+    for shot in value["shots"]:
+        if "image" in shot:
+            reference_bytes(shot["image"], verify_cloud=True)
     billing = fal.billing()
     quotes = {model: quote(fal, model) for model in {s["model"] for s in value["shots"]}}
     plan = {
@@ -445,6 +558,12 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         "createdAt": int(time.time()),
         "retryReason": reason,
     }
+    request_input = dict(content["input"])
+    if "image" in shot:
+        data = reference_bytes(shot["image"])
+        request_input[PROFILES[shot["model"]]["imageField"]] = (
+            "data:image/png;base64," + base64.b64encode(data).decode()
+        )
     with database() as db:
         previous = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
         if previous:
@@ -472,7 +591,7 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         result = fal.request(
             "POST",
             QUEUE + "/" + endpoint,
-            json=content["input"],
+            json=request_input,
             headers={
                 "X-Fal-No-Retry": "1",
                 "x-app-fal-disable-fallback": "true",
@@ -549,8 +668,10 @@ def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, r
         "category": "creative-reimagining",
         "sessionId": manifest["sessionId"],
         "sourceKeys": manifest["sourceKeys"],
+        "characterIds": manifest.get("characterIds", []),
         "tags": ["video-comparison", "ai-generated"],
         "extra": {
+            "relationshipRole": "finished",
             "provider": "fal",
             "endpoint": endpoint,
             "requestId": request_id,
