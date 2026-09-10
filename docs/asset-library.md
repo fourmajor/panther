@@ -37,6 +37,43 @@ accepting artifact-supplied URLs. Existing chapters need no migration or regener
 links. The current editorial worker does not yet generate optional alias annotations.
 If the asset catalog is unavailable, the story remains readable with a visible retry notice.
 
+### Novel link previews
+
+Hover a prose link briefly, focus it with the keyboard, or tap it once on a touch screen to open a
+small preview. A second tap or **Open linked page** navigates; ordinary desktop clicks and modified
+clicks retain normal link behavior. The preview stays open while hovered, supports Escape/outside-tap
+dismissal, fits within the viewport, and closes on navigation, game changes or sign-out. It never
+changes the manuscript, clean download, or the link's destination.
+
+Every supported typed destination (`character`, `asset`, `chapter`) uses the same version-1 preview
+projection for both old and new records. Character descriptions and asset descriptions provide the
+summary. For a chapter/transcript without a description, a bounded opening excerpt is explicitly labeled
+as an excerpt with a spoiler notice; technical JSON/review notes are not blindly dumped into a card.
+When the destination has no descriptive content, show its available metadata and say the description
+is missing. Do not invent biographies, identities or facts to fill the space. These previews are
+generated at read time, not AI-written summaries or new canonical context. No paid inference or
+separate summary workflow runs on hover. A richer authored/AI synopsis can be supplied explicitly.
+
+Assets can optionally carry this structured metadata under `extra`:
+
+```json
+{"preview":{"schemaVersion":1,"summary":"A short, factual description of this asset.",
+"imageKey":"games/example-game/assets/example-portrait/original/portrait.png"}}
+```
+
+The summary is plain text, displayed with a 320-character bound. `imageKey` is a same-game asset
+reference, never an external URL. Keep any AI-summary provenance in the normal metadata/source
+references and do not assert review or canon that did not occur. Optional enriched metadata does not
+exempt old records: all records receive the same computed projection without rewriting source bytes.
+
+Images use the character's selected portrait, the image asset itself, or that explicit preview image.
+A character without a selected portrait can use its single explicitly associated portrait; multiple
+ambiguous candidates are not guessed. Only PNG/JPEG/WebP/AVIF files up to 8 MiB receive private signed
+image URLs. Images are not generated, videos do not autoplay, and failed images leave a readable card.
+Summaries/images are fetched through existing authenticated APIs on demand and cached only in memory
+for at most a minute (50 targets). Cache and DOM are cleared on navigation/sign-out; late responses
+cannot paint another game's preview. Errors never prevent following the original link.
+
 Choose a game, then **Audio** or **Transcripts**. Both sections use existing private immutable
 assets; no conversion, generation, transcription or new workflow is started by browsing.
 Audio opens one continuous MP3 listening derivative produced by the completed-chunk-set

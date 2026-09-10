@@ -344,6 +344,12 @@ Use `--metadata /outside/repo/asset.json`. Supported fields:
 - `sourceKeys`: exact existing object keys from this game for source material or earlier revisions.
 - `extra`: an object for extensible metadata, e.g. `creator`, `generator`, `modelVersion`,
   `createdAt`, `reviewStatus`, `license`, or other user-provided provenance. Do not invent values.
+  For novel link previews, optional `extra.preview` uses `schemaVersion: 1`, a short plain-text
+  `summary`, and optional same-game `imageKey`. Use stable asset references, never external URLs.
+  Keep generated-summary provenance and source links; do not invent a character biography or canon.
+  Existing descriptions are used automatically; otherwise the reader labels content excerpts or
+  shows available metadata. Preview summaries stay outside the manuscript and are not factual
+  correction context. Images require explicit association or selection, not filename/identity guesses.
 
 Only include links and provenance you can substantiate. Do not include passwords, signed URLs,
 personal contact details, or unrelated sensitive data. Long prompts, documents, and provenance

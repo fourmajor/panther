@@ -61,6 +61,12 @@
 
 ## Editorial workflows
 
+- Novel link previews are separate read-time projections, never manuscript edits. Support hover,
+  keyboard focus and touch; keep navigation usable when a preview fails. Use descriptions or clearly
+  labeled excerpts, not invented facts, and only explicitly associated same-game preview images.
+  Apply the same projection to existing and future records. Keep optional richer summaries structured
+  and source-attributed; hovering must not trigger paid inference or media generation.
+
 - Character appearances use explicit asset `characterIds`, not player or provenance inference.
   Narrative navigation uses typed same-game references with subtle reading styles. Keep annotations
   separate from manuscript text; ambiguous names remain unlinked. New entity pages should extend the
