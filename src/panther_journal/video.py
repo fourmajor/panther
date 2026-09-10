@@ -79,6 +79,10 @@ def fail(message):
     raise click.ClickException(message)
 
 
+class TerminalModelRejection(Exception):
+    """A typed rejection from a verified, completed queue result, not an uncertain POST."""
+
+
 def number(value):
     try:
         result = Decimal(str(value))
@@ -209,7 +213,7 @@ class Fal:
         except (requests.RequestException, KeyError, TypeError, ValueError):
             fail("Read-only fal billing response unavailable or invalid; generation is blocked.")
 
-    def request(self, method, url, **kwargs):
+    def request(self, method, url, *, completed_result=False, **kwargs):
         parts = urlsplit(url)
         if (
             parts.scheme != "https"
@@ -222,6 +226,22 @@ class Fal:
             response = self.session.request(
                 method, url, timeout=(10, 30), allow_redirects=False, **kwargs
             )
+            if completed_result and method == "GET" and response.status_code == 422:
+                body = response.json()
+                details = body.get("detail") if isinstance(body, dict) else None
+                # Never parse prose, echo inputs, accept an unknown error, or interpret a
+                # failed POST as safely rejected. The caller has verified COMPLETED and URL.
+                if (
+                    isinstance(details, list)
+                    and 1 <= len(details) <= 10
+                    and all(
+                        isinstance(item, dict)
+                        and isinstance(item.get("type"), str)
+                        and item.get("type") in {"content_policy_violation", "no_media_generated"}
+                        for item in details
+                    )
+                ):
+                    raise TerminalModelRejection(sorted({item["type"] for item in details}))
             # Never print provider error bodies/headers: they may echo prompts or credentials.
             if not 200 <= response.status_code < 300:
                 fail(f"fal returned HTTP {response.status_code}; no automatic retry was made.")
@@ -501,6 +521,11 @@ def summary(row):
         "reservedUsd": f"{row['reserved_cents'] / 100:.2f}",
         "requestId": data.get("requestId"),
         "downloadPath": data.get("downloadPath"),
+        **(
+            {"providerErrorTypes": data["providerErrorTypes"]}
+            if "providerErrorTypes" in data
+            else {}
+        ),
     }
 
 
@@ -645,9 +670,16 @@ def poll(attempt_id, fal):
         return update_attempt(attempt_id, status["status"], {})
     if status.get("error") or status.get("error_type"):
         return update_attempt(attempt_id, "FAILED", {"providerError": True})
-    result = fal.request(
-        "GET", queue_url(data["urls"]["response"], data["requestId"], data["endpoint"], "response")
-    )
+    try:
+        result = fal.request(
+            "GET",
+            queue_url(data["urls"]["response"], data["requestId"], data["endpoint"], "response"),
+            completed_result=True,
+        )
+    except TerminalModelRejection as exc:
+        return update_attempt(
+            attempt_id, "FAILED", {"providerError": True, "providerErrorTypes": exc.args[0]}
+        )
     if not isinstance(result.get("video"), dict) or not isinstance(result["video"].get("url"), str):
         fail("Completed response has no video. Reservation retained; inspect before retrying.")
     return update_attempt(attempt_id, "COMPLETED", {"result": result})
