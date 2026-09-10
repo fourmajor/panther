@@ -289,8 +289,10 @@ panther upload /outside/repo/harbor.png --game GAME_ID --asset harbor-map \
 ```
 
 Replace `GAME_ID` with a discovered lowercase game slug. Files become browsable in the web media
-library. Metadata links record organization; uploads do not automatically update character pages,
-create session records, or add filtering UI. Do not claim otherwise.
+library. Character-tagged assets appear under Featuring this character after refreshing its page;
+this does not change its official portrait/model selection or create session records. Videos appear
+in Videos regardless of kind. Novel readers link exact unambiguous character names and asset titles
+without changing the stored prose; aliases require explicit typed references in the chapter artifact.
 
 ## Reliability and reporting
 

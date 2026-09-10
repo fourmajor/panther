@@ -175,9 +175,10 @@ test('ambiguous titles, explicit disambiguation, missing and hostile targets are
   const assets=[key,key.replace('chart-a','chart-b')].map(key=>({key,metadata:{title:'Harbor chart'},sourceKeys:[]}));
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets,cursor:null}}));
   let explicit=false;
-  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],markdown:'Harbor chart. Ren Vale. Missing portrait. Unsafe URL. Conflicting alias.',readerReferences:{schemaVersion:1,mentions:[
+  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],markdown:'Harbor chart. Ren Vale. Missing portrait. Unsafe URL. Conflicting alias. Mira Vale.',readerReferences:{schemaVersion:1,mentions:[
     ...(explicit?[{text:'Harbor chart',target:{type:'asset',key}},{text:'Ren Vale',target:{type:'character',id:'ren-one'}}]:[]),
     {text:'Missing portrait',target:{type:'asset',key:'games/other-game/assets/x/original/a.png'}},
+    {text:'Mira Vale',target:{type:'character',id:'mira',gameId:'other-game'}},
     {text:'Unsafe URL',target:{type:'__proto__',id:'javascript:alert(1)'}},
     {text:'Conflicting alias',target:{type:'character',id:'mira'}},
     {text:'Conflicting alias',target:{type:'character',id:'ren-one'}},

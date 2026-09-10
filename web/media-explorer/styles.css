@@ -135,6 +135,7 @@ main {
 #character-assets { margin-top: 2.5rem; overflow-wrap: anywhere; }
 #character-assets-list { padding-left: 1.3rem; }
 #character-assets-list li { padding-block: .5rem; }
+#character-assets-list a { color: var(--accent); text-underline-offset: .2em; }
 .novel-details { max-width: 75ch; margin: 2rem auto; line-height: 1.7; overflow-wrap: anywhere; }
 .novel-details h3 { margin-top: 2rem; }
 .novel-details pre { white-space: pre-wrap; font-size: .8rem; }

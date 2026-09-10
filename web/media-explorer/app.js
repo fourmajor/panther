@@ -884,10 +884,16 @@ function narrativeReferences(chapter, assets, chapters) {
   const names = new Map();
   const add = (text, target, explicit = false) => {
     if (typeof text !== "string" || text !== text.trim() || text.length < 2 || text.length > 160 || /[\n\r<>\[\]*_`]/.test(text)) return;
-    if (!target || (target.gameId && target.gameId !== state.gameId)) return;
+    if (!target || (target.gameId !== undefined && target.gameId !== state.gameId)) {
+      if (explicit) names.set(text, {explicit, ambiguous:true});
+      return;
+    }
     const resolve = Object.hasOwn(resolvers, target.type) && resolvers[target.type];
     const destination = resolve && resolve(target);
-    if (!destination) return;
+    if (!destination) {
+      if (explicit) names.set(text, {explicit, ambiguous:true});
+      return;
+    }
     const previous = names.get(text);
     if (previous?.explicit && !explicit) return;
     if (!previous || (explicit && !previous.explicit)) names.set(text, {...destination, explicit});
