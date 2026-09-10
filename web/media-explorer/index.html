@@ -20,6 +20,7 @@
       </a>
       <nav class="primary-nav" id="primary-nav" aria-label="Panther sections" hidden>
         <a href="/characters">Characters</a>
+        <a href="/novel">Novel</a>
         <a href="/media">Media</a>
       </nav>
       <div class="account" id="account" hidden>
@@ -111,6 +112,32 @@
             </aside>
           </div>
         </article>
+      </section>
+
+      <section id="novel" hidden aria-label="Novel">
+        <div class="explorer-heading">
+          <div><p class="eyebrow">From the table to the page</p><h1>Novel</h1></div>
+          <button class="quiet-button" id="novel-refresh" type="button">Refresh chapters</button>
+        </div>
+        <p id="novel-status" class="status" role="status"></p>
+        <div id="novel-list" class="novel-list"></div>
+        <div id="novel-reader" hidden>
+          <div class="novel-tools">
+            <button class="back-button" id="novel-back" type="button">← All chapters</button>
+            <div class="novel-tabs" aria-label="Chapter view">
+              <button id="novel-read" class="quiet-button" aria-pressed="true" type="button">Read</button>
+              <button id="novel-show-details" class="quiet-button" aria-pressed="false" type="button">Details</button>
+            </div>
+            <button id="novel-download" class="quiet-button" type="button">Download story</button>
+          </div>
+          <p id="novel-notice" class="novel-notice" hidden></p>
+          <article id="novel-manuscript" class="novel-manuscript" aria-label="Chapter text">
+            <h1 id="novel-title"></h1>
+            <div id="novel-prose"></div>
+          </article>
+          <section id="novel-details" class="novel-details" aria-label="Chapter details" hidden></section>
+          <nav id="novel-pagination" class="novel-pagination" aria-label="Chapter navigation"></nav>
+        </div>
       </section>
 
       <section class="explorer" id="explorer" hidden>

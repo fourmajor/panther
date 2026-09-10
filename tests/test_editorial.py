@@ -295,7 +295,7 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
             "title": stage,
             "markdown": "Synthetic manuscript",
             "evidenceIds": ["raw", "catalog"],
-            "uncertainties": [],
+            "uncertainties": ["Separate synthetic editorial note"],
             "decisions": [],
             "selectedKeys": [],
             "shots": [],
@@ -338,6 +338,9 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
         )
         artifacts[stage] = {"key": completed[-1]["outputKey"]}
     assert len(completed) == len(STAGES)
+    assert storage["novel-chapter.md"] == storage["novel-chapter.json"]["payload"]["chapter"]
+    assert "Separate synthetic editorial note" not in storage["novel-chapter.md"]
+    assert storage["novel-chapter.json"]["payload"]["review"]["uncertainties"]
     assert storage["raw"] == original
     assert (
         storage["corrected-transcript.json"]["payload"]["transcript"]["segments"]

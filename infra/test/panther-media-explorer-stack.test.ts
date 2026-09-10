@@ -83,6 +83,21 @@ test("structured game catalog is retained, on-demand and cannot mutate artwork",
   });
 });
 
+test("novel reader is authenticated and has only read permissions", () => {
+  const template = mediaExplorerTemplate();
+  for (const route of ["GET /novel", "GET /novel-chapter"]) {
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", { RouteKey: route, AuthorizationType: "JWT" });
+  }
+  template.hasResourceProperties("AWS::Lambda::Function", { Handler: "novel.handler" });
+  const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("EditorialProcessingNovelReader"));
+  assert.equal(policies.length, 1);
+  const serialized = JSON.stringify(policies);
+  assert.match(serialized, /dynamodb:Query/);
+  assert.match(serialized, /s3:GetObject/);
+  assert.doesNotMatch(serialized, /PutItem|UpdateItem|DeleteItem|PutObject|states:|InvokeFunction/);
+});
+
 test("media explorer uses private static hosting and Cognito authentication", () => {
   const template = mediaExplorerTemplate();
 
@@ -192,7 +207,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 28);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 30);
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,
