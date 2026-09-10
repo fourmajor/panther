@@ -12,6 +12,15 @@ from panther_journal import model_workflow as worker
 from panther_journal.cli import main
 
 
+def test_qa_image_includes_runtime_plan_and_discovers_tests_before_jobs():
+    repo = Path(__file__).resolve().parents[1]
+    dockerfile = (repo / "ops/model-worker/Dockerfile").read_text()
+    ignore = (repo / ".dockerignore").read_text()
+    assert "COPY src/panther_journal/editorial-plan.json" in dockerfile
+    assert "!src/panther_journal/editorial-plan.json" in ignore
+    assert "playwright test browser-tests/viewer.spec.cjs --list" in dockerfile
+
+
 def test_subscription_environment_never_inherits_provider_or_aws_keys(monkeypatch):
     monkeypatch.setattr(worker.shutil, "which", lambda name: "/test/codex")
     for name in (

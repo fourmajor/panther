@@ -13,5 +13,8 @@
 !ops/
 !ops/model-worker/
 !ops/model-worker/Dockerfile
+!src/
+!src/panther_journal/
+!src/panther_journal/editorial-plan.json
 **/__pycache__/**
 **/*.pyc

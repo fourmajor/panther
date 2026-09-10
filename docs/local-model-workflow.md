@@ -51,6 +51,10 @@ register a new revision to restart expired/failed work. No automatic cloud compu
 Requirements: native Blender, Codex CLI signed in using ChatGPT, a current Panther CLI sign-in,
 Docker Desktop, and a reviewed Panther checkout. Build the credential-free browser QA image:
 
+The image includes the editorial stage contract used while synthesizing the viewer's security
+policy. Its build must successfully collect the viewer tests before it is installed or pinned;
+missing runtime inputs must fail image preparation rather than consume a character job's retries.
+
 ```sh
 bash ops/model-worker/build-qa.sh
 panther model worker --repo /absolute/trusted/panther \
