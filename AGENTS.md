@@ -2,6 +2,12 @@
 
 ## Panther CLI and game assets
 
+- Record structured generation metadata for every asset using `docs/generation-metadata.md`:
+  actual model/version when known, provider, inference location distinct from local coordination,
+  tools, and evidence-backed cost status. Unknown is not zero; subscriptions and budget reservations
+  are not per-asset billed charges. Backfill older assets through the same versioned migration,
+  preserving original bytes/provenance; never guess model identity from appearance or tool names.
+
 - Physical storage organization is a versioned application contract. Use the shared server path
   builder and the migration requirements in `docs/asset-storage.md`; never hand-assemble new S3 destinations.
   Group content by game, character/session/shared library, media kind, and immutable asset revision;

@@ -2,11 +2,12 @@
 
 import json
 import os
+import copy
 from pathlib import Path
 
 import click
 
-from panther_journal import cloud
+from panther_journal import cloud, generation_metadata as generation
 
 
 @click.group()
@@ -27,6 +28,57 @@ def catalog(game):
         if not cursor:
             break
     click.echo(json.dumps({"gameId": game, "assets": records}, indent=2))
+
+
+def generation_plan(records, facts):
+    """Version-1 backfill: preserve metadata/bytes; only explicitly evidenced facts enrich defaults."""
+    if not isinstance(facts, dict) or set(facts) - {r["key"] for r in records}:
+        raise click.ClickException("Generation facts must reference inventoried assets only")
+    migrations = []
+    for record in records:
+        details = copy.deepcopy(record["metadata"])
+        extra = details.setdefault("extra", {})
+        desired = facts.get(record["key"], extra.get("generation", generation.unknown()))
+        if not isinstance(desired, dict) or desired.get("schemaVersion") != 1:
+            raise click.ClickException("Generation facts require schemaVersion 1")
+        if extra.get("generation") == desired:
+            continue
+        extra["generation"] = desired
+        migrations.append({"schemaVersion": 1, "key": record["key"],
+                           "expectedVersionId": record["versionId"], "kind": record["kind"],
+                           "metadata": details, "reason": "Generation metadata v1: explicit evidence or unknown; original bytes and provenance retained"})
+    return {"schemaVersion": 1, "migrations": migrations}
+
+
+@assets.command("generation-plan")
+@click.option("--facts", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Private JSON map of exact asset keys to evidence-backed generation records.")
+@click.option("--output", required=True, type=click.Path(path_type=Path))
+def plan_generation(facts, output):
+    """Inventory ALL games and prepare a generation-v1 migration. No cloud writes."""
+    config = cloud.configuration()
+    records = []
+    for game in cloud.api(config, "GET", "/games")["games"]:
+        cursor = None
+        while True:
+            page = cloud.api(config, "GET", "/assets", params={"gameId": game["id"], "cursor": cursor})
+            for asset in page["assets"]:
+                info = cloud.api(config, "GET", "/object-url", params={"key": asset["key"]})
+                records.append({k: info[k] for k in ("key", "versionId", "kind", "metadata")})
+            cursor = page.get("cursor")
+            if not cursor:
+                break
+    try:
+        supplied = json.loads(facts.read_text()) if facts else {}
+        plan = generation_plan(records, supplied)
+        with output.open("x") as stream:
+            output.chmod(0o600)
+            json.dump(plan, stream, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except (OSError, ValueError):
+        raise click.ClickException("Could not read facts or create a new private plan; never overwrite a prior plan") from None
+    click.echo(f"Inventoried {len(records)} assets across all games; planned {len(plan['migrations'])} metadata updates. Dry-run with assets migrate.")
 
 
 @assets.command("migrate")

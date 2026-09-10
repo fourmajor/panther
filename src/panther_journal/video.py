@@ -20,8 +20,9 @@ import zlib
 
 import click
 import requests
+from keyring.errors import KeyringError
 
-from panther_journal import cloud
+from panther_journal import cloud, generation_metadata as generation
 from panther_journal.audio_storage import flush_directory, flush_file, write_json
 
 ROOT = Path.home() / "Library/Application Support/Panther/video-comparison"
@@ -212,6 +213,41 @@ class Fal:
                 return {"account": data["username"], "balanceUsd": str(balance)}
         except (requests.RequestException, KeyError, TypeError, ValueError):
             fail("Read-only fal billing response unavailable or invalid; generation is blocked.")
+
+    @staticmethod
+    def billing_events(request_ids):
+        """Read-only, request-scoped cost evidence. Never settles/releases a reservation."""
+        if not request_ids or len(request_ids) > 50 or not all(re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", r) for r in request_ids):
+            fail("Invalid billing request IDs")
+        try:
+            key = cloud.credential_store().get_password("panther.place/fal", "admin-key")
+            if not key:
+                fail("Read-only billing key unavailable")
+            with requests.Session() as session:
+                session.trust_env = False
+                # The API caps date windows at 90 days; older history remains unknown here.
+                from datetime import datetime, timedelta, timezone
+                start = (datetime.now(timezone.utc) - timedelta(days=89)).isoformat()
+                response = session.get(PLATFORM + "/models/billing-events",
+                    params={"request_id": ",".join(request_ids), "start": start, "limit": 1000},
+                    headers={"Authorization": "Key " + key}, timeout=(10, 30), allow_redirects=False)
+                if response.status_code != 200:
+                    fail("Read-only billing events unavailable")
+                data = response.json()
+                if not isinstance(data, dict) or data.get("has_more") is not False or not isinstance(data.get("billing_events"), list):
+                    fail("Incomplete billing events; do not infer costs")
+                result = {}
+                for event in data["billing_events"]:
+                    rid, endpoint = event["request_id"], event["endpoint_id"]
+                    if rid not in request_ids or rid in result or not isinstance(endpoint, str):
+                        fail("Ambiguous billing records; inspect before assigning costs")
+                    amount = number(event["cost_total"])
+                    if amount < 0 or amount > Decimal("999999999"):
+                        fail("Invalid billed amount")
+                    result[rid] = {"endpoint": endpoint, "amount": format(amount, "f")}
+                return result
+        except (requests.RequestException, KeyringError, ValueError, TypeError, KeyError):
+            fail("Read-only billing events unavailable or invalid")
 
     def request(self, method, url, *, completed_result=False, **kwargs):
         parts = urlsplit(url)
@@ -703,7 +739,7 @@ def media_url(url):
     fail("Generated media is not on an approved fal delivery host.")
 
 
-def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, reserve, digest):
+def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, reserve, digest, billed=None):
     metadata = {
         "title": f"Video comparison — {shot}",
         "category": "creative-reimagining",
@@ -712,6 +748,7 @@ def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, r
         "characterIds": manifest.get("characterIds", []),
         "tags": ["video-comparison", "ai-generated"],
         "extra": {
+            "generation": generation.fal(endpoint, request_id, billed),
             "relationshipRole": "finished",
             "provider": "fal",
             "endpoint": endpoint,
@@ -780,6 +817,13 @@ def download(attempt_id):
     finally:
         temporary.unlink(missing_ok=True)
     manifest = plan["manifest"]
+    billed = None
+    try:
+        event = Fal.billing_events([data["requestId"]]).get(data["requestId"])
+        if event and event["endpoint"] == data["endpoint"]:
+            billed = event["amount"]
+    except click.ClickException:
+        pass  # Preserve the download; unavailable/delayed billing is explicitly unknown.
     write_json(
         metadata,
         upload_metadata(
@@ -791,6 +835,7 @@ def download(attempt_id):
             attempt_id,
             row["reserved_cents"],
             digest.hexdigest(),
+            billed,
         ),
     )
     return update_attempt(
@@ -827,6 +872,26 @@ def check():
 @video.group()
 def budget():
     """Inspect conservative reservations, not an assertion of actual provider charges."""
+
+
+@video.command("costs")
+def costs():
+    """Read actual per-request billing without changing the ledger or submitting anything."""
+    with database() as db:
+        attempts = [{"shot": r["shot"], "reservedUsd": f"{r['reserved_cents'] / 100:.2f}",
+                     **json.loads(r["content"])} for r in db.execute("SELECT * FROM attempts")]
+    ids = [r["requestId"] for r in attempts if r.get("requestId")]
+    events = {}
+    for i in range(0, len(ids), 50):
+        events.update(Fal.billing_events(ids[i:i + 50]))
+    rows = []
+    for r in attempts:
+        rid, endpoint = r.get("requestId"), r.get("endpoint")
+        event = events.get(rid)
+        billed = event["amount"] if event and event["endpoint"] == endpoint else None
+        rows.append({"shot": r["shot"], "requestId": rid, "reservedUsd": r["reservedUsd"],
+                     "generation": generation.fal(endpoint, rid, billed)})
+    click.echo(json.dumps({"attempts": rows}, indent=2))
 
 
 @budget.command("init")

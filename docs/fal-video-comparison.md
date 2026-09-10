@@ -151,6 +151,11 @@ does not imply cancellation after processing starts.
 
 ## Recovery and honest cost accounting
 
+`panther video costs` now reads actual, request-matched billing events (including explicit zero
+charges) with the separate read-only-use admin key. Downloads include known model/provider and
+attempt the same billing lookup; unavailable costs remain unknown. This does not alter the ledger,
+release reservations or recover blocked requests. See [generation metadata](generation-metadata.md).
+
 - A verified queue `COMPLETED` result may return HTTP 422 with typed
   `content_policy_violation` or `no_media_generated` errors. Poll records these as `FAILED`,
   retaining the entire reservation and safe error type only. Unknown/malformed errors and

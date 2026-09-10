@@ -25,6 +25,7 @@ const assets=[
   [playbackManifest,'recording-playback-manifest',[recording,part,part2],'application/json'],
 ].map(([key,kind,sourceKeys,contentType])=>({key,kind,sourceKeys,contentType,recording:key===recording?{partCount:2,status:'interrupted'}:undefined,name:key.split('/').at(-1),size:100,lastModified:'2026-01-01T12:00:00Z',metadata:{title:kind,sessionId:'session-one'}}));
 assets.find(a=>a.key===playbackManifest).playback={recordingKey:recording,audioKey:continuous,durationSeconds:1.2,sourceManifestSha256:'a'.repeat(64)};
+assets.find(a=>a.key===video).metadata.extra={generation:{schemaVersion:1,method:'ai',model:'Kling 3 Pro',provider:'fal',inference:'remote',cost:{status:'billed',amount:'1.344',currency:'USD'},evidence:'Synthetic billing event'}};
 
 async function fixture(page) {
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'stu'}))+'.test'})));
@@ -52,6 +53,33 @@ async function fixture(page) {
     return route.fulfill({json:body,headers});
   });
 }
+
+for (const width of [1280,390]) test(`image creation metadata distinguishes costs and inference at ${width}`, async({page})=>{
+  await page.setViewportSize({width,height:1000}); await fixture(page);
+  const key=prefix+'portrait-a/original/portrait.png';
+  let generation={schemaVersion:1,method:'ai-assisted',provider:'OpenAI',inference:'remote',execution:'local',tool:'Codex CLI + Blender',cost:{status:'subscription'}};
+  await page.route(`${api}/object-url?**`,route=>route.fulfill({headers,contentType:'application/json',body:JSON.stringify({key,size:100,contentType:'image/png',expiresIn:300,url:'https://audio.example/portrait.png',metadata:{extra:{generation}}})}));
+  await page.route('https://audio.example/portrait.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==','base64')}));
+  await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(key)}`);
+  const details=page.locator('#asset-generation');
+  await expect(details).toContainText('Unknown / not recorded');
+  await expect(details).toContainText('Provider-hosted');
+  await expect(details).toContainText('Local computer');
+  await expect(details).toContainText('Subscription-covered');
+  await expect(details).not.toContainText('USD 0');
+  // Scroll the scrollable dialog as a person would; the sticky close control stays usable.
+  await page.locator('#preview-dialog').evaluate(el=>el.scrollTop=el.scrollHeight);
+  const box=await details.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
+  const close=page.getByRole('button',{name:'Close preview'});
+  expect(await close.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`generation-${width}.png`),fullPage:true});
+  for (const [cost,text] of [[{status:'unknown'},'Unknown / not reconciled'],[{status:'not-applicable'},'No metered generation charge'],[{status:'estimated',amount:'2.4318',currency:'USD'},'USD 2.4318 · Estimate, not a charge'],[{status:'billed',amount:'0',currency:'USD'},'USD 0 · Billed']]) {
+    generation={schemaVersion:1,method:'ai',model:'<img src=x onerror=window.attacked=true>',cost,evidence:'Synthetic evidence'};
+    await page.reload(); await expect(details).toContainText(text);
+    await expect(details.locator('img')).toHaveCount(0);
+    expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
+  }
+});
 
 for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mobile layout at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page);
@@ -121,6 +149,9 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   const box=await link.boundingBox(); expect(box.x+box.width).toBeLessThanOrEqual(width);
   expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await link.click();
+  await expect(page.locator('#asset-generation')).toContainText('Kling 3 Pro');
+  await expect(page.locator('#asset-generation')).toContainText('Provider-hosted');
+  await expect(page.locator('#asset-generation')).toContainText('USD 1.344 · Billed');
   const player=page.locator('#preview-body video'); await expect(player).toHaveAttribute('controls','');
   await expect.poll(()=>player.evaluate(v=>v.readyState)).toBeGreaterThanOrEqual(2);
   await player.evaluate(v=>v.play()); await expect.poll(()=>player.evaluate(v=>v.currentTime)).toBeGreaterThan(0);
@@ -129,6 +160,7 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await page.screenshot({path:test.info().outputPath(`videos-${width}.png`),fullPage:true});
   await player.evaluate(v=>{window.previousVideo=v;});
   await page.keyboard.press('Escape'); expect(await page.evaluate(()=>window.previousVideo.paused)).toBe(true);
+  await expect(page.locator('#asset-generation')).toBeEmpty();
   await page.reload(); await expect(page.locator('.session-card')).toHaveCount(1);
   await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
   await expect(page).toHaveURL(`${origin}/games/other-game/videos`);
