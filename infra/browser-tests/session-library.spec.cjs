@@ -119,7 +119,8 @@ test('original FLAC decodes, plays, advances to the next part and stops on close
   await expect(page.locator('#preview-body [role="status"]')).toContainText('Part 2 of 2');
   await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeGreaterThan(0);
   await page.evaluate(()=>{window.testAudio=document.querySelector('audio');});
-  await page.getByRole('button',{name:'Close preview'}).click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#preview-dialog')).not.toBeVisible();
   expect(await page.evaluate(()=>window.testAudio.paused)).toBe(true);
 });
 

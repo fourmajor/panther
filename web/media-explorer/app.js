@@ -1161,6 +1161,7 @@ elements.logout.addEventListener("click", logout);
 elements.refresh.addEventListener("click", () => { assetIndex = null; return loadPrefix(state.currentPrefix); });
 elements.loadMore.addEventListener("click", () => loadPrefix(state.currentPrefix, state.nextCursor));
 elements.previewClose.addEventListener("click", closePreview);
+elements.previewDialog.addEventListener("cancel", event => { event.preventDefault(); closePreview(); });
 elements.previewDialog.addEventListener("click", (event) => {
   if (event.target === elements.previewDialog) closePreview();
 });
