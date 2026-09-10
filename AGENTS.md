@@ -12,6 +12,9 @@
   views expose Inputs and reverse-linked Outputs across media types. Never overwrite inputs, guess
   missing historical lineage, or duplicate mutable output lists onto source assets. Preserve related
   exports/parts under their asset identity, distinct from directional derivation relationships.
+  User-facing Inputs/Outputs show finished assets only, traversing hidden processing steps without
+  changing stored provenance. Group explicit audio parts/listening copies and paired transcript
+  exports; never show manifests, plans, drafts or review reports as ordinary finished connections.
 
 - Prefer explicit, versioned structured data types for application facts. Player is a stable
   person identity, separate from a login account, Character, and a per-game membership/role.

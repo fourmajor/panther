@@ -40,6 +40,25 @@ async function fixture(page) {
   });
 }
 
+test('chapter Details connects finished assets rather than editorial planning files',async({page})=>{
+  await fixture(page);
+  const prefix='games/campaign-a/assets/';
+  const raw=prefix+'raw/original/raw.json', corrected=prefix+'corrected/original/corrected.json';
+  const proof=prefix+'proof/original/novel-proof.json', chapter=prefix+'chapter/original/novel-chapter.json';
+  const assets=[[raw,'raw-transcript',[]],[corrected,'corrected-transcript',[raw]],
+    [proof,'novel-proof',[corrected]],[chapter,'novel-chapter',[proof]]].map(([key,kind,sourceKeys])=>
+    ({key,kind,sourceKeys,name:key.split('/').at(-1),metadata:{title:kind},contentType:'application/json'}));
+  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets,cursor:null}}));
+  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],
+    markdown:'A finished chapter.', details:{review:{},artifact:{key:chapter},sourceKeys:[proof],rawReference:{key:raw}}}}));
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await page.getByRole('button',{name:'Details',exact:true}).click();
+  const links=page.locator('#novel-details [data-connections]');
+  await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
+  await expect(links).not.toContainText('novel-proof');
+  await expect(page.getByText('Full provenance and revision history',{exact:true})).toBeVisible();
+});
+
 async function accessibleInViewport(locator, width) {
   await expect(locator).toBeVisible();
   const box=await locator.boundingBox();

@@ -64,7 +64,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   }
   await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
   await expect(page.locator('#preview-body')).toContainText('Recording status: interrupted');
-  await expect(page.locator('#asset-links')).toContainText('raw-transcript');
+  await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Original transcript');
   await expect(page.locator('audio')).toHaveAttribute('controls','');
   await expect(page.locator('#preview-body [role="status"]')).toContainText('Continuous playback');
   await expect(page.getByRole('button',{name:'Jump to part 2',exact:false})).toBeEnabled();
@@ -87,10 +87,10 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
   await page.getByText('Capture integrity and warnings',{exact:true}).click();
   await expect(page.locator('#preview-body')).toContainText('Synthetic capture gap');
-  await page.locator('#asset-links').getByRole('link',{name:'corrected-transcript',exact:true}).click();
+  await page.locator('#asset-links [data-connections="outputs"]').getByRole('link',{name:'Corrected transcript · session-one',exact:true}).click();
   await expect(page.locator('.transcript-segment').first()).toContainText('The lantern.');
   await expect(page.getByText('Transcript corrections, uncertainty and provenance',{exact:true})).toBeVisible();
-  await expect(page.locator('#asset-links')).toContainText('video-comparison');
+  await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Video');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
@@ -124,7 +124,7 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   const player=page.locator('#preview-body video'); await expect(player).toHaveAttribute('controls','');
   await expect.poll(()=>player.evaluate(v=>v.readyState)).toBeGreaterThanOrEqual(2);
   await player.evaluate(v=>v.play()); await expect.poll(()=>player.evaluate(v=>v.currentTime)).toBeGreaterThan(0);
-  await expect(page.locator('#asset-links')).toContainText('corrected-transcript');
+  await expect(page.locator('#asset-links [data-connections="inputs"]')).toContainText('Corrected transcript');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`videos-${width}.png`),fullPage:true});
   await player.evaluate(v=>{window.previousVideo=v;});
@@ -203,6 +203,33 @@ test('continuous playback refreshes expired links without changing to a source c
   await page.getByRole('button',{name:'Refresh playback link'}).click();
   await expect.poll(()=>links).toBe(2);
   await expect.poll(()=>audio.evaluate(a=>a.currentTime)).toBeCloseTo(.7,1);
+});
+
+for (const width of [1280,390]) test(`finished connections hide workflow internals and retain useful links at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000}); await fixture(page);
+  const middle=prefix+'work/original/correction.json', proof=prefix+'work/original/novel-proof.json';
+  const shots=prefix+'work/original/video-shot-list.json', chapter=prefix+'chapter/original/novel-chapter.json';
+  const extra=(key,kind,sourceKeys)=>({key,name:key.split('/').at(-1),kind,sourceKeys,contentType:'application/json',
+    metadata:{title:kind,sessionId:'session-one'},lastModified:'2026-01-01T00:00:00Z'});
+  const graph=assets.map(a=>a.key===corrected?{...a,sourceKeys:[middle]}:a.key===video?{...a,sourceKeys:[shots]}:a);
+  graph.push(extra(middle,'correction',[raw]),extra(proof,'novel-proof',[corrected]),extra(shots,'video-shot-list',[corrected]),
+    {...extra(chapter,'novel-chapter',[proof]),metadata:{title:'novel-chapter',sessionId:'session-one',extra:{jobId:'c'.repeat(64)}}},
+    extra(chapter.replace('.json','.md'),'novel-chapter',[proof]));
+  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:graph,cursor:null}}));
+  await page.goto(`${origin}/games/test-game/audio`);
+  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
+  const connections=page.locator('#asset-links [data-connections]');
+  await expect(connections.getByRole('link')).toHaveText(['Original transcript · session-one']);
+  await connections.getByRole('link',{name:'Original transcript · session-one'}).click();
+  await expect(connections.getByRole('link')).toHaveText(['Audio · session-one','Corrected transcript · session-one']);
+  await connections.getByRole('link',{name:'Corrected transcript · session-one'}).click();
+  await expect(connections.getByRole('link')).toHaveText(['Original transcript · session-one','Novel chapter · session-one','Video · session-one']);
+  await expect(connections.getByRole('link',{name:'Novel chapter · session-one'})).toHaveAttribute('href',`/games/test-game/novel/${'c'.repeat(64)}`);
+  for (const text of ['novel-proof','video-shot-list','correction.json','playback-v1','part-0000']) await expect(connections).not.toContainText(text);
+  await page.screenshot({path:test.info().outputPath(`finished-connections-${width}.png`),fullPage:true});
+  await connections.getByRole('link',{name:'Video · session-one'}).click();
+  await expect(page.locator('#preview-body video')).toBeVisible();
+  await expect(connections.getByRole('link')).toHaveText(['Corrected transcript · session-one']);
 });
 
 test('late catalog and document responses cannot populate a different game',async({page})=>{
