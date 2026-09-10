@@ -94,5 +94,18 @@ export class EditorialProcessing extends Construct {
     for (const route of ["/editorial-jobs", "/editorial-context"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration, authorizer: props.authorizer });
     }
+    // Reading a novel never needs the broker's write or workflow permissions.
+    const reader = new lambda.Function(this, "NovelReader", {
+      runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+      handler: "novel.handler", code, environment,
+      memorySize: 256, timeout: Duration.seconds(30),
+      logGroup: new logs.LogGroup(this, "NovelReaderLogs", { retention: logs.RetentionDays.ONE_MONTH }),
+    });
+    table.grantReadData(reader);
+    props.bucket.grantRead(reader, "games/*");
+    const novelIntegration = new integrations.HttpLambdaIntegration("NovelIntegration", reader);
+    for (const route of ["/novel", "/novel-chapter"]) {
+      props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration: novelIntegration, authorizer: props.authorizer });
+    }
   }
 }

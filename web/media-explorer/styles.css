@@ -114,6 +114,26 @@ main {
 .game-toolbar select { min-width: 0; max-width: 100%; flex: 1 1 15rem; border: 1px solid var(--line); border-radius: .4rem; background: var(--panel); color: var(--ink); padding: .7rem; font: inherit; }
 .game-purpose { color: var(--accent); }
 .game-ruleset { flex-basis: 100%; overflow-wrap: anywhere; }
+.novel-list { display: grid; gap: 1rem; }
+.novel-card { border: 1px solid var(--line); border-radius: .6rem; padding: 1.5rem; background: var(--panel); overflow-wrap: anywhere; }
+.novel-card h2 { font: 1.8rem Georgia, serif; }
+.novel-card p:last-child { margin-bottom: 0; color: var(--muted); font-size: .85rem; }
+.novel-card a, .novel-details a, .novel-pagination a { color: var(--accent); text-underline-offset: .2em; }
+.novel-tools, .novel-tabs, .novel-pagination, .novel-sources { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; }
+.novel-tools { justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
+.novel-tabs [aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.novel-notice { margin: 1.5rem 0; color: var(--muted); font-size: .9rem; line-height: 1.6; }
+.novel-manuscript { max-width: 66ch; margin: clamp(2rem, 5vw, 4rem) auto; font: clamp(1.1rem, 2vw, 1.3rem)/1.85 Georgia, "Times New Roman", serif; overflow-wrap: anywhere; }
+.novel-manuscript h1 { font-size: clamp(2.4rem, 6vw, 4.4rem); line-height: 1.1; margin-bottom: 2.5rem; }
+.novel-manuscript p { margin-bottom: 1.3em; white-space: pre-line; }
+.novel-manuscript hr { border: 0; border-top: 1px solid var(--line); width: 5rem; margin: 2.5rem auto; }
+.novel-manuscript blockquote { border-left: 2px solid var(--accent); margin-left: 0; padding-left: 1.2rem; }
+.novel-details { max-width: 75ch; margin: 2rem auto; line-height: 1.7; overflow-wrap: anywhere; }
+.novel-details h3 { margin-top: 2rem; }
+.novel-details pre { white-space: pre-wrap; font-size: .8rem; }
+.novel-details details { margin-top: 2rem; }
+.novel-details summary { cursor: pointer; }
+.novel-pagination { justify-content: space-between; border-top: 1px solid var(--line); padding-top: 1.5rem; overflow-wrap: anywhere; }
 .roster { margin-bottom: 2rem; color: var(--muted); }
 .roster ul { padding-left: 1.25rem; line-height: 1.8; }
 

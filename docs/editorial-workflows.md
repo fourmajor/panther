@@ -85,6 +85,41 @@ provider choice. Keep enrollment recordings private and separate from ordinary g
 
 ## Evidence and growing metadata
 
+### Reading novels in Panther
+
+Open **Novel** after choosing a game, or use `/games/GAME_ID/novel`. Completed
+`novel-chapter` stages appear automatically, even while the independent video branch is still
+running. The table of contents shows one chapter per source session, using the newest run's
+completed edition. Sessions are ordered by their first run's creation time; this is an initial
+ordering convention, not a user-edited book/volume structure. Each edition has a stable URL at
+`/games/GAME_ID/novel/JOB_ID`. Details links to earlier editions without overwriting assets.
+
+The reader uses the checksummed JSON artifact's `payload.chapter`, **not** the older Markdown
+export that mixed in editorial notes. Title and prose are shown in Read; review notes, uncertainty,
+source artifacts, AI-review status and full revision history live in the separate Details view.
+Test-game and working-draft notices sit outside the manuscript. The exact legacy microphone-test
+notice is relocated outside the prose; arbitrary story headings are never used to truncate text.
+Story downloads contain only the title and manuscript. New worker exports no longer append review
+notes to novel Markdown; existing JSON and Markdown objects remain unchanged. A pinned worker
+must be upgraded using the installer below to adopt exporter changes; the web reader works with
+existing artifacts immediately, without upgrading or rerunning a job.
+
+`GET /novel?gameId=...` returns bounded, cursor-paginated chapter summaries. The browser collects
+pages before ordering editions. `GET /novel-chapter?gameId=...&chapterId=...` returns the manuscript
+and separate details. Both require Cognito JWTs and the existing owner/DM group policy. Player
+memberships remain game roles, not authorization grants; this is not multi-group tenancy.
+The dedicated CDK-managed Lambda can only read the existing editorial table and private assets.
+It validates game/run identity and pinned checksum/size before displaying content. No new database,
+scheduled polling, workflow mutation or always-on compute is introduced. The initial renderer
+supports prose paragraphs, headings, emphasis, quotations and scene breaks, and treats HTML,
+images and links as inert text. Generated illustrations are deferred to
+[issue #52](https://github.com/fourmajor/panther/issues/52).
+
+The broader library enhancements (book/volume organization, saved reading progress and richer
+publication metadata) remain tracked in [issue #17](https://github.com/fourmajor/panther/issues/17).
+
+### Context selection
+
 The worker reads the structured game catalog and asks AI to select relevant same-game source assets
 from their metadata. Eligible text sources include previous corrected transcripts, character/lore
 records, `game-context`, sources marked `reference`/`canonical-source`, and future kinds explicitly

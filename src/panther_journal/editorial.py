@@ -510,14 +510,14 @@ def process(config, root, claim):
             f"[{s['start']:.2f}–{s['end']:.2f}] {names.get(s.get('playerId'), 'Unassigned')}: {s['text']}"
             for s in payload["transcript"]["segments"]
         )
-    if publication == "accepted-with-notes":
+    if publication == "accepted-with-notes" and stage != "novel-chapter":
         markdown = "# Working draft — continued automatically with review notes\n\n" + markdown
         if stage in {"novel-chapter", "corrected-transcript"}:
             markdown += "\n\n## Final review\n\n" + report["markdown"]
     notes = report["uncertainties"] + [
         f"{d['issue']}: {d['decision']} — {d['reason']}" for d in report["decisions"]
     ]
-    if notes:
+    if notes and stage != "novel-chapter":
         markdown += "\n\n## Editorial notes\n\n" + "\n\n".join(notes)
     readable = folder / f"{stage}.md"
     with readable.open("x") as stream:

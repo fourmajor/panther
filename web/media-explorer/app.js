@@ -46,6 +46,7 @@ const elements = {
   status: document.querySelector("#status"),
   username: document.querySelector("#username"),
   welcome: document.querySelector("#welcome"),
+  novel: document.querySelector("#novel"),
 };
 
 const state = {
@@ -182,6 +183,7 @@ function clearSession() {
   state.charactersLoaded = false;
   state.mediaLoaded = false;
   state.currentCharacter = null;
+  clearNovel();
   elements.characterModel.src = null;
   elements.previewBody.replaceChildren();
   if (elements.previewDialog.open) elements.previewDialog.close();
@@ -283,6 +285,7 @@ function showWelcome(message = "") {
   elements.welcome.hidden = false;
   elements.explorer.hidden = true;
   elements.characters.hidden = true;
+  elements.novel.hidden = true;
   elements.account.hidden = true;
   elements.primaryNav.hidden = true;
   elements.authError.textContent = message;
@@ -588,10 +591,12 @@ function resetCharacterModel() {
 
 async function renderRoute() {
   const epoch = ++routeEpoch;
+  elements.novel.hidden = true;
+  clearNovel();
   try { await ensureSession(); } catch (error) { showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -607,6 +612,14 @@ async function renderRoute() {
     return;
   }
   if (epoch !== routeEpoch) return;
+  if (window.location.pathname === "/novel" || gameRoute?.[2] === "novel") {
+    setActiveNavigation("novel");
+    elements.characters.hidden = true;
+    elements.explorer.hidden = true;
+    elements.novel.hidden = false;
+    await loadNovel(gameRoute?.[3], epoch);
+    return;
+  }
   if (window.location.pathname === "/characters" || characterMatch || gameRoute?.[2] === "characters") {
     setActiveNavigation("characters");
     elements.characters.hidden = false;
@@ -744,6 +757,171 @@ function closePreview() {
   elements.openOriginal.removeAttribute("href");
 }
 
+const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", "manuscript",
+  "details", "notice", "pagination", "read", "show-details", "download", "back", "refresh"]
+  .map(name => [name, document.getElementById(`novel-${name}`)]));
+let currentChapter = null;
+
+function clearNovel() {
+  currentChapter = null;
+  novel.reader.hidden = true;
+  for (const part of ["list", "prose", "details", "pagination", "title", "notice"]) novel[part].replaceChildren();
+}
+
+function novelView(details) {
+  novel.manuscript.hidden = details;
+  novel.details.hidden = !details;
+  novel.read.setAttribute("aria-pressed", String(!details));
+  novel["show-details"].setAttribute("aria-pressed", String(details));
+}
+
+// A deliberately small prose-Markdown renderer. Raw HTML, images, and links stay inert text;
+// nothing from an AI artifact is ever assigned to innerHTML or fetched as a remote resource.
+function proseInline(parent, text) {
+  for (const part of text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g)) {
+    const strong = part.startsWith("**") && part.endsWith("**");
+    const emphasis = !strong && ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_")));
+    if (strong || emphasis) {
+      const el = document.createElement(strong ? "strong" : "em");
+      el.textContent = part.slice(strong ? 2 : 1, strong ? -2 : -1);
+      parent.append(el);
+    } else parent.append(document.createTextNode(part));
+  }
+}
+
+function proseMarkdown(parent, markdown) {
+  parent.replaceChildren();
+  for (const block of markdown.trim().split(/\n\s*\n/)) {
+    if (!block) continue;
+    const heading = block.match(/^(#{1,6}) (.+)$/);
+    const separator = /^(?:\*\s*){3,}$|^-{3,}$/.test(block.trim());
+    const quote = block.startsWith("> ");
+    const el = document.createElement(separator ? "hr" : heading ? `h${Math.min(heading[1].length + 1, 6)}` : quote ? "blockquote" : "p");
+    if (!separator) proseInline(el, heading ? heading[2] : quote ? block.replace(/^> ?/gm, "") : block);
+    parent.append(el);
+  }
+}
+
+function novelLink(title, id) {
+  const link = document.createElement("a");
+  link.href = gamePath(`novel/${id}`);
+  link.textContent = title;
+  link.addEventListener("click", event => {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); navigate(link.getAttribute("href"));
+  });
+  return link;
+}
+
+function chapterDate(chapter) {
+  return new Date(chapter.publishedAt * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function chapterDetails(chapter, versions) {
+  const heading = document.createElement("h2"); heading.textContent = "About this chapter";
+  const summary = document.createElement("p");
+  summary.textContent = `Session: ${chapter.sessionId} · Published ${chapterDate(chapter)} · ${chapter.publicationStatus} · ${chapter.reviewStatus}. An adaptation, not a factual transcript.`;
+  const reviewTitle = document.createElement("h3"); reviewTitle.textContent = "Editorial review and notes";
+  const review = document.createElement("div");
+  proseMarkdown(review, chapter.details.review.markdown || "No review text recorded.");
+  const notes = document.createElement("ul");
+  for (const note of chapter.details.review.uncertainties || []) {
+    const li = document.createElement("li"); li.textContent = note; notes.append(li);
+  }
+  const versionsTitle = document.createElement("h3"); versionsTitle.textContent = "Versions of this session";
+  const versionList = document.createElement("ul");
+  for (const [index, version] of versions.entries()) {
+    const li = document.createElement("li");
+    li.append(novelLink(`${index === 0 ? "Latest" : "Earlier"} · ${chapterDate(version)} · ${version.title}${version.id === chapter.id ? " (viewing)" : ""}`, version.id));
+    versionList.append(li);
+  }
+  const sourceTitle = document.createElement("h3"); sourceTitle.textContent = "Source artifacts";
+  const sources = document.createElement("div"); sources.className = "novel-sources";
+  const keys = new Set([chapter.details.rawReference?.key, ...(chapter.details.sourceKeys || []), chapter.details.artifact?.key]);
+  for (const key of keys) {
+    if (typeof key !== "string" || !key.startsWith(`games/${state.gameId}/assets/`)) continue;
+    const button = document.createElement("button"); button.className = "quiet-button";
+    button.textContent = key.split("/").at(-1); button.title = key;
+    button.addEventListener("click", () => previewFile({key, name: button.textContent}));
+    sources.append(button);
+  }
+  const provenance = document.createElement("details");
+  const label = document.createElement("summary"); label.textContent = "Full provenance and revision history";
+  const data = document.createElement("pre"); data.textContent = JSON.stringify(chapter.details, null, 2);
+  provenance.append(label, data);
+  novel.details.replaceChildren(heading, summary, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
+}
+
+async function loadNovel(chapterId, epoch) {
+  const gameId = state.gameId;
+  const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
+  novel.status.textContent = "Loading chapters…";
+  novel.status.hidden = false;
+  try {
+    const chapters = [];
+    let cursor;
+    do {
+      const page = await api("/novel", {gameId, cursor});
+      if (!current()) return;
+      chapters.push(...page.chapters);
+      cursor = page.cursor;
+    } while (cursor);
+    // A session can have multiple immutable editions; only the latest appears in the TOC.
+    chapters.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+    const sessions = new Map();
+    for (const chapter of chapters) {
+      if (!sessions.has(chapter.sessionId)) sessions.set(chapter.sessionId, []);
+      sessions.get(chapter.sessionId).push(chapter);
+    }
+    const ordered = [...sessions.values()].sort((a, b) => a.at(-1).createdAt - b.at(-1).createdAt || a[0].sessionId.localeCompare(b[0].sessionId)).map(v => v[0]);
+    if (!chapterId) {
+      novel.status.hidden = Boolean(ordered.length);
+      novel.status.textContent = "No chapters yet. Completed novel chapters will appear here automatically.";
+      for (const [index, chapter] of ordered.entries()) {
+        const card = document.createElement("div"); card.className = "novel-card";
+        const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
+        const title = document.createElement("h2"); title.append(novelLink(chapter.title, chapter.id));
+        const meta = document.createElement("p"); meta.textContent = `${chapter.sessionId} · ${chapterDate(chapter)}${chapter.publicationStatus === "accepted-with-notes" ? " · Working draft" : ""}`;
+        card.append(number, title, meta); novel.list.append(card);
+      }
+      return;
+    }
+    const chapter = await api("/novel-chapter", {gameId, chapterId});
+    if (!current()) return;
+    currentChapter = chapter;
+    novel.title.textContent = chapter.title;
+    proseMarkdown(novel.prose, chapter.markdown);
+    chapterDetails(chapter, sessions.get(chapter.sessionId) || [chapter]);
+    novel.notice.textContent = [chapter.notice,
+      state.gameDetail.game.purpose === "test" ? "Test-game adaptation · not campaign canon." : "",
+      chapter.publicationStatus === "accepted-with-notes" ? "Working draft · AI review left unresolved notes. See Details." : "",
+      sessions.get(chapter.sessionId)?.[0].id !== chapter.id ? "You are reading an earlier version. See Details for the latest." : "",
+    ].filter(Boolean).join(" ");
+    novel.notice.hidden = !novel.notice.textContent;
+    novelView(false);
+    novel.reader.hidden = false;
+    novel.status.hidden = true;
+    const index = ordered.findIndex(c => c.sessionId === chapter.sessionId);
+    if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id));
+    if (index >= 0 && index < ordered.length - 1) novel.pagination.append(novelLink(`${ordered[index + 1].title} →`, ordered[index + 1].id));
+  } catch (error) {
+    if (!current()) return;
+    novel.status.hidden = false;
+    novel.status.textContent = `${error.message}. Use Refresh chapters to retry.`;
+  }
+}
+
+novel.refresh.addEventListener("click", renderRoute);
+novel.back.addEventListener("click", () => navigate(gamePath("novel")));
+novel.read.addEventListener("click", () => novelView(false));
+novel["show-details"].addEventListener("click", () => novelView(true));
+novel.download.addEventListener("click", () => {
+  if (!currentChapter) return;
+  const url = URL.createObjectURL(new Blob([`# ${currentChapter.title}\n\n${currentChapter.markdown}\n`], {type: "text/markdown;charset=utf-8"}));
+  const link = document.createElement("a"); link.href = url; link.download = `chapter-${currentChapter.id.slice(0, 12)}.md`;
+  link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
 elements.login.addEventListener("click", login);
 elements.logout.addEventListener("click", logout);
 elements.refresh.addEventListener("click", () => loadPrefix(state.currentPrefix));
@@ -753,7 +931,10 @@ elements.previewDialog.addEventListener("click", (event) => {
   if (event.target === elements.previewDialog) closePreview();
 });
 elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
-elements.gameSelector.addEventListener("change", () => navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${window.location.pathname.includes("characters") ? "characters" : "media"}`));
+elements.gameSelector.addEventListener("change", () => {
+  const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "media";
+  navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${section}`);
+});
 elements.modelLoad.addEventListener("click", loadCharacterModel);
 elements.modelReset.addEventListener("click", resetCharacterModel);
 elements.characterModel.addEventListener("progress", (event) => {
