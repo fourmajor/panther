@@ -100,10 +100,13 @@ export class PantherMediaExplorerStack extends Stack {
             contentSecurityPolicy: [
               "default-src 'self'",
               "base-uri 'self'",
-              "connect-src 'self' https://*.amazonaws.com https://*.amazoncognito.com",
+              // GLB embedded images become blob URLs: ImageBitmapLoader fetches
+              // them, while its HTMLImageElement fallback uses img-src. Permit
+              // local blobs in these two directives, never executable scripts.
+              "connect-src 'self' blob: https://*.amazonaws.com https://*.amazoncognito.com",
               "frame-ancestors 'none'",
               "frame-src https://*.amazonaws.com",
-              "img-src 'self' data: https://*.amazonaws.com",
+              "img-src 'self' data: blob: https://*.amazonaws.com",
               "media-src https://*.amazonaws.com",
               "object-src 'none'",
               // Model-viewer's bundled decoder initializes WebAssembly; this
