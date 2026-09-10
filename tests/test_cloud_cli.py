@@ -57,6 +57,9 @@ def test_instructions_ship_with_cli():
     assert "also offer to extend the" in result.output
     assert "without direct AWS access" in result.output
     assert "Infrastructure deployment remains a separate CDK/AWS administrative operation" in result.output
+    assert "panther video --help" in result.output
+    assert "never create a fresh plan as a retry" in result.output
+    assert "administrator key is used only for GET billing checks" in result.output
 
 
 def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypatch):

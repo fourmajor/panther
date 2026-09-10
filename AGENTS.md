@@ -125,6 +125,14 @@
 
 ## Cost posture
 
+- Explicitly owner-approved fal video comparisons use `panther video` and the persistent local
+  $50 total budget guard described in `docs/fal-video-comparison.md`. This is a narrow paid-video
+  integration, never an editorial/Blender inference fallback. Do not call fal generation directly,
+  erase/reinitialize its ledger to recover budget, infer model/rights approval, or enable top-ups.
+  Unknown submissions retain their reservation and block new submissions. The generation key and
+  the separate read-only-use admin billing key remain in the OS credential store, never prompts,
+  Git, AWS, browser code or the CI runner. This local guard cannot govern dashboard/other-device spend.
+
 - Model-workflow AI runs through Codex CLI on the owner's laptop using ChatGPT subscription
   authentication. Never introduce API-key inference, paid generation providers, automatic credit
   purchases, or usage-reset redemption as a fallback. Pause/checkpoint on limits. AWS coordinates
