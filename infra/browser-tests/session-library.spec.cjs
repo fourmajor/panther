@@ -57,6 +57,10 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('#preview-body')).toContainText('Recording status: interrupted');
   await expect(page.locator('#asset-links')).toContainText('raw-transcript');
   await expect(page.locator('audio')).toHaveAttribute('controls','');
+  const close=page.getByRole('button',{name:'Close preview'});
+  const closeBox=await close.boundingBox();
+  expect(closeBox.x+closeBox.width).toBeLessThanOrEqual(width);
+  expect(await close.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await page.screenshot({path:test.info().outputPath(`audio-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
   await page.locator('#primary-nav').getByRole('link',{name:'Transcripts',exact:true}).click();
@@ -70,6 +74,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('#preview-body')).toContainText('Synthetic capture gap');
   await page.locator('#asset-links').getByRole('link',{name:'corrected-transcript',exact:true}).click();
   await expect(page.locator('.transcript-segment').first()).toContainText('The lantern.');
+  await expect(page.getByText('Transcript corrections, uncertainty and provenance',{exact:true})).toBeVisible();
   await expect(page.locator('#asset-links')).toContainText('video-comparison');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});

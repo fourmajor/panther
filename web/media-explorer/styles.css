@@ -560,11 +560,18 @@ model-viewer,
 
 .preview-header {
   border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
 }
+
+.preview-header > div { min-width: 0; flex: 1; }
+.preview-header .icon-button { flex-shrink: 0; }
 
 .preview-header h2 {
   overflow: hidden;
-  max-width: 75vw;
+  max-width: 100%;
   margin: 0;
   text-overflow: ellipsis;
   white-space: nowrap;

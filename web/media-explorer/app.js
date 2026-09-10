@@ -758,12 +758,14 @@ async function previewFile(file) {
   try {
     const result = await api("/object-url", { key: file.key });
     if (epoch !== previewEpoch) return;
-    elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
+    const structured = file.key.endsWith(".json") && sameGameKey(file.key);
+    if (structured) elements.previewBody.textContent = "Loading structured document…";
+    else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
     if (result.contentType.startsWith("audio/")) attachMediaRecovery(elements.previewBody.firstChild, file.key, () => epoch === previewEpoch);
     void renderAssetLinks(file.key, epoch);
-    if (file.key.endsWith(".json") && sameGameKey(file.key)) {
+    if (structured) {
       const detail = await api("/asset-document", {gameId: state.gameId, key: file.key});
       if (epoch !== previewEpoch) return;
       renderStructuredAsset(detail, epoch);
@@ -958,6 +960,7 @@ async function allAssets(gameId) {
       const page = await api("/assets", {gameId, cursor});
       if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
       assets.push(...page.assets);
+      if (assets.length > 5000) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
       cursor = page.cursor;
       if (cursor && (seen.has(cursor) || seen.size >= 200)) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
       if (cursor) seen.add(cursor);
@@ -1082,7 +1085,10 @@ function renderStructuredAsset(asset, epoch) {
   const transcript = doc.entityType === "PlayerTranscript" ? doc : doc.stage === "corrected-transcript" ? doc.payload?.transcript : null;
   if (transcript && Array.isArray(transcript.segments)) {
     const notice = document.createElement("p"); notice.className = "novel-notice";
-    notice.textContent = `${doc.stage === "corrected-transcript" ? "Corrected / edited transcript" : "Raw transcript"} · ${doc.reviewStatus || "unreviewed"}. Speakers identify players, not characters.`;
+    const edited = [asset.kind, doc.stage, doc.artifactType].some(kind => ["corrected-transcript", "edited-transcript"].includes(kind));
+    notice.textContent = `${edited ? "Corrected / edited transcript" : "Raw transcript"} · ${doc.reviewStatus || "unreviewed"}. Speakers identify players, not characters.`;
+    if (doc.publicationStatus === "accepted-with-notes") notice.textContent += " Working draft with unresolved review notes.";
+    if (!transcript.captureIntegrity) notice.textContent += " Capture integrity was not recorded in this version.";
     host.append(notice);
     if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
@@ -1097,6 +1103,10 @@ function renderStructuredAsset(asset, epoch) {
       host.append(line);
     }
     if (doc.payload?.review) host.append(detailBlock("Correction review", doc.payload.review));
+    host.append(detailBlock("Transcript corrections, uncertainty and provenance", Object.fromEntries(
+      Object.entries(transcript).filter(([key]) => key !== "segments")
+    )));
+    if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
   } else if (doc.entityType === "Recording" && Array.isArray(doc.parts)) {
     const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} original parts. Part boundaries may have a brief playback gap.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
@@ -1146,7 +1156,7 @@ novel.download.addEventListener("click", () => {
 
 elements.login.addEventListener("click", login);
 elements.logout.addEventListener("click", logout);
-elements.refresh.addEventListener("click", () => loadPrefix(state.currentPrefix));
+elements.refresh.addEventListener("click", () => { assetIndex = null; return loadPrefix(state.currentPrefix); });
 elements.loadMore.addEventListener("click", () => loadPrefix(state.currentPrefix, state.nextCursor));
 elements.previewClose.addEventListener("click", closePreview);
 elements.previewDialog.addEventListener("click", (event) => {
