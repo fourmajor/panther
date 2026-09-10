@@ -148,11 +148,17 @@ def test_periodic_sync_retries_without_active_chunk_or_duplicate_uploads(source,
     sync.checkpoint(folder, header)
     (folder / "part-0001.flac").write_bytes(b"active")
     monkeypatch.setattr(sync.cloud, "configuration", lambda: {})
-    monkeypatch.setattr(sync.cloud, "api", lambda *a, **k: {})
+    commits = []
+    def api(config, method, route, **kwargs):
+        if route == "/recording-sets/complete":
+            assert "recording.json" in sent and "part-0000.flac" in sent
+            commits.append(kwargs["json"])
+        return {}
+    monkeypatch.setattr(sync.cloud, "api", api)
     sent = []
     fail = True
 
-    def upload(config, file, record, kind):
+    def upload(config, file, record, kind, **kwargs):
         nonlocal fail
         if file.suffix == ".flac" and fail:
             fail = False
@@ -167,9 +173,12 @@ def test_periodic_sync_retries_without_active_chunk_or_duplicate_uploads(source,
         assert sync.sync_once(folder)["partsSynced"] == 1
     assert sent == ["capture.json", "part-0000.flac", "part-0000.json"]
     assert "part-0001.flac" not in sent and "recording.json" not in sent
+    assert not commits
     # A stopped recording recovers its intact prefix before final manifest publication.
     assert sync.sync_once(folder)["complete"]
-    assert sent[-1] == "recording.json"
+    assert "recording.json" in sent
+    assert not any(name.startswith("playback-") for name in sent)
+    assert commits[0]["status"] == "COMPLETE"
     assert (folder / "part-0001.flac").exists()
 
 

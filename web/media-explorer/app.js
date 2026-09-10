@@ -1110,7 +1110,7 @@ async function loadLibrary(section, epoch) {
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     status.textContent = selected.length
       ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
-        : section === "audio" ? "Original recordings. Chunked sessions play in order; originals are retained." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
+        : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
       : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
     for (const asset of selected) {
       const card = document.createElement("article"); card.className = "novel-card session-card";
@@ -1220,34 +1220,41 @@ function renderStructuredAsset(asset, epoch) {
     )));
     if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
   } else if (doc.entityType === "Recording" && Array.isArray(doc.parts)) {
-    const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} original parts. Part boundaries may have a brief playback gap.`;
+    const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} lossless original parts retained. One continuous listening copy; assembly does not repair capture gaps.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
-    const status = document.createElement("p"); status.setAttribute("role", "status");
+    const status = document.createElement("p"); status.setAttribute("role", "status"); status.textContent = "Loading continuous recording…";
     const parts = document.createElement("div"); parts.className = "recording-parts";
     host.append(notice, audio, status, parts);
-    let selected = -1, request = 0;
-    const playPart = async (index, autoplay = false) => {
-      const part = doc.parts[index], serial = ++request;
-      if (!part || typeof part.file !== "string" || !/^part-[0-9]{4}\.flac$/.test(part.file)) return;
-      const key = asset.key.slice(0,asset.key.lastIndexOf("/")+1) + part.file;
-      audio.pause(); status.textContent = `Loading part ${index+1}…`;
+    const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
+    void (async () => {
       try {
-        const result = await api("/object-url", {key});
-        if (epoch !== previewEpoch || request !== serial) return;
-        selected = index; audio.src = result.url;
-        status.textContent = `Part ${index+1} of ${doc.parts.length} · session ${timestamp(part.start)}`;
-        for (const [i,button] of [...parts.children].entries()) button.setAttribute("aria-pressed", String(i === index));
-        if (autoplay) await audio.play();
-      } catch (error) { if (epoch === previewEpoch && request === serial) status.textContent = `${error.message}. Choose the part again to retry.`; }
-    };
-    doc.parts.forEach((part,index) => {
-      const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button";
-      button.textContent = `Part ${index+1} · ${timestamp(part.start)}`;
-      button.addEventListener("click", () => playPart(index)); parts.append(button);
-    });
-    audio.addEventListener("ended", () => { if (selected+1 < doc.parts.length && epoch === previewEpoch) void playPart(selected+1,true); });
-    audio.addEventListener("error", () => { status.textContent = "Playback failed or link expired. Select this part again to refresh; original FLAC files are available under Inputs."; });
-    void playPart(0);
+        const assets = await allAssets(gameId);
+        if (!current()) return;
+        const copies = assets.filter(a => a.playback?.recordingKey === asset.key && sameGameKey(a.playback.audioKey)
+          && assets.some(file => file.key === a.playback.audioKey && file.kind === "recording-playback"));
+        copies.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
+        if (!copies.length) {
+          audio.hidden = true;
+          status.textContent = "Continuous playback has not been prepared yet. It is produced after the uploaded chunk set is marked complete and the laptop workflow runs. Lossless originals remain under Inputs.";
+          return;
+        }
+        const copy = copies[0].playback;
+        const result = await api("/object-url", {key:copy.audioKey});
+        if (!current()) return;
+        audio.src = result.url;
+        attachMediaRecovery(audio, copy.audioKey, current);
+        status.textContent = `Continuous playback · ${timestamp(copy.durationSeconds)} · AAC listening copy. No file switches at part boundaries.`;
+        doc.parts.forEach((part,index) => {
+          if (!Number.isFinite(part.start) || part.start < 0 || part.start >= copy.durationSeconds) return;
+          const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button";
+          button.textContent = `Jump to part ${index+1} · ${timestamp(part.start)}`;
+          button.disabled = audio.readyState < 1;
+          audio.addEventListener("loadedmetadata", () => { if (current()) button.disabled = false; });
+          button.addEventListener("click", () => { if (current()) audio.currentTime = part.start; });
+          parts.append(button);
+        });
+      } catch (error) { if (current()) status.textContent = `${error.message}. Close and reopen to retry. Original parts are retained.`; }
+    })();
   } else {
     const pre = document.createElement("pre"); pre.textContent = JSON.stringify(doc,null,2); host.append(pre);
   }

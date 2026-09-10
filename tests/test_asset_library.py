@@ -119,3 +119,23 @@ def test_real_handler_routes_and_streaming_storage(broker):  # noqa: F811
     assert page["assets"][0]["key"] == key
     detail = unpack(request(broker.media, "GET /asset-document", query={"gameId": "test-game", "key": key}))
     assert detail["document"]["segments"] == []
+
+
+def test_playback_projection_requires_exact_same_recording_identity(library):
+    _, _, s3 = library
+    prefix = "games/example-game/assets/recording-a/original/"
+    doc = {"entityType": "RecordingPlayback", "schemaVersion": 1, "version": 1,
+           "gameId": "example-game", "recordingId": "recording-a",
+           "sourceManifestSha256": "a" * 64, "durationSeconds": 60,
+           "audioKey": prefix + "playback-v1-" + "a" * 16 + ".m4a",
+           "recordingKey": prefix + "recording.json", "sourceKeys": [prefix + "recording.json"]}
+    key = add(s3, "recording-a/original/playback-v1-" + "a" * 16 + ".json", "recording-playback-manifest", doc)
+    item = response_body(call(library, "/asset-document", key=key))
+    assert item["playback"]["audioKey"] == doc["audioKey"]
+    assert item["sourceKeys"] == [doc["recordingKey"]]
+    for field, bad in [("audioKey", "games/other-game/assets/a/original/a.m4a"),
+                       ("recordingId", "other"), ("durationSeconds", -1), ("version", 2)]:
+        changed = {**doc, field: bad}
+        s3.objects[key]["Body"] = json.dumps(changed).encode()
+        item = response_body(call(library, "/asset-document", key=key))
+        assert "playback" not in item and item["lineageWarning"]

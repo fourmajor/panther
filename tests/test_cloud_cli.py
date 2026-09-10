@@ -54,6 +54,9 @@ def test_instructions_ship_with_cli():
     assert "recording attribute" in result.output
     assert "recording transcribe --blind" in result.output
     assert "recording sync RECORDING_DIR" in result.output
+    assert "recording playback jobs" in result.output
+    assert "RecordingChunkSet" in result.output
+    assert "not individual uploads or quiet time" in result.output
     assert "game set-ruleset" in result.output
     assert "never infer identities" in result.output
     assert "original/<filename>" in result.output

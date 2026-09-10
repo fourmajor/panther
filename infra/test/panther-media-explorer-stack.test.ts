@@ -20,6 +20,28 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("completed recording sets trigger a separate durable laptop playback workflow", () => {
+  const template = mediaExplorerTemplate();
+  const machines = Object.entries(template.findResources("AWS::StepFunctions::StateMachine"))
+    .filter(([id]) => id.startsWith("PlaybackProcessing"));
+  assert.equal(machines.length, 1);
+  const definition = JSON.stringify(machines);
+  assert.match(definition, /AssembleAndVerifyOnLaptop/);
+  assert.match(definition, /lambda:invoke.waitForTaskToken/);
+  assert.match(definition, /2592000/);
+  assert.doesNotMatch(definition, /Parallel|ecs:|sagemaker:|bedrock:/);
+  for (const route of ["POST /recording-sets/complete", "GET /recording-playback-jobs",
+    "POST /recording-playback-jobs/claim", "POST /recording-playback-jobs/heartbeat", "POST /recording-playback-jobs/complete"]) {
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", { RouteKey: route, AuthorizationType: "JWT" });
+  }
+  const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("PlaybackProcessing")));
+  assert.doesNotMatch(policies, /s3:PutObject/);
+  const buckets = JSON.stringify(template.findResources("AWS::S3::Bucket"));
+  assert.doesNotMatch(buckets, /s3:ObjectCreated/);
+  template.hasResourceProperties("AWS::Lambda::Function", { Handler: "playback_jobs.handler" });
+});
+
 test("model jobs use retained on-demand state and a durable external-worker callback", () => {
   const template = mediaExplorerTemplate();
   template.hasResource("AWS::DynamoDB::Table", {
@@ -207,7 +229,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 32);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 37);
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

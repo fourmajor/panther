@@ -195,6 +195,9 @@ def sync_once(folder):
         if (folder / "capture-health.json").exists():
             send(folder / "capture-health.json", "capture-health")
         send(folder / "recording.json", "recording-manifest")
+        from panther_journal.playback_worker import complete_set
+
+        complete_set(folder, config, record)
     return {"partsSynced": len(record.parts), "complete": complete}
 
 

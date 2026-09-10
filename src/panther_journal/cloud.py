@@ -428,6 +428,8 @@ def register(group):
     from panther_journal.games import game, player
     from panther_journal.recording import recording
     from panther_journal.recording_sync import sync
+    from panther_journal.recording_playback import playback as playback_preview
+    from panther_journal.playback_worker import playback
     from panther_journal.editorial import editorial
     from panther_journal.capture_audit import audit_command
     from panther_journal.video import video
@@ -439,6 +441,8 @@ def register(group):
     group.add_command(editorial)
     group.add_command(video)
     recording.add_command(sync)
+    recording.add_command(playback)
+    recording.add_command(playback_preview)
     recording.add_command(audit_command)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

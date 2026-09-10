@@ -75,7 +75,8 @@ discard the complete lineage. Existing recording manifests link their ordered pa
 documents retain their actual stage inputs. The web catalog reads these explicit fields and scopes
 all links to the selected game. Missing or unreadable historical provenance is labeled incomplete.
 
-The Audio section plays original recordings in the browser, including ordered FLAC parts. The
+The Audio section plays recordings continuously through a single AAC-in-M4A listening copy,
+not a playlist that switches FLAC files at chunk boundaries. Lossless parts remain the sources. The
 Transcripts section lists raw and corrected/edited versions separately. Structured readers preserve
 player attribution, timestamps, capture warnings, correction evidence and uncertainty; they never
 rewrite source assets. Browser format support varies; retain the original download fallback.
@@ -149,6 +150,30 @@ assuming that locally saved audio is already in the cloud. Keep local files. Int
 checkpoints do not mean a recording is complete. Recovery can exclude a damaged uncheckpointed
 final chunk while retaining it locally and reporting the omission; never claim zero audio loss.
 Generated transcripts are `unclassified` and unreviewed, not automatically canonical sources.
+
+### Completed chunk sets and continuous playback
+
+Every chunk belongs to its recording's `chunkSetId` (also the recording asset ID). New uploads
+tag this in `extra`; legacy chunks gain explicit membership through the immutable completed-set
+record without rewriting originals. `recording upload` and finalized `recording sync` mark the
+uploaded set `COMPLETE` only after all source uploads succeed. The server verifies every declared
+chunk's key, order, byte size and SHA-256 before committing a versioned `RecordingChunkSet`.
+Capture status (`complete` or recovered `interrupted`) is separate from upload-set completeness.
+Never tag an active recording or its intermediate checkpoints complete.
+
+That completed-set commit, not individual uploads or quiet time, automatically starts a separate
+Step Functions playback workflow. The laptop downloads the pinned cloud inputs, verifies and joins
+decoded samples into one AAC-in-M4A file, then publishes kind `recording-playback` and its
+`recording-playback-manifest` provenance. Keep lossless originals. The lossy listening copy must
+never become transcription input or hide capture warnings. Assembly does not add silence or repair
+missing captured audio. No AI, paid inference or always-on cloud compute is used.
+
+Inspect `panther recording playback jobs`; re-run `recording upload`/`sync` after an uncertain
+completion response. Identical completed sets reuse the same job. For already-uploaded sources,
+`panther recording playback complete-set --help` exposes explicit completion without reuploading.
+Do not create a different set to evade a failed job. The owner's installed worker runs while the
+laptop is awake; offline jobs wait. `recording playback-preview RECORDING_DIR` is local-only
+diagnostics, with no publication option. See `docs/recording-playback-workflow.md` for operations.
 
 For a test with a held-out reading script, use `recording transcribe --blind` and keep the script
 outside recordings and uploads. Its isolated recognizer receives only audio and model weights,
