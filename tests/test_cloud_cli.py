@@ -51,6 +51,8 @@ def test_instructions_ship_with_cli():
     assert "panther assets reorganize" in result.output
     assert "physical `storageKey`" in result.output
     assert "Multiple-character media is stored once" in result.output
+    assert "extra.preview" in result.output
+    assert "Preview summaries stay outside the manuscript" in result.output
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
     assert "Tag every character actually depicted or discussed" in result.output

@@ -132,6 +132,15 @@ main {
 .novel-manuscript .narrative-link { color: inherit; text-decoration: underline dotted; text-decoration-color: #8b8578; text-underline-offset: .18em; text-decoration-thickness: 1px; }
 .novel-manuscript .narrative-link:hover, .novel-manuscript .narrative-link:focus-visible { color: var(--accent); text-decoration-style: solid; text-decoration-color: currentColor; }
 .novel-manuscript .narrative-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.narrative-preview { position: fixed; z-index: 50; width: min(340px, calc(100vw - 24px)); box-sizing: border-box; overflow: auto; overscroll-behavior: contain; padding: 20px; border: 1px solid #625c4c; border-radius: 12px; background: #191914; color: #e8e2d4; box-shadow: 0 12px 40px #0008; font: 15px/1.5 system-ui, sans-serif; }
+.narrative-preview[hidden] { display: none; }
+.narrative-preview h3 { font: 600 19px/1.3 system-ui, sans-serif; margin: 0 28px 12px 0; overflow-wrap: anywhere; }
+.narrative-preview p { margin: 10px 0; overflow-wrap: anywhere; }
+.narrative-preview img { display: block; width: 100%; height: 140px; object-fit: contain; border-radius: 6px; background: #111; }
+.narrative-preview .preview-caption { color: #aca797; font-size: 12px; }
+.narrative-preview .preview-close { position: absolute; top: 8px; right: 8px; min-width: 36px; min-height: 36px; padding: 2px; }
+.narrative-preview a { display: inline-block; padding: 8px 0; color: var(--accent); }
+.narrative-preview a:focus-visible, .narrative-preview button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #character-assets { margin-top: 2.5rem; overflow-wrap: anywhere; }
 #character-assets-list { padding-left: 1.3rem; }
 #character-assets-list li { padding-block: .5rem; }

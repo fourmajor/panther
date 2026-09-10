@@ -620,6 +620,7 @@ function resetCharacterModel() {
 }
 
 async function renderRoute() {
+  dismissNarrativePreview(true);
   const epoch = ++routeEpoch;
   clearLibrary();
   closePreview();
@@ -823,6 +824,7 @@ const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", 
 let currentChapter = null;
 
 function clearNovel() {
+  dismissNarrativePreview(true);
   currentChapter = null;
   novel.reader.hidden = true;
   for (const part of ["list", "prose", "details", "pagination", "title", "notice"]) novel[part].replaceChildren();
@@ -850,6 +852,7 @@ function proseInline(parent, text, references) {
 }
 
 function proseMarkdown(parent, markdown, references) {
+  if (narrativePreviewAnchor && parent.contains(narrativePreviewAnchor)) dismissNarrativePreview();
   parent.replaceChildren();
   for (const block of markdown.trim().split(/\n\s*\n/)) {
     if (!block) continue;
@@ -869,7 +872,7 @@ function narrativeReferences(chapter, assets, chapters) {
     character: target => {
       const c = characters.find(c => c.id === target.id);
       if (!c || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(c.id)) return null;
-      return {identity: `character:${c.id}`, make: text => {
+      return {identity: `character:${c.id}`, target, make: text => {
         const a = document.createElement("a"); a.href = gamePath(`characters/${c.id}`); a.textContent = text; a.title = `Character: ${c.name}`;
         a.addEventListener("click", e => {
           if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -880,10 +883,10 @@ function narrativeReferences(chapter, assets, chapters) {
     },
     asset: target => {
       const asset = assets.find(a => a.key === target.key && sameGameKey(a.key));
-      return asset ? {identity: `asset:${asset.key}`, make: text => assetLink(asset, text)} : null;
+      return asset ? {identity: `asset:${asset.key}`, target, make: text => assetLink(asset, text)} : null;
     },
     chapter: target => chapters.some(c => c.id === target.id && /^[a-f0-9]{64}$/.test(c.id))
-      ? {identity: `chapter:${target.id}`, make: text => novelLink(text, target.id)} : null,
+      ? {identity: `chapter:${target.id}`, target, make: text => novelLink(text, target.id)} : null,
   };
   const names = new Map();
   const add = (text, target, explicit = false) => {
@@ -928,12 +931,218 @@ function linkedProse(parent, text, references) {
       if (reference.ambiguous) parent.append(document.createTextNode(match[0]));
       else {
         const a = reference.make(match[0]); a.classList.add("narrative-link"); parent.append(a);
+        attachNarrativePreview(a, reference.target);
       }
       end = match.index + match[0].length;
     }
     parent.append(document.createTextNode(part.slice(end)));
   }
 }
+
+// Read-time, versioned preview projections work for every existing and future target. They never
+// rewrite manuscripts or turn generated adaptations into facts. No AI/provider requests on hover.
+const narrativePreviewCache = new Map();
+let narrativePreviewCard, narrativePreviewAnchor, narrativePreviewTimer, narrativePreviewSerial = 0;
+let narrativePreviewTouch = false;
+
+function previewText(value, maximum = 320) {
+  if (typeof value !== "string") return "";
+  const text = value.replace(/^#{1,6}\s+/gm, "").replace(/\s+/g, " ").trim();
+  if (text.length <= maximum) return text;
+  const short = text.slice(0, maximum - 1);
+  const boundary = short.lastIndexOf(" ");
+  return short.slice(0, boundary > maximum / 2 ? boundary : short.length) + "…";
+}
+
+function dismissNarrativePreview(clearCache = false) {
+  clearTimeout(narrativePreviewTimer);
+  narrativePreviewSerial += 1;
+  if (narrativePreviewAnchor) {
+    narrativePreviewAnchor.removeAttribute("aria-describedby");
+    narrativePreviewAnchor.setAttribute("aria-expanded", "false");
+  }
+  narrativePreviewAnchor = null;
+  narrativePreviewTouch = false;
+  if (narrativePreviewCard) { narrativePreviewCard.hidden = true; narrativePreviewCard.replaceChildren(); }
+  if (clearCache) narrativePreviewCache.clear();
+}
+
+function positionNarrativePreview() {
+  if (!narrativePreviewAnchor || !narrativePreviewCard || narrativePreviewCard.hidden) return;
+  const rect = narrativePreviewAnchor.getBoundingClientRect();
+  if (!narrativePreviewAnchor.isConnected || rect.bottom < 0 || rect.top > innerHeight) {
+    dismissNarrativePreview(); return;
+  }
+  const card = narrativePreviewCard, margin = 12;
+  card.style.maxHeight = `${Math.max(120, innerHeight - margin * 2)}px`;
+  const box = card.getBoundingClientRect();
+  card.style.left = `${Math.max(margin, Math.min(rect.left, innerWidth - box.width - margin))}px`;
+  const below = rect.bottom + 6;
+  card.style.top = `${Math.max(margin, Math.min(below + box.height <= innerHeight - margin
+    ? below : rect.top - box.height - 6, innerHeight - box.height - margin))}px`;
+}
+
+function previewCard() {
+  if (narrativePreviewCard) return narrativePreviewCard;
+  const card = document.createElement("section"); card.id = "narrative-preview";
+  card.className = "narrative-preview"; card.hidden = true;
+  card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Link preview");
+  card.addEventListener("pointerenter", () => clearTimeout(narrativePreviewTimer));
+  card.addEventListener("pointerleave", () => {
+    if (!narrativePreviewTouch && !card.contains(document.activeElement)) {
+      narrativePreviewTimer = setTimeout(() => dismissNarrativePreview(), 180);
+    }
+  });
+  card.addEventListener("focusout", () => setTimeout(() => {
+    if (!card.contains(document.activeElement) && document.activeElement !== narrativePreviewAnchor) dismissNarrativePreview();
+  }, 0));
+  document.body.append(card); narrativePreviewCard = card;
+  return card;
+}
+
+async function narrativePreviewData(target, gameId) {
+  const requestRoute = routeEpoch, requestSession = sessionEpoch;
+  const characters = state.gameDetail?.characters || [];
+  const cacheKey = JSON.stringify([gameId, target]);
+  const cached = narrativePreviewCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < 60000) return cached.value;
+  const localAssets = await allAssets(gameId);
+  const metadataPreview = metadata => metadata?.extra?.preview?.schemaVersion === 1 ? metadata.extra.preview : {};
+  let title, summary = "", source = "description", imageKey, imageLabel = "Preview image", asset;
+  if (target.type === "character") {
+    const character = characters.find(c => c.id === target.id);
+    title = character?.name || "Character";
+    const result = await api("/character-profile", {gameId, characterId: target.id}).catch(error => {
+      if (/not found/i.test(error.message)) return null;
+      throw error;
+    });
+    const profile = result?.profile;
+    summary = previewText(profile?.summary) || previewText(profile?.title);
+    imageKey = profile?.model?.posterKey;
+    imageLabel = `Portrait of ${title}`;
+    if (!summary) { summary = `${title} is a character in this game. No description has been recorded yet.`; source = "metadata"; }
+    if (!imageKey) {
+      // Only an explicitly associated portrait; never infer identity from appearance or filename.
+      const portraits = localAssets.filter(a => a.kind === "portrait" && a.metadata?.characterIds?.includes(target.id));
+      if (portraits.length === 1) { imageKey = portraits[0].key; imageLabel = `Associated portrait of ${title}`; }
+    }
+  } else if (target.type === "asset") {
+    asset = localAssets.find(a => a.key === target.key);
+    if (!asset) throw new Error("Linked asset is unavailable");
+    title = asset.metadata?.title || asset.name;
+    const supplied = metadataPreview(asset.metadata);
+    summary = previewText(supplied.summary) || previewText(asset.metadata?.description);
+    imageKey = supplied.imageKey || (/^image\/(png|jpeg|webp|avif)$/.test(asset.contentType) ? asset.key : null);
+    if (!summary && asset.key.endsWith(".json")) {
+      const detail = await api("/asset-document", {gameId, key: asset.key});
+      const doc = detail.document;
+      summary = previewText(doc?.payload?.summary || doc?.summary);
+      if (!summary) {
+        const transcript = doc?.entityType === "PlayerTranscript" ? doc : doc?.payload?.transcript;
+        const text = doc?.stage === "novel-chapter" ? doc.payload?.chapter
+          : transcript?.segments?.slice(0, 3).map(s => s.text).filter(t => typeof t === "string").join(" ");
+        summary = previewText(text); if (summary) source = "excerpt";
+      }
+    }
+    if (!summary) {
+      summary = `${title} · ${(asset.kind || "asset").replaceAll("-", " ")}${asset.metadata?.sessionId ? ` · ${asset.metadata.sessionId}` : ""}. No description has been recorded yet.`;
+      source = "metadata";
+    }
+  } else if (target.type === "chapter") {
+    const chapter = await api("/novel-chapter", {gameId, chapterId: target.id});
+    title = chapter.title; summary = previewText(chapter.markdown); source = "excerpt";
+    asset = localAssets.find(a => a.kind === "novel-chapter" && a.metadata?.extra?.jobId === target.id);
+    const supplied = metadataPreview(asset?.metadata);
+    if (previewText(supplied.summary)) { summary = previewText(supplied.summary); source = "description"; }
+    imageKey = supplied.imageKey;
+  } else throw new Error("Unsupported preview target");
+  let imageUrl;
+  if (typeof imageKey === "string" && imageKey.startsWith(`games/${gameId}/assets/`) && !imageKey.split("/").includes("..")) {
+    const image = await api("/object-url", {key: imageKey}).catch(() => null);
+    if (image && /^image\/(png|jpeg|webp|avif)$/.test(image.contentType) && image.size > 0 && image.size <= 8 * 1024 * 1024) imageUrl = image.url;
+  }
+  const value = {schemaVersion: 1, title, summary, source, imageUrl, imageLabel};
+  // A late response must not repopulate the cache after sign-out or a game change.
+  if (state.gameId === gameId && state.tokens && requestRoute === routeEpoch && requestSession === sessionEpoch) {
+    if (narrativePreviewCache.size >= 50) narrativePreviewCache.delete(narrativePreviewCache.keys().next().value);
+    narrativePreviewCache.set(cacheKey, {at: Date.now(), value});
+  }
+  return value;
+}
+
+async function showNarrativePreview(anchor, target, touch = false) {
+  dismissNarrativePreview();
+  const serial = narrativePreviewSerial, gameId = state.gameId, epoch = routeEpoch;
+  narrativePreviewAnchor = anchor; narrativePreviewTouch = touch;
+  anchor.removeAttribute("title"); anchor.setAttribute("aria-expanded", "true");
+  anchor.setAttribute("aria-describedby", "narrative-preview-summary");
+  const card = previewCard(); card.hidden = false;
+  const close = document.createElement("button"); close.className = "quiet-button preview-close";
+  close.type = "button"; close.textContent = "×"; close.setAttribute("aria-label", "Close link preview");
+  close.addEventListener("click", () => { dismissNarrativePreview(); anchor.focus({preventScroll:true}); dismissNarrativePreview(); });
+  const heading = document.createElement("h3"); heading.textContent = anchor.textContent;
+  const summary = document.createElement("p"); summary.id = "narrative-preview-summary";
+  summary.setAttribute("aria-live", "polite"); summary.textContent = "Loading preview…";
+  const label = document.createElement("p"); label.className = "preview-caption";
+  const open = document.createElement("a"); open.href = anchor.href; open.textContent = "Open linked page →";
+  open.addEventListener("click", e => {
+    if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault(); dismissNarrativePreview(); anchor.click();
+  });
+  card.replaceChildren(close, heading, summary, label, open); positionNarrativePreview();
+  const current = () => serial === narrativePreviewSerial && epoch === routeEpoch && gameId === state.gameId && anchor.isConnected;
+  try {
+    const data = await narrativePreviewData(target, gameId);
+    if (!current()) return;
+    heading.textContent = data.title; summary.textContent = data.summary;
+    label.textContent = data.source === "excerpt" ? "Opening excerpt · may contain spoilers" : data.source === "metadata" ? "Available information" : "Summary";
+    if (data.imageUrl) {
+      const img = document.createElement("img"); img.alt = data.imageLabel;
+      img.referrerPolicy = "no-referrer"; img.src = data.imageUrl;
+      img.addEventListener("error", () => { img.remove(); positionNarrativePreview(); });
+      img.addEventListener("load", positionNarrativePreview);
+      heading.after(img);
+    }
+    positionNarrativePreview();
+  } catch {
+    if (current()) { summary.textContent = "Preview unavailable. You can still open the linked page."; positionNarrativePreview(); }
+  }
+}
+
+function attachNarrativePreview(anchor, target) {
+  let touchDown = false;
+  anchor.setAttribute("aria-haspopup", "dialog"); anchor.setAttribute("aria-controls", "narrative-preview");
+  anchor.setAttribute("aria-expanded", "false");
+  anchor.addEventListener("pointerenter", e => {
+    if (e.pointerType === "touch") return;
+    clearTimeout(narrativePreviewTimer);
+    narrativePreviewTimer = setTimeout(() => showNarrativePreview(anchor, target), 160);
+  });
+  anchor.addEventListener("pointerleave", () => {
+    clearTimeout(narrativePreviewTimer);
+    if (!narrativePreviewTouch && document.activeElement !== anchor) narrativePreviewTimer = setTimeout(() => dismissNarrativePreview(), 180);
+  });
+  anchor.addEventListener("pointerdown", e => { touchDown = e.pointerType === "touch"; });
+  anchor.addEventListener("focus", () => { if (!touchDown) showNarrativePreview(anchor, target); });
+  anchor.addEventListener("blur", () => {
+    touchDown = false;
+    narrativePreviewTimer = setTimeout(() => { if (!narrativePreviewCard?.contains(document.activeElement)) dismissNarrativePreview(); }, 180);
+  });
+  anchor.addEventListener("click", e => {
+    if (!(e.pointerType === "touch" || (e.detail && matchMedia("(hover: none)").matches))) return;
+    if (narrativePreviewAnchor === anchor && narrativePreviewTouch) { dismissNarrativePreview(); return; }
+    e.preventDefault(); e.stopImmediatePropagation(); showNarrativePreview(anchor, target, true);
+  }, true);
+}
+
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && narrativePreviewAnchor) { event.preventDefault(); dismissNarrativePreview(); }
+});
+document.addEventListener("pointerdown", event => {
+  if (narrativePreviewAnchor && !narrativePreviewAnchor.contains(event.target) && !narrativePreviewCard?.contains(event.target)) dismissNarrativePreview();
+});
+window.addEventListener("resize", positionNarrativePreview);
+document.addEventListener("scroll", positionNarrativePreview, true);
 
 function novelLink(title, id) {
   const link = document.createElement("a");

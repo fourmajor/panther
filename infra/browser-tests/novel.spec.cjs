@@ -77,6 +77,101 @@ async function accessibleInViewport(locator, width) {
   expect(await locator.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
 }
 
+async function previewFixture(page) {
+  await fixture(page);
+  const portrait='games/campaign-a/assets/mira-portrait/original/portrait.png';
+  const chart='games/campaign-a/assets/chart-a/original/map.png';
+  // Synthetic one-pixel PNG, never private artwork.
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+  await page.route('https://images.example/**',route=>route.fulfill({body:png,contentType:'image/png'}));
+  await page.route(`${api}/character-profile*`,route=>route.fulfill({headers,json:{profile:{id:'mira',name:'Mira Vale',
+    summary:'A patient navigator who charts the harbor and keeps careful records.',model:{posterKey:portrait}}}}));
+  await page.route(`${api}/object-url*`,route=>route.fulfill({headers,json:{key:new URL(route.request().url()).searchParams.get('key'),
+    url:'https://images.example/portrait.png',size:png.length,contentType:'image/png',expiresIn:300}}));
+  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[{key:chart,name:'map.png',kind:'map',contentType:'image/png',size:png.length,
+    metadata:{title:'Harbor chart',characterIds:['mira'],extra:{preview:{schemaVersion:1,summary:'A chart of the harbor, its shoals and marked approaches.'}}},sourceKeys:[]}],cursor:null}}));
+  await page.route(`${api}/novel-chapter*`,route=>{
+    if(new URL(route.request().url()).searchParams.get('chapterId')!==first) return route.fallback();
+    return route.fulfill({headers,json:{...chapters[0],markdown:'Mira Vale studied the Harbor chart. She recalled Beyond the Harbor.',
+      readerReferences:{schemaVersion:1,mentions:[{text:'Beyond the Harbor',target:{type:'chapter',id:second}}]},details:{review:{},sourceKeys:[]}}});
+  });
+}
+
+for(const width of [1280,390]) test(`novel hover previews show summaries and images without obscuring controls at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:900}); await previewFixture(page);
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  const prose=page.locator('#novel-prose'), link=prose.getByRole('link',{name:'Mira Vale',exact:true});
+  await expect(prose.getByRole('link')).toHaveCount(3);
+  const original=await prose.innerText();
+  await link.hover();
+  const card=page.getByRole('dialog',{name:'Link preview'});
+  await expect(card).toContainText('A patient navigator');
+  await expect(card.getByRole('img',{name:'Portrait of Mira Vale'})).toBeVisible();
+  await expect.poll(()=>card.locator('img').evaluate(i=>i.naturalWidth)).toBeGreaterThan(0);
+  const box=await card.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x+box.width).toBeLessThanOrEqual(width); expect(box.y+box.height).toBeLessThanOrEqual(900);
+  await accessibleInViewport(card.getByRole('button',{name:'Close link preview'}),width);
+  await card.hover(); await expect(card).toBeVisible();
+  await page.screenshot({path:test.info().outputPath(`novel-preview-${width}.png`),fullPage:true});
+  await page.keyboard.press('Escape'); await expect(card).not.toBeVisible();
+  expect(await prose.innerText()).toBe(original);
+  await prose.getByRole('link',{name:'Harbor chart',exact:true}).focus();
+  await expect(card).toContainText('A chart of the harbor');
+  await expect(card.locator('img')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await prose.getByRole('link',{name:'Beyond the Harbor',exact:true}).focus();
+  await expect(card).toContainText('Opening excerpt');
+  await expect(card).toContainText('The door opened');
+  await expect(card).not.toContainText('Editorial audit');
+  await card.getByRole('link',{name:'Open linked page'}).click();
+  await expect(page).toHaveURL(`${origin}/games/campaign-a/novel/${second}`);
+  await expect(card).not.toBeVisible();
+});
+
+test('touch opens a preview first and its explicit open link navigates',async({browser})=>{
+  const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+  const page=await context.newPage(); await previewFixture(page);
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await expect(page.locator('#novel-prose a')).toHaveCount(3);
+  await page.locator('#novel-prose').getByRole('link',{name:'Beyond the Harbor',exact:true}).tap();
+  await expect(page).toHaveURL(`${origin}/games/campaign-a/novel/${first}`);
+  const card=page.getByRole('dialog',{name:'Link preview'});
+  await expect(card).toContainText('The door opened');
+  await accessibleInViewport(card.getByRole('link',{name:'Open linked page'}),390);
+  await card.getByRole('link',{name:'Open linked page'}).tap();
+  await expect(page).toHaveURL(`${origin}/games/campaign-a/novel/${second}`);
+  await context.close();
+});
+
+test('late or failed previews never leak across games and never prevent navigation',async({page})=>{
+  await previewFixture(page); let release, arrived;
+  const waiting=new Promise(resolve=>{arrived=resolve;});
+  await page.route(`${api}/character-profile*`,async route=>{
+    arrived(); await new Promise(resolve=>{release=resolve;});
+    await route.fulfill({headers,json:{profile:{summary:'STALE CHARACTER DESCRIPTION'}}});
+  });
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await expect(page.locator('#novel-prose a')).toHaveCount(3);
+  await page.locator('#novel-prose').getByRole('link',{name:'Mira Vale'}).hover(); await waiting;
+  await page.getByRole('combobox',{name:'Game'}).selectOption('test-b');
+  release(); await expect(page.getByRole('dialog',{name:'Link preview'})).not.toBeVisible();
+  await expect(page.locator('body')).not.toContainText('STALE CHARACTER DESCRIPTION');
+});
+
+test('unsafe summary text and unavailable images remain inert and text-only',async({page})=>{
+  await previewFixture(page);
+  await page.route(`${api}/character-profile*`,route=>route.fulfill({headers,json:{profile:{summary:'<script>window.attacked=true</script>',model:{posterKey:'games/foreign/assets/portrait/original/x.png'}}}}));
+  const imageRequests=[]; page.on('request',r=>{if(r.url().includes('/object-url'))imageRequests.push(r.url());});
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await expect(page.locator('#novel-prose a')).toHaveCount(3);
+  await page.locator('#novel-prose').getByRole('link',{name:'Mira Vale'}).focus();
+  const card=page.getByRole('dialog',{name:'Link preview'});
+  await expect(card).toContainText('<script>window.attacked=true</script>');
+  await expect(card.locator('img,script')).toHaveCount(0);
+  expect(imageRequests).toEqual([]); expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
+  await page.keyboard.press('Escape'); await expect(card).not.toBeVisible();
+});
+
 for(const width of [1280,390]) {
   test(`clean reader, details, versions and game switching at ${width}px`, async({page})=>{
     await page.setViewportSize({width,height:1000}); await fixture(page);
