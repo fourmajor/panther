@@ -280,8 +280,9 @@ def validate_manifest(value):
         or value["schemaVersion"] != 1
     ):
         fail("Expected a version-1 video comparison manifest; see docs/fal-video-comparison.md.")
-    for name in ("gameId", "sessionId"):
-        identifier(value[name])
+    identifier(value["gameId"])
+    if value["sessionId"] is not None:
+        identifier(value["sessionId"])
     sources = value["sourceKeys"]
     if (
         not isinstance(sources, list)
@@ -666,7 +667,7 @@ def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, r
     metadata = {
         "title": f"Video comparison — {shot}",
         "category": "creative-reimagining",
-        "sessionId": manifest["sessionId"],
+        **({"sessionId": manifest["sessionId"]} if manifest["sessionId"] is not None else {}),
         "sourceKeys": manifest["sourceKeys"],
         "characterIds": manifest.get("characterIds", []),
         "tags": ["video-comparison", "ai-generated"],

@@ -272,6 +272,7 @@ via `image` with absolute private `path`, hex `sha256`, and stable `key` also in
 Obtain permission to send those images to fal. These are explicit opt-in profiles; existing text-only
 plans still send no references. Keep the same $50 ledger, no automatic retries or voice cloning.
 Use manifest `characterIds` for characters actually depicted; do not infer from input associations.
+For a standalone screen test, set `sessionId: null` rather than inventing a game-session association.
 
 ### Automatic generation from turnaround references
 

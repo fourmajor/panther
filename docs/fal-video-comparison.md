@@ -88,6 +88,8 @@ Submit rechecks local bytes before reserving, then sends a base64 data URI with 
 No extra public file hosting, expiring S3 link, or separate provider upload is needed. The ledger
 pins file descriptors/checksums rather than duplicating image data. Never delete the private inputs.
 Optional manifest `characterIds` tags explicitly depicted characters on the downloaded video metadata.
+Set `sessionId: null` for standalone screen tests with no real session association; never invent a
+session ID just to choose a storage folder. Such outputs use the ordinary shared-game media library.
 
 On 2026-09-10 the live image-endpoint base rates matched the text endpoints ($0.15/s Veo, $0.14/s
 Kling). The existing conservative audio/headroom calculation reserves $1.50 and $2.10 respectively;

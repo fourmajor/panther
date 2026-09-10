@@ -179,6 +179,14 @@ def test_prepare_never_generates_and_approval_is_explicit(setup):
     assert fal.posts == []
 
 
+def test_standalone_comparison_does_not_invent_a_game_session(setup):
+    value = manifest()
+    value["sessionId"] = None
+    assert v.prepare(value, setup)["approved"] is False
+    metadata = v.upload_metadata(value, "scene-veo", "endpoint", "request", "plan", "attempt", 150, "0"*64)
+    assert "sessionId" not in metadata
+
+
 def test_initialization_never_resets_lifetime_reservations(setup):
     fal = setup
     plan = approved(fal)
