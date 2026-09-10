@@ -57,6 +57,13 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
   await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
   expect((await links.allTextContents()).join('\n')).not.toContain('novel-proof');
   const link=links.getByRole('link',{name:'Corrected transcript',exact:true});
+  // Details is a normal document: reach its below-the-fold connections with user scrolling,
+  // then verify hit-testing (no forced clicks or scrolling a clipped element into place).
+  for (let scrolls=0; scrolls<5 && (await link.boundingBox()).y>900; scrolls++) {
+    const before=(await link.boundingBox()).y;
+    await page.mouse.wheel(0,350);
+    await expect.poll(async()=> (await link.boundingBox()).y).toBeLessThan(before-1);
+  }
   await accessibleInViewport(link,width);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`chapter-connections-${width}.png`),fullPage:true});
