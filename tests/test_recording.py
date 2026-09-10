@@ -187,6 +187,10 @@ def test_raw_commit_happens_only_after_all_uploads_and_keeps_local_on_failure(
         return file.name
 
     def api(config, method, route, **kwargs):
+        if route == "/recording-sets/complete":
+            assert events == ["part-0000.flac", "recording.json"]
+            assert kwargs["json"]["status"] == "COMPLETE"
+            return {"status": "SUBMITTED"}
         if method == "POST":
             assert events == [
                 "part-0000.flac",

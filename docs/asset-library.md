@@ -39,12 +39,15 @@ If the asset catalog is unavailable, the story remains readable with a visible r
 
 Choose a game, then **Audio** or **Transcripts**. Both sections use existing private immutable
 assets; no conversion, generation, transcription or new workflow is started by browsing.
-Audio opens an original FLAC recording as an ordered part playlist. It requests a fresh private
-link for each part, stops on navigation, and offers part reselection on expiration/playback failure.
-Chunk boundaries may briefly pause; browser codec support varies. Original downloads remain available.
+Audio opens one continuous MP3 listening derivative produced by the completed-chunk-set
+workflow. It has one source and timeline; part buttons seek within it instead of switching files.
+Playback stops on navigation. Expired-link recovery restores the position in the same listening
+file. Original lossless FLAC chunks remain unchanged under Inputs for download and reprocessing.
+If the listening copy is not ready, the reader explains that completion and the laptop worker are
+required; it never silently falls back to a gapped chunk playlist. Assembly cannot repair capture loss.
 Loose audio files without a recording manifest are listed separately, including music.
 Capture setup/checkpoint metadata is not a second recording: only structured Recording documents
-with parts become playlist entries. Setup files remain accessible under Related files and Media.
+with parts become session entries. Setup files remain accessible under Related files and Media.
 
 Transcripts lists all raw, corrected and edited versions. When a JSON version has a matching Markdown
 export, the section shows the structured reader once; its export remains under Related files.

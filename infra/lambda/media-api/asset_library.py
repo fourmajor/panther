@@ -4,6 +4,8 @@ import base64
 import binascii
 from concurrent.futures import ThreadPoolExecutor
 import json
+import math
+import re
 
 MAX_DOCUMENT = 2 * 1024**2
 PAGE_SIZE = 25
@@ -68,6 +70,21 @@ def describe(media, game, key, *, include_document=False):
                 for part in doc["parts"]:
                     if isinstance(part, dict) and isinstance(part.get("file"), str) and "/" not in part["file"]:
                         sources.append(key.rsplit("/", 1)[0] + "/" + part["file"])
+            if doc.get("entityType") == "RecordingPlayback":
+                prefix = key.rsplit("/", 1)[0] + "/"
+                digest = doc.get("sourceManifestSha256")
+                duration = doc.get("durationSeconds")
+                if (doc.get("schemaVersion") == 1 and doc.get("version") == 1
+                        and doc.get("recordingId") == key.split("/")[3]
+                        and isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                        and key == prefix + f"playback-v1-{digest[:16]}.json"
+                        and doc.get("recordingKey") == prefix + "recording.json"
+                        and doc.get("audioKey") == prefix + f"playback-v1-{digest[:16]}.mp3"
+                        and type(duration) in (int, float) and math.isfinite(duration) and duration > 0):
+                    result["playback"] = {field: doc[field] for field in
+                                          ("recordingKey", "audioKey", "sourceManifestSha256", "durationSeconds")}
+                else:
+                    result["lineageWarning"] = "Playback identity is invalid; original sources retained."
             if doc.get("entityType") == "PlayerTranscript" and isinstance(doc.get("recordingId"), str):
                 recording = doc["recordingId"]
                 if media._valid_slug(recording):

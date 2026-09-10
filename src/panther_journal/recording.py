@@ -406,7 +406,7 @@ def import_audio(source, game, session, output_root):
     click.echo(str(folder))
 
 
-def upload_one(config, file, record, kind):
+def upload_one(config, file, record, kind, *, source_keys=None):
     key = f"games/{record.gameId}/assets/{record.id}/original/{file.name}"
     sha = base64.b64encode(bytes.fromhex(digest(file))).decode()
     try:
@@ -425,7 +425,7 @@ def upload_one(config, file, record, kind):
         "title": file.name,
         "sessionId": record.sessionId,
         "category": "canonical-source" if kind == "recording" else "unclassified",
-        "extra": {"recordingId": record.id, "sha256": sha},
+        "extra": {"recordingId": record.id, "chunkSetId": record.id, "sha256": sha},
     }
     # Existing CLI enforces authentication, streamed SHA-256, exact size, and If-None-Match.
     metadata_path = file.parent / f".upload-{uuid.uuid4().hex}.json"
@@ -433,6 +433,8 @@ def upload_one(config, file, record, kind):
         metadata["sourceKeys"] = [
             f"games/{record.gameId}/assets/{record.id}/original/recording.json"
         ]
+    if source_keys is not None:
+        metadata["sourceKeys"] = source_keys
     write_new(metadata_path, metadata)
     cloud.upload.callback(
         file=file,
@@ -478,6 +480,9 @@ def upload_recording(folder, transcript, editorial=True):
     manifest_key = upload_one(config, folder / "recording.json", record, "recording-manifest")
     if (folder / "capture-health.json").exists():
         upload_one(config, folder / "capture-health.json", record, "capture-health")
+    from panther_journal.playback_worker import complete_set
+
+    playback = complete_set(folder, config, record)
     transcript_keys = [
         upload_one(config, file, record, "raw-transcript") for file in transcript_files
     ]
@@ -497,6 +502,7 @@ def upload_recording(folder, transcript, editorial=True):
         json.dumps(
             {
                 "recordingId": record.id,
+                "playback": playback,
                 "sourceKeys": keys,
                 "manifestKey": manifest_key,
                 "transcriptKeys": transcript_keys,

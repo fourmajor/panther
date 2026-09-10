@@ -7,6 +7,9 @@ const headers={'access-control-allow-origin':origin};
 const prefix='games/test-game/assets/';
 const part=prefix+'recording-a/original/part-0000.flac', part2=prefix+'recording-a/original/part-0001.flac';
 const recording=prefix+'recording-a/original/recording.json', raw=prefix+'recording-a/original/raw.json';
+const continuous=prefix+'recording-a/original/playback-v1-aaaaaaaaaaaaaaaa.mp3';
+// synthetic-continuous.mp3 is a 1.2-second 440 Hz generated tone, MP3 64 kbps, seek header.
+const playbackManifest=continuous.replace('.mp3','.json');
 const corrected=prefix+'corrected-a/original/corrected.json', video=prefix+'video-a/original/take.mp4';
 // Synthetic quarter-second 440 Hz FLAC; no private recording or user credentials.
 const flac=Buffer.from('ZkxhQwAAACICQAJAAAAAAASVAfQA8AAAAAAAAAAAAAAAAAAAAAAAAAAAhAAALAwAAABMYXZmNjEuNy4xMDABAAAAFAAAAGVuY29kZXI9TGF2ZjYxLjcuMTAw//gkCADKTgAABWsKMg3FD7YPzQ4FCpTmMQqH2KXbLDk9DhuCxn3GhDapRYRihDCNVLEYlostLLqSkWUUqTCMWULJSVZWWlFIpYjKrEwjBaKSlkYTTBGFJKJhOKyyogQknNClMmBBAIhSIWckKQocpphEApJCIEEAgIacwoBBAwICAQTygQQJSFCkoXkyFDDORAIIFDAoTJ0NCkxKRSxGVWJhGC0UlLIwmmCMKSUTCcVllRZJKlZa1JQjCZaZcqSLRZUtWomFpImIwhlapRYRihDCNVLEAIEpChSULyZChhnIgEEChgUJk6GhSYZDKBBD0CIBBACkMmUIIBEiAEEAyTCIBGGhQ4UJJzQpTJgQQCIUiFmAl3X/+CQIAc1O8YfwE/CB8sX2mfuJAQEGWuYytIU6h1uuKGk+5eIG/k6AAaUlMIgHDCIEQCCSJwwoEEDCCARmhQIgQiQIhkicyZAoZnIgEEMwoTJ0NCkMOGUCCSlAiBBAOBkpQiARKAQQJkKEQIoGIFOBkzmIUzJgQQCmULOSFIUNKSmEQDhhECIBBJE4YUCCBhBAIzQoEQIRIEQyROZMgUMzkQCCGYUJk6GhSGHDKBBJSgRAggHAyUoRAIlAIIEyFCIEUDECnAyZzEKZkwIIBTKFnJCkKGlJTCIBwwiBEAgkicMKBBAwggEZoUCIEIkCIZInMmQKGZyIBBDMKEydDQpDDhlAgkpQIgQQDgZKUIgESgEECZChECKBiBTgZM5AZPj/+CQIAsRODFQIJQMA/YD4TPQB8SHwA+Yww4pGnCc+GUItwUNlfWaEATAggEQpELMkhSU9JmEQCkyIEEAgIaTMKAQQKBAQCCZhQCIEpClNMmSSFClLIgEEChgUJnocMkhzKBEypQmEYLRUpZGEyYIwpSyMTisopFKlVZZRRKEYTLTLlJItLVWlKJhaUmIwhlaUosIxYhhGpRYTEtFoE0yZJIUKUsiAQQKGBQmehwySHMoEEOYEQCCAFIcyhBAIhEAIIBmUIIEYaGGQzn0KGGEwIIBEKRCzJIUlFVaUomFpSYjCGVpSiwjFiGEalFhMS0WtWpKSSLLWuTCMWULJSqyopJFSliMqUJhGC0VKWRhMmCMKUH0G//h0CAMBDxBOA/oI/QzxD1wP9w6vC6kHQ+WaXbqQXRevWFKfdMDg/0gALZZUKJJVTJrSIoIwTKmTlpIoiytOnRMKQkTEYQZRqihQRhRDCOvTCMIsQstJrqSSFiir0YQxaQsSiq15aKEkJLEanYmEYFoKS00YRrBGEkRQjCPJssqFEkqpk1pEUEYJlTJy0kURZWnTomFIQPxi','base64');
@@ -18,7 +21,10 @@ const assets=[
   [raw.replace('.json','.md'),'raw-transcript',[recording],'text/markdown'],
   [corrected,'corrected-transcript',[raw],'application/json'],
   [video,'video-comparison',[corrected],'video/mp4'],
+  [continuous,'recording-playback',[playbackManifest],'audio/mpeg'],
+  [playbackManifest,'recording-playback-manifest',[recording,part,part2],'application/json'],
 ].map(([key,kind,sourceKeys,contentType])=>({key,kind,sourceKeys,contentType,recording:key===recording?{partCount:2,status:'interrupted'}:undefined,name:key.split('/').at(-1),size:100,lastModified:'2026-01-01T12:00:00Z',metadata:{title:kind,sessionId:'session-one'}}));
+assets.find(a=>a.key===playbackManifest).playback={recordingKey:recording,audioKey:continuous,durationSeconds:1.2,sourceManifestSha256:'a'.repeat(64)};
 
 async function fixture(page) {
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'stu'}))+'.test'})));
@@ -29,6 +35,7 @@ async function fixture(page) {
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   await page.route('https://audio.example/**',route=>route.fulfill({body:flac,contentType:'audio/flac',headers:{'accept-ranges':'bytes'}}));
+  await page.route('https://audio.example/playback-*.mp3',route=>route.fulfill({body:fs.readFileSync(path.join(__dirname,'synthetic-continuous.mp3')),contentType:'audio/mpeg',headers:{'accept-ranges':'bytes'}}));
   await page.route(`${api}/**`,route=>{
     const u=new URL(route.request().url()), game=u.searchParams.get('gameId'), key=u.searchParams.get('key');
     const games=[{id:'test-game',name:'Test Game',purpose:'test'},{id:'other-game',name:'Other Game',purpose:'campaign'}];
@@ -40,7 +47,7 @@ async function fixture(page) {
     if(u.pathname==='/object-url') body={...assets.find(a=>a.key===key),url:`https://audio.example/${key.split('/').at(-1)}`,expiresIn:300};
     if(u.pathname==='/asset-document') {
       const transcript={entityType:'PlayerTranscript',players:[{id:'alex',name:'Alex'}],captureIntegrity:{warnings:['Synthetic capture gap']},segments:[{start:0,end:2,playerId:'alex',text:key===raw?'The lanturn.':'The lantern.',originalText:'The lanturn.',uncertainty:'Test spelling'}, {start:2,end:4,playerId:null,text:'<script>window.attacked=true</script> Pizza?'}]};
-      body={...assets.find(a=>a.key===key),document:key===recording?{entityType:'Recording',status:'interrupted',parts:[{file:'part-0000.flac',start:0},{file:'part-0001.flac',start:.25}]}:key===raw?transcript:{stage:'corrected-transcript',reviewStatus:'ai-reviewed-unverified',payload:{transcript,review:{passed:true}}}};
+      body={...assets.find(a=>a.key===key),document:key===recording?{entityType:'Recording',status:'interrupted',parts:[{file:'part-0000.flac',start:0},{file:'part-0001.flac',start:.6}]}:key===raw?transcript:{stage:'corrected-transcript',reviewStatus:'ai-reviewed-unverified',payload:{transcript,review:{passed:true}}}};
     }
     return route.fulfill({json:body,headers});
   });
@@ -59,6 +66,12 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('#preview-body')).toContainText('Recording status: interrupted');
   await expect(page.locator('#asset-links')).toContainText('raw-transcript');
   await expect(page.locator('audio')).toHaveAttribute('controls','');
+  await expect(page.locator('#preview-body [role="status"]')).toContainText('Continuous playback');
+  await expect(page.getByRole('button',{name:'Jump to part 2',exact:false})).toBeEnabled();
+  const playerBox=await page.locator('audio').boundingBox();
+  expect(playerBox.x).toBeGreaterThanOrEqual(0);
+  expect(playerBox.x+playerBox.width).toBeLessThanOrEqual(width);
+  expect(playerBox.y+playerBox.height).toBeLessThan(1000);
   const close=page.getByRole('button',{name:'Close preview'});
   const closeBox=await close.boundingBox();
   expect(closeBox.x+closeBox.width).toBeLessThanOrEqual(width);
@@ -145,18 +158,51 @@ test('catalog errors are recoverable without silently claiming empty results',as
   await expect(page.locator('.session-card')).toHaveCount(2);
 });
 
-test('original FLAC decodes, plays, advances to the next part and stops on close',async({page})=>{
+test('one continuous MP3 track crosses part boundaries and seeks without changing files',async({page})=>{
+  const requested=[];
+  page.on('request',r=>{if(r.url().startsWith(api+'/object-url')) requested.push(new URL(r.url()).searchParams.get('key'));});
   await fixture(page); await page.goto(`${origin}/games/test-game/audio`);
   await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
   const audio=page.locator('audio');
   await expect.poll(()=>audio.evaluate(el=>el.readyState)).toBeGreaterThan(0);
+  await expect.poll(()=>audio.evaluate(el=>el.duration)).toBeCloseTo(1.2,1);
+  await page.getByRole('button',{name:'Jump to part 2',exact:false}).click();
+  await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeCloseTo(.6,1);
+  await page.getByRole('button',{name:'Jump to part 1',exact:false}).click();
+  const src=await audio.getAttribute('src');
   await audio.evaluate(el=>el.play());
-  await expect(page.locator('#preview-body [role="status"]')).toContainText('Part 2 of 2');
-  await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeGreaterThan(0);
+  await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeGreaterThan(.65);
+  await expect(audio).toHaveAttribute('src',src);
+  expect(requested.filter(key=>key===continuous)).toHaveLength(1);
+  expect(requested).not.toContain(part); expect(requested).not.toContain(part2);
+  await expect(page.locator('#preview-body [role="status"]')).toContainText('Continuous playback');
   await page.evaluate(()=>{window.testAudio=document.querySelector('audio');});
   await page.keyboard.press('Escape');
   await expect(page.locator('#preview-dialog')).not.toBeVisible();
   expect(await page.evaluate(()=>window.testAudio.paused)).toBe(true);
+});
+
+test('unprepared or incomplete copies do not silently fall back to gapped part switching',async({page})=>{
+  await fixture(page);
+  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:assets.filter(a=>a.key!==continuous),cursor:null}}));
+  await page.goto(`${origin}/games/test-game/audio`);
+  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
+  await expect(page.locator('#preview-body')).toContainText('Continuous playback has not been prepared');
+  await expect(page.locator('#preview-body audio')).not.toBeVisible();
+  await expect(page.locator('#asset-links')).toContainText('recording');
+});
+
+test('continuous playback refreshes expired links without changing to a source chunk',async({page})=>{
+  await fixture(page); let links=0;
+  await page.route(`${api}/object-url*`,route=>{if(new URL(route.request().url()).searchParams.get('key')===continuous) links++; return route.fallback();});
+  await page.goto(`${origin}/games/test-game/audio`);
+  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
+  const audio=page.locator('#preview-body audio');
+  await expect.poll(()=>audio.evaluate(a=>a.readyState)).toBeGreaterThan(0);
+  await audio.evaluate(a=>{a.currentTime=.7;a.dispatchEvent(new Event('error'));});
+  await page.getByRole('button',{name:'Refresh playback link'}).click();
+  await expect.poll(()=>links).toBe(2);
+  await expect.poll(()=>audio.evaluate(a=>a.currentTime)).toBeCloseTo(.7,1);
 });
 
 test('late catalog and document responses cannot populate a different game',async({page})=>{

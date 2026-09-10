@@ -2,6 +2,11 @@
 
 ## Panther CLI and game assets
 
+- Recording chunks are grouped by a structured chunk-set identity. Only an explicitly completed,
+  server-verified uploaded set triggers the playback workflow, never individual uploads or a quiet
+  period. Assemble listening derivatives in the separate laptop workflow, not the uploader. Browser
+  playback must be continuous; preserve lossless source chunks and capture warnings for reprocessing.
+
 - Every derived asset must record its exact immutable inputs using `sourceKeys`; large structured
   provenance can additionally use `inputArtifacts` keyed references in its JSON document. Asset
   views expose Inputs and reverse-linked Outputs across media types. Never overwrite inputs, guess

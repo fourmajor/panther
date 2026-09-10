@@ -1,5 +1,9 @@
 # Local recording and player-attributed transcripts
 
+After upload, the [completed chunk-set workflow](recording-playback-workflow.md) produces one
+continuous browser listening file on the owner's laptop. Chunk uploads alone never trigger it.
+Lossless FLAC originals remain the inputs for transcription, not the lossy listening copy.
+
 Recording and recognition use the CLI. Capture works
 offline. Whisper.cpp and pyannote Community-1 run locally; no paid inference or audio uploads to
 model providers. Audio backup uses `--sync` during capture or `recording sync` afterward.
