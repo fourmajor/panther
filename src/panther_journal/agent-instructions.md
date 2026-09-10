@@ -139,6 +139,7 @@ Video planning does not authorize video generation, provider choice, licensing o
 H3 Max comparisons use `h3-max-image`: one approved pinned starting frame, eight seconds at
 768P with native audio, safety checking on and prompt expansion disabled. This is H3 Max, not
 Turbo, and is only for owner-approved experiments; Veo/Kling remain the production choices.
+Use `h3-max` for text-only comparisons with the same settings, explicit 16:9 and no reference image.
 The guard reserves the regular rate plus headroom, even during promotional pricing.
 For a lost result, `panther video reconcile-unavailable ATTEMPT_ID` verifies the original account,
 live completion, exact request identity, result HTTP 404 and a matching zero-charge billing event.

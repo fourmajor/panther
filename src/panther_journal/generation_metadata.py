@@ -20,6 +20,7 @@ def local(tool, *, method="procedural"):
 
 def fal(endpoint, request_id, billed=None):
     models = {
+        "minimax/h3-max/text-to-video": "MiniMax H3 Max (post-trained by fal)",
         "minimax/h3-max/image-to-video": "MiniMax H3 Max (post-trained by fal)",
         "fal-ai/veo3.1/fast": "Veo 3.1 Fast",
         "fal-ai/kling-video/v3/pro/text-to-video": "Kling 3 Pro",

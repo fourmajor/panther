@@ -86,6 +86,22 @@ def missing_result_attempt(setup, monkeypatch):
     return attempt
 
 
+def test_h3_text_profile_uses_same_budget_without_image(setup):
+    m = manifest()
+    m["shots"][0].update(model="h3-max", maxAttempts=1)
+    setup.rate = Decimal("0.0125")
+    plan = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    a = v.submit(plan, "scene-veo", 1, "", setup)
+    assert a["reservedUsd"] == "0.80"
+    endpoint, req = setup.posts[0]
+    assert endpoint == v.QUEUE + "/minimax/h3-max/text-to-video"
+    assert req["json"] == {"prompt": m["shots"][0]["prompt"], "duration": 8, "resolution": "768P",
+                           "aspect_ratio": "16:9", "prompt_expansion_mode": "disabled",
+                           "enable_safety_checker": True, "sync_mode": False}
+    assert v.generation.fal("minimax/h3-max/text-to-video", "r")["model"] == "MiniMax H3 Max (post-trained by fal)"
+
+
 def test_reconcile_missing_result_keeps_full_reservation_and_audit(setup, monkeypatch):
     a = missing_result_attempt(setup, monkeypatch)
     with v.database() as db:

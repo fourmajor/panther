@@ -32,6 +32,12 @@ QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
+    "h3-max": {
+        "endpoint": "minimax/h3-max/text-to-video",
+        "floor": "0.08",
+        "multiplier": "1.6",
+        "source": "https://fal.ai/models/minimax/h3-max/text-to-video",
+    },
     "h3-max-image": {
         "endpoint": "minimax/h3-max/image-to-video",
         "floor": "0.08",
@@ -428,11 +434,13 @@ def payload(shot):
             body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.
     elif shot["model"] in {"seedance-2.0", "seedance-2.0-image"}:
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
-    elif shot["model"] == "h3-max-image":
+    elif shot["model"] in {"h3-max", "h3-max-image"}:
         # Native audio is integral; canvas follows the pinned image. No prompt rewrite.
         body = {"prompt": shot["prompt"], "duration": 8, "resolution": "768P",
                 "prompt_expansion_mode": "disabled", "enable_safety_checker": True,
                 "sync_mode": False}
+        if shot["model"] == "h3-max":
+            body["aspect_ratio"] = "16:9"
     else:
         fail("Unsupported model profile.")
     if "image" in shot:

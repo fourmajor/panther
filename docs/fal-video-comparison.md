@@ -93,6 +93,10 @@ Money is rounded upward to integer cents, with nonfinite/negative/unknown values
 
 ### Image-anchored comparisons
 
+`h3-max` uses `minimax/h3-max/text-to-video` for the same bounded settings below, with explicit
+16:9 and no reference image. This allows a like-for-like comparison with earlier text-only city
+shots. It shares the same regular-price reservation and lifetime ledger, not a separate budget.
+
 `h3-max-image` uses `minimax/h3-max/image-to-video` (H3 Max, not Turbo), one pinned starting
 PNG, eight seconds, `768P`, integral native audio, `prompt_expansion_mode: disabled`, safety
 checker enabled and synchronous/base64 output disabled. There are no end frames, voice references,
