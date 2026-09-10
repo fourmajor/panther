@@ -139,7 +139,7 @@ def api(config, method, route, **kwargs):
             except ValueError:
                 message = "Request failed"
             raise click.ClickException(f"Panther: {message}")
-        if response.status_code != 200:
+        if response.status_code not in (200, 201):
             raise click.ClickException("Unexpected Panther response.")
         return response.json()
     except (requests.RequestException, ValueError):
