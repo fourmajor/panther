@@ -136,6 +136,21 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
+For shot preparation and actual editing, use `panther video production --help` and the trusted
+`docs/video-production.md`. Pin selected character appearances, prepared full-frame starting images
+and optional verified Kling ending images before generation. Preparation reviews existing plates;
+it does not create missing images or approve spending. Use the separate production manifest, then
+mark it complete only once every selected take and sound/caption source exists and matches Panther.
+`production run`/the local inbox worker performs sampled continuity review, bounded edit/grade,
+fresh re-review, independent sound stems/mix, captions, master/browser export and final sequence QC.
+`production publish` uses Panther uploads, not AWS credentials. Keep all originals and run history.
+Native generator sound is one mixed track, never pretend it is isolated dialogue/music/effects.
+Mute it or preserve it explicitly; replacement stems require genuine sources and rights notes.
+Keep unresolved defects as working-draft notes. Sampled visual reviews and technical audio checks
+are not exhaustive motion, lip-sync or perceptual audio verification. New generation/voice services
+and paid retries still require separate approval. New finishing assets record exact provenance,
+hidden processing roles and subscription/local-processing metadata; never relabel original footage.
+
 H3 Max image shots use `h3-max-image`: one approved pinned starting frame, eight seconds at
 768P with native audio, safety checking on and prompt expansion disabled. This is H3 Max, not
 Turbo; it is the selected dialogue model. Existing spending and reference-sharing approvals still apply.

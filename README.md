@@ -76,6 +76,7 @@ data live in the dedicated AWS account and must never be committed to GitHub.
 
 - [Panther CLI and agent usage](docs/cli.md)
 - [Local recording and player-attributed transcript tests](docs/local-audio.md)
+- [Local video production: continuity, sound, editing and delivery](docs/video-production.md)
 - [AWS platform architecture](docs/aws-platform-architecture-draft.md)
 - [AWS foundation runbook](docs/aws-foundation-runbook.md)
 - [Audio capture strategy](docs/adr/0001-audio-capture-strategy.md)
