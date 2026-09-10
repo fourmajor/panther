@@ -183,7 +183,9 @@ def test_standalone_comparison_does_not_invent_a_game_session(setup):
     value = manifest()
     value["sessionId"] = None
     assert v.prepare(value, setup)["approved"] is False
-    metadata = v.upload_metadata(value, "scene-veo", "endpoint", "request", "plan", "attempt", 150, "0"*64)
+    metadata = v.upload_metadata(
+        value, "scene-veo", "endpoint", "request", "plan", "attempt", 150, "0" * 64
+    )
     assert "sessionId" not in metadata
 
 
@@ -403,7 +405,8 @@ def test_unknown_pricing_units_block_inference(monkeypatch):
 
 
 @pytest.mark.parametrize("unit", ["seconds", "tokens", "1000 tokens"])
-def test_seedance_requires_exact_token_unit(monkeypatch, unit):
+@pytest.mark.parametrize("model", ["seedance-2.0", "seedance-2.0-image"])
+def test_seedance_requires_exact_token_unit(monkeypatch, unit, model):
     fal = object.__new__(v.Fal)
     monkeypatch.setattr(
         fal,
@@ -411,7 +414,7 @@ def test_seedance_requires_exact_token_unit(monkeypatch, unit):
         lambda *a, **k: {
             "prices": [
                 {
-                    "endpoint_id": v.PROFILES["seedance-2.0"]["endpoint"],
+                    "endpoint_id": v.PROFILES[model]["endpoint"],
                     "unit": unit,
                     "currency": "USD",
                     "unit_price": "0.014",
@@ -420,10 +423,64 @@ def test_seedance_requires_exact_token_unit(monkeypatch, unit):
         },
     )
     if unit == "1000 tokens":
-        assert fal.price("seedance-2.0") == Decimal("0.014")
+        assert fal.price(model) == Decimal("0.014")
     else:
         with pytest.raises(click.ClickException, match="billing units"):
-            fal.price("seedance-2.0")
+            fal.price(model)
+
+
+def test_seedance_image_fixed_payload_and_shared_guard(setup, tmp_path, monkeypatch):
+    m, path = image_manifest(tmp_path, monkeypatch)
+    m["sessionId"] = None
+    m["shots"][0]["model"] = "seedance-2.0-image"
+    setup.rate = Decimal("0.014")
+    quote = v.quote(setup, "seedance-2.0-image")
+    assert quote["estimatedTokens"] == 172800
+    assert quote["reserveCents"] == 304
+    plan = v.prepare(m, setup)["planId"]
+    with pytest.raises(click.ClickException, match="approv"):
+        v.submit(plan, "scene-veo", 1, "", setup)
+    assert not setup.posts
+    assert (
+        CliRunner()
+        .invoke(
+            main,
+            ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"],
+        )
+        .exit_code
+        == 0
+    )
+    original = path.read_bytes()
+    path.write_bytes(b"changed")
+    with pytest.raises(click.ClickException, match="changed"):
+        v.submit(plan, "scene-veo", 1, "", setup)
+    path.write_bytes(original)
+    setup.rate = Decimal("0.02")
+    with pytest.raises(click.ClickException, match="Pricing increased"):
+        v.submit(plan, "scene-veo", 1, "", setup)
+    setup.rate = Decimal("0.014")
+    with v.database() as db:
+        assert v.totals(db)["reservationCents"] == 0
+    attempt = v.submit(plan, "scene-veo", 1, "", setup)
+    assert attempt["reservedUsd"] == "3.04"
+    assert v.submit(plan, "scene-veo", 1, "", setup) == attempt
+    assert len(setup.posts) == 1
+    assert setup.posts[0][0] == v.QUEUE + "/bytedance/seedance-2.0/image-to-video"
+    assert setup.posts[0][1]["json"] == {
+        "prompt": "A fictional harbor at dusk.",
+        "duration": "8",
+        "resolution": "720p",
+        "aspect_ratio": "16:9",
+        "generate_audio": True,
+        "bitrate_mode": "standard",
+        "image_url": "data:image/png;base64," + base64.b64encode(original).decode(),
+    }
+    v.poll(attempt["attemptId"], setup)
+    with pytest.raises(click.ClickException, match="not allowed"):
+        v.submit(plan, "scene-veo", 2, "No extra attempt authorized", setup)
+    with v.database() as db:
+        assert v.totals(db)["reservedLifetimeUsd"] == "3.04"
+        assert "data:image" not in db.execute("SELECT content FROM attempts").fetchone()[0]
 
 
 def test_seedance_token_quote_fixed_payload_and_durable_budget(setup):

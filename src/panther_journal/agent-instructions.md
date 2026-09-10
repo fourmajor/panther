@@ -266,7 +266,8 @@ operation never replaces an existing profile; inspect `character show` after an 
 The page displays its portrait while no model is published. Model registration/publication follows
 the normal workflow below. Initializing a page does not assert new campaign canon or create a player.
 
-Image-anchored fal comparisons additionally support `veo-3.1-fast-image` and `kling-3-pro-image`.
+Image-anchored fal comparisons additionally support `veo-3.1-fast-image`, `kling-3-pro-image`,
+and `seedance-2.0-image` (standard, fixed 720p/eight seconds, token-based pricing).
 Read the trusted comparison runbook before using them. Each shot pins one same-game uploaded PNG
 via `image` with absolute private `path`, hex `sha256`, and stable `key` also in `sourceKeys`.
 Obtain permission to send those images to fal. These are explicit opt-in profiles; existing text-only

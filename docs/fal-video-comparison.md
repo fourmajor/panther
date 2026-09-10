@@ -72,6 +72,17 @@ Money is rounded upward to integer cents, with nonfinite/negative/unknown values
 
 ### Image-anchored comparisons
 
+`seedance-2.0-image` uses `bytedance/seedance-2.0/image-to-video`, with exactly one
+checksum-pinned starting PNG in `image_url`, explicit 16:9/720p/eight seconds, native audio and
+standard bitrate. No end frame, voice reference, auto duration, higher resolution or arbitrary
+arguments are accepted. It shares the image validation and existing lifetime ledger, without
+changing earlier plans. On 2026-09-10 its documented token formula and $0.014/1,000-token rate
+match the text adapter: a conservative $2.4272 estimate and $3.04 reservation per attempt.
+Submission checks live pricing again; this is not a provider-enforced spending cap. Obtain the
+same explicit model/reference-sharing approval as for the other image profiles.
+See [Seedance image schema](https://fal.ai/models/bytedance/seedance-2.0/image-to-video/api)
+and [settings/pricing](https://fal.ai/models/bytedance/seedance-2.0/image-to-video).
+
 The additional bounded profiles `veo-3.1-fast-image` and `kling-3-pro-image` use
 `fal-ai/veo3.1/fast/image-to-video` and `fal-ai/kling-video/v3/pro/image-to-video` respectively.
 They retain eight seconds, native synthetic audio, the same lifetime ledger, serialized submissions,
