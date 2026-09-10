@@ -41,17 +41,7 @@ def test_batch_stops_on_conflict_without_rewriting_expected_version(tmp_path, mo
     assert json.loads(report.read_text())["status"] == "interrupted-inspect-before-retry"
 
 
-def test_storage_copy_and_retirement_are_separate_explicit_operations(tmp_path, monkeypatch):
-    entry = {"key": "games/test/assets/a/original/a.png", "expectedVersionId": "one"}
-    plan = tmp_path / "plan.json"
-    plan.write_text(json.dumps({"schemaVersion": 1, "migrations": [entry]}))
-    calls = []
-    monkeypatch.setattr(cloud, "configuration", lambda: {})
-    monkeypatch.setattr(cloud, "api", lambda *a, **k: calls.append((a[2], k["json"])) or {"status": "ready"})
-    runner = CliRunner()
-    for number, options in enumerate([[], ["--apply"], ["--retire"], ["--retire", "--apply"]]):
-        result = runner.invoke(main, ["assets", "reorganize", str(plan), "--report", str(tmp_path / f"report-{number}.jsonl"), *options])
-        assert result.exit_code == 0, result.output
-    assert [v[1]["action"] for v in calls] == ["copy", "copy", "retire", "retire"]
-    assert [v[1]["dryRun"] for v in calls] == [True, False, True, False]
-    assert all(v[0] == "/asset-storage-migrations" for v in calls)
+def test_completed_storage_rollout_has_no_mutating_command():
+    result = CliRunner().invoke(main, ["assets", "reorganize", "--help"])
+    assert result.exit_code != 0
+    assert "No such command" in result.output

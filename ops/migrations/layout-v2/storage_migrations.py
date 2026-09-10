@@ -1,4 +1,8 @@
-"""Owner-only staged physical migration, dispatched by the serialized migration Lambda."""
+"""Historical layout-v2 migration engine. Not deployed or exposed by the current API.
+
+Kept with tests as migration evidence, not an alternate storage mode. Recovery or a future
+layout upgrade requires a new reviewed CDK/API migration and a freshly audited private plan.
+"""
 
 import base64
 from datetime import datetime, timezone

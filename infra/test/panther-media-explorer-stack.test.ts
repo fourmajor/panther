@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(storageMode = "original"): Template {
-  const app = new App({context: {assetStorageMode: storageMode}});
+function mediaExplorerTemplate(): Template {
+  const app = new App();
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     env: {
       account: "123456789012",
@@ -60,27 +60,23 @@ test("asset migrations are authenticated, serialized, conditional, and retain ob
   assert.equal(policies.length, 1);
   const statements = policies[0][1].Properties.PolicyDocument.Statement;
   const writes = statements.filter((s: any) => JSON.stringify(s.Action).includes("s3:PutObject"));
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 1);
   assert.equal(writes[0].Condition.StringEquals["s3:x-amz-metadata-directive"], "REPLACE");
   assert.ok(writes[0].Condition.StringLike["s3:x-amz-copy-source"]);
-  assert.equal(writes[1].Condition.StringEquals["s3:if-none-match"], "*");
   const deletes = statements.filter((s: any) => JSON.stringify(s.Action).includes("s3:Delete"));
-  assert.equal(deletes.length, 1);
-  assert.equal(deletes[0].Action, "s3:DeleteObject");
-  assert.equal(deletes[0].Condition.Null["s3:if-match"], "false");
+  assert.equal(deletes.length, 0);
+  assert.doesNotMatch(JSON.stringify(writes), /\/assets\/\*/);
   assert.doesNotMatch(JSON.stringify(statements), /s3:DeleteObjectVersion|s3:\*/);
-  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
-    RouteKey: "POST /asset-storage-migrations", AuthorizationType: "JWT",
-  });
+  assert.doesNotMatch(JSON.stringify(template.findResources("AWS::ApiGatewayV2::Route")), /asset-storage-migrations/);
 });
 
 test("indexed storage is consistent across readers and only permits create-only organized uploads", () => {
-  const template = mediaExplorerTemplate("indexed");
+  const template = mediaExplorerTemplate();
   const handlers = new Set(["index.handler", "asset_migrations.handler", "editorial_jobs.handler",
     "novel.handler", "model_jobs.handler", "playback_jobs.handler", "catalog.handler"]);
   for (const fn of Object.values(template.findResources("AWS::Lambda::Function"))) {
     if (handlers.has(fn.Properties.Handler) && fn.Properties.Environment?.Variables?.ASSET_BUCKET_NAME) {
-      assert.equal(fn.Properties.Environment.Variables.ASSET_STORAGE_MODE, "indexed");
+      assert.equal(fn.Properties.Environment.Variables.ASSET_STORAGE_MODE, undefined);
       handlers.delete(fn.Properties.Handler);
     }
   }
@@ -282,7 +278,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 39);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 38);
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

@@ -127,10 +127,17 @@ def test_catalog_rejects_unapproved_account(catalog):
         assert request(catalog, route, setup(), username="outsider")["statusCode"] == 403
 
 
-def test_legacy_assets_remain_discoverable_without_migration(catalog):
-    catalog.media.s3.put_object(
-        Bucket="test-assets", Key="games/older-game/assets/map/original/map.txt", Body=b"test"
-    )
+def put_indexed_fixture(catalog, key, body):
+    import base64
+    import hashlib
+    storage = catalog.media.s3
+    target = storage.reserve(key, "map", {"characterIds": [], "extra": {"relationshipRole": "finished"}},
+        base64.b64encode(hashlib.sha256(body).digest()).decode(), len(body), "2020-01-01T00:00:00+00:00")
+    storage.raw.put_object(Bucket="test-assets", Key=target, Body=body)
+
+
+def test_indexed_assets_are_discoverable_without_a_roster(catalog):
+    put_indexed_fixture(catalog, "games/older-game/assets/map/original/map.txt", b"test")
     result = json.loads(request(catalog, "GET /games")["body"])
     assert result["games"][0]["id"] == "older-game"
     assert result["games"][0]["legacy"] is True
@@ -175,7 +182,7 @@ def test_ruleset_changes_preserve_roster_and_refuse_stale_updates(catalog):
 
 def test_ruleset_adopts_legacy_header_without_touching_assets(catalog):
     key = "games/older-game/assets/map/original/map.txt"
-    catalog.media.s3.put_object(Bucket="test-assets", Key=key, Body=b"unchanged")
+    put_indexed_fixture(catalog, key, b"unchanged")
     body = {"gameId": "older-game", "ruleset": "Synthetic Hack", "expectedRuleset": None}
     reply = request(catalog, "POST /game/ruleset", body)
     assert reply["statusCode"] == 200, reply

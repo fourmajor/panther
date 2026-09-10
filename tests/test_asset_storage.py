@@ -17,6 +17,7 @@ import pytest
 @pytest.fixture
 def store(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "ops/migrations/layout-v2"))
     for name in ("asset_storage", "storage_layout", "storage_migrations"):
         monkeypatch.delitem(sys.modules, name, raising=False)
     storage = importlib.import_module("asset_storage")
@@ -176,3 +177,38 @@ def test_stale_version_and_destination_collision_never_overwrite(store, monkeypa
     with pytest.raises(ValueError, match="Destination collision"):
         migrations.handle(plan, {"sub": "owner"}, media)
     assert raw.get_object(Bucket=bucket, Key=target)["Body"].read() == b"unrelated"
+
+
+def test_current_metadata_edit_uses_indexed_payload_and_preserves_locator(store, monkeypatch):
+    storage, layout = store
+    blob = b"Immutable original recording"
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode()
+    details = metadata(sessionId="night-one")
+    target = storage.reserve(REF, "recording", details, digest, len(blob), DATE)
+    source = storage.raw.put_object(Bucket=storage.bucket, Key=target, Body=blob,
+        ChecksumAlgorithm="SHA256", ContentType="audio/flac", Metadata={
+            "kind": "recording", "uploaded-by": "original-person", "asset-created-at": DATE,
+            "panther": base64.b64encode(json.dumps(details).encode()).decode()})
+    media = SimpleNamespace(s3=storage, BUCKET_NAME=storage.bucket,
+        _valid_key=lambda key: isinstance(key, str) and key.startswith("games/") and ".." not in key,
+        _valid_slug=lambda value: isinstance(value, str) and layout.SLUG.fullmatch(value),
+        _asset_created_at=lambda head: __import__("datetime").datetime.fromisoformat(head["Metadata"]["asset-created-at"]),
+        _response=lambda status, body: {"statusCode": status, "body": body})
+    monkeypatch.setitem(sys.modules, "index", media)
+    monkeypatch.delitem(sys.modules, "asset_migrations", raising=False)
+    migrations = importlib.import_module("asset_migrations")
+    locator = storage.locator(REF)
+    request = {"schemaVersion": 1, "key": REF, "expectedVersionId": source["VersionId"],
+        "kind": "recording", "metadata": {**details, "title": "A clearer title"},
+        "reason": "Improve descriptive metadata", "dryRun": False}
+    result = migrations._handle({"body": json.dumps(request)}, {"sub": "owner"})
+    assert result["statusCode"] == 200, result
+    assert result["body"]["status"] == "migrated"
+    assert storage.get_object(Bucket=storage.bucket, Key=REF)["Body"].read() == blob
+    assert storage.raw.get_object(Bucket=storage.bucket, Key=target, VersionId=source["VersionId"])["Body"].read() == blob
+    assert storage.locator(REF) == locator
+    current = storage.head_object(Bucket=storage.bucket, Key=REF)
+    request["expectedVersionId"] = current["VersionId"]
+    request["metadata"]["sessionId"] = "night-two"
+    assert migrations._handle({"body": json.dumps(request)}, {"sub": "owner"})["statusCode"] == 400
+    assert storage.head_object(Bucket=storage.bucket, Key=REF)["VersionId"] == current["VersionId"]

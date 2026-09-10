@@ -91,8 +91,20 @@ class FakeS3:
         self.signed_requests.append((_operation, Params, ExpiresIn))
         return f"https://private.example/{Params['Key']}?expires={ExpiresIn}"
 
+    # Business-rule tests mock the storage facade. Its real indexed implementation is
+    # exercised separately by test_asset_storage and the real_storage upload test.
+    def resolve(self, key):
+        return key
 
-def load_media_api(monkeypatch):
+    def reference_for(self, key):
+        return key
+
+    def reserve(self, key, kind, metadata, *_args):
+        from storage_layout import location
+        return location(key, kind, metadata)
+
+
+def load_media_api(monkeypatch, *, real_storage=False):
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     fake_s3 = FakeS3()
     boto3 = types.ModuleType("boto3")
@@ -107,11 +119,14 @@ def load_media_api(monkeypatch):
     monkeypatch.setitem(sys.modules, "botocore.exceptions", botocore_exceptions)
     monkeypatch.setitem(sys.modules, "botocore.config", botocore_config)
     monkeypatch.setenv("ASSET_BUCKET_NAME", "private-test-bucket")
+    monkeypatch.delitem(sys.modules, "asset_storage", raising=False)
 
     module_path = Path(__file__).parents[1] / "infra" / "lambda" / "media-api" / "index.py"
     spec = importlib.util.spec_from_file_location("panther_media_api_test", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if not real_storage:
+        module.s3 = fake_s3
     return module, fake_s3
 
 
@@ -282,7 +297,7 @@ def test_real_signer_binds_length_checksum_and_conditional_write(monkeypatch):
         aws_secret_access_key="test-only-not-a-real-secret",
     )
     module, _ = load_media_api(monkeypatch)
-    module.s3 = signer
+    module.s3.generate_presigned_url = signer.generate_presigned_url
     result = response_body(module.handler(upload_event(), None))
     query = parse_qs(urlparse(result["url"]).query)
     signed = set(query["X-Amz-SignedHeaders"][0].split(";"))

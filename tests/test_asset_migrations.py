@@ -37,6 +37,8 @@ def service(monkeypatch):
             "reason": "Bring metadata to the current standard", "metadata": {
                 "schemaVersion": 1, "title": "Example model", "category": "reference", "characterIds": [],
                 "tags": [], "sourceKeys": [], "extra": {"relationshipRole": "finished"}}}
+    import storage_layout
+    s3.resolve = lambda _key: storage_layout.location(key, body["kind"], body["metadata"])
     return module, s3, body
 
 
@@ -116,9 +118,8 @@ def test_new_uploads_get_explicit_current_metadata(monkeypatch):
 
 def test_indexed_upload_is_routed_server_side_and_old_worker_reference_remains_stable(monkeypatch):
     from test_media_api import upload_event
-    monkeypatch.setenv("ASSET_STORAGE_MODE", "indexed")
     monkeypatch.delitem(sys.modules, "asset_storage", raising=False)
-    media, s3 = load_media_api(monkeypatch)
+    media, s3 = load_media_api(monkeypatch, real_storage=True)
     result = media.handler(upload_event(), None)
     assert result["statusCode"] == 200, result
     result = response_body(result)
@@ -129,9 +130,10 @@ def test_indexed_upload_is_routed_server_side_and_old_worker_reference_remains_s
     assert any("/catalog/assets/" in key for key in s3.objects)
 
 
-def test_prepare_mode_freezes_uploads_without_generating_signed_puts(monkeypatch):
+def test_retired_environment_flag_cannot_bypass_indexed_storage(monkeypatch):
     from test_media_api import upload_event
     monkeypatch.setenv("ASSET_STORAGE_MODE", "prepare")
-    media, s3 = load_media_api(monkeypatch)
-    assert media.handler(upload_event(), None)["statusCode"] == 503
-    assert not s3.signed_requests
+    media, s3 = load_media_api(monkeypatch, real_storage=True)
+    result = response_body(media.handler(upload_event(), None))
+    assert "/content/" in result["storageKey"]
+    assert s3.signed_requests[0][1]["Key"] == result["storageKey"]
