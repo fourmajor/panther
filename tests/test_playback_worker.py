@@ -6,6 +6,7 @@ import shutil
 
 import click
 import pytest
+import requests
 
 from panther_journal import recording as audio, playback_worker as worker
 from test_recording_resilience import source  # noqa: F401
@@ -52,6 +53,12 @@ def test_worker_builds_only_from_completed_pinned_cloud_set(source, tmp_path, mo
     assert not list(folder.glob("playback-*"))  # Uploading machine's local files are not used for output.
     with pytest.raises(click.ClickException, match="completed"):
         worker.process({}, {**claim, "job": {**claim["job"], "setStatus": "UPLOADING"}}, root)
+    def failed_download(*args):
+        raise requests.HTTPError("https://example.invalid/?X-Amz-Signature=DO-NOT-LOG")
+    monkeypatch.setattr(worker, "download", failed_download)
+    with pytest.raises(click.ClickException, match="download failed") as caught:
+        worker.process({}, claim, root)
+    assert "DO-NOT-LOG" not in str(caught.value) and caught.value.__suppress_context__
 
 
 def test_lost_lease_is_not_silently_ignored(monkeypatch):

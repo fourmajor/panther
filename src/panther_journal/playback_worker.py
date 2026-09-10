@@ -7,6 +7,7 @@ import threading
 import time
 
 import click
+import requests
 
 from panther_journal import cloud, recording as audio, recording_playback
 from panther_journal.audio_storage import lock
@@ -71,7 +72,11 @@ def process(config, claim, root):
             if ref["key"] != prefix + name or (folder / name).is_symlink():
                 raise click.ClickException("Invalid completed-set input path.")
             lease.check()
-            download(config, ref, folder / name)
+            try:
+                download(config, ref, folder / name)
+            except requests.RequestException:
+                # requests exceptions can contain a full credential-bearing signed URL.
+                raise click.ClickException("Playback input download failed; checkpoints retained for retry.") from None
         record = audio.verified(folder)
         if record.id != job["chunkSetId"] or record.gameId != job["gameId"]:
             raise click.ClickException("Completed set identity mismatch.")
