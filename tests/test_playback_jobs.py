@@ -118,10 +118,10 @@ def test_verified_output_finishes_via_durable_callback(playback, monkeypatch):
     source_sha = base64.b64decode(job["recording"]["sha256"]).hex()
     stem = job["recording"]["key"].replace("recording.json", "playback-v1-" + source_sha[:16])
     audio = b"synthetic encoded audio"
-    put(m, stem + ".m4a", audio, "audio/mp4")
+    put(m, stem + ".mp3", audio, "audio/mpeg")
     doc = {"entityType": "RecordingPlayback", "version": 1, "gameId": job["gameId"],
         "recordingId": job["chunkSetId"], "recordingKey": job["recording"]["key"],
-        "sourceManifestSha256": source_sha, "audioKey": stem + ".m4a", "size": len(audio),
+        "sourceManifestSha256": source_sha, "audioKey": stem + ".mp3", "size": len(audio),
         "audioSha256": hashlib.sha256(audio).hexdigest(),
         "sourceKeys": [job["recording"]["key"], *[r["key"] for r in job["chunks"]]]}
     put(m, stem + ".json", json.dumps({**doc, "sourceKeys": []}).encode(), "application/json")
@@ -129,7 +129,7 @@ def test_verified_output_finishes_via_durable_callback(playback, monkeypatch):
     put(m, stem + ".json", json.dumps(doc).encode(), "application/json")
     old = m.read(job["jobId"])
     result = unpack(request(m, "POST /recording-playback-jobs/complete", body))
-    assert result["status"] == "DONE" and result["output"]["audio"]["key"] == stem + ".m4a"
+    assert result["status"] == "DONE" and result["output"]["audio"]["key"] == stem + ".mp3"
     assert unpack(request(m, "POST /recording-playback-jobs/complete", body)) == result
     states = Mock()
     monkeypatch.setattr(m, "states", states)

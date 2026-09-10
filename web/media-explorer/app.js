@@ -1243,7 +1243,7 @@ function renderStructuredAsset(asset, epoch) {
         if (!current()) return;
         audio.src = result.url;
         attachMediaRecovery(audio, copy.audioKey, current);
-        status.textContent = `Continuous playback · ${timestamp(copy.durationSeconds)} · AAC listening copy. No file switches at part boundaries.`;
+        status.textContent = `Continuous playback · ${timestamp(copy.durationSeconds)} · MP3 listening copy. No file switches at part boundaries.`;
         doc.parts.forEach((part,index) => {
           if (!Number.isFinite(part.start) || part.start < 0 || part.start >= copy.durationSeconds) return;
           const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button";

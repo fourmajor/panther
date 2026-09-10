@@ -127,13 +127,13 @@ def test_playback_projection_requires_exact_same_recording_identity(library):
     doc = {"entityType": "RecordingPlayback", "schemaVersion": 1, "version": 1,
            "gameId": "example-game", "recordingId": "recording-a",
            "sourceManifestSha256": "a" * 64, "durationSeconds": 60,
-           "audioKey": prefix + "playback-v1-" + "a" * 16 + ".m4a",
+           "audioKey": prefix + "playback-v1-" + "a" * 16 + ".mp3",
            "recordingKey": prefix + "recording.json", "sourceKeys": [prefix + "recording.json"]}
     key = add(s3, "recording-a/original/playback-v1-" + "a" * 16 + ".json", "recording-playback-manifest", doc)
     item = response_body(call(library, "/asset-document", key=key))
     assert item["playback"]["audioKey"] == doc["audioKey"]
     assert item["sourceKeys"] == [doc["recordingKey"]]
-    for field, bad in [("audioKey", "games/other-game/assets/a/original/a.m4a"),
+    for field, bad in [("audioKey", "games/other-game/assets/a/original/a.mp3"),
                        ("recordingId", "other"), ("durationSeconds", -1), ("version", 2)]:
         changed = {**doc, field: bad}
         s3.objects[key]["Body"] = json.dumps(changed).encode()

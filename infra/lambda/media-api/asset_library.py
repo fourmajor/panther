@@ -79,7 +79,7 @@ def describe(media, game, key, *, include_document=False):
                         and isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
                         and key == prefix + f"playback-v1-{digest[:16]}.json"
                         and doc.get("recordingKey") == prefix + "recording.json"
-                        and doc.get("audioKey") == prefix + f"playback-v1-{digest[:16]}.m4a"
+                        and doc.get("audioKey") == prefix + f"playback-v1-{digest[:16]}.mp3"
                         and type(duration) in (int, float) and math.isfinite(duration) and duration > 0):
                     result["playback"] = {field: doc[field] for field in
                                           ("recordingKey", "audioKey", "sourceManifestSha256", "durationSeconds")}

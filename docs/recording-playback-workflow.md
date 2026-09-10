@@ -1,7 +1,7 @@
 # Completed recording set → continuous listening copy
 
 Chunks are a recovery/storage detail, not interruptions in browser playback. Audio uses one
-AAC-in-M4A listening file and one seekable timeline. Part buttons seek within that file. Lossless
+MP3 listening file and one seekable timeline. Part buttons seek within that file. Lossless
 FLAC chunks remain unchanged for transcription and future processing; the listening copy is lossy.
 
 ## Completion contract
@@ -32,17 +32,17 @@ The separate playback state machine queues `AssembleAndVerifyOnLaptop` and waits
 The owner laptop claims work with Panther authentication, a ten-minute lease and one-minute
 heartbeats. It downloads/checksum-verifies the pinned cloud inputs, decodes every FLAC in order,
 streams the samples into **one persistent encoder**, verifies sample counts and output format/duration,
-and publishes M4A plus typed `RecordingPlayback` provenance through Panther. The broker checks hashes
+and publishes MP3 plus typed `RecordingPlayback` provenance through Panther. The broker checks hashes
 and exact lineage before accepting DONE. Refresh Audio to discover the new listening copy; browsing
 starts no work. Missing playback shows a preparation notice, never a gapped chunk-playlist fallback.
 
-The output preserves original sample rate: supported rates are 32,000, 44,100, 48,000 and 96,000 Hz,
-with mono 128 kbps or stereo 192 kbps AAC and faststart MP4 indexing. Mismatched formats, changed
+The output preserves original sample rate: supported rates are 32,000, 44,100 and 48,000 Hz,
+with mono 128 kbps or stereo 192 kbps MP3 and MP3 seek/duration indexing. Mismatched formats, changed
 sources and incorrect sample counts fail visibly. No resampling, speech synthesis, silence padding,
 denoising or transcript changes occur. Assembly cannot recover missing captured audio.
 
 Provenance includes source manifest/parts, exact `sourceKeys`, sample count, decoded PCM hash, part
-offsets, codec, size, output hash and capture-warning text. The M4A's compact `sourceKeys` points to
+offsets, codec, size, output hash and capture-warning text. The MP3's compact `sourceKeys` points to
 that JSON, which retains the full input list. Both files use immutable
 `playback-v1-MANIFEST_HASH_PREFIX` names under the existing recording asset identity.
 
@@ -99,6 +99,10 @@ under new identities. Originals remain downloadable when playback is not yet rea
 
 Tests cover completeness, missing/changed chunks, duplicate commits/delivery, authentication,
 leases, output lineage and sample-preserving assembly. Self-hosted Docker browser tests decode
-a synthetic continuous AAC fixture, cross a part boundary without changing the media URL, seek,
-recover expired links and stop on navigation. The committed M4A is a generated 1.2-second 440 Hz
+a synthetic continuous MP3 fixture, cross a part boundary without changing the media URL, seek,
+recover expired links and stop on navigation. The committed MP3 is a generated 1.2-second 440 Hz
 tone, not game audio.
+
+The initial AAC candidate failed actual Chromium playback in the isolated runner. MP3 was selected
+instead and tested without substituting a different codec fixture. Chromium documents MP3 support
+separately from Chrome-only AAC: [codec support](https://www.chromium.org/audio-video/).

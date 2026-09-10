@@ -7,12 +7,12 @@ const headers={'access-control-allow-origin':origin};
 const prefix='games/test-game/assets/';
 const part=prefix+'recording-a/original/part-0000.flac', part2=prefix+'recording-a/original/part-0001.flac';
 const recording=prefix+'recording-a/original/recording.json', raw=prefix+'recording-a/original/raw.json';
-const continuous=prefix+'recording-a/original/playback-v1-aaaaaaaaaaaaaaaa.m4a';
-// synthetic-continuous.m4a is a 1.2-second 440 Hz generated tone, AAC 64 kbps, faststart.
-const playbackManifest=continuous.replace('.m4a','.json');
+const continuous=prefix+'recording-a/original/playback-v1-aaaaaaaaaaaaaaaa.mp3';
+// synthetic-continuous.mp3 is a 1.2-second 440 Hz generated tone, MP3 64 kbps, seek header.
+const playbackManifest=continuous.replace('.mp3','.json');
 const corrected=prefix+'corrected-a/original/corrected.json', video=prefix+'video-a/original/take.mp4';
 // Synthetic quarter-second 440 Hz FLAC; no private recording or user credentials.
-const flac=Buffer.from('ZkxhQwAAACICQAJAAAAAAASVAfQA8AAAAAAAAAAAAAAAAAAAAAAAAAAAhAAALAwAAABMYXZmNjEuNy4xMDABAAAAFAAAAGVuY29kZXI9TGF2ZjYxLjcuMTAw//gkCADKTgAABWsKMg3FD7YPzQ4FCpTmMQqH2KXbLDk9DhuCxn3GhDapRYRihDCNVLEYlostLLqSkWUUqTCMWULJSVZWWlFIpYjKrEwjBaKSlkYTTBGFJKJhOKyyogQknNClMmBBAIhSIWckKQocpphEApJCIEEAgIacwoBBAwICAQTygQQJSFCkoXkyFDDORAIIFDAoTJ0NCkxKRSxGVWJhGC0UlLIwmmCMKSUTCcVllRZJKlZa1JQjCZaZcqSLRZUtWomFpImIwhlapRYRihDCNVLEAIEpChSULyZChhnIgEEChgUJk6GhSYZDKBBD0CIBBACkMmUIIBEiAEEAyTCIBGGhQ4UJJzQpTJgQQCIUiFmAl3X/+CQIAc1O8YfwE/CB8sX2mfuJAQEGWuYytIU6h1uuKGk+5eIG/k6AAaUlMIgHDCIEQCCSJwwoEEDCCARmhQIgQiQIhkicyZAoZnIgEEMwoTJ0NCkMOGUCCSlAiBBAOBkpQiARKAQQJkKEQIoGIFOBkzmIUzJgQQCmULOSFIUNKSmEQDhhECIBBJE4YUCCBhBAIzQoEQIRIEQyROZMgUMzkQCCGYUJk6GhSGHDKBBJSgRAggHAyUoRAIlAIIEyFCIEUDECnAyZzEKZkwIIBTKFnJCkKGlJTCIBwwiBEAgkicMKBBAwggEZoUCIEIkCIZInMmQKGZyIBBDMKEydDQpDDhlAgkpQIgQQDgZKUIgESgEECZChECKBiBTgZM5AZPj/+CQIAsRODFQIJQMA/YD4TPQB8SHwA+Yww4pGnCc+GUItwUNlfWaEATAggEQpELMkhSU9JmEQCkyIEEAgIaTMKAQQKBAQCCZhQCIEpClNMmSSFClLIgEEChgUJnocMkhzKBEypQmEYLRUpZGEyYIwpSyMTisopFKlVZZRRKEYTLTLlJItLVWlKJhaUmIwhlaUosIxYhhGpRYTEtFoE0yZJIUKUsiAQQKGBQmehwySHMoEEOYEQCCAFIcyhBAIhEAIIBmUIIEYaGGQzn0KGGEwIIBEKRCzJIUlFVaUomFpSYjCGVpSiwjFiGEalFhMS0WtWpKSSLLWuTCMWULJSqyopJFSliMqUJhGC0VKWRhMmCMKUH0G//h0CAMBDxBOA/oI/QzxD1wP9w6vC6kHQ+WaXbqQXRevWFKfdMDg/0gALZZUKJJVTJrSIoIwTKmTlpIoiytOnRMKQkTEYQZRqihQRhRDCOvTCMIsQstJrqSSFiir0YQxaQsSiq15aKEkJLEanYmEYFoKS00YRrBGEkRQjCPJssqFEkqpk1pEUEYJlTJy0kURZWnTomFIQPxi','base64');
+const flac=Buffer.from('ZkxhQwAMP3ICQAJAAAAAAASVAfQA8AAAAAAAAAAAAAAAAAAAAAAAAAAAhAAALAwAAABMYXZmNjEuNy4xMDABAAAAFAAAAGVuY29kZXI9TGF2ZjYxLjcuMTAw//gkCADKTgAABWsKMg3FD7YPzQ4FCpTmMQqH2KXbLDk9DhuCxn3GhDapRYRihDCNVLEYlostLLqSkWUUqTCMWULJSVZWWlFIpYjKrEwjBaKSlkYTTBGFJKJhOKyyogQknNClMmBBAIhSIWckKQocpphEApJCIEEAgIacwoBBAwICAQTygQQJSFCkoXkyFDDORAIIFDAoTJ0NCkxKRSxGVWJhGC0UlLIwmmCMKSUTCcVllRZJKlZa1JQjCZaZcqSLRZUtWomFpImIwhlapRYRihDCNVLEAIEpChSULyZChhnIgEEChgUJk6GhSYZDKBBD0CIBBACkMmUIIBEiAEEAyTCIBGGhQ4UJJzQpTJgQQCIUiFmAl3X/+CQIAc1O8YfwE/CB8sX2mfuJAQEGWuYytIU6h1uuKGk+5eIG/k6AAaUlMIgHDCIEQCCSJwwoEEDCCARmhQIgQiQIhkicyZAoZnIgEEMwoTJ0NCkMOGUCCSlAiBBAOBkpQiARKAQQJkKEQIoGIFOBkzmIUzJgQQCmULOSFIUNKSmEQDhhECIBBJE4YUCCBhBAIzQoEQIRIEQyROZMgUMzkQCCGYUJk6GhSGHDKBBJSgRAggHAyUoRAIlAIIEyFCIEUDECnAyZzEKZkwIIBTKFnJCkKGlJTCIBwwiBEAgkicMKBBAwggEZoUCIEIkCIZInMmQKGZyIBBDMKEydDQpDDhlAgkpQIgQQDgZKUIgESgEECZChECKBiBTgZM5AZPj/+CQIAsRODFQIJQMA/YD4TPQB8SHwA+Yww4pGnCc+GUItwUNlfWaEATAggEQpELMkhSU9JmEQCkyIEEAgIaTMKAQQKBAQCCZhQCIEpClNMmSSFClLIgEEChgUJnocMkhzKBEypQmEYLRUpZGEyYIwpSyMTisopFKlVZZRRKEYTLTLlJItLVWlKJhaUmIwhlaUosIxYhhGpRYTEtFoE0yZJIUKUsiAQQKGBQmehwySHMoEEOYEQCCAFIcyhBAIhEAIIBmUIIEYaGGQzn0KGGEwIIBEKRCzJIUlFVaUomFpSYjCGVpSiwjFiGEalFhMS0WtWpKSSLLWuTCMWULJSqyopJFSliMqUJhGC0VKWRhMmCMKUH0G//h0CAMBDxBOA/oI/QzxD1wP9w6vC6kHQ+WaXbqQXRevWFKfdMDg/0gALZZUKJJVTJrSIoIwTKmTlpIoiytOnRMKQkTEYQZRqihQRhRDCOvTCMIsQstJrqSSFiir0YQxaQsSiq15aKEkJLEanYmEYFoKS00YRrBGEkRQjCPJssqFEkqpk1pEUEYJlTJy0kURZWnTomFIQPxi','base64');
 const assets=[
   [part,'recording',[], 'audio/flac'],[part2,'recording',[],'audio/flac'],
   [recording,'recording-manifest',[part,part2],'application/json'],
@@ -21,7 +21,7 @@ const assets=[
   [raw.replace('.json','.md'),'raw-transcript',[recording],'text/markdown'],
   [corrected,'corrected-transcript',[raw],'application/json'],
   [video,'video-comparison',[corrected],'video/mp4'],
-  [continuous,'recording-playback',[playbackManifest],'audio/mp4'],
+  [continuous,'recording-playback',[playbackManifest],'audio/mpeg'],
   [playbackManifest,'recording-playback-manifest',[recording,part,part2],'application/json'],
 ].map(([key,kind,sourceKeys,contentType])=>({key,kind,sourceKeys,contentType,recording:key===recording?{partCount:2,status:'interrupted'}:undefined,name:key.split('/').at(-1),size:100,lastModified:'2026-01-01T12:00:00Z',metadata:{title:kind,sessionId:'session-one'}}));
 assets.find(a=>a.key===playbackManifest).playback={recordingKey:recording,audioKey:continuous,durationSeconds:1.2,sourceManifestSha256:'a'.repeat(64)};
@@ -35,7 +35,7 @@ async function fixture(page) {
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   await page.route('https://audio.example/**',route=>route.fulfill({body:flac,contentType:'audio/flac',headers:{'accept-ranges':'bytes'}}));
-  await page.route('https://audio.example/playback-*.m4a',route=>route.fulfill({body:fs.readFileSync(path.join(__dirname,'synthetic-continuous.m4a')),contentType:'audio/mp4',headers:{'accept-ranges':'bytes'}}));
+  await page.route('https://audio.example/playback-*.mp3',route=>route.fulfill({body:fs.readFileSync(path.join(__dirname,'synthetic-continuous.mp3')),contentType:'audio/mpeg',headers:{'accept-ranges':'bytes'}}));
   await page.route(`${api}/**`,route=>{
     const u=new URL(route.request().url()), game=u.searchParams.get('gameId'), key=u.searchParams.get('key');
     const games=[{id:'test-game',name:'Test Game',purpose:'test'},{id:'other-game',name:'Other Game',purpose:'campaign'}];
@@ -158,7 +158,7 @@ test('catalog errors are recoverable without silently claiming empty results',as
   await expect(page.locator('.session-card')).toHaveCount(2);
 });
 
-test('one continuous AAC track crosses part boundaries and seeks without changing files',async({page})=>{
+test('one continuous MP3 track crosses part boundaries and seeks without changing files',async({page})=>{
   const requested=[];
   page.on('request',r=>{if(r.url().startsWith(api+'/object-url')) requested.push(new URL(r.url()).searchParams.get('key'));});
   await fixture(page); await page.goto(`${origin}/games/test-game/audio`);

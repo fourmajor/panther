@@ -166,7 +166,7 @@ def update(body, actor, operation):
         source_sha = base64.b64decode(job["recording"]["sha256"]).hex()
         prefix = job["recording"]["key"].removesuffix("recording.json")
         stem = prefix + "playback-v1-" + source_sha[:16]
-        output = {"manifest": reference(stem + ".json"), "audio": reference(stem + ".m4a")}
+        output = {"manifest": reference(stem + ".json"), "audio": reference(stem + ".mp3")}
         doc = document(output["manifest"], limit=1_000_000)
         if (doc.get("entityType") != "RecordingPlayback" or doc.get("version") != 1
                 or doc.get("gameId") != job["gameId"] or doc.get("recordingId") != job["chunkSetId"]

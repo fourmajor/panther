@@ -29,15 +29,15 @@ def test_continuous_copy_uses_every_sample_once_and_preserves_sources(source, mo
     assert doc["inputPcmSha256"] == hashlib.sha256(pcm).hexdigest()
     assert doc["durationSeconds"] == pytest.approx(1.2)
     assert [m["start"] for m in doc["partMarkers"]] == [0, 0.6]
-    assert doc["lossless"] is False and doc["codec"] == "aac"
+    assert doc["lossless"] is False and doc["codec"] == "mp3"
     assert len(doc["sourceKeys"]) == 3
     assert "capture" in doc["captureWarning"]
     assert [audio.digest(folder / p.file) for p in record.parts] == original_hashes
     assert audio.verified(folder) == record
-    # Full derivative decodes, has one timeline, and puts MP4's seek index before media bytes.
+    # Full derivative decodes, has one timeline, and has an MP3 seek/duration header.
     subprocess.run(["ffmpeg", "-v", "error", "-i", str(target), "-f", "null", "-"], check=True)
     body = target.read_bytes()
-    assert body.index(b"moov") < body.index(b"mdat")
+    assert b"Info" in body[:2048] or b"Xing" in body[:2048]
     monkeypatch.setattr(playback.subprocess, "Popen", lambda *a, **k: pytest.fail("must reuse verified existing copy"))
     assert playback.build(folder) == (target, manifest, doc)
 
@@ -61,8 +61,8 @@ def test_sample_count_and_format_mismatches_do_not_publish(source):  # noqa: F81
     (folder / "recording.json").write_text(json.dumps(changed))
     with pytest.raises(click.ClickException, match="sample count"):
         playback.build(folder)
-    assert not list(folder.glob("playback-*.m4a"))
-    assert not list(folder.glob(".playback-*.m4a"))
+    assert not list(folder.glob("playback-*.mp3"))
+    assert not list(folder.glob(".playback-*.mp3"))
     changed = record.model_dump()
     changed["parts"][1]["sampleRate"] = 44100
     (folder / "recording.json").write_text(json.dumps(changed))

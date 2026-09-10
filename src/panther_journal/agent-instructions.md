@@ -75,7 +75,7 @@ discard the complete lineage. Existing recording manifests link their ordered pa
 documents retain their actual stage inputs. The web catalog reads these explicit fields and scopes
 all links to the selected game. Missing or unreadable historical provenance is labeled incomplete.
 
-The Audio section plays recordings continuously through a single AAC-in-M4A listening copy,
+The Audio section plays recordings continuously through a single MP3 listening copy,
 not a playlist that switches FLAC files at chunk boundaries. Lossless parts remain the sources. The
 Transcripts section lists raw and corrected/edited versions separately. Structured readers preserve
 player attribution, timestamps, capture warnings, correction evidence and uncertainty; they never
@@ -163,7 +163,7 @@ Never tag an active recording or its intermediate checkpoints complete.
 
 That completed-set commit, not individual uploads or quiet time, automatically starts a separate
 Step Functions playback workflow. The laptop downloads the pinned cloud inputs, verifies and joins
-decoded samples into one AAC-in-M4A file, then publishes kind `recording-playback` and its
+decoded samples into one MP3 file, then publishes kind `recording-playback` and its
 `recording-playback-manifest` provenance. Keep lossless originals. The lossy listening copy must
 never become transcription input or hide capture warnings. Assembly does not add silence or repair
 missing captured audio. No AI, paid inference or always-on cloud compute is used.

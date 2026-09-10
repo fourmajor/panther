@@ -39,7 +39,7 @@ If the asset catalog is unavailable, the story remains readable with a visible r
 
 Choose a game, then **Audio** or **Transcripts**. Both sections use existing private immutable
 assets; no conversion, generation, transcription or new workflow is started by browsing.
-Audio opens one continuous AAC-in-M4A listening derivative produced by the completed-chunk-set
+Audio opens one continuous MP3 listening derivative produced by the completed-chunk-set
 workflow. It has one source and timeline; part buttons seek within it instead of switching files.
 Playback stops on navigation. Expired-link recovery restores the position in the same listening
 file. Original lossless FLAC chunks remain unchanged under Inputs for download and reprocessing.

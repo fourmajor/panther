@@ -26,7 +26,7 @@ def build(folder):
         record = audio.verified(folder)
         source_hash = audio.digest(folder / "recording.json")
         name = f"playback-v1-{source_hash[:16]}"
-        target, manifest = folder / f"{name}.m4a", folder / f"{name}.json"
+        target, manifest = folder / f"{name}.mp3", folder / f"{name}.json"
         if manifest.exists():
             doc = json.loads(manifest.read_text())
             if (manifest.is_symlink() or target.is_symlink() or not target.is_file()
@@ -36,18 +36,18 @@ def build(folder):
                 raise click.ClickException("Saved playback changed or is missing; refusing overwrite.")
             return target, manifest, doc
         first = record.parts[0]
-        if first.channels not in {1, 2} or first.sampleRate not in {32000, 44100, 48000, 96000}:
-            raise click.ClickException("Continuous playback currently supports mono/stereo 32–96 kHz recordings; originals retained.")
+        if first.channels not in {1, 2} or first.sampleRate not in {32000, 44100, 48000}:
+            raise click.ClickException("Continuous playback currently supports mono/stereo 32/44.1/48 kHz recordings; originals retained.")
         if any((p.channels, p.sampleRate) != (first.channels, first.sampleRate) for p in record.parts):
             raise click.ClickException("Recording formats differ between parts; refusing implicit mixing/resampling.")
         if target.exists():
             raise click.ClickException("Playback exists without its manifest; retain it for recovery, do not overwrite.")
-        temporary = folder / f".playback-{uuid.uuid4().hex}.m4a"
+        temporary = folder / f".playback-{uuid.uuid4().hex}.mp3"
         command = [audio.executable("ffmpeg"), "-v", "error", "-xerror", "-nostdin",
                    "-f", "s32le", "-ar", str(first.sampleRate), "-ac", str(first.channels),
-                   "-i", "pipe:0", "-map_metadata", "-1", "-c:a", "aac", "-b:a",
-                   "128k" if first.channels == 1 else "192k", "-movflags", "+faststart",
-                   "-f", "ipod", str(temporary)]
+                   "-i", "pipe:0", "-map_metadata", "-1", "-c:a", "libmp3lame", "-b:a",
+                   "128k" if first.channels == 1 else "192k", "-write_xing", "1",
+                   "-f", "mp3", str(temporary)]
         pcm_hash, total_samples, markers = hashlib.sha256(), 0, []
         try:
             with tempfile.TemporaryFile() as errors:
@@ -101,7 +101,7 @@ def build(folder):
                                    check=True, capture_output=True, text=True, timeout=60)
             encoded = json.loads(check.stdout)
             duration = total_samples / first.sampleRate
-            if (len(encoded["streams"]) != 1 or encoded["streams"][0]["codec_name"] != "aac"
+            if (len(encoded["streams"]) != 1 or encoded["streams"][0]["codec_name"] != "mp3"
                     or abs(float(encoded["format"]["duration"]) - duration) > 0.1):
                 raise click.ClickException("Encoded playback duration/format is invalid; originals retained.")
             prefix = f"games/{record.gameId}/assets/{record.id}/original/"
@@ -115,7 +115,7 @@ def build(folder):
                 "audioSha256": audio.digest(temporary), "size": temporary.stat().st_size,
                 "durationSeconds": duration, "sampleRate": first.sampleRate, "channels": first.channels,
                 "inputSamples": total_samples, "inputPcmSha256": pcm_hash.hexdigest(),
-                "codec": "aac", "container": "m4a", "lossless": False,
+                "codec": "mp3", "container": "mp3", "lossless": False,
                 "purpose": "continuous-listening-copy", "recordingStatus": record.status,
                 "captureWarning": "Assembly does not repair missing captured audio. Original parts and capture reports remain authoritative.",
             }
