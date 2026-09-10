@@ -404,6 +404,77 @@ def test_unknown_pricing_units_block_inference(monkeypatch):
         fal.price("veo-3.1-fast")
 
 
+@pytest.mark.parametrize("error_type", ["content_policy_violation", "no_media_generated"])
+def test_completed_typed_rejection_preserves_reservation(setup, monkeypatch, error_type):
+    from types import SimpleNamespace
+
+    plan = approved(setup)
+    attempt = v.submit(plan, "scene-veo", 1, "", setup)
+    fal = object.__new__(v.Fal)
+    calls = []
+
+    def request(method, url, **kwargs):
+        calls.append((method, url))
+        if url.endswith("/status"):
+            return SimpleNamespace(status_code=200, json=lambda: {"status": "COMPLETED"})
+        return SimpleNamespace(
+            status_code=422,
+            json=lambda: {
+                "detail": [{"type": error_type, "input": "SYNTHETIC-SECRET", "msg": "PRIVATE"}]
+            },
+        )
+
+    fal.session = SimpleNamespace(request=request)
+    result = v.poll(attempt["attemptId"], fal)
+    assert result["state"] == "FAILED"
+    assert result["providerErrorTypes"] == [error_type]
+    assert all(method == "GET" for method, _ in calls)
+    assert v.poll(attempt["attemptId"], fal) == result
+    assert len(calls) == 2
+    with v.database() as db:
+        assert v.totals(db)["reservationCents"] == 150
+        content = db.execute("SELECT content FROM attempts").fetchone()[0]
+        assert "SECRET" not in content and "PRIVATE" not in content
+
+
+@pytest.mark.parametrize(
+    "details", [[], None, [{"type": "unknown"}], [{"msg": "PRIVATE"}], [{"type": []}]]
+)
+def test_unknown_result_422_remains_blocked(setup, details):
+    from types import SimpleNamespace
+
+    plan = approved(setup)
+    attempt = v.submit(plan, "scene-veo", 1, "", setup)
+    fal = object.__new__(v.Fal)
+    fal.session = SimpleNamespace(
+        request=lambda method, url, **kw: (
+            SimpleNamespace(status_code=200, json=lambda: {"status": "COMPLETED"})
+            if url.endswith("/status")
+            else SimpleNamespace(status_code=422, json=lambda: {"detail": details})
+        )
+    )
+    with pytest.raises(click.ClickException, match="422"):
+        v.poll(attempt["attemptId"], fal)
+    with v.database() as db:
+        assert db.execute("SELECT state FROM attempts").fetchone()[0] == "SUBMITTED"
+        assert v.totals(db)["reservationCents"] == 150
+
+
+def test_post_rejection_never_gets_terminal_result_treatment():
+    from types import SimpleNamespace
+
+    fal = object.__new__(v.Fal)
+    fal.session = SimpleNamespace(
+        request=lambda *a, **kw: SimpleNamespace(
+            status_code=422, json=lambda: {"detail": [{"type": "content_policy_violation"}]}
+        )
+    )
+    with pytest.raises(click.ClickException, match="422"):
+        fal.request(
+            "POST", v.QUEUE + "/bytedance/seedance-2.0/image-to-video", completed_result=True
+        )
+
+
 @pytest.mark.parametrize("unit", ["seconds", "tokens", "1000 tokens"])
 @pytest.mark.parametrize("model", ["seedance-2.0", "seedance-2.0-image"])
 def test_seedance_requires_exact_token_unit(monkeypatch, unit, model):

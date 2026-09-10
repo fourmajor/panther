@@ -151,6 +151,11 @@ does not imply cancellation after processing starts.
 
 ## Recovery and honest cost accounting
 
+- A verified queue `COMPLETED` result may return HTTP 422 with typed
+  `content_policy_violation` or `no_media_generated` errors. Poll records these as `FAILED`,
+  retaining the entire reservation and safe error type only. Unknown/malformed errors and
+  failed submissions remain blocked, not assumed settled. This does not authorize a retry,
+  altered-input workaround or a refund. See [fal model errors](https://fal.ai/docs/documentation/model-apis/errors).
 - `SUBMITTING` after a process crash or `UNKNOWN` after a lost/invalid response retains the full
   reservation and blocks all new requests. Check fal request history/support; no automatic
   reconciliation or reservation release is implemented. Do not create a new plan to bypass this.
