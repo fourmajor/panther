@@ -136,6 +136,15 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
+H3 Max comparisons use `h3-max-image`: one approved pinned starting frame, eight seconds at
+768P with native audio, safety checking on and prompt expansion disabled. This is H3 Max, not
+Turbo, and is only for owner-approved experiments; Veo/Kling remain the production choices.
+The guard reserves the regular rate plus headroom, even during promotional pricing.
+For a lost result, `panther video reconcile-unavailable ATTEMPT_ID` verifies the original account,
+live completion, exact request identity, result HTTP 404 and a matching zero-charge billing event.
+It retains the full reservation and audit trail, records outcome unknown/output unavailable, and
+forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
+
 Standing production selection policy: default to **Veo 3.1 Fast through fal**, explicitly for
 dialogue and city/urban establishing shots. Use **Kling 3 Pro through fal for battle/action**.
 Select per shot: action in a city uses Kling; dialogue close-ups between combat beats use Veo.

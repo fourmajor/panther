@@ -74,6 +74,8 @@ def test_instructions_ship_with_cli():
     assert "without direct AWS access" in result.output
     assert "Infrastructure deployment remains a separate CDK/AWS administrative operation" in result.output
     assert "panther video --help" in result.output
+    assert "H3 Max comparisons use `h3-max-image`" in result.output
+    assert "panther video reconcile-unavailable ATTEMPT_ID" in result.output
     assert "default to **Veo 3.1 Fast through fal**" in result.output
     assert "dialogue and city/urban establishing shots" in result.output
     assert "Kling 3 Pro through fal for battle/action" in result.output
