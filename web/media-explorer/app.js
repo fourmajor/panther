@@ -992,10 +992,10 @@ async function loadLibrary(section, epoch) {
   try {
     const assets = await allAssets(gameId);
     if (!current()) return;
-    const manifests = new Set(assets.filter(a => a.kind === "recording-manifest").map(a => a.key.split("/")[3]));
+    const manifests = new Set(assets.filter(a => a.recording?.partCount > 0).map(a => a.key.split("/")[3]));
     const keys = new Set(assets.map(a => a.key));
     const selected = assets.filter(a => section === "audio"
-      ? a.kind === "recording-manifest" || ((a.contentType.startsWith("audio/") || /\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name)) && !manifests.has(a.key.split("/")[3]))
+      ? a.recording?.partCount > 0 || ((a.contentType.startsWith("audio/") || /\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name)) && !manifests.has(a.key.split("/")[3]))
       : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
         && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));

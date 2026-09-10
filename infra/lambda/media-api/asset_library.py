@@ -64,6 +64,7 @@ def describe(media, game, key, *, include_document=False):
             if isinstance(inputs, dict):
                 sources.extend(v.get("key") for v in inputs.values() if isinstance(v, dict))
             if doc.get("entityType") == "Recording" and isinstance(doc.get("parts"), list):
+                result["recording"] = {"partCount": len(doc["parts"]), "status": doc.get("status", "unknown")}
                 for part in doc["parts"]:
                     if isinstance(part, dict) and isinstance(part.get("file"), str) and "/" not in part["file"]:
                         sources.append(key.rsplit("/", 1)[0] + "/" + part["file"])

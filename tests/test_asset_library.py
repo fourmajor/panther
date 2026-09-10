@@ -62,6 +62,7 @@ def test_explicit_recording_raw_corrected_and_stage_links(library):
     recording = add(s3, "recording-a/original/recording.json", "recording-manifest", {
         "entityType": "Recording", "parts": [{"file": "part-0000.flac"}], "gameId": "example-game",
     })
+    header = add(s3, "recording-a/original/capture.json", "recording-manifest", {"id": "recording-a"})
     raw = add(s3, "recording-a/original/raw.json", "raw-transcript", {
         "entityType": "PlayerTranscript", "recordingId": "recording-a", "segments": [],
     })
@@ -73,6 +74,8 @@ def test_explicit_recording_raw_corrected_and_stage_links(library):
     page = response_body(call(library))
     indexed = {a["key"]: a for a in page["assets"]}
     assert indexed[recording]["sourceKeys"] == [part]
+    assert indexed[recording]["recording"]["partCount"] == 1
+    assert "recording" not in indexed[header]
     assert indexed[raw]["sourceKeys"] == [recording]
     assert indexed[corrected]["sourceKeys"] == sorted([recording, raw])
     assert "document" not in indexed[corrected]
