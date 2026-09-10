@@ -74,6 +74,12 @@ def test_instructions_ship_with_cli():
     assert "without direct AWS access" in result.output
     assert "Infrastructure deployment remains a separate CDK/AWS administrative operation" in result.output
     assert "panther video --help" in result.output
+    assert "default to **Veo 3.1 Fast through fal**" in result.output
+    assert "dialogue and city/urban establishing shots" in result.output
+    assert "Kling 3 Pro through fal for battle/action" in result.output
+    assert "action in a city uses Kling" in result.output
+    assert "does not automatically classify shots" in result.output
+    assert "or authorize spending, reference sharing" in result.output
     assert "never create a fresh plan as a retry" in result.output
     assert "administrator key is used only for GET billing checks" in result.output
 

@@ -67,6 +67,13 @@
 
 ## Editorial workflows
 
+- Video production model policy: default to Veo 3.1 Fast through fal, explicitly for dialogue and
+  city shots; use Kling 3 Pro through fal for battle/action. Apply per shot, with action taking
+  precedence over city setting and separate dialogue close-ups using Veo. Follow the mixed-shot
+  guidance and exact profiles in `docs/fal-video-comparison.md#production-model-selection`.
+  Record the choice in new executable plans; this is not automatic routing or spending approval.
+  Do not silently upgrade/fallback models or rewrite historical comparison provenance.
+
 - Novel link previews are separate read-time projections, never manuscript edits. Support hover,
   keyboard focus and touch; keep navigation usable when a preview fails. Use descriptions or clearly
   labeled excerpts, not invented facts, and only explicitly associated same-game preview images.
