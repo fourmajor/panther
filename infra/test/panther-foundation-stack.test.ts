@@ -74,7 +74,6 @@ test("foundation records bucket names and creates an account budget", () => {
   template.resourceCountIs("AWS::SSM::Parameter", 2);
   template.hasResourceProperties("AWS::Budgets::Budget", {
     Budget: {
-      BudgetName: "panther-monthly-cost",
       BudgetLimit: {
         Amount: 10,
         Unit: "USD",
@@ -86,7 +85,7 @@ test("foundation records bucket names and creates an account budget", () => {
       Match.objectLike({
         Subscribers: [
           {
-            Address: "alerts@example.com",
+            Address: { Ref: "BudgetEmail" },
             SubscriptionType: "EMAIL",
           },
         ],

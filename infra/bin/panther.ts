@@ -5,6 +5,7 @@ import { PantherAccessStack } from "../lib/panther-access-stack";
 import { PantherDomainStack } from "../lib/panther-domain-stack";
 import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
+import { PantherCostAnomaliesStack } from "../lib/panther-cost-anomalies-stack";
 
 const app = new cdk.App();
 
@@ -17,6 +18,11 @@ const administratorEmail = app.node.tryGetContext("administratorEmail");
 const identityCenterInstanceArn = app.node.tryGetContext("identityCenterInstanceArn");
 const identityStoreId = app.node.tryGetContext("identityStoreId");
 const monthlyBudgetUsd = Number(app.node.tryGetContext("monthlyBudgetUsd") ?? 10);
+const anomalyThresholdUsd = Number(app.node.tryGetContext("anomalyThresholdUsd") ?? 1);
+function percentages(name: string): number[] | undefined {
+  const value = app.node.tryGetContext(name);
+  return value === undefined ? undefined : String(value).split(",").map(Number);
+}
 const domainName = app.node.tryGetContext("domainName") ?? "panther.place";
 const mediaExplorerDomainPrefix =
   app.node.tryGetContext("mediaExplorerDomainPrefix") ?? "panther-media-fourmajor";
@@ -50,6 +56,11 @@ const domain = new PantherDomainStack(app, "PantherDomain", {
   description: "Public DNS and global certificate foundation for the Panther web application",
 });
 
+const costAnomalies = new PantherCostAnomaliesStack(app, "PantherCostAnomalies", {
+  env: { account, region }, budgetEmail, anomalyThresholdUsd,
+  description: "Account-wide service cost anomaly monitoring and daily fallback alerts",
+});
+
 const foundation = new PantherFoundationStack(app, "PantherFoundation", {
   env: {
     account,
@@ -58,6 +69,11 @@ const foundation = new PantherFoundationStack(app, "PantherFoundation", {
   applicationOrigin: `https://${domainName}`,
   budgetEmail,
   monthlyBudgetUsd,
+  firstSpendUsd: Number(app.node.tryGetContext("firstSpendUsd") ?? 1),
+  actualBudgetPercentages: percentages("actualBudgetPercentages"),
+  forecastBudgetPercentages: percentages("forecastBudgetPercentages"),
+  anomalyMonitorArn: costAnomalies.monitorArn,
+  anomalyThresholdUsd,
   description: "Near-zero-idle foundation for Panther application and game assets",
 });
 

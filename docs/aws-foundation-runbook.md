@@ -58,8 +58,12 @@ AWS_PROFILE=panther-admin npm run deploy -- PantherFoundation \
   --context monthlyBudgetUsd=10
 ```
 
-The email context is optional, but without it the budget will not send notifications. AWS requires
-the recipient to confirm the budget-notification subscription.
+Cost alerts now require an owner email parameter and retain it on later stack updates. The
+`budgetEmail` context supplies its initial default; explicit parameter overrides change an existing
+recipient. SNS anomaly email requires recipient confirmation; direct Budgets email is independent.
+Before deploying to an existing account, follow [the cost-alert runbook](cost-alerts.md) to adopt
+AWS's automatically created service monitor and daily subscription through CDK import. That runbook
+also covers the new `PantherCostAnomalies` stack, all alert layers, delivery tests and limitations.
 
 The account ID context is required. Requiring it prevents CDK from silently inheriting a different
 default AWS profile.
