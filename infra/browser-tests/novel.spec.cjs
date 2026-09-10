@@ -40,8 +40,8 @@ async function fixture(page) {
   });
 }
 
-test('chapter Details connects finished assets rather than editorial planning files',async({page})=>{
-  await fixture(page);
+for (const width of [1280,390]) test(`chapter Details connects finished assets at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000}); await fixture(page);
   const prefix='games/campaign-a/assets/';
   const raw=prefix+'raw/original/raw.json', corrected=prefix+'corrected/original/corrected.json';
   const proof=prefix+'proof/original/novel-proof.json', chapter=prefix+'chapter/original/novel-chapter.json';
@@ -56,6 +56,10 @@ test('chapter Details connects finished assets rather than editorial planning fi
   const links=page.locator('#novel-details [data-connections]');
   await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
   await expect(links).not.toContainText('novel-proof');
+  const link=links.getByRole('link',{name:'Corrected transcript',exact:true});
+  await accessibleInViewport(link,width);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`chapter-connections-${width}.png`),fullPage:true});
   await expect(page.getByText('Full provenance and revision history',{exact:true})).toBeVisible();
 });
 
