@@ -62,6 +62,12 @@ def _valid_slug(value):
     return isinstance(value, str) and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value)
 
 
+def _asset_created_at(head):
+    """Metadata-only revisions do not change when the file entered the game record."""
+    value = head.get("Metadata", {}).get("asset-created-at")
+    return datetime.fromisoformat(value) if value else head["LastModified"]
+
+
 def _text(value, *, maximum):
     if not isinstance(value, str):
         return None
@@ -432,7 +438,7 @@ def _object_url(event):
         return _response(400, {"error": "Invalid object key"})
 
     try:
-        metadata = s3.head_object(Bucket=BUCKET_NAME, Key=key)
+        metadata = s3.head_object(Bucket=BUCKET_NAME, Key=key, ChecksumMode="ENABLED")
     except ClientError as error:
         if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
             return _response(404, {"error": "Object not found"})
@@ -449,11 +455,16 @@ def _object_url(event):
             "key": key,
             "contentType": metadata.get("ContentType", "application/octet-stream"),
             "size": metadata.get("ContentLength", 0),
+            "versionId": metadata.get("VersionId"),
+            "etag": metadata.get("ETag"),
+            "sha256": metadata.get("ChecksumSHA256"),
+            "createdAt": _asset_created_at(metadata).isoformat() if metadata.get("LastModified") else None,
             "url": _signed_asset(key),
             "expiresIn": SIGNED_URL_TTL_SECONDS,
             "kind": stored.get("kind"),
             "metadata": details,
             "uploadedBy": stored.get("uploaded-by"),
+            "migrationId": stored.get("migration-id"),
         },
     )
 
@@ -556,6 +567,13 @@ def _upload(event):
         return _response(400, {"error": "Source keys must belong to this game"})
     if "extra" in metadata and not isinstance(metadata["extra"], dict):
         return _response(400, {"error": "Metadata extra must be an object"})
+    import asset_metadata
+    metadata = asset_metadata.defaults(kind, metadata, filename, content_type)
+    if metadata["extra"]["relationshipRole"] not in {"finished", "intermediate"}:
+        return _response(400, {"error": "Invalid relationshipRole"})
+    if (asset_metadata.internal(kind) and not (kind == "recording-manifest" and filename == "recording.json")
+            and metadata["extra"]["relationshipRole"] != "intermediate"):
+        return _response(400, {"error": "Internal workflow files must be intermediate"})
     try:
         encoded_metadata = base64.b64encode(
             json.dumps(
@@ -567,7 +585,8 @@ def _upload(event):
         ).decode("ascii")
     except (ValueError, TypeError):
         return _response(400, {"error": "Metadata must be valid JSON"})
-    object_metadata = {"kind": kind, "uploaded-by": uploader, "panther": encoded_metadata}
+    object_metadata = {"kind": kind, "uploaded-by": uploader, "panther": encoded_metadata,
+                       "asset-created-at": datetime.now(timezone.utc).isoformat()}
     if sum(len(k) + len(v) for k, v in object_metadata.items()) > 1900:
         return _response(
             400, {"error": "Metadata is too large; upload long notes as another asset"}

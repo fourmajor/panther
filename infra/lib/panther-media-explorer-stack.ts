@@ -310,6 +310,37 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
+    const migrationLogs = new logs.LogGroup(this, "AssetMigrationLogs", {
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const migrations = new lambda.Function(this, "AssetMigrations", {
+      runtime: lambda.Runtime.PYTHON_3_13,
+      architecture: lambda.Architecture.ARM_64,
+      handler: "asset_migrations.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api"), {
+        exclude: ["**/__pycache__/**", "**/*.pyc"],
+      }),
+      timeout: Duration.seconds(25), memorySize: 256,
+      // Serializes all metadata writers; create-only uploads cannot replace an existing object.
+      reservedConcurrentExecutions: 1,
+      logGroup: migrationLogs,
+      environment: { ASSET_BUCKET_NAME: privateAssets.bucketName },
+    });
+    migrations.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:GetObjectVersionTagging"],
+      resources: [privateAssets.arnForObjects("games/*")],
+    }));
+    migrations.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:PutObject", "s3:PutObjectTagging"],
+      resources: [privateAssets.arnForObjects("games/*/assets/*")],
+      conditions: {
+        StringLike: { "s3:x-amz-copy-source": `${privateAssets.bucketName}/games/*/assets/*` },
+        StringEquals: { "s3:x-amz-metadata-directive": "REPLACE" },
+      },
+    }));
+    mediaApi.addRoutes({ path: "/asset-migrations", methods: [apigwv2.HttpMethod.POST],
+      integration: new apigwv2Integrations.HttpLambdaIntegration("AssetMigrationsIntegration", migrations), authorizer });
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer });
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer });

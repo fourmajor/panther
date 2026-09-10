@@ -40,7 +40,7 @@ def describe(media, game, key, *, include_document=False):
         "key": key, "name": key.rsplit("/", 1)[-1],
         "size": head["ContentLength"], "contentType": head.get("ContentType", "application/octet-stream"),
         "kind": stored.get("kind", "unclassified"), "metadata": metadata,
-        "lastModified": head["LastModified"].isoformat(), "sourceKeys": [],
+        "lastModified": media._asset_created_at(head).isoformat(), "sourceKeys": [],
     }
     sources = metadata.get("sourceKeys", [])
     sources = list(sources) if isinstance(sources, list) else []

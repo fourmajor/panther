@@ -25,6 +25,27 @@ to Panther's source repository.
 
 ## When an operation is missing
 
+Standards evolve by migration, not permanent exceptions for old assets. A standards change includes
+updated producers/validators, a versioned repeatable migration, a complete inventory/backfill of all
+affected games, post-migration verification, and removal of obsolete compatibility code. Never call
+a rollout complete while old assets remain non-compliant. Preserve original bytes and recoverable
+prior versions; unknown facts remain unknown, not invented to pass validation. Keep private plans,
+evidence and reports outside Git. Report unresolvable records explicitly instead of exempting them.
+
+Use `panther assets catalog --game GAME_ID` for the full catalog and `panther info KEY` for an
+object's current `versionId`. Metadata migrations use `panther assets migrate PLAN.json --report
+NEW_REPORT.jsonl` (dry run), then the same plan with `--apply` and a new report path. The plan is
+`{"schemaVersion":1,"migrations":[...]}`; each entry has `schemaVersion:1`, `key`, exact
+`expectedVersionId`, `kind`, complete metadata, and a factual `reason`. Include metadata
+`schemaVersion:1`, title, category, characterIds, tags, sourceKeys, and extra.relationshipRole.
+Keep all existing sourceKeys and provenance; large structured provenance remains in its document.
+This owner-only operation makes a version-pinned metadata-only copy, retaining bytes, the key,
+original uploader and previous S3 versions. It never accepts replacement content. Identical retries
+are idempotent. Conflicts require inspection, not blindly updating the expected version. Inspect
+the result and retained source checksums after applying; bulk approval is not permission to guess
+character identity, consent, rights or canon. Content/schema migrations need their own versioned
+operation and downstream-reference verification, not misuse of the metadata-only operation.
+
 Check existing Panther CLI capabilities before requesting AWS access for game work. Whenever asking
 the user to sign in to AWS for an asset or other game-related operation, also offer to extend the
 Panther CLI so future operations of that type use Panther authentication without direct AWS access.
@@ -208,7 +229,8 @@ Omitting `--asset` generates a unique ID; record the returned ID rather than gue
 videos, stories, music, and models can all be imported originals. The category and provenance
 describe what they actually represent. Do not mislabel generated material as a factual source.
 
-No asset overwrite or deletion is supported. For a revision, choose a new asset ID or filename, preserve
+No file-content overwrite or deletion is supported. The controlled metadata migration above is the
+only metadata-update path; ordinary uploads stay create-only. For a content revision, choose a new asset ID or filename, preserve
 the previous object, and link it in `sourceKeys`. The CLI does not move or rewrite existing assets.
 It cannot upload into `derived/web/`; import a locally optimized GLB under a new `original/` key.
 Use `panther character set-model` for the narrow, authorized model-selection operation below.
