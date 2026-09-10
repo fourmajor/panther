@@ -132,6 +132,15 @@ and no automatic retries. Veo uses 720p; Kling's Pro endpoint controls its outpu
 These profiles do not add voice cloning, reference videos, multiple shots, or arbitrary arguments.
 They require explicit approval to send the specific reference images to fal in addition to model/spend approval.
 
+`kling-3-pro-image` also accepts optional `endImage` with the same `{path, sha256, key}`
+descriptor as `image`. Both source keys must appear in `sourceKeys`; both files receive identical
+local/remote checksum, decoding, dimension and size validation and are pinned in the reviewed plan.
+The verified provider field is `end_image_url`. No extra duration, resolution, reference video or
+generation call is added; the same conservative Kling quote/ledger gates apply. End frames are
+rejected for other current adapters, never silently discarded. Existing plans without end frames
+retain their original payloads and approvals. New images require specific reference-sharing approval.
+See [local production](video-production.md) for shot preparation and separate post-generation finishing.
+
 Add `image: {"path": "/private/path/frame.png", "sha256": "64-lowercase-hex-digits", "key":
 "games/synthetic-game/assets/frame/original/frame.png"}` to an image-profile shot. The source key
 must also occur in the manifest's `sourceKeys`. Use a complete 16:9 starting frame, not a portrait

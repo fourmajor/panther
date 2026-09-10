@@ -96,6 +96,14 @@ Missing character/environment plates are documented dependencies with preparatio
 never fabricated existing assets. Actual footage, performances, VFX, sound mix, grading and delivery
 QC depend on generated material and are planned here, not falsely reported as completed.
 
+Once selected footage exists, the separate [local production workflow](video-production.md) now
+executes continuity review, bounded edit/grade and re-review, independent sound-stem assembly,
+mixing, captions, master/browser delivery and final sequence checks. Its explicitly completed
+production manifest is a different trigger from transcript completion. Shot preparation validates
+selected appearance references and full starting/optional supported ending plates, emitting only
+an unapproved generation manifest. This does not change the editorial Step Function, submit paid
+requests or manufacture missing imagery, consent or audio stems.
+
 Voice casting produces versioned `VoiceProfileProposal` records linked separately to Player and
 Character IDs. The plan describes performance, pronunciation, enrollment samples, consent/rights,
 revocation, continuity and lip-sync requirements, with an independent narrator. Real-player cloning

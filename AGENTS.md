@@ -67,6 +67,15 @@
 
 ## Editorial workflows
 
+- Video production uses the separate completed-manifest local workflow in `docs/video-production.md`.
+  Pin selected appearance revisions and prepared shot frames; review generated footage for face,
+  costume, weapon-hand, prop, motion and cross-shot continuity. Preserve the original take and
+  actual edit/review history. Keep dialogue/music/effects/ambience independently editable when
+  genuine stems exist; a native mixed soundtrack is not isolated speech. Finish with measured
+  sound, color adjustment, editable captions, clean master, browser delivery and final QC.
+  Routine defects yield explicit working drafts, never invented repairs or implicit paid retries.
+  Frame-sampled visual checks and technical sound checks must disclose their coverage limits.
+
 - Video production model policy: default to Veo 3.1 Fast through fal, explicitly for city shots;
   use MiniMax H3 Max (not Turbo) through fal for dialogue and Kling 3 Pro through fal for battle/action.
   Apply per shot, with action taking precedence over city setting and separate dialogue close-ups

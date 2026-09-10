@@ -391,7 +391,7 @@ def validate_manifest(value):
         if (
             not isinstance(shot, dict)
             or not {"id", "model", "prompt", "maxAttempts"} <= set(shot)
-            or set(shot) - {"id", "model", "prompt", "maxAttempts", "image"}
+            or set(shot) - {"id", "model", "prompt", "maxAttempts", "image", "endImage"}
         ):
             fail(
                 "Each shot requires id, model, prompt and maxAttempts; arbitrary provider arguments are forbidden."
@@ -402,8 +402,12 @@ def validate_manifest(value):
         seen.add(shot["id"])
         if bool(PROFILES[shot["model"]].get("imageField")) != ("image" in shot):
             fail("Image profiles require exactly one pinned image; text profiles forbid it.")
-        if "image" in shot:
-            ref = shot["image"]
+        if "endImage" in shot and shot["model"] != "kling-3-pro-image":
+            fail("Ending frames are verified only for kling-3-pro-image; no silent fallback.")
+        for name in ("image", "endImage"):
+            if name not in shot:
+                continue
+            ref = shot[name]
             if (
                 not isinstance(ref, dict)
                 or set(ref) != {"path", "sha256", "key"}
@@ -446,6 +450,8 @@ def payload(shot):
     if "image" in shot:
         # Pin the descriptor, not an expiring URL or megabytes of duplicated private data.
         body[PROFILES[shot["model"]]["imageField"]] = dict(shot["image"])
+    if "endImage" in shot:
+        body["end_image_url"] = dict(shot["endImage"])
     return body
 
 
@@ -509,8 +515,9 @@ def reference_bytes(ref, *, verify_cloud=False):
 def prepare(value, fal):
     validate_manifest(value)
     for shot in value["shots"]:
-        if "image" in shot:
-            reference_bytes(shot["image"], verify_cloud=True)
+        for name in ("image", "endImage"):
+            if name in shot:
+                reference_bytes(shot[name], verify_cloud=True)
     billing = fal.billing()
     quotes = {model: quote(fal, model) for model in {s["model"] for s in value["shots"]}}
     plan = {
@@ -655,9 +662,12 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         "retryReason": reason,
     }
     request_input = dict(content["input"])
-    if "image" in shot:
-        data = reference_bytes(shot["image"])
-        request_input[PROFILES[shot["model"]]["imageField"]] = (
+    for name, field in (("image", PROFILES[shot["model"]].get("imageField")),
+                        ("endImage", "end_image_url")):
+        if name not in shot:
+            continue
+        data = reference_bytes(shot[name])
+        request_input[field] = (
             "data:image/png;base64," + base64.b64encode(data).decode()
         )
     with database() as db:

@@ -213,6 +213,40 @@ def image_manifest(tmp_path, monkeypatch):
     return m, path
 
 
+def test_kling_end_frame_is_pinned_sent_and_budgeted(setup, tmp_path, monkeypatch):
+    m, path = image_manifest(tmp_path, monkeypatch)
+    shot = m["shots"][0]
+    shot.update(model="kling-3-pro-image", endImage=dict(shot["image"]))
+    plan = v.prepare(m, setup)["planId"]
+    assert not setup.posts
+    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    a = v.submit(plan, shot["id"], 1, "", setup)
+    assert a["reservedUsd"] == "2.25"  # Fake live base $0.15 × 1.5 × 8 × 1.25.
+    body = setup.posts[0][1]["json"]
+    assert body["start_image_url"] == body["end_image_url"]
+    assert body["end_image_url"].startswith("data:image/png;base64,")
+    assert len(setup.posts) == 1
+    v.submit(plan, shot["id"], 1, "", setup)
+    assert len(setup.posts) == 1
+
+
+def test_unsupported_or_changed_end_frame_fails_without_spend(setup, tmp_path, monkeypatch):
+    m, path = image_manifest(tmp_path, monkeypatch)
+    shot = m["shots"][0]
+    shot["endImage"] = dict(shot["image"])
+    with pytest.raises(click.ClickException, match="Ending frames"):
+        v.prepare(m, setup)
+    shot["model"] = "kling-3-pro-image"
+    plan = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    path.write_bytes(b"changed")
+    with pytest.raises(click.ClickException, match="changed"):
+        v.submit(plan, shot["id"], 1, "", setup)
+    assert not setup.posts
+    with v.database() as db:
+        assert v.totals(db)["reservationCents"] == 0
+
+
 def test_image_plan_pins_local_and_cloud_bytes_without_uploading_or_spending(
     setup, tmp_path, monkeypatch
 ):
