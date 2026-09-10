@@ -149,6 +149,26 @@ test('deep-linked transcript survives reload and expired authentication clears c
   await expect(page.locator('#library-list')).toBeEmpty();
 });
 
+test('organized physical storage resolves to the unchanged transcript identity and finished connections',async({page})=>{
+  await fixture(page);
+  const physical='games/test-game/content/sessions/session-one/transcripts/raw/recording-a/raw.json';
+  const requested=[];
+  page.on('request',r=>{if(r.url().startsWith(api+'/asset-document')) requested.push(new URL(r.url()).searchParams.get('key'));});
+  await page.route(`${api}/object-url*`,route=>{
+    if(new URL(route.request().url()).searchParams.get('key')!==physical) return route.fallback();
+    return route.fulfill({headers,json:{...assets.find(a=>a.key===raw),storageKey:physical,
+      url:'https://audio.example/raw.json',expiresIn:300}});
+  });
+  await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(physical)}`);
+  await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
+  await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Corrected transcript');
+  expect(requested).toContain(raw); expect(requested).not.toContain(physical);
+  await page.reload();
+  await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
+  await page.locator('#asset-links [data-connections="outputs"]').getByRole('link',{name:'Corrected transcript · session-one'}).click();
+  await expect(page.locator('.transcript-segment').first()).toContainText('The lantern.');
+});
+
 test('catalog errors are recoverable without silently claiming empty results',async({page})=>{
   await fixture(page); let broken=true;
   await page.route(`${api}/assets*`,route=>broken?route.fulfill({status:503,headers,json:{error:'Storage unavailable'}}):route.fallback());

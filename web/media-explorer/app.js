@@ -681,7 +681,9 @@ async function renderRoute() {
     await loadPrefix(state.currentPrefix);
   }
   const key = new URLSearchParams(location.search).get("asset");
-  if (epoch === routeEpoch && sameGameKey(key)) await previewFile({key, name: key.split("/").at(-1)});
+  const physicalAsset = typeof key === "string" && key.startsWith(`games/${state.gameId}/content/`)
+    && !key.split("/").some(part => !part || part === "." || part === "..") && !/[\\\x00-\x1f]/.test(key);
+  if (epoch === routeEpoch && (sameGameKey(key) || physicalAsset)) await previewFile({key, name: key.split("/").at(-1)});
 }
 
 function fileGlyph(name) {
@@ -786,15 +788,17 @@ async function previewFile(file) {
   try {
     const result = await api("/object-url", { key: file.key });
     if (epoch !== previewEpoch) return;
-    const structured = file.key.endsWith(".json") && sameGameKey(file.key);
+    // Physical folders may change; connections/readers use the API's stable asset identity.
+    const assetRef = result.key || file.key;
+    const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
     if (structured) elements.previewBody.textContent = "Loading structured document…";
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
-    if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, file.key, () => epoch === previewEpoch);
-    void renderAssetLinks(file.key, epoch);
+    if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
+    void renderAssetLinks(assetRef, epoch);
     if (structured) {
-      const detail = await api("/asset-document", {gameId: state.gameId, key: file.key});
+      const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef});
       if (epoch !== previewEpoch) return;
       renderStructuredAsset(detail, epoch);
     }

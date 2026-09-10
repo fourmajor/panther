@@ -2,6 +2,15 @@
 
 ## Panther CLI and game assets
 
+- Physical storage organization is a versioned application contract. Use the shared server path
+  builder and the staged rollout in `docs/asset-storage.md`; never hand-assemble new S3 destinations.
+  Group content by game, character/session/shared library, media kind, and immutable asset revision;
+  keep workflow internals separate from finished media. Support new kinds through structured metadata.
+  Stable asset references and physical storage locations are distinct: never rewrite raw evidence,
+  workflow checksum pins, or every downstream document just because a file moves. Every asset must
+  use the same location catalog after cutover, without old-path fallbacks. A rollout remains incomplete
+  until all games are migrated, verified, and temporary modes/old write permissions are removed.
+
 - Evolving standards require migrations, not permanent legacy exceptions. Whenever an asset/data
   contract or organizational rule changes, update producers and validators, provide a versioned,
   repeatable migration, backfill all affected existing data, verify the full inventory, and remove

@@ -39,6 +39,25 @@ def migrate(plan, apply, report):
     Each entry contains schemaVersion, key, expectedVersionId, kind, metadata, and reason.
     File bytes are never accepted or replaced. Retries reuse the same plan.
     """
+    run_migrations(plan, apply, report, "/asset-migrations")
+
+
+@assets.command("reorganize")
+@click.argument("plan", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--apply", is_flag=True, help="Apply the inspected storage plan; otherwise dry-run only.")
+@click.option("--retire", is_flag=True, help="After cutover verification, hide old physical keys with recoverable delete markers.")
+@click.option("--report", required=True, type=click.Path(path_type=Path))
+def reorganize(plan, apply, retire, report):
+    """Copy pinned assets into the enforced layout without changing their references.
+
+    Uses the same schemaVersion-1 plan as metadata migrations. Copying retains the old keys.
+    Retirement is a separate post-cutover operation; earlier S3 versions are never deleted.
+    No direct AWS authentication is needed for this owner-only game operation.
+    """
+    run_migrations(plan, apply, report, "/asset-storage-migrations", {"action": "retire" if retire else "copy"})
+
+
+def run_migrations(plan, apply, report, endpoint, extra=None):
     try:
         document = json.loads(plan.read_text())
         if document.get("schemaVersion") != 1 or not isinstance(document.get("migrations"), list):
@@ -56,13 +75,14 @@ def migrate(plan, apply, report):
             report.chmod(0o600)
             for entry in records:
                 try:
-                    result = cloud.api(config, "POST", "/asset-migrations", json={**entry, "dryRun": not apply})
+                    result = cloud.api(config, "POST", endpoint, json={**entry, **(extra or {}), "dryRun": not apply})
                 except click.ClickException:
                     output.write(json.dumps({"key": entry["key"], "status": "interrupted-inspect-before-retry"}) + "\n")
                     output.flush()
                     os.fsync(output.fileno())
                     raise
-                output.write(json.dumps({"request": entry, "result": result}) + "\n")
+                output.write(json.dumps({"request": entry, "endpoint": endpoint,
+                                         "operation": extra or {}, "dryRun": not apply, "result": result}) + "\n")
                 output.flush()
                 os.fsync(output.fileno())
                 click.echo(f"{result['status']}: {entry['key']}")

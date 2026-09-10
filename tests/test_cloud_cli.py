@@ -48,6 +48,9 @@ def test_instructions_ship_with_cli():
     assert "do not delete intermediate provenance" in result.output
     assert "Standards evolve by migration" in result.output
     assert "panther assets migrate" in result.output
+    assert "panther assets reorganize" in result.output
+    assert "physical `storageKey`" in result.output
+    assert "Multiple-character media is stored once" in result.output
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
     assert "Tag every character actually depicted or discussed" in result.output

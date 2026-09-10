@@ -77,14 +77,16 @@ Amazon S3 is the durable source of truth for uploaded and generated files.
 - Default S3 encryption is used initially. A customer-managed KMS key is not required for the first
   deployment.
 
-Asset keys are organized around stable asset identities, not a fixed list of media types. An asset
-can have an original and any number of derived representations:
+Stable asset identities are separate from their physical storage paths. The implemented version-2
+organization and required all-game migration are described in [asset-storage.md](asset-storage.md).
+That runbook's rollout status is authoritative; merging code alone does not move production data.
+An asset can have retained source files and any number of derived representations:
 
 ```text
-games/<game-id>/assets/<asset-id>/original/<filename>
-games/<game-id>/assets/<asset-id>/derived/<representation-id>/<filename>
-games/<game-id>/assets/<asset-id>/manifests/<version>.json
-games/<game-id>/sessions/<session-id>/manifests/<version>.json
+games/<game-id>/content/characters/<character-id>/<collection>/<asset-id>/<filename>
+games/<game-id>/content/sessions/<session-id>/<collection>/<asset-id>/<filename>
+games/<game-id>/content/library/<collection>/<asset-id>/<filename>
+games/<game-id>/catalog/assets/<asset-id>/<reference-namespace>/<filename>.json
 games/<game-id>/characters/<character-id>/profile.json
 ```
 
@@ -92,7 +94,9 @@ The private bucket contains canonical originals and working derivatives. The pub
 the same game and asset identifiers, but contains only representations deliberately approved for
 web access.
 
-Each asset has metadata in the application database and, where useful, a portable JSON manifest.
+Current asset metadata lives in S3 object metadata and structured artifacts; the location catalog is
+also a small S3 JSON record. A general asset-metadata database is a possible future index, not a
+currently deployed prerequisite. Structured game/job state uses on-demand DynamoDB separately.
 Metadata includes `asset_id`, `game_id`, optional `session_id`, title, open-ended `asset_kind`, MIME
 type, visibility, tags, relationships, provenance, checksum, and available representations.
 `asset_kind` is a namespaced string rather than a closed enumeration, allowing new kinds to be

@@ -6,6 +6,11 @@ verify every record, and remove obsolete runtime compatibility. Keep a private r
 facts. Unknown is a valid explicit state, not permission to fabricate metadata or exempt a record.
 Repository instructions apply this policy to future schema and organizational changes as well.
 
+For the physical S3 reorganization, see [asset-storage.md](asset-storage.md). It uses the same private
+version-pinned metadata plan with `panther assets reorganize`, a separate copy/cutover/retirement process,
+and stable asset references. Do not run the metadata-only migration first against a storage plan: that
+would change its expected source versions. The storage copy applies the approved metadata at the same time.
+
 ## Metadata migration v1
 
 `panther assets catalog --game GAME_ID` gives the complete catalog. `panther info KEY` returns the
