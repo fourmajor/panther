@@ -129,6 +129,13 @@ main {
 .novel-manuscript p { margin-bottom: 1.3em; white-space: pre-line; }
 .novel-manuscript hr { border: 0; border-top: 1px solid var(--line); width: 5rem; margin: 2.5rem auto; }
 .novel-manuscript blockquote { border-left: 2px solid var(--accent); margin-left: 0; padding-left: 1.2rem; }
+.novel-manuscript .narrative-link { color: inherit; text-decoration: underline dotted; text-decoration-color: #8b8578; text-underline-offset: .18em; text-decoration-thickness: 1px; }
+.novel-manuscript .narrative-link:hover, .novel-manuscript .narrative-link:focus-visible { color: var(--accent); text-decoration-style: solid; text-decoration-color: currentColor; }
+.novel-manuscript .narrative-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+#character-assets { margin-top: 2.5rem; overflow-wrap: anywhere; }
+#character-assets-list { padding-left: 1.3rem; }
+#character-assets-list li { padding-block: .5rem; }
+#character-assets-list a { color: var(--accent); text-underline-offset: .2em; }
 .novel-details { max-width: 75ch; margin: 2rem auto; line-height: 1.7; overflow-wrap: anywhere; }
 .novel-details h3 { margin-top: 2rem; }
 .novel-details pre { white-space: pre-wrap; font-size: .8rem; }

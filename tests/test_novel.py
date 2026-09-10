@@ -25,6 +25,9 @@ def completed(novel, *, status="DONE", publication="accepted"):
         "stage": "novel-chapter",
         "publicationStatus": publication,
         "payload": {
+            "readerReferences": {"schemaVersion": 1, "mentions": [
+                {"text": "the captain", "target": {"type": "character", "id": "captain"}}
+            ]},
             "chapter": "**Adapted from fictional microphone-test material; not campaign canon.**\n\n# A Synthetic Story\n\nOnly the **story**.\n\n## Editorial notes\n\nA fictional sign on the wall.",
             "review": {
                 "markdown": "Private editorial audit",
@@ -53,8 +56,11 @@ def test_completed_chapter_visible_before_video_finishes_and_prose_is_separate(n
     listing = unpack(request(novel, "GET /novel", query=q))["chapters"]
     assert len(listing) == 1 and listing[0]["title"] == "A Synthetic Story"
     assert "details" not in listing[0] and "markdown" not in listing[0]
+    assert "readerReferences" not in listing[0]
     result = unpack(request(novel, "GET /novel-chapter", query={**q, "chapterId": job["jobId"]}))
     assert result["markdown"].startswith("Only the **story**.")
+    assert result["readerReferences"]["mentions"][0]["target"]["type"] == "character"
+    assert "readerReferences" not in result["markdown"]
     assert "## Editorial notes" in result["markdown"]  # Never truncate arbitrary story headings.
     assert "Private editorial audit" not in result["markdown"]
     assert result["details"]["review"]["markdown"] == "Private editorial audit"

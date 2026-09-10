@@ -51,7 +51,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   const errors=[]; page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`${origin}/games/test-game/audio`);
   await expect(page.locator('.session-card')).toHaveCount(1);
-  for (const name of ['Audio','Transcripts']) {
+  for (const name of ['Audio','Transcripts','Videos']) {
     const link=page.locator('#primary-nav').getByRole('link',{name,exact:true});
     const box=await link.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
   }
@@ -85,6 +85,41 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('#library-status')).toContainText('No transcripts yet');
   await expect(page.locator('#preview-body')).toBeEmpty();
   expect(errors).toEqual([]);
+});
+
+for(const width of [1280,390]) test(`videos are playable, linked and game scoped at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000}); await fixture(page);
+  await page.goto(`${origin}/games/test-game/videos`);
+  await expect(page.locator('#library-title')).toHaveText('Videos');
+  await expect(page.locator('.session-card')).toHaveCount(1);
+  // Generate synthetic footage inside the isolated test browser; no real game media in Git.
+  const bytes=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas'); canvas.width=160; canvas.height=90;
+    const ctx=canvas.getContext('2d'),stream=canvas.captureStream(10),recorder=new MediaRecorder(stream,{mimeType:'video/webm'}),chunks=[];
+    recorder.ondataavailable=e=>chunks.push(e.data);
+    const stopped=new Promise(resolve=>recorder.onstop=resolve); recorder.start();
+    for(let i=0;i<12;i++) { ctx.fillStyle=i%2?'#bca675':'#303840';ctx.fillRect(0,0,160,90); await new Promise(r=>setTimeout(r,100)); }
+    recorder.stop(); await stopped; stream.getTracks().forEach(t=>t.stop());
+    return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));
+  });
+  await page.route('https://audio.example/take.mp4',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
+  const link=page.locator('#library-list').getByRole('link',{name:'video-comparison',exact:true});
+  await expect(link).toBeVisible();
+  const box=await link.boundingBox(); expect(box.x+box.width).toBeLessThanOrEqual(width);
+  expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+  await link.click();
+  const player=page.locator('#preview-body video'); await expect(player).toHaveAttribute('controls','');
+  await expect.poll(()=>player.evaluate(v=>v.readyState)).toBeGreaterThanOrEqual(2);
+  await player.evaluate(v=>v.play()); await expect.poll(()=>player.evaluate(v=>v.currentTime)).toBeGreaterThan(0);
+  await expect(page.locator('#asset-links')).toContainText('corrected-transcript');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`videos-${width}.png`),fullPage:true});
+  await player.evaluate(v=>{window.previousVideo=v;});
+  await page.keyboard.press('Escape'); expect(await page.evaluate(()=>window.previousVideo.paused)).toBe(true);
+  await page.reload(); await expect(page.locator('.session-card')).toHaveCount(1);
+  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await expect(page).toHaveURL(`${origin}/games/other-game/videos`);
+  await expect(page.locator('#library-status')).toContainText('No videos yet');
 });
 
 test('deep-linked transcript survives reload and expired authentication clears content',async({page})=>{

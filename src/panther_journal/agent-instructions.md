@@ -256,6 +256,9 @@ Use `--metadata /outside/repo/asset.json`. Supported fields:
 - `description`: short factual description, not an invented backstory.
 - `category`: one of the categories above; defaults to `unclassified`.
 - `characterIds`: list of known character slugs, not display names.
+  Tag every character actually depicted or discussed so its profile can list the asset, across
+  portraits, video, stories, transcripts and future kinds. Do not infer presence from player identity
+  or upstream inputs. Preserve explicit associations when creating new versions.
 - `sessionId`: known session slug; omit when not session-specific or unknown.
 - `tags`: reusable lowercase hyphenated slugs; no redundant filename extensions.
 - `sourceKeys`: exact existing object keys from this game for source material or earlier revisions.
@@ -286,8 +289,10 @@ panther upload /outside/repo/harbor.png --game GAME_ID --asset harbor-map \
 ```
 
 Replace `GAME_ID` with a discovered lowercase game slug. Files become browsable in the web media
-library. Metadata links record organization; uploads do not automatically update character pages,
-create session records, or add filtering UI. Do not claim otherwise.
+library. Character-tagged assets appear under Featuring this character after refreshing its page;
+this does not change its official portrait/model selection or create session records. Videos appear
+in Videos regardless of kind. Novel readers link exact unambiguous character names and asset titles
+without changing the stored prose; aliases require explicit typed references in the chapter artifact.
 
 ## Reliability and reporting
 
