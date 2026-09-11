@@ -1692,6 +1692,7 @@ function resetLive() {
   document.getElementById("live-status").textContent = "Checking for live recordings…";
 }
 function liveState(record) {
+  if (!liveFailure && record.captureState === "stopped") return "stopped";
   if (liveFailure || record.connectionStale || record.heartbeatAgeSeconds + (Date.now() - liveFetchedAt) / 1000 > 75) return "lost";
   return record.captureState;
 }

@@ -16,15 +16,16 @@ const COOKIE = '__Host-panther-refresh';
 const jwt = (expired = false) => 'test.' + Buffer.from(JSON.stringify({ exp: Date.now() / 1000 + (expired ? -60 : 3600), 'cognito:username': 'test' })).toString('base64url') + '.test';
 
 async function fixture(context, { remembered = true } = {}) {
-  const state = { refreshes: 0, exchanges: [], revocations: 0, failure: 0, apiFailureOnce: false, apiTokens: [] };
+  const state = { refreshes: 0, exchanges: [], revocations: 0, failure: 0, apiFailureOnce: false, apiTokens: [], apiPaths: [] };
   if (remembered) await context.addCookies([{ name: COOKIE, value: 'synthetic-cookie', domain: 'panther.place', path: '/', httpOnly: true, secure: true, sameSite: 'Strict', expires: Math.floor(Date.now()/1000) + 34560000 }]);
   await context.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
     state.apiTokens.push((await route.request().allHeaders()).authorization);
+    state.apiPaths.push(new URL(route.request().url()).pathname);
     if (state.apiFailureOnce) {
       state.apiFailureOnce = false;
       return route.fulfill({ status: 401, json: {}, headers: { 'access-control-allow-origin': 'https://panther.place' } });
     }
-    return route.fulfill({ json: { games: [{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], prefix: 'games/test-game/', prefixes: [], objects: [], characters: [] }, headers: { 'access-control-allow-origin': 'https://panther.place' } });
+    return route.fulfill({ json: { recordings:[], games: [{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], prefix: 'games/test-game/', prefixes: [], objects: [], characters: [] }, headers: { 'access-control-allow-origin': 'https://panther.place' } });
   });
   await context.route('https://test.amazoncognito.com/logout*', route => route.fulfill({ contentType: 'text/html', body: 'Signed out of Cognito' }));
   await context.route('https://panther.place/**', async route => {
@@ -87,7 +88,8 @@ for (const width of [1280, 390]) {
     const page = await context.newPage();
     await page.goto('https://panther.place/media');
     await expect(page.locator('#account')).toBeVisible();
-    await expect.poll(() => state.apiTokens.length).toBe(4);
+    await expect.poll(() => state.apiPaths.filter(p => p !== '/recordings/live').length).toBe(4);
+    expect(state.apiPaths.filter(p => p === '/games')).toHaveLength(2); // Exactly one retry.
     expect(state.refreshes).toBe(2);
     expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);
     await context.close();

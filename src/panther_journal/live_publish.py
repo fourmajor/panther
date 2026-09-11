@@ -18,7 +18,9 @@ def snapshot(folder, header, root, config, now=None):
     progress = (
         journal.stat().st_mtime if journal.is_file() else (folder / "capture.json").stat().st_mtime
     )
-    stale_capture = now - progress > max(90, header.get("chunkSeconds", 30) * 2 + 15)
+    settings_file = folder / "capture-settings.json"
+    settings = live.read_json(settings_file) if settings_file.exists() else {}
+    stale_capture = now - progress > max(90, settings.get("chunkSeconds", 30) * 2 + 15)
     status_file = root / "status.json"
     status = live.read_json(status_file) if status_file.exists() else {"state": "starting"}
     chunks, lines = [], []
@@ -68,12 +70,13 @@ class Publisher:
 
     def __exit__(self, *_):
         self.stop_event.set()
-        self.thread.join(timeout=2)
-        # A dead/closed preview stops heartbeats; the server/browser expires presence.
+        self.thread.join(timeout=5)
+        # Best-effort final state; abrupt shutdown/network failure still expires presence.
 
     def run(self):
         config, failed = None, False
-        while not self.stop_event.is_set():
+        while True:
+            final = self.stop_event.is_set()
             try:
                 payload = snapshot(*self.args)
                 if config is None:
@@ -99,5 +102,6 @@ class Publisher:
                         "Web live feed disconnected. Check connectivity / panther login in another terminal. Local recording and preview continue."
                     )
                 failed = True
-            if self.stop_event.wait(20):
+            if final:
                 return
+            self.stop_event.wait(20)

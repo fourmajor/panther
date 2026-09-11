@@ -67,7 +67,7 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   feed.records[0].captureState = 'recording'; feed.records[0].heartbeatAgeSeconds = 80; feed.records[0].connectionStale = true;
   await page.getByRole('button',{name:'Refresh live feed'}).click();
   await expect(badge).toHaveText('Recording signal lost');
-  feed.records = [recording({captureState:'stopped',previewState:'stopped'})];
+  feed.records = [recording({captureState:'stopped',previewState:'stopped',heartbeatAgeSeconds:200,connectionStale:true})];
   await page.getByRole('button',{name:'Refresh live feed'}).click();
   await expect(badge).toHaveText('Recording stopped');
   feed.fail = true; await page.getByRole('button',{name:'Refresh live feed'}).click();

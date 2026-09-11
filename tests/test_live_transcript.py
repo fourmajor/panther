@@ -303,6 +303,33 @@ def test_web_snapshot_contains_recent_text_not_audio_and_capture_health(capture,
     assert value["captureState"] == "recording"
     assert value["segments"] == [{"start": 1.0, "end": 4.0, "text": "Synthetic preview"}]
     assert snapshot(folder, header, root, config, now + 100)["captureState"] == "stalled"
+    (folder / "capture-settings.json").write_text(json.dumps({"chunkSeconds": 120}))
+    assert snapshot(folder, header, root, config, now + 100)["captureState"] == "recording"
     monkeypatch.setattr(live, "capture_running", lambda _: False)
     assert snapshot(folder, header, root, config, now + 100)["captureState"] == "stopped"
     assert not any(k in value for k in ("audio", "sourceKeys", "playerId", "modelPath"))
+
+
+def test_publisher_sends_final_capture_state_without_cloud_credentials(capture, monkeypatch):
+    from panther_journal import live_publish
+
+    folder, header, model = capture
+    add_part(capture, 0)
+    root = live.follow(folder, model, once=True, transcriber=recognizer, emit=lambda _: None)
+    publisher = live_publish.Publisher(
+        folder, header, root, live.read_json(root / "preview.json"), lambda _: None
+    )
+    running, sent = [True], []
+    monkeypatch.setattr(live, "capture_running", lambda _: running[0])
+    monkeypatch.setattr(live_publish.cloud, "configuration", lambda: {"synthetic": True})
+
+    def post(config, method, route, **kwargs):
+        assert config == {"synthetic": True} and method == "POST" and route == "/recordings/live"
+        sent.append(kwargs["json"])
+        running[0] = False
+        publisher.stop_event.set()
+
+    monkeypatch.setattr(live_publish.cloud, "api", post)
+    publisher.run()
+    assert [p["captureState"] for p in sent] == ["recording", "stopped"]
+    assert live.read_json(root / "web-status.json")["state"] == "published"
