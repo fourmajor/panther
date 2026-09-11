@@ -11,7 +11,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 /** Ephemeral presence/read-time preview, never source assets or editorial inputs. */
 export class LiveRecordings extends Construct {
   constructor(scope: Construct, id: string, props: {
-    api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer;
+    api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
     const table = new dynamodb.Table(this, "Data", {
@@ -38,7 +38,7 @@ export class LiveRecordings extends Construct {
       }),
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_WEEK }),
       environment: { LIVE_RECORDINGS_TABLE: table.tableName, LIVE_HISTORY_TABLE: history.tableName,
-        LIVE_RECORDING_PUBLISHERS: "stu,other_stu" },
+        LIVE_RECORDING_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:Query", "dynamodb:PutItem", "dynamodb:GetItem"], resources: [table.tableArn],

@@ -15,7 +15,7 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** Private application jobs, not CI. No AI service, inbound laptop connection, or idle compute. */
 export class ModelProcessing extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
     const table = new dynamodb.Table(this, "Jobs", {
@@ -38,7 +38,7 @@ export class ModelProcessing extends Construct {
       code,
       memorySize: 256, timeout: Duration.seconds(60), logGroup,
       environment: { ASSET_BUCKET_NAME: props.bucket.bucketName, JOB_TABLE: table.tableName,
-        MODEL_PUBLISHERS: "stu,other_stu", MODEL_WORKERS: "stu" },
+        MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS },
     });
     table.grantReadWriteData(fn);
     props.bucket.grantRead(fn, "games/*");

@@ -11,7 +11,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 
 export class GameCatalog extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
     const table = new dynamodb.Table(this, "Data", {
@@ -29,7 +29,7 @@ export class GameCatalog extends Construct {
       }),
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
       environment: { ASSET_BUCKET_NAME: props.bucket.bucketName,
-        CATALOG_TABLE: table.tableName, CATALOG_EDITORS: "stu,other_stu" },
+        CATALOG_TABLE: table.tableName, CATALOG_EDITORS: props.accessEnvironment.MODEL_PUBLISHERS },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"],

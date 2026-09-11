@@ -70,9 +70,10 @@ def chapter(job):
 
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    # Same two-person group access as the editorial/catalog APIs; memberships are game roles,
+    # Same configured publisher access as the editorial/catalog APIs; memberships are game roles,
     # not authorization grants. Future multi-group access must change this policy explicitly.
-    if not claims.get("sub") or claims.get("cognito:username") not in {"stu", "other_stu"}:
+    from access_policy import authorized
+    if not authorized(claims, "MODEL_PUBLISHERS"):
         return jobs.response(403, {"error": "Owner or DM sign-in required"})
     q = event.get("queryStringParameters") or {}
     game = q.get("gameId", "")

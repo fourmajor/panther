@@ -1,5 +1,20 @@
 # Repository Agent Instructions
 
+## Private account data
+
+- Specific account identities, emails, account rosters and capability assignments are private
+  deployment/application data, not repository content. Never add real users to source code,
+  fixtures, docs, issues, PR descriptions or CI artifacts. Use fictional identities in tests/examples.
+- CDK still owns infrastructure and provisioning definitions. Supply actual account configuration
+  from an owner-only file outside the repository using `PANTHER_IDENTITIES_FILE`; see
+  `docs/private-account-configuration.md`. Never commit that file, synthesized production templates,
+  deployment diffs or account inventories. Missing configuration must fail closed.
+- Preserve existing account/resource identities, passwords and access when changing how configuration
+  is stored; verify no user deletion/recreation or privilege expansion in the deployment diff.
+  Keep Player identities separate from login accounts. Formal member/admin roles are separate work.
+- Removing data from the current tree does not erase Git/PR history. Report that limitation; do not
+  rewrite shared history or claim historical erasure without a separately authorized cleanup.
+
 ## Panther CLI and game assets
 
 - Record structured generation metadata for every asset using `docs/generation-metadata.md`:

@@ -49,7 +49,7 @@ def test_only_explicit_complete_set_starts_exactly_named_workflow(playback, monk
     body, _ = complete_manifest(m)
     assert m.table.scan()["Count"] == 0  # Chunk uploads and even manifest upload do not trigger.
     assert request(m, "POST /recording-sets/complete", {**body, "status": "UPLOADING"})["statusCode"] == 400
-    job = unpack(request(m, "POST /recording-sets/complete", body, username="other_stu"))
+    job = unpack(request(m, "POST /recording-sets/complete", body, username="example-editor"))
     assert job["entityType"] == "RecordingChunkSet" and job["setStatus"] == "COMPLETE"
     assert len(job["chunks"]) == 2 and job["status"] == "SUBMITTED"
     assert unpack(request(m, "POST /recording-sets/complete", body)) == job
@@ -95,7 +95,7 @@ def test_owner_lease_excludes_dm_other_worker_and_expired_attempts(playback, mon
     m = playback
     job = queued(m)
     assert request(m, "GET /recording-playback-jobs", username="outsider")["statusCode"] == 403
-    assert request(m, "POST /recording-playback-jobs/claim", {"workflowVersion": 1}, username="other_stu")["statusCode"] == 403
+    assert request(m, "POST /recording-playback-jobs/claim", {"workflowVersion": 1}, username="example-editor")["statusCode"] == 403
     claim = unpack(request(m, "POST /recording-playback-jobs/claim", {"workflowVersion": 1}))
     body = {"jobId": job["jobId"], "lease": claim["lease"]}
     assert "taskToken" not in claim["job"] and "leaseActor" not in claim["job"]

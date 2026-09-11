@@ -253,7 +253,7 @@ recoverable. Run the same live command to finish recognition/upload; do not dele
 
 The authenticated heartbeat GET endpoint is polled only by visible signed-in pages. It returns a bounded recent
 window (up to ten recording feeds) for the selected game, using the existing shared-group authorization
-model. Only `stu` and `other_stu` can publish; a different authenticated user cannot overwrite another
+model. Only privately configured publishers can publish; a different authenticated user cannot overwrite another
 publisher's recording. Older updates cannot replace newer ones. The feed is an explicitly ephemeral
 read-time projection: DynamoDB TTL removes each heartbeat/history chunk seven days after its last sync,
 and reads hide expired items even before

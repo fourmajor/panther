@@ -16,7 +16,7 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** Each editorial discipline is a durable callback stage, not a Lambda-hosted AI call. */
 export class EditorialProcessing extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
     const plan = JSON.parse(fs.readFileSync(path.join(__dirname,
@@ -32,6 +32,7 @@ export class EditorialProcessing extends Construct {
       exclude: ["**/__pycache__/**", "**/*.pyc"],
     });
     const environment = { ASSET_BUCKET_NAME: props.bucket.bucketName,
+      MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS,
       EDITORIAL_TABLE: table.tableName, EDITORIAL_PLAN: JSON.stringify(plan) };
     const fn = new lambda.Function(this, "Broker", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,

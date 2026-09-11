@@ -40,7 +40,7 @@ not execute a polling loop, Lambda renderer, or AI API call. Callback tokens sta
 are never given to the laptop or included in public job responses/logs.
 
 The owner/DM can register references and inspect jobs. Only the CDK-configured owner worker
-(`stu` initially) can claim jobs. Workers use Panther authentication, 10-minute exclusive leases,
+(configured privately at deployment) can claim jobs. Workers use Panther authentication, 10-minute exclusive leases,
 and one-minute heartbeats. A stopped machine can reclaim expired work; checkpoints stay on disk.
 Usage-limit pauses defer a job for at least an hour and do not consume its crash retry allowance.
 Three crashed attempts fail the job. A set expires after 30 days waiting/running; deliberately

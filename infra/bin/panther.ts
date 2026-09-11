@@ -6,6 +6,7 @@ import { PantherDomainStack } from "../lib/panther-domain-stack";
 import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 import { PantherCostAnomaliesStack } from "../lib/panther-cost-anomalies-stack";
+import { loadIdentities } from "../lib/deployment-identities";
 
 const app = new cdk.App();
 
@@ -78,6 +79,7 @@ const foundation = new PantherFoundationStack(app, "PantherFoundation", {
 });
 
 const mediaExplorer = new PantherMediaExplorerStack(app, "PantherMediaExplorer", {
+  identities: loadIdentities(account, process.env.PANTHER_IDENTITIES_FILE),
   env: {
     account,
     region,

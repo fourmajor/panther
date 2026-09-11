@@ -16,8 +16,8 @@ def broker(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
     monkeypatch.setenv("ASSET_BUCKET_NAME", "test-panther-assets")
     monkeypatch.setenv("JOB_TABLE", "test-jobs")
-    monkeypatch.setenv("MODEL_PUBLISHERS", "stu,other_stu")
-    monkeypatch.setenv("MODEL_WORKERS", "stu")
+    monkeypatch.setenv("MODEL_PUBLISHERS", "example-operator,example-editor")
+    monkeypatch.setenv("MODEL_WORKERS", "example-operator")
     monkeypatch.setenv(
         "STATE_MACHINE_ARN", "arn:aws:states:us-west-2:123456789012:stateMachine:test"
     )
@@ -49,7 +49,7 @@ def broker(monkeypatch):
         yield m
 
 
-def request(m, route, body=None, username="stu", query=None, actor="test-owner"):
+def request(m, route, body=None, username="example-operator", query=None, actor="test-owner"):
     return m.handler(
         {
             "routeKey": route,
@@ -184,7 +184,7 @@ def test_claim_is_exclusive_and_worker_only(broker):
     _, claimed = queued(broker)
     assert claimed["job"]["status"] == "RUNNING"
     assert unpack(request(broker, "POST /model-jobs/claim"))["job"] is None
-    assert request(broker, "POST /model-jobs/claim", username="other_stu")["statusCode"] == 403
+    assert request(broker, "POST /model-jobs/claim", username="example-editor")["statusCode"] == 403
     assert "taskToken" not in claimed["job"] and "lease" not in claimed["job"]
     payload = {"jobId": claimed["job"]["jobId"], "lease": claimed["lease"]}
     assert (

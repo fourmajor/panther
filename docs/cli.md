@@ -9,7 +9,7 @@ With [pipx](https://pipx.pypa.io/stable/installation/) installed:
 
 ```sh
 pipx install 'git+https://github.com/fourmajor/panther.git'
-panther login --username other_stu
+panther login --username YOUR_USERNAME
 panther instructions
 ```
 

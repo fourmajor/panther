@@ -77,7 +77,7 @@ def test_leases_callback_redaction_and_expiry(editorial):
     job, claim = queued(m)
     assert "taskToken" not in json.dumps(claim)
     assert unpack(request(m, "POST /editorial-jobs/claim"))["task"] is None
-    assert request(m, "POST /editorial-jobs/claim", username="other_stu")["statusCode"] == 403
+    assert request(m, "POST /editorial-jobs/claim", username="example-editor")["statusCode"] == 403
     body = {"jobId": job["jobId"], "stage": "context", "lease": claim["lease"]}
     assert (
         request(m, "POST /editorial-jobs/heartbeat", body, actor="different")["statusCode"] == 400

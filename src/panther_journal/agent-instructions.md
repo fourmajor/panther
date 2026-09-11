@@ -382,7 +382,7 @@ The full operational instructions are in `docs/local-model-workflow.md` in the t
    new model/source keys match. The response records `previousProfileKey`; the exact old profile
    and all old assets are retained. For uncertain responses, inspect before retrying.
 
-Publishing is limited to the CDK-configured owner/DM usernames. It changes only the model selection
+Publishing is limited to privately configured publisher accounts. It changes only the model selection
 and publication audit fields, preserves the existing portrait and other character information,
 and resets the viewer to its standard front view. A failed concurrent write may retain an unused
 history snapshot; it must never overwrite a newer profile. This is basic safe model replacement,

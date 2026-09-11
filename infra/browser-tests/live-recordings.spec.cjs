@@ -12,7 +12,7 @@ function recording(overrides = {}) {
 }
 async function fixture(page) {
   const state = {records:[recording()], fail:false, historyFail:false, chunks:null, reads:0};
-  await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'stu'}))+'.test'})));
+  await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-operator'}))+'.test'})));
   await page.route(`${origin}/**`, route => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript', body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});

@@ -28,7 +28,7 @@ assets.find(a=>a.key===playbackManifest).playback={recordingKey:recording,audioK
 assets.find(a=>a.key===video).metadata.extra={generation:{schemaVersion:1,method:'ai',model:'Kling 3 Pro',provider:'fal',inference:'remote',cost:{status:'billed',amount:'1.344',currency:'USD'},evidence:'Synthetic billing event'}};
 
 async function fixture(page) {
-  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'stu'}))+'.test'})));
+  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-operator'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
     const pathname=new URL(route.request().url()).pathname;
     if(pathname==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
