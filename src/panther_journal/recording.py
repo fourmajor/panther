@@ -754,6 +754,8 @@ def diarize(folder, runtime, model, speakers):
     ]
     if speakers:
         command += ["--speakers", str(speakers)]
+    click.echo(f"Speaker run: {target}")
+    click.echo(f"Progress: {target / 'progress.json'} (stage counts, not an overall estimate)")
     # No credentials inherited. Downloads are a separate, interactive setup operation.
     env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in os.environ}
     env.update(HF_HUB_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1", PYANNOTE_METRICS_ENABLED="0")
@@ -768,6 +770,32 @@ def diarize(folder, runtime, model, speakers):
     click.echo(
         "Speaker labels are anonymous and specific to this run. Confirm names from introductions before attribution."
     )
+
+
+@recording.command('speaker-status')
+@click.argument('run', type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option('--json', 'as_json', is_flag=True, help='Return the saved progress snapshot.')
+def speaker_status(run, as_json):
+    """Read future diarization runs' real stage counters without contacting AWS or the worker."""
+    path = run / 'progress.json'
+    if not path.exists():
+        raise click.ClickException('No progress snapshot: this run may predate progress reporting or not have started. Overall progress is unknown.')
+    if path.is_symlink() or path.stat().st_size > 16384:
+        raise click.ClickException('Invalid progress snapshot')
+    try:
+        value = json.loads(path.read_text())
+        if value.get('schemaVersion') != 1 or value.get('entityType') != 'SpeakerDetectionProgress':
+            raise ValueError('Invalid schema')
+        if as_json:
+            click.echo(json.dumps(value, indent=2, allow_nan=False))
+            return
+        counts = (f"{value['completed']}/{value['total']} ({value['stagePercent']}% of this stage)"
+                  if value['stagePercent'] is not None else 'no batch counter for this stage')
+        click.echo(f"{value['state']}: {value['stage']} — {counts}")
+        click.echo(f"Overall: {'100%' if value['state'] == 'complete' else 'unknown'}; last update: {value['updatedAt']}")
+        click.echo('This is a saved observation, not proof the process is still running or a resumable checkpoint.')
+    except (ValueError, TypeError, KeyError) as exc:
+        raise click.ClickException('Invalid progress snapshot') from exc
 
 
 class SpeakerTurn(BaseModel):
