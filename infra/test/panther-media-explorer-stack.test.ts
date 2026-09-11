@@ -22,6 +22,24 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("movie review saves decisions without any generation or workflow permissions", () => {
+  const template = mediaExplorerTemplate();
+  for (const route of ["GET /movie-review", "POST /movie-review"]) {
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:route, AuthorizationType:"JWT"});
+  }
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"movie_review.handler"});
+  const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("EditorialProcessingMovieReview")));
+  assert.match(policies, /dynamodb:PutItem/);
+  assert.match(policies, /dynamodb:GetItem/);
+  assert.doesNotMatch(policies, /states:|s3:PutObject|secretsmanager:|bedrock:|sagemaker:/);
+  const tables = Object.entries(template.findResources("AWS::DynamoDB::Table"))
+    .filter(([id]) => id.startsWith("EditorialProcessingMovieReviews"));
+  assert.equal(tables.length, 1);
+  assert.equal(tables[0][1].Properties.BillingMode,"PAY_PER_REQUEST");
+  assert.equal(tables[0][1].DeletionPolicy,"Retain");
+});
+
 test("live recording preview has authenticated routes and only expiring on-demand storage", () => {
   const template = mediaExplorerTemplate();
   for (const route of ["GET /recordings/live", "POST /recordings/live", "GET /recordings/live/history", "POST /recordings/live/history"]) {
@@ -327,7 +345,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 44);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 46);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

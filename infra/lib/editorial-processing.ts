@@ -108,5 +108,28 @@ export class EditorialProcessing extends Construct {
     for (const route of ["/novel", "/novel-chapter"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration: novelIntegration, authorizer: props.authorizer });
     }
+    // Review decisions cannot dispatch jobs or spend. Retain immutable revision-specific audit rows.
+    const reviews = new dynamodb.Table(this, "MovieReviews", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED, removalPolicy: RemovalPolicy.RETAIN,
+    });
+    const movieReview = new lambda.Function(this, "MovieReview", {
+      runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+      handler: "movie_review.handler", code,
+      environment: { ASSET_BUCKET_NAME: props.bucket.bucketName,
+        MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS,
+        MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS, MOVIE_REVIEW_TABLE: reviews.tableName },
+      memorySize: 256, timeout: Duration.seconds(30),
+      logGroup: new logs.LogGroup(this, "MovieReviewLogs", { retention: logs.RetentionDays.ONE_MONTH }),
+    });
+    movieReview.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["dynamodb:GetItem", "dynamodb:PutItem"], resources: [reviews.tableArn],
+    }));
+    props.bucket.grantRead(movieReview, "games/*");
+    const reviewIntegration = new integrations.HttpLambdaIntegration("MovieReviewIntegration", movieReview);
+    props.api.addRoutes({ path: "/movie-review", methods: [api.HttpMethod.GET, api.HttpMethod.POST],
+      integration: reviewIntegration, authorizer: props.authorizer });
   }
 }
