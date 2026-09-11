@@ -36,6 +36,7 @@ async function fixture(page,{blocked=false,conflict=false}={}) {
       } else body={plan,sha256:'a'.repeat(64),review,canApprove:true,readiness:{knownCostUsd:blocked?'0.32':'1.12',costComplete:!blocked,durationSeconds:16,ready:!blocked,blockers:blocked?['gate: starting composition has not been prepared','gate: generation cost is not quoted','gate: Character identity needs checking.']:[]}};
     }
     if(u.pathname==='/object-url') body={url:'https://images.example/frame.svg',contentType:'image/svg+xml'};
+    if(u.pathname==='/recordings/live') body={recordings:[]};
     return route.fulfill({headers,json:body});
   });
   return writes;
@@ -73,6 +74,7 @@ test('blocked plan saves shot feedback, never pretends missing prices are zero',
   await page.getByRole('button',{name:'Save change requests'}).click(); await expect(page.locator('.movie-feedback-status')).toContainText('Review saved');
   expect(writes[0].comments).toEqual([{shotId:'gate',text:'Keep the lantern in her right hand.'}]);
   await expect(page.getByRole('button',{name:'Review approval…'})).toBeDisabled();
+  await page.screenshot({path:test.info().outputPath('movie-blocked.png'),fullPage:true});
 });
 test('conflicts retain unsaved feedback and do not show success',async({page})=>{
   await fixture(page,{conflict:true});await open(page); await page.getByLabel('Request a change to this shot').fill('Change this shot.');

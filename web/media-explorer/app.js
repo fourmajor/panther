@@ -1322,6 +1322,8 @@ function clearLibrary() {
   document.getElementById("movie-workspace").hidden = true;
   document.getElementById("session-library").hidden = true;
   document.getElementById("library-list").replaceChildren();
+  document.getElementById("library-list").hidden = false;
+  document.getElementById("library-status").hidden = false;
   if (!state.tokens) assetIndex = null;
 }
 
@@ -1373,6 +1375,9 @@ async function loadLibrary(section, epoch) {
     if (!current()) return;
     if (section === "videos") await loadMovies(assets, epoch);
     if (!current()) return;
+    status.hidden = section === "videos" && new URLSearchParams(location.search).has("project");
+    list.hidden = status.hidden;
+    if (status.hidden) return;
     const manifests = new Set(assets.filter(a => a.recording?.partCount > 0).map(a => a.key.split("/")[3]));
     const keys = new Set(assets.map(a => a.key));
     const selected = assets.filter(a => section === "audio"
@@ -1551,6 +1556,8 @@ async function loadMovies(assets, epoch) {
   const plans = assets.filter(a => a.kind === "movie-review-plan" && sameGameKey(a.key));
   const key = new URLSearchParams(location.search).get("project");
   if (!key) {
+    // Do not push existing playable videos below the fold with an empty planning feature.
+    if (!plans.length) { host.hidden = true; return; }
     const intro = movieNode("div", undefined, "movie-intro");
     const text = movieNode("div"); text.append(movieNode("p", "THE CUTTING ROOM", "eyebrow"),
       movieNode("h2", "A good film starts before the first frame."),
@@ -1596,7 +1603,8 @@ function drawMovieWorkspace(host, data, key, assets, current) {
   title.append(movieNode("p", `PRE-PRODUCTION / ${plan.revisionId}`, "eyebrow"), movieNode("h2", plan.title), movieNode("p", plan.summary, "movie-synopsis"));
   heading.append(title, movieNode("span", "No generation started", "movie-tag")); header.append(heading);
   const stats = movieNode("div", undefined, "movie-stats");
-  stats.append(movieNode("span", `${plan.shots.length} planned shots`), movieNode("span", `${data.readiness.durationSeconds}s planned runtime`), movieNode("span", "AI adaptation · not a verbatim record"));
+  stats.append(movieNode("span", `${plan.shots.length} planned shots`), movieNode("span", `${data.readiness.durationSeconds}s planned runtime`),
+    movieNode("span", `${movieMoney(plan.budget.capUsd)} budget ceiling`), movieNode("span", "AI adaptation · not a verbatim record"));
   header.append(stats); host.append(header);
   const layout = movieNode("div", undefined, "movie-layout"), main = movieNode("div", undefined, "movie-main"), aside = movieNode("aside", undefined, "movie-budget");
   aside.setAttribute("aria-label", "Budget and approval");
