@@ -52,6 +52,11 @@ pinned in the preview identity, so changing it preserves the prior preview rathe
 The live worker keeps the speaker pipeline resident, with two CPU threads, low
 priority and a 180-second per-chunk deadline, using Apple MPS with bounded batches when available.
 It may fall behind; no real-time guarantee is made. The first chunk includes model startup time.
+On the development Mac, a two-chunk local check measured roughly 39 seconds for the first
+30-second chunk (startup included) and 22 seconds for the next, combining Whisper and resident
+MPS speaker analysis. CPU-only speaker analysis alone took roughly 83 seconds for one chunk.
+Other local analysis was active during these measurements. This small throughput check is not
+a sustained recording benchmark, speaker-identity accuracy test, or guarantee for other hardware.
 Do not trade away capture reliability or silently switch to a paid provider.
 
 Completed live recognition is provisional. Final reconciliation should reuse its saved evidence
