@@ -1,6 +1,7 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import test from "node:test";
+import assert from "node:assert/strict";
 import { PantherAccessStack } from "../lib/panther-access-stack";
 import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 
@@ -138,6 +139,26 @@ test("access assigns administrator and asset-uploader permission sets", () => {
     Name: "PantherAssetUploader",
     InlinePolicy: Match.objectLike({
       Statement: Match.arrayWith([
+        {
+          Sid: "CostExplorerReadOnly",
+          Action: ["ce:Get*", "ce:Describe*", "ce:List*"],
+          Effect: "Allow",
+          Resource: "*",
+        },
+        {
+          Sid: "CostExplorerConsoleContext",
+          Action: [
+            "account:GetAccountInformation",
+            "billing:GetIAMAccessPreference",
+            "billing:GetBillingView",
+            "billing:GetBillingViewData",
+            "billing:ListBillingViews",
+            "consolidatedbilling:GetAccountBillingRole",
+            "consolidatedbilling:ListLinkedAccounts",
+          ],
+          Effect: "Allow",
+          Resource: "*",
+        },
         Match.objectLike({
           Action: Match.arrayWith(["s3:PutObject"]),
           Effect: "Allow",
@@ -149,4 +170,14 @@ test("access assigns administrator and asset-uploader permission sets", () => {
       ]),
     }),
   });
+  const uploader = Object.values(template.findResources("AWS::SSO::PermissionSet"))
+    .find((resource) => resource.Properties.Name === "PantherAssetUploader")!;
+  assert.equal(uploader.Properties.ManagedPolicies, undefined);
+  const actions: string[] = uploader.Properties.InlinePolicy.Statement.flatMap(
+    (statement: { Action: string | string[] }) => [statement.Action].flat(),
+  );
+  for (const action of actions.filter((action) =>
+    !action.startsWith("s3:") && !action.startsWith("ssm:"))) {
+    assert.match(action, /^(ce|account|billing|consolidatedbilling):(Get|Describe|List)/);
+  }
 });
