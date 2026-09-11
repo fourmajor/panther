@@ -20,6 +20,11 @@ For batch speaker detection, read `panther recording speaker-status RUN_DIRECTOR
 Report `stagePercent` only as progress within its named stage. Overall progress stays unknown
 until completion; never invent an overall percentage from runtime, CPU activity or stage counts.
 Older running jobs may have no progress snapshot. Do not restart them just to add instrumentation.
+For a completed batch, `recording attribute --word-level` reuses saved ASR token timestamps and
+diarization, splitting at word boundaries without changing raw text. Its printed output directory
+contains measured segment-count progress and throughput-based estimated completion time in
+`progress.json`. These measure attribution processing only, not review or accuracy. See
+`docs/speaker-detection-progress.md` for temporal strictness controls and timing limitations.
 When authorized to publish voice profiles, use immutable Panther assets (`speaker-recognition-profile`
 versus `voice-synthesis-profile`) with explicit `extra.playerIds`, consent/source provenance, and
 local/remote model metadata. Keep reference clips as linked `voice-reference-audio` assets. Do not

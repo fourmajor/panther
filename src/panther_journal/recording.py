@@ -859,7 +859,10 @@ def attributed_lines(lines, turns, mapping):
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Private JSON mapping anonymous labels to confirmed player IDs.",
 )
-def attribute(transcript, diarization_file, mapping):
+@click.option('--word-level', is_flag=True, help='Split using the original saved ASR token timing evidence.')
+@click.option('--minimum-coverage', default=0.65, type=click.FloatRange(min=0.500001, max=1))
+@click.option('--winner-margin', default=0.25, type=click.FloatRange(min=0, max=1))
+def attribute(transcript, diarization_file, mapping, word_level, minimum_coverage, winner_margin):
     """Create a new transcript version using a human-confirmed speaker-to-player map."""
     folder = transcript.resolve().parent
     record = verified(folder)
@@ -889,21 +892,51 @@ def attribute(transcript, diarization_file, mapping):
         raise click.ClickException(
             "Map detected speaker labels to this roster's player IDs, not character IDs."
         )
-    document["segments"] = attributed_lines(document["segments"], turns, names)
+    target = folder / f"transcript-{uuid.uuid4().hex}"
+    target.mkdir(mode=0o700)
+    progress = None
+    if word_level:
+        from panther_journal import word_attribution
+
+        timing_path = transcript / 'asr-output/transcription.json'
+        progress = word_attribution.Progress(target / 'progress.json', len(document['segments']))
+        click.echo(f'Progress: {target / "progress.json"}')
+        try:
+            timing = json.loads(timing_path.read_text())
+            document['segments'], report = word_attribution.attribute(
+                document['segments'], timing, turns, names, minimum_coverage, winner_margin, progress)
+            document['speakerAttributionPolicy'] = {
+                'version': 1, 'method': 'word-exclusive-coverage',
+                'minimumCoverage': minimum_coverage, 'winnerMargin': winner_margin,
+                'maximumOverlapCoverage': 0.1, 'timingEvidenceSha256': digest(timing_path),
+                'timingWarning': 'Whisper token times are estimates, not forced alignment. '
+                                 'Player labels inherit the supplied map; coverage is not accuracy.',
+            }
+            write_new(target / 'attribution-report.json', report)
+        except Exception as exc:
+            progress.write(progress.completed, status='failed', error=str(exc))
+            raise click.ClickException(str(exc)) from exc
+    else:
+        document["segments"] = attributed_lines(document["segments"], turns, names)
     document.update(
         sourceTranscriptId=document["id"],
         sourceTranscriptSha256=digest(source),
-        id=f"transcript-{uuid.uuid4().hex}",
-        speakerMethod="local-diarization-confirmed-map",
+        id=target.name,
+        speakerMethod="word-timing-diarization-confirmed-map" if word_level else "local-diarization-confirmed-map",
         createdAt=datetime.now(timezone.utc).isoformat(),
         reviewStatus="unreviewed",
         diarizationSha256=digest(diarization_file),
         speakerMap=names,
     )
-    target = folder / document["id"]
-    target.mkdir(mode=0o700)
-    save_transcript(target, document)
-    write_new(target / "diarization.json", speakers)
+    try:
+        save_transcript(target, document)
+        write_new(target / "diarization.json", speakers)
+    except Exception as exc:
+        if progress:
+            progress.write(progress.total, status='failed', error=str(exc))
+        raise
+    if progress:
+        progress.write(progress.total, status='completed')
     click.echo(str(target))
     click.echo(
         "Mixed or overlapping speech remains unassigned. All text and earlier versions are retained."

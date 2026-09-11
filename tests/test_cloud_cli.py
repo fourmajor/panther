@@ -57,6 +57,7 @@ def test_instructions_ship_with_cli():
     assert "Preview summaries stay outside the manuscript" in result.output
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
+    assert "recording attribute --word-level" in result.output
     assert "Tag every character actually depicted or discussed" in result.output
     assert "--local-only" in result.output
     assert "raw-transcript" in result.output
