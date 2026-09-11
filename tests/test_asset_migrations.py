@@ -43,7 +43,7 @@ def service(monkeypatch):
     return module, s3, body
 
 
-def call(service, body=None, username="stu"):
+def call(service, body=None, username="example-operator"):
     module, _, default = service
     return module.handler({"body": json.dumps(default if body is None else body),
         "requestContext": {"authorizer": {"jwt": {"claims": {"sub": "owner-id", "cognito:username": username}}}}}, None)
@@ -84,7 +84,7 @@ def test_invalid_or_conflicted_plans_cannot_write(service, change):
 
 def test_owner_only_versioning_required_and_lineage_cannot_be_dropped(service):
     _, s3, body = service
-    assert call(service, username='other_stu')['statusCode'] == 403
+    assert call(service, username='example-editor')['statusCode'] == 403
     s3.objects[body['key']]['VersionId'] = 'null'
     assert call(service)['statusCode'] == 400
     s3.objects[body['key']]['VersionId'] = 'version-one'
@@ -104,7 +104,7 @@ def test_handler_releases_only_definite_results_and_never_locks_for_nonowner(ser
     assert call(service)["statusCode"] == 503
     assert not state["complete"]
     monkeypatch.setattr(module, "exclusive", lambda: pytest.fail("Unauthorized lock attempt"))
-    assert call(service, username="other_stu")["statusCode"] == 403
+    assert call(service, username="example-editor")["statusCode"] == 403
 
 
 def test_new_uploads_get_explicit_current_metadata(monkeypatch):

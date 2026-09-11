@@ -122,7 +122,7 @@ def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypa
     )
     monkeypatch.setattr(cloud, "cognito", lambda _config: client)
     result = CliRunner().invoke(
-        main, ["login", "--username", "other_stu"], input="secret-password\n"
+        main, ["login", "--username", "example-editor"], input="secret-password\n"
     )
     assert result.exit_code == 0, result.output
     assert "secret-password" not in result.output + store.value
@@ -157,7 +157,7 @@ def test_login_handles_authenticator_challenge(setup, monkeypatch):
     )
     monkeypatch.setattr(cloud, "cognito", lambda _config: client)
     result = CliRunner().invoke(
-        main, ["login", "--username", "other_stu"], input="password\n123456\n"
+        main, ["login", "--username", "example-editor"], input="password\n123456\n"
     )
     assert result.exit_code == 0, result.output
     assert "123456" not in result.output
@@ -252,7 +252,7 @@ def test_list_paginates_and_info_hides_signed_urls(setup, monkeypatch):
 
 def test_plaintext_keyring_is_rejected(monkeypatch):
     monkeypatch.setattr(cloud.keyring, "get_keyring", lambda: MemoryStore())
-    result = CliRunner().invoke(main, ["login", "--username", "other_stu"])
+    result = CliRunner().invoke(main, ["login", "--username", "example-editor"])
     assert result.exit_code != 0
     assert "will not save tokens in plaintext" in result.output
 

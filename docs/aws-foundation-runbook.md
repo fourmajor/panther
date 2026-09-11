@@ -185,17 +185,18 @@ AWS_PROFILE=panther-sso-admin npm run deploy -- PantherMediaExplorer \
   --exclusively
 ```
 
-CDK creates the private web bucket, CloudFront distribution, Cognito user pool, two users, protected
+Supply `PANTHER_IDENTITIES_FILE` as described in [private account configuration](private-account-configuration.md)
+before CDK synthesis, diff or deployment. Its actual contents and production templates stay outside GitHub.
+
+CDK creates the private web bucket, CloudFront distribution, Cognito user pool, configured users, protected
 HTTP API, and on-demand Lambda functions. The default Cognito domain prefix is checked into
 `infra/cdk.json`; change that context value if AWS reports that the globally named prefix is already
 in use. `--exclusively` prevents this focused deployment from also updating the existing foundation
 stack without its deployment-time budget email context.
 
-The two initial usernames are `stu` and `other_stu`. Their generated passwords are stored as standard
-SSM SecureString parameters.
-
-Additional accounts are declared in `MEDIA_USERS` in the media-explorer CDK stack; `goldsoundz`
-uses the same generated-password provisioning at `/panther/media-explorer/users/goldsoundz/password`.
+Accounts are supplied through private deployment configuration, never a list in application source.
+Their generated initial passwords are stored as standard SSM SecureString parameters under
+`/panther/media-explorer/users/USERNAME/password`.
 Adding an account does not add it to management/publisher allowlists, create a Player record, or
 grant an application admin role. Formal member/admin roles are tracked in issue #83. Passwords
 must be handed off privately, never committed, placed in an issue, or exposed in deployment output.
@@ -205,14 +206,7 @@ Retrieve the initial account passwords with administrative access:
 ```bash
 AWS_PROFILE=panther-sso-admin aws ssm get-parameter \
   --region us-west-2 \
-  --name /panther/media-explorer/users/stu/password \
-  --with-decryption \
-  --query Parameter.Value \
-  --output text
-
-AWS_PROFILE=panther-sso-admin aws ssm get-parameter \
-  --region us-west-2 \
-  --name /panther/media-explorer/users/other_stu/password \
+  --name /panther/media-explorer/users/USERNAME/password \
   --with-decryption \
   --query Parameter.Value \
   --output text

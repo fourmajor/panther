@@ -15,7 +15,7 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** A completed set is the durable outbox event; individual uploads never start assembly. */
 export class PlaybackProcessing extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
     const table = new dynamodb.Table(this, "Sets", {
@@ -28,7 +28,8 @@ export class PlaybackProcessing extends Construct {
     const code = lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api"), {
       exclude: ["**/__pycache__/**", "**/*.pyc"],
     });
-    const environment = { ASSET_BUCKET_NAME: props.bucket.bucketName, PLAYBACK_TABLE: table.tableName };
+    const environment = { ASSET_BUCKET_NAME: props.bucket.bucketName, PLAYBACK_TABLE: table.tableName,
+      MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS };
     const broker = new lambda.Function(this, "Broker", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
       handler: "playback_jobs.handler", code, environment,

@@ -7,6 +7,8 @@ import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 function mediaExplorerTemplate(): Template {
   const app = new App();
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
+    identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
+      publishers:["example-operator","example-editor"], workers:["example-operator"], migrationAdmins:["example-operator"]},
     env: {
       account: "123456789012",
       region: "us-west-2",
@@ -137,7 +139,7 @@ test("model jobs use retained on-demand state and a durable external-worker call
     BisectBatchOnFunctionError: true,
   });
   template.hasResourceProperties("AWS::Lambda::Function", {
-    Handler: "model_jobs.handler", Environment: { Variables: Match.objectLike({ MODEL_WORKERS: "stu" }) },
+    Handler: "model_jobs.handler", Environment: { Variables: Match.objectLike({ MODEL_WORKERS: "example-operator" }) },
   });
   template.resourceCountIs("AWS::EC2::NatGateway", 0);
   template.resourceCountIs("AWS::EC2::Instance", 0);
@@ -167,7 +169,7 @@ test("editorial workflow has separate review stages, parallel adaptations, and n
 test("structured game catalog is retained, on-demand and cannot mutate artwork", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::Lambda::Function", {
-    Handler: "catalog.handler", Environment: { Variables: Match.objectLike({ CATALOG_EDITORS: "stu,other_stu" }) },
+    Handler: "catalog.handler", Environment: { Variables: Match.objectLike({ CATALOG_EDITORS: "example-operator,example-editor" }) },
   });
   const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
     .filter(([id]) => id.startsWith("GameCatalog"));
@@ -273,25 +275,31 @@ test("media explorer provisions configured users without exposing passwords or e
 
   template.resourceCountIs("Custom::PantherMediaUser", 3);
   template.hasResourceProperties("Custom::PantherMediaUser", {
-    Username: "stu",
-    PasswordParameterName: "/panther/media-explorer/users/stu/password",
+    Username: "example-operator",
+    PasswordParameterName: "/panther/media-explorer/users/example-operator/password",
   });
   template.hasResourceProperties("Custom::PantherMediaUser", {
-    Username: "other_stu",
-    PasswordParameterName: "/panther/media-explorer/users/other_stu/password",
+    Username: "example-editor",
+    PasswordParameterName: "/panther/media-explorer/users/example-editor/password",
   });
   template.hasResourceProperties("Custom::PantherMediaUser", {
-    Username: "goldsoundz",
-    PasswordParameterName: "/panther/media-explorer/users/goldsoundz/password",
+    Username: "example-member",
+    PasswordParameterName: "/panther/media-explorer/users/example-member/password",
   });
   for (const fn of Object.values(template.findResources("AWS::Lambda::Function"))) {
     for (const [name, value] of Object.entries(fn.Properties.Environment?.Variables || {})) {
-      if (/(PUBLISHERS|EDITORS|WORKERS|ADMINS)$/.test(name)) {
-        assert.doesNotMatch(String(value), /goldsoundz/);
+      if (/(PUBLISHERS|EDITORS|WORKERS|ADMINS|MIGRATORS)$/.test(name)) {
+        assert.doesNotMatch(String(value), /example-member/);
       }
     }
   }
   const users = Object.values(template.findResources("Custom::PantherMediaUser"));
+  for (const handler of ["index.handler","model_jobs.handler","editorial_jobs.handler","novel.handler","playback_jobs.handler"]) {
+    template.hasResourceProperties("AWS::Lambda::Function", {Handler:handler,
+      Environment:{Variables:Match.objectLike({MODEL_PUBLISHERS:"example-operator,example-editor"})}});
+  }
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"asset_migrations.handler",
+    Environment:{Variables:Match.objectLike({ASSET_MIGRATORS:"example-operator"})}});
   for (const user of users) assert.equal(user.Properties.Password, undefined);
   template.hasResourceProperties("AWS::IAM::Policy", {
     PolicyDocument: Match.objectLike({
@@ -332,7 +340,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     Environment: {
       Variables: Match.objectLike({
         SIGNED_URL_TTL_SECONDS: "300",
-        MODEL_PUBLISHERS: "stu,other_stu",
+        MODEL_PUBLISHERS: "example-operator,example-editor",
       }),
     },
     Handler: "index.handler",

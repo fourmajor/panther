@@ -213,7 +213,8 @@ def handler(event, _context):
     if "operation" in event and "requestContext" not in event:
         return internal(event)
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    if not claims.get("sub") or claims.get("cognito:username") not in {"stu", "other_stu"}:
+    from access_policy import authorized
+    if not authorized(claims, "MODEL_PUBLISHERS"):
         return response(403, {"error": "Owner or DM sign-in required"})
     try:
         route = event.get("routeKey", "")
@@ -231,7 +232,7 @@ def handler(event, _context):
         body = json.loads(base64.b64decode(raw) if event.get("isBase64Encoded") else raw)
         if route == "POST /recording-sets/complete":
             return response(200, submit(body))
-        if claims.get("cognito:username") != "stu":
+        if not authorized(claims, "MODEL_WORKERS"):
             return response(403, {"error": "Only the owner's laptop can process playback"})
         if route == "POST /recording-playback-jobs/claim":
             if body.get("workflowVersion") != 1:

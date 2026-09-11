@@ -66,7 +66,8 @@ def validate(body):
 
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    if claims.get("cognito:username") != "stu" or not claims.get("sub"):
+    from access_policy import authorized
+    if not authorized(claims, "ASSET_MIGRATORS"):
         return media._response(403, {"error": "Owner sign-in required for asset migrations"})
     try:
         with exclusive() as lock:

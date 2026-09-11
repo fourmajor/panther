@@ -36,6 +36,14 @@ def library(monkeypatch):
     return lib, media, s3
 
 
+def test_library_access_uses_private_configuration_not_a_builtin_identity(library, monkeypatch):
+    monkeypatch.setenv("MODEL_PUBLISHERS", "custom-account")
+    assert call(library, username="custom-account")["statusCode"] == 200
+    assert call(library, username="example-operator")["statusCode"] == 403
+    monkeypatch.delenv("MODEL_PUBLISHERS")
+    assert call(library, username="custom-account")["statusCode"] == 403
+
+
 def add(s3, name, kind, doc=None, sources=()):
     key = "games/example-game/assets/" + name
     s3.objects[key] = {
@@ -47,7 +55,7 @@ def add(s3, name, kind, doc=None, sources=()):
     return key
 
 
-def call(library, route="/assets", username="stu", **query):
+def call(library, route="/assets", username="example-operator", **query):
     lib, media, _ = library
     return lib.handle({
         "routeKey": "GET " + route,
@@ -94,7 +102,7 @@ def test_scope_auth_and_cursor(library):
     assert call(library, gameId="other-game", cursor=page["cursor"])["statusCode"] == 400
     assert call(library, cursor="broken")["statusCode"] == 400
     assert call(library, username="outsider")["statusCode"] == 403
-    assert call(library, username="other_stu")["statusCode"] == 200
+    assert call(library, username="example-editor")["statusCode"] == 200
     assert call(library, "/asset-document", key="games/other/assets/a/a.json")["statusCode"] == 400
     assert call(library, "/asset-document", key="games/example-game/assets/../a")["statusCode"] == 400
 

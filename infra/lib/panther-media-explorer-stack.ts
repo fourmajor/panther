@@ -34,7 +34,7 @@ import { GameCatalog } from "./game-catalog";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
 
-const MEDIA_USERS = ["stu", "other_stu", "goldsoundz"] as const;
+import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
 
 // The module build has bare Three.js imports; static hosting needs this
 // self-contained browser distribution instead.
@@ -44,6 +44,7 @@ export const MODEL_VIEWER_BUNDLE_PATH = path.join(
 );
 
 export interface PantherMediaExplorerStackProps extends StackProps {
+  readonly identities: DeploymentIdentities;
   readonly certificateArn: string;
   readonly cognitoDomainPrefix: string;
   readonly domainName: string;
@@ -53,6 +54,12 @@ export interface PantherMediaExplorerStackProps extends StackProps {
 export class PantherMediaExplorerStack extends Stack {
   constructor(scope: Construct, id: string, props: PantherMediaExplorerStackProps) {
     super(scope, id, props);
+    const identities = validateIdentities(props.identities);
+    const accessEnvironment = {
+      MODEL_PUBLISHERS: identities.publishers.join(","),
+      MODEL_WORKERS: identities.workers.join(","),
+      ASSET_MIGRATORS: identities.migrationAdmins.join(","),
+    };
 
     if (this.node.tryGetContext("assetStorageMode") !== undefined) {
       throw new Error("assetStorageMode was retired; indexed layout version 2 is unconditional");
@@ -260,7 +267,7 @@ export class PantherMediaExplorerStack extends Stack {
       environment: {
         ASSET_BUCKET_NAME: privateAssets.bucketName,
         SIGNED_URL_TTL_SECONDS: "300",
-        MODEL_PUBLISHERS: "stu,other_stu",
+        MODEL_PUBLISHERS: accessEnvironment.MODEL_PUBLISHERS,
       },
     });
     mediaApiFunction.addToRolePolicy(
@@ -338,7 +345,7 @@ export class PantherMediaExplorerStack extends Stack {
       timeout: Duration.seconds(25), memorySize: 256,
       logGroup: migrationLogs,
       environment: { ASSET_BUCKET_NAME: privateAssets.bucketName,
-        MIGRATION_LOCK_TABLE: migrationLock.tableName },
+        MIGRATION_LOCK_TABLE: migrationLock.tableName, ASSET_MIGRATORS: accessEnvironment.ASSET_MIGRATORS },
     });
     migrationLock.grant(migrations, "dynamodb:PutItem", "dynamodb:DeleteItem");
     migrations.addToRolePolicy(new iam.PolicyStatement({
@@ -362,11 +369,11 @@ export class PantherMediaExplorerStack extends Stack {
       // 404 instead of 403. A prefix condition cannot match a HEAD request.
       actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn],
     }));
-    new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
-    new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer });
-    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
-    new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
-    new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer });
+    new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,
@@ -475,7 +482,7 @@ export class PantherMediaExplorerStack extends Stack {
       logGroup: providerLogGroup,
     });
 
-    for (const username of MEDIA_USERS) {
+    for (const username of identities.users) {
       new CustomResource(this, `User-${username}`, {
         serviceToken: userProvider.serviceToken,
         resourceType: "Custom::PantherMediaUser",

@@ -19,7 +19,7 @@ def catalog(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
     monkeypatch.setenv("ASSET_BUCKET_NAME", "test-assets")
     monkeypatch.setenv("CATALOG_TABLE", "test-catalog")
-    monkeypatch.setenv("CATALOG_EDITORS", "stu,other_stu")
+    monkeypatch.setenv("CATALOG_EDITORS", "example-operator,example-editor")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     with mock_aws():
         boto3.client("dynamodb").create_table(
@@ -103,7 +103,7 @@ def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, m
     assert request(catalog, "POST /character-profile", body)["statusCode"] == 422
 
 
-def request(m, route, body=None, username="stu", game="test-game"):
+def request(m, route, body=None, username="example-operator", game="test-game"):
     return m.handler(
         {
             "routeKey": route,

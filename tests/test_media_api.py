@@ -105,6 +105,8 @@ class FakeS3:
 
 
 def load_media_api(monkeypatch, *, real_storage=False):
+    monkeypatch.setenv("MODEL_PUBLISHERS", "example-operator,example-editor")
+    monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     fake_s3 = FakeS3()
     boto3 = types.ModuleType("boto3")

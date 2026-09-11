@@ -59,10 +59,10 @@ async function fixture(context, { remembered = true, username = 'test' } = {}) {
 }
 
 test('additional configured account uses the same authenticated browser session', async ({context, page}) => {
-  const state = await fixture(context, {username:'goldsoundz'}); // Synthetic session, never real credentials.
+  const state = await fixture(context, {username:'example-member'}); // Synthetic session, never real credentials.
   await page.goto('https://panther.place/transcripts');
   await expect(page.locator('#account')).toBeVisible();
-  await expect(page.locator('#username')).toHaveText('goldsoundz');
+  await expect(page.locator('#username')).toHaveText('example-member');
   await expect(page.locator('#live-status')).toContainText('No live recording reported');
   expect(state.refreshes).toBe(1);
   expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);

@@ -12,7 +12,7 @@ import pytest
 def service(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
     monkeypatch.setenv("LIVE_RECORDINGS_TABLE", "test-live")
-    monkeypatch.setenv("LIVE_RECORDING_PUBLISHERS", "stu,other_stu")
+    monkeypatch.setenv("LIVE_RECORDING_PUBLISHERS", "example-operator,example-editor")
     monkeypatch.setenv("LIVE_HISTORY_TABLE", "test-history")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     with mock_aws():
@@ -53,7 +53,7 @@ def payload(now=1000):
     }
 
 
-def event(body=None, *, game="test-game", actor="owner", username="stu"):
+def event(body=None, *, game="test-game", actor="owner", username="example-operator"):
     return {
         "routeKey": "POST /recordings/live" if body is not None else "GET /recordings/live",
         "requestContext": {

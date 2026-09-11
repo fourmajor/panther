@@ -97,7 +97,8 @@ def describe(media, game, key, *, include_document=False):
 
 def handle(event, media):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    if not claims.get("sub") or claims.get("cognito:username") not in {"stu", "other_stu"}:
+    from access_policy import authorized
+    if not authorized(claims, "MODEL_PUBLISHERS"):
         return media._response(403, {"error": "Owner or DM sign-in required"})
     query = event.get("queryStringParameters") or {}
     game = query.get("gameId", "")

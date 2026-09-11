@@ -66,7 +66,7 @@ def test_completed_chapter_visible_before_video_finishes_and_prose_is_separate(n
     assert result["details"]["review"]["markdown"] == "Private editorial audit"
     assert result["notice"].endswith("not campaign canon.")
     assert "taskToken" not in json.dumps(result)
-    assert request(novel, "GET /novel", query=q, username="other_stu")["statusCode"] == 200
+    assert request(novel, "GET /novel", query=q, username="example-editor")["statusCode"] == 200
 
 
 def test_auth_game_boundaries_and_unfinished_chapters(novel):
