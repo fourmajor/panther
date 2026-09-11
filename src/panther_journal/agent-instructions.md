@@ -367,6 +367,13 @@ The full operational instructions are in `docs/local-model-workflow.md` in the t
 
 ### Selecting an already-created model
 
+To replace only a portrait, first upload a new character-tagged image and inspect
+`character show`. Run `character set-portrait --game GAME_ID --character CHARACTER_ID
+--portrait-key KEY --expected-revision 'EXACT QUOTED REVISION' --reason 'WHY'`.
+This preserves exact profile history, all old assets, and the selected model. Inspect the
+result; never automatically retry a revision conflict. Changing a portrait does not register
+new turnaround references or authorize model generation. Visually inspect the image before selection.
+
 1. Use `panther character list` to discover IDs, then `panther character show --game GAME_ID
    --character CHARACTER_ID` to inspect the current profile and its exact `revision` token.
 2. Retain and upload the editable source and a separate, tested GLB (at most 5 MiB), using new

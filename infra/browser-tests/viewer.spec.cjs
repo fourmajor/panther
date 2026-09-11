@@ -25,11 +25,12 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
   test(`portrait-only character remains usable at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Swashbuckler', summary: 'Synthetic portrait-only fixture.' };
+    let portraitVersion = 1;
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
-      json: { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null, character, model:null, poster:{url:'https://test.s3.amazonaws.com/portrait.svg'} },
+      json: { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null, character, model:null, poster:{url:`https://test.s3.amazonaws.com/portrait.svg?v=${portraitVersion}`} },
       headers: {'access-control-allow-origin':'https://panther.place'},
     }));
-    await page.route('https://test.s3.amazonaws.com/portrait.svg', route => route.fulfill({ contentType:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1536"><rect width="1024" height="1536" fill="tan"/></svg>' }));
+    await page.route('https://test.s3.amazonaws.com/portrait.svg?*', route => route.fulfill({ contentType:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1536"><rect width="1024" height="1536" fill="tan"/></svg>' }));
     await page.route('https://panther.place/**', route => {
       const pathname = new URL(route.request().url()).pathname;
       if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
@@ -50,6 +51,12 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     const screenshot = testInfo.outputPath('portrait-only-page.png');
     await page.screenshot({path:screenshot,fullPage:true});
     await testInfo.attach('portrait-only-page',{path:screenshot,contentType:'image/png'});
+    portraitVersion = 2;
+    await page.reload();
+    await expect(portrait).toBeVisible();
+    await expect(portrait).toHaveAttribute('src', /v=2$/);
+    await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);
+    await expect(page.locator('#model-load')).toBeHidden();
   });
   test(`published model loads, rotates, resets and preserves fallback at ${viewport.width}px`, async ({ page }, testInfo) => {
     test.setTimeout(90000);

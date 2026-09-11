@@ -445,6 +445,54 @@ def _publish_model(event):
     )
 
 
+def _publish_portrait(event):
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
+    actor = claims.get("sub")
+    if not actor or claims.get("cognito:username") not in MODEL_PUBLISHERS:
+        return _response(403, {"error": "This account cannot publish character portraits"})
+    try:
+        raw = event.get("body") or ""
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw, validate=True).decode("utf-8")
+        body = json.loads(raw)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return _response(400, {"error": "Invalid portrait publication request"})
+    fields = {"gameId", "characterId", "portraitKey", "expectedRevision", "reason"}
+    if not isinstance(body, dict) or set(body) != fields:
+        return _response(400, {"error": "Invalid portrait publication request"})
+    game, character = body["gameId"], body["characterId"]
+    if not all(_valid_slug(v) and len(v) <= 96 for v in (game, character)):
+        return _response(400, {"error": "Invalid character identifier"})
+    reason = _text(body["reason"], maximum=500)
+    portrait = body["portraitKey"]
+    pattern = re.compile(rf"^games/{re.escape(game)}/assets/[a-z0-9-]+/original/[^/\\]+$")
+    if not reason or not _text(body["expectedRevision"], maximum=128) or not _valid_key(portrait) or not pattern.fullmatch(portrait):
+        return _response(400, {"error": "An immutable same-game portrait, revision and reason are required"})
+    record = _profile_record(game, character)
+    if not record:
+        return _response(404, {"error": "Character not found"})
+    key, old_raw, profile, revision = record
+    if revision != body["expectedRevision"]:
+        return _response(409, {"error": "Character changed; inspect it again before publishing"})
+    if not _asset_metadata(portrait, maximum=MAX_POSTER_BYTES, expected_types={"image/png", "image/jpeg", "image/webp", "image/avif"}):
+        return _response(422, {"error": "Portrait unavailable or invalid image type/size"})
+    history_key = key.removesuffix("profile.json") + f"history/{hashlib.sha256(old_raw).hexdigest()}.json"
+    try:
+        s3.put_object(Bucket=BUCKET_NAME, Key=history_key, Body=old_raw, ContentType="application/json", IfNoneMatch="*")
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") != "PreconditionFailed":
+            raise
+    profile.setdefault("model", {})["posterKey"] = portrait
+    profile["portraitPublication"] = {"actor": actor, "publishedAt": datetime.now(timezone.utc).isoformat(), "reason": reason, "previousProfileKey": history_key}
+    try:
+        result = s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=json.dumps(profile, ensure_ascii=False).encode("utf-8"), ContentType="application/json", IfMatch=revision)
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") in {"PreconditionFailed", "ConditionalRequestConflict"}:
+            return _response(409, {"error": "Character changed; inspect it again before publishing"})
+        raise
+    return _response(200, {"profile": profile, "revision": result["ETag"], "previousProfileKey": history_key})
+
+
 def _object_url(event):
     key = _query(event, "key")
     if not _valid_key(key) or key.endswith("/"):
@@ -658,6 +706,8 @@ def handler(event, _context):
             return _character_profile(event)
         if route_key == "PUT /character-model":
             return _publish_model(event)
+        if route_key == "PUT /character-portrait":
+            return _publish_portrait(event)
         if route_key == "POST /uploads":
             return _upload(event)
         if route_key == "GET /objects":

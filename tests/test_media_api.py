@@ -332,6 +332,36 @@ NEW_WEB = "games/example-game/assets/new-model/original/model.glb"
 NEW_SOURCE = "games/example-game/assets/new-model/original/model.blend"
 
 
+def test_portrait_replacement_preserves_history_and_model(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    request = publication(module, client)
+    before = client.objects[PROFILE_KEY]["Body"]
+    old = json.loads(before)
+    portrait = "games/example-game/assets/new-portrait/original/portrait.png"
+    client.objects[portrait] = {"Body": b"image", "ContentType": "image/png"}
+    request["routeKey"] = "PUT /character-portrait"
+    request["body"] = json.dumps({"gameId":"example-game", "characterId":"example-character", "portraitKey":portrait, "reason":"Owner supplied replacement", "expectedRevision":client.get_object(Key=PROFILE_KEY)["ETag"]})
+    response = module.handler(request, None)
+    assert response["statusCode"] == 200
+    result = response_body(response)
+    assert client.objects[result["previousProfileKey"]]["Body"] == before
+    expected = dict(old["model"], posterKey=portrait)
+    assert result["profile"]["model"] == expected
+    assert result["profile"]["portraitPublication"]["actor"] == "user-id"
+    assert module.handler(request, None)["statusCode"] == 409
+
+
+@pytest.mark.parametrize("portrait,status", [("games/other/assets/x/original/p.png",400), (PROFILE_KEY,400), ("games/example-game/assets/missing/original/p.png",422), (None,400)])
+def test_portrait_replacement_rejects_invalid_sources(monkeypatch, portrait, status):
+    module, client = load_media_api(monkeypatch)
+    request = publication(module, client)
+    request["routeKey"] = "PUT /character-portrait"
+    request["body"] = json.dumps({"gameId":"example-game", "characterId":"example-character", "portraitKey":portrait, "reason":"Replacement", "expectedRevision":client.get_object(Key=PROFILE_KEY)["ETag"]})
+    assert module.handler(request, None)["statusCode"] == status
+    request["requestContext"]["authorizer"]["jwt"]["claims"]["cognito:username"] = "unprivileged"
+    assert module.handler(request, None)["statusCode"] == 403
+
+
 def publication(module, client, **updates):
     module.MODEL_PUBLISHERS = {"owner", "dm"}
     client.objects[NEW_WEB] = {

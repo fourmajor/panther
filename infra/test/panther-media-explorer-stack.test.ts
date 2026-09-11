@@ -327,7 +327,10 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 43);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 44);
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
+  });
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }
