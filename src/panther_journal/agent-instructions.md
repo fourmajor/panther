@@ -220,6 +220,13 @@ output and never loosen final-transcript validation. Source/model integrity fail
 the preview. Resume a stopped preview with its original command; never delete failed attempts.
 The worker also publishes an ephemeral recent-text/heartbeat projection to the authenticated web
 app through Panther (not AWS credentials); use `--local-only` to disable that. `--once` never publishes.
+Full provisional history is separately uploaded as immutable, hash-pinned chunks, not just the last
+sixty heartbeat entries. Default workers backfill from chunk zero while prioritizing newly completed
+audio; `--once` does not backfill extra chunks. Resume existing preview commands to populate earlier
+history without replacing their saved results. The web reader pages from Beginning/Earlier/Later and
+returns to Live explicitly; never confuse a pending history interval with silence. Upload failures
+leave local text/acknowledgements intact and do not stop presence or capture. History remains ephemeral
+for seven days after each chunk's last sync, separate from permanent audio/final transcript assets.
 This is not an asset upload or source evidence. The Transcripts/Audio live panel keeps speakers
 unassigned. A blinking red badge requires recent capture progress and a fresh heartbeat; stalled
 capture and lost contact must not look active. Closing the worker loses presence, not source audio.

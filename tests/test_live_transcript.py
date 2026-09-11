@@ -92,7 +92,7 @@ def test_only_completed_chunks_and_capture_is_untouched(capture):
     assert value["extra"]["contextUse"] == "exclude"
     assert value["extra"]["generation"]["inference"] == "local"
     assert value["extra"]["generation"]["cost"] == {"status": "not-applicable"}
-    assert "Earlier chunks omitted: 1" in (root / "preview.txt").read_text()
+    assert "Joined at chunk 1" in (root / "preview.txt").read_text()
     assert not (root / "part-0002.json").exists()
     assert all(p.read_bytes() == data for p, data in before.items())
     assert not (folder / "recording.json").exists()
@@ -443,3 +443,43 @@ def test_malformed_json_gap_retains_raw_and_detects_later_tampering(capture, mon
     raw.write_text("{changed")
     with pytest.raises(click.ClickException, match="Preserved recognizer output changed"):
         live.follow(folder, model, once=True, emit=lambda _: None)
+
+
+def test_backfill_starts_at_beginning_but_new_audio_has_priority(capture):
+    folder, _, model = capture
+    for index in range(3):
+        add_part(capture, index)
+    processed = []
+
+    def record_order(folder, part, model, attempt):
+        processed.append(int(part.file[5:9]))
+        if part.start == 0:
+            add_part(capture, 3)
+        return recognizer(folder, part, model, attempt)
+
+    root = live.follow(folder, model, transcriber=record_order, emit=lambda _: None)
+    assert processed == [2, 0, 3, 1]
+    assert live.read_json(root / "status.json")["backfillPendingChunks"] == 0
+    text = (root / "preview.txt").read_text()
+    assert text.index("[00:00:01]") < text.index("[00:00:31]") < text.index("[00:01:01]")
+    before = {p: p.read_bytes() for p in root.glob("part-*.json")}
+    live.follow(folder, model, transcriber=lambda *a: pytest.fail("No repeated inference"), emit=lambda _: None)
+    assert all(p.read_bytes() == data for p, data in before.items())
+
+
+def test_history_upload_is_complete_idempotent_and_includes_backfilled_chunks(capture, monkeypatch):
+    from panther_journal import live_history
+
+    folder, header, model = capture
+    add_part(capture, 0)
+    add_part(capture, 1)
+    root = live.follow(folder, model, transcriber=recognizer, emit=lambda _: None)
+    config = live.read_json(root / "preview.json")
+    sent = []
+    monkeypatch.setattr(live_history.cloud, "api", lambda c,m,r,**kw: sent.append((m,r,kw["json"])))
+    assert live_history.publish_pending(folder, header, root, config, {}) == 2
+    assert [body["partIndex"] for _,_,body in sent] == [1, 0]
+    assert all(route == "/recordings/live/history" for _,route,_ in sent)
+    assert all(body["modelSha256"] == config["settings"]["modelSha256"] for _,_,body in sent)
+    assert live_history.publish_pending(folder, header, root, config, {}) == 0
+    assert len(sent) == 2

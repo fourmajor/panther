@@ -1356,6 +1356,10 @@ async function loadLibrary(section, epoch) {
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
   document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section);
+  if (["transcripts", "audio"].includes(section)) {
+    drawLive();
+    for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
+  }
   document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
   status.textContent = "Loading session assets…";
   try {
@@ -1684,9 +1688,46 @@ document.addEventListener("visibilitychange", () => {
 // Live previews are ephemeral, game-scoped projections; never add them to the asset catalog.
 let liveGame = null, liveTimer = null, liveController = null, liveSerial = 0;
 let liveRecords = [], liveFetchedAt = 0, liveFailure = false, liveRenderKey = null;
+const liveHistory = new Map(), liveHistoryControllers = new Set();
+function historyKey(record) { return `${record.recordingId}:${record.previewId}`; }
+async function loadLiveHistory(record, position = "live", cursor) {
+  const key = historyKey(record), game = liveGame;
+  let view = liveHistory.get(key);
+  if (!view) { view = {chunks:[],mode:"live",request:0,error:null}; liveHistory.set(key,view); }
+  const request = ++view.request, controller = new AbortController();
+  liveHistoryControllers.add(controller);
+  const timeout = setTimeout(() => controller.abort(),12000);
+  view.loading = true; view.error = null;
+  // Freeze historical pages while new speech arrives; Live explicitly rejoins the tail.
+  view.mode = position === "live" ? "live" : "history";
+  drawLive();
+  try {
+    const query = {gameId:game,recordingId:record.recordingId,previewId:record.previewId,position};
+    if (cursor !== undefined) query.cursor = String(cursor);
+    const result = await api("/recordings/live/history",query,{signal:controller.signal});
+    if (liveHistory.get(key)!==view || view.request!==request || game!==liveGame || !state.tokens) return;
+    if (!Array.isArray(result.chunks)) throw new Error("Invalid live history");
+    if (!result.chunks.length && ["before","after"].includes(position)) {
+      view.error = "No more transcribed history is available in that direction yet.";
+    } else {
+      view.chunks = result.chunks; view.loaded = true; view.jump = position !== "live";
+      view.position = position;
+    }
+  } catch {
+    if (liveHistory.get(key)!==view || view.request!==request || game!==liveGame || !state.tokens) return;
+    view.error = "Transcript history unavailable. Retry with Beginning or Live; recording may still continue.";
+  } finally {
+    clearTimeout(timeout); liveHistoryControllers.delete(controller);
+    if (liveHistory.get(key)===view && view.request===request && game===liveGame && state.tokens) {
+      view.loading = false; drawLive();
+    }
+  }
+}
 function resetLive() {
   liveSerial += 1; clearTimeout(liveTimer); liveController?.abort(); liveController = null;
   liveGame = null; liveRecords = []; liveRenderKey = null; liveFailure = false;
+  for (const controller of liveHistoryControllers) controller.abort();
+  liveHistoryControllers.clear(); liveHistory.clear();
   document.getElementById("recording-badge").hidden = true;
   document.getElementById("live-recordings").replaceChildren();
   document.getElementById("live-status").textContent = "Checking for live recordings…";
@@ -1708,33 +1749,65 @@ function drawLive() {
   status.textContent = liveFailure ? "Live feed unavailable. Recording may still be running locally. Retrying automatically."
     : liveRecords.length ? "Updates automatically as completed audio chunks are transcribed."
     : "No live recording reported for this game. Start the live worker from the recording laptop.";
-  const projected = liveRecords.map(r => ({recordingId:r.recordingId, sessionId:r.sessionId, mode:liveState(r), previewState:r.previewState, segments:r.segments, omittedChunks:r.omittedChunks}));
+  const projected = liveRecords.map(r => ({recordingId:r.recordingId, previewId:r.previewId, sessionId:r.sessionId, mode:liveState(r), previewState:r.previewState, segments:r.segments, omittedChunks:r.omittedChunks, history:liveHistory.get(historyKey(r))}));
   const key = JSON.stringify(projected);
   if (key === liveRenderKey) return;
   liveRenderKey = key;
   const host = document.getElementById("live-recordings"), positions = new Map();
+  const focusAction = host.contains(document.activeElement) ? document.activeElement.dataset.historyAction : null;
   for (const el of host.querySelectorAll(".live-lines")) positions.set(el.dataset.recording, {top:el.scrollTop, bottom:el.scrollHeight-el.scrollTop-el.clientHeight<30});
   host.replaceChildren();
   for (const record of projected) {
     const article = document.createElement("article"), heading = document.createElement("h3"), note = document.createElement("p"), lines = document.createElement("div");
     heading.textContent = record.sessionId;
     note.textContent = `${labels[record.mode] || "Recording status unknown"} · ${record.previewState.replaceAll("-", " ")}.${record.omittedChunks ? " Joined after recording began." : ""}`;
+    const view = record.history, controls = document.createElement("div"), historyNote = document.createElement("p");
+    controls.className = "live-history-controls"; controls.setAttribute("role","group"); controls.setAttribute("aria-label","Transcript history navigation");
+    const chunks = view?.chunks || [], first = chunks[0]?.partIndex, last = chunks.at(-1)?.partIndex;
+    for (const [label,position,cursor,disabled] of [
+      ["Beginning","beginning",undefined,false], ["Earlier","before",first,first===undefined || first===0],
+      ["Later","after",last,last===undefined], ["Live","live",undefined,false],
+    ]) {
+      const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+      button.dataset.historyAction = `${record.recordingId}:${label}`; button.disabled = disabled;
+      button.addEventListener("click",()=>loadLiveHistory(record,position,cursor)); controls.append(button);
+    }
+    historyNote.className = "live-history-status";
+    historyNote.textContent = view?.error || (view?.loading ? "Loading transcript history…"
+      : view?.loaded && !chunks.length ? "History is being uploaded from the recording laptop."
+      : view?.position === "beginning" && first>0 ? "The beginning is still being transcribed. Retry Beginning shortly."
+      : view?.mode === "history" ? "Browsing earlier speech. Choose Live to follow new speech."
+      : "Following new speech. Use Beginning or Earlier to browse the full session.");
     lines.className = "live-lines"; lines.dataset.recording = record.recordingId; lines.tabIndex = 0;
-    lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Recent provisional speech for ${record.sessionId}`);
-    for (const segment of record.segments) {
+    lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Provisional transcript for ${record.sessionId}`);
+    const displayed = view?.loaded ? chunks.flatMap((chunk,index) => {
+      const previous = chunks[index-1];
+      const missing = previous && chunk.partIndex > previous.partIndex+1
+        ? [{kind:"history-pending",start:previous.end,text:"Earlier audio in this interval is still being transcribed or uploaded."}] : [];
+      return [...missing,...(chunk.segments.length ? chunk.segments : [{kind:"no-speech",start:chunk.start,
+        text:"No speech recognized in this audio chunk (not proof of silence)."}])];
+    }) : record.segments;
+    for (const segment of displayed) {
       const p = document.createElement("p"), timestamp = document.createElement("time"), seconds = Math.floor(segment.start);
       timestamp.textContent = `${segment.approximateTiming ? "~" : ""}${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
       if (segment.approximateTiming) timestamp.title = "Approximate timing: recognizer end time was clipped to the audio chunk boundary. Original output retained.";
       const gap = segment.kind === "preview-gap";
-      if (gap) { p.className = "live-gap"; p.setAttribute("role", "note"); }
+      if (gap || ["history-pending","no-speech"].includes(segment.kind)) { p.className = "live-gap"; p.setAttribute("role", "note"); }
       p.append(timestamp, document.createTextNode(gap
         ? "Preview gap: invalid recognizer output for this audio chunk. Original audio retained; not silence."
         : segment.text)); lines.append(p);
     }
-    if (!record.segments.length) lines.textContent = "Waiting for recognized speech. This does not prove silence or confirm microphone quality.";
-    article.append(heading, note, lines); host.append(article);
+    if (!displayed.length) lines.textContent = "No recognized speech in this view yet. This does not prove silence or confirm microphone quality.";
+    article.append(heading, note, controls, historyNote, lines); host.append(article);
     const previous = positions.get(record.recordingId);
-    lines.scrollTop = !previous || previous.bottom ? lines.scrollHeight : previous.top;
+    lines.scrollTop = view?.jump ? 0 : !previous || previous.bottom ? lines.scrollHeight : previous.top;
+    if (view) view.jump = false;
+  }
+  if (focusAction) {
+    const buttons = Array.from(host.querySelectorAll("button"));
+    const target = buttons.find(b=>b.dataset.historyAction===focusAction && !b.disabled)
+      || buttons.find(b=>b.dataset.historyAction===`${focusAction.split(":")[0]}:Beginning`);
+    target?.focus({preventScroll:true});
   }
 }
 async function refreshLive() {
@@ -1756,6 +1829,10 @@ async function refreshLive() {
     clearTimeout(timeout);
     if (serial === liveSerial && game === state.gameId && state.tokens) {
       drawLive(); liveTimer = setTimeout(refreshLive, 20000);
+      if (!document.getElementById("live-transcript").hidden) for (const record of liveRecords) {
+        const view = liveHistory.get(historyKey(record));
+        if (!view || (view.mode === "live" && !view.loading)) void loadLiveHistory(record);
+      }
     }
   }
 }

@@ -13,6 +13,7 @@ def service(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
     monkeypatch.setenv("LIVE_RECORDINGS_TABLE", "test-live")
     monkeypatch.setenv("LIVE_RECORDING_PUBLISHERS", "stu,other_stu")
+    monkeypatch.setenv("LIVE_HISTORY_TABLE", "test-history")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     with mock_aws():
         boto3.client("dynamodb").create_table(
@@ -26,6 +27,12 @@ def service(monkeypatch):
                 {"AttributeName": k, "AttributeType": "S"} for k in ("gameId", "recordingId")
             ],
         )
+        boto3.client("dynamodb").create_table(
+            TableName="test-history", BillingMode="PAY_PER_REQUEST",
+            KeySchema=[{"AttributeName":"feedId","KeyType":"HASH"},{"AttributeName":"partIndex","KeyType":"RANGE"}],
+            AttributeDefinitions=[{"AttributeName":"feedId","AttributeType":"S"},{"AttributeName":"partIndex","AttributeType":"N"}],
+        )
+        monkeypatch.delitem(sys.modules, "live_history", raising=False)
         monkeypatch.delitem(sys.modules, "live_recordings", raising=False)
         yield importlib.import_module("live_recordings")
 
@@ -122,3 +129,78 @@ def test_gap_notice_preserved_as_notice_not_speech(service):
     feed = json.loads(service.handle(event(), 1001)["body"])["recordings"][0]
     assert feed["segments"][0]["kind"] == "preview-gap"
     assert feed["captureState"] == "recording" and not feed["connectionStale"]
+
+
+def history_payload(index):
+    return {"schemaVersion":1,"gameId":"test-game","recordingId":"recording-"+"a"*32,
+            "previewId":"v1-"+"b"*24,"partIndex":index,"start":index*30,"end":(index+1)*30,
+            "sourceSha256":"c"*64,"modelSha256":"d"*64,"recognizerSha256":"e"*64,
+            "segments":[{"start":index*30,"end":index*30+2,"text":f"Synthetic chunk {index}"}]}
+
+
+def history_event(body=None, **query):
+    e = event(body)
+    e["routeKey"] += "/history"
+    e["queryStringParameters"] = {"gameId":"test-game","recordingId":"recording-"+"a"*32,
+                                   "previewId":"v1-"+"b"*24,**query}
+    return e
+
+
+def test_full_history_pagination_and_immutable_owner_pins(service):
+    parent = payload()
+    parent["captureSeconds"] = 1000
+    assert service.handle(event(parent),1000)["statusCode"] == 200
+    for index in range(31):
+        assert service.handle(history_event(history_payload(index)),1000)["statusCode"] == 200
+    for query, expected in [({},range(21,31)), ({"position":"beginning"},range(10)),
+                            ({"position":"before","cursor":"21"},range(11,21)),
+                            ({"position":"after","cursor":"9"},range(10,20))]:
+        result = json.loads(service.handle(history_event(**query),1001)["body"])
+        assert [c["partIndex"] for c in result["chunks"]] == list(expected)
+    assert service.handle(history_event(history_payload(0)),1001)["statusCode"] == 200
+    changed = history_payload(0)
+    changed["segments"][0]["text"] = "Changed"
+    assert service.handle(history_event(changed),1001)["statusCode"] == 409
+    other = history_event(history_payload(1))
+    other["requestContext"]["authorizer"]["jwt"]["claims"]["sub"] = "other-owner"
+    assert service.handle(other,1001)["statusCode"] == 403
+    assert service.handle(history_event(gameId="other-game"),1001)["statusCode"] == 404
+    assert service.handle(history_event(previewId="different-preview"),1001)["statusCode"] == 409
+    assert service.handle(history_event(),1000+service.TTL)["statusCode"] == 404
+
+
+@pytest.mark.parametrize("change", [
+    {"partIndex":-1}, {"sourceSha256":"made-up"}, {"start":float("nan")},
+    {"start":2,"end":1}, {"end":100},
+    {"segments":[{"start":-1,"end":2,"text":"Invalid"}]},
+    {"segments":[{"start":1,"end":2,"text":"Invalid","playerId":"invented"}]},
+])
+def test_history_rejects_unpinned_or_out_of_bounds_chunks(service, change):
+    service.handle(event(payload()),1000)
+    with pytest.raises(ValueError):
+        service.handle(history_event({**history_payload(0),**change}),1000)
+
+
+def test_history_does_not_truncate_long_speech_or_refresh_presence(service):
+    service.handle(event(payload()),1000)
+    value = history_payload(0)
+    value["segments"][0]["text"] = "x"*600
+    assert service.handle(history_event(value),1060)["statusCode"] == 200
+    result = json.loads(service.handle(history_event(),1080)["body"])
+    assert len(result["chunks"][0]["segments"][0]["text"]) == 600
+    assert json.loads(service.handle(event(),1080)["body"])["recordings"][0]["connectionStale"]
+
+
+def test_history_filters_expired_rows_before_serving_a_full_page(service):
+    import live_history
+
+    parent = payload()
+    parent["captureSeconds"] = 1000
+    service.handle(event(parent),1000)
+    for index in range(15):
+        service.handle(history_event(history_payload(index)),1000)
+    for index in range(11):
+        live_history.history.update_item(Key={"feedId":"test-game#recording-"+"a"*32+"#v1-"+"b"*24,"partIndex":index},
+                                         UpdateExpression="SET expiresAt = :t",ExpressionAttributeValues={":t":1001})
+    result = json.loads(service.handle(history_event(position="beginning"),1002)["body"])
+    assert [c["partIndex"] for c in result["chunks"]] == [11,12,13,14]

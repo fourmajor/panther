@@ -376,7 +376,7 @@ def presentation(root, config, values, status):
     lines = [
         NOTICE,
         "Capture and cloud backup run independently. Preview text can be wrong.",
-        f"Earlier chunks omitted: {config['startIndex']} (use --from-start for a separate full preview).",
+        f"Joined at chunk {config['startIndex']}; earlier audio is backfilled while following new speech.",
         f"Status: {status['state']}; queued chunks: {status['pendingChunks'] if status['pendingChunks'] is not None else 'unknown'}",
         "",
     ]
@@ -411,15 +411,19 @@ def follow(
     emit(
         f"Preview file: {root / 'preview.txt'}\nCtrl+C stops ONLY this preview; keep the recording terminal open."
     )
-    values = []
+    values, backfilled = [], []
     from panther_journal.live_publish import Publisher
 
+    publisher = Publisher(folder, header, root, config, emit) if publish else None
     with (
         lock(root, "preview.lock"),
-        Publisher(folder, header, root, config, emit) if publish else nullcontext(),
+        publisher if publisher else nullcontext(),
     ):
         try:
             parts = completed_parts(folder, header)
+            for part in parts[:config["startIndex"]]:
+                if (root / f"{Path(part.file).stem}.json").exists():
+                    backfilled.append(process_part(folder, model, root, config, part, transcriber))
             for part in parts[config["startIndex"] :]:
                 if not (root / f"{Path(part.file).stem}.json").exists():
                     break
@@ -439,7 +443,7 @@ def follow(
                     presentation(
                         root,
                         config,
-                        values,
+                        sorted([*backfilled, *values], key=lambda v: v["sourcePart"]["start"]),
                         {
                             "schemaVersion": 1,
                             "state": "transcribing",
@@ -466,37 +470,47 @@ def follow(
                     if value["processingSeconds"] > parts[index - 1].duration:
                         emit("Preview is slower than capture and may lag; recording is unaffected.")
                 running = capture_running(folder)
+                parts = completed_parts(folder, header)
                 pending = max(0, len(parts) - index)
-                state = "catching-up" if pending else "waiting-for-chunk" if running else "stopped"
+                earlier = next((p for p in parts[:config["startIndex"]]
+                                if not (root / f"{Path(p.file).stem}.json").exists()), None)
+                if not once and not pending and earlier is not None:
+                    emit(f"Backfilling earlier audio {earlier.start:.0f}s–{earlier.start + earlier.duration:.0f}s…")
+                    backfilled.append(process_part(folder, model, root, config, earlier, transcriber))
+                backfill_pending = min(config["startIndex"], len(parts)) - len(backfilled)
+                state = "catching-up" if pending or backfill_pending else "waiting-for-chunk" if running else "stopped"
                 status = {
                     "schemaVersion": 1,
                     "state": state,
                     "pendingChunks": pending,
                     "chunksTranscribed": len(values),
+                    "backfillPendingChunks": backfill_pending,
                     "captureRunning": running,
                     "finalRecordingManifestPresent": (folder / "recording.json").is_file(),
                     "checkedAt": time.time(),
                     "error": None,
                 }
-                presentation(root, config, values, status)
+                presentation(root, config, sorted([*backfilled, *values], key=lambda v: v["sourcePart"]["start"]), status)
                 if once:
                     emit("One-chunk preview finished; recording was not stopped.")
                     return root
-                if not running and not pending:
+                if not running and not pending and not backfill_pending:
                     # Capture may have published its final checkpoint during the transcription pass.
                     if len(completed_parts(folder, header)) > index:
                         continue
+                    if publisher:
+                        publisher.flush_history()
                     emit(
                         "Capture is no longer active. Preview saved; full transcription/player attribution is still separate."
                     )
                     return root
-                if not pending:
+                if not pending and not backfill_pending:
                     time.sleep(2)
         except KeyboardInterrupt:
             presentation(
                 root,
                 config,
-                values,
+                sorted([*backfilled, *values], key=lambda v: v["sourcePart"]["start"]),
                 {
                     "state": "preview-stopped",
                     "pendingChunks": None,
@@ -510,7 +524,7 @@ def follow(
             presentation(
                 root,
                 config,
-                values,
+                sorted([*backfilled, *values], key=lambda v: v["sourcePart"]["start"]),
                 {
                     "state": "preview-error",
                     "pendingChunks": None,

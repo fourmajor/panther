@@ -67,16 +67,33 @@ class Publisher:
         self.args = (folder, header, root, config)
         self.root, self.emit = root, emit
         self.stop_event = threading.Event()
+        self.presence_ready = threading.Event()
+        self.history_wake = threading.Event()
+        self.history_flushed = threading.Event()
+        self.history_flush_generation = 0
         self.thread = threading.Thread(target=self.run, name="panther-live-web", daemon=True)
+        from panther_journal.live_history import run as history_run
+        self.history_thread = threading.Thread(target=history_run, args=(self,), name="panther-live-history", daemon=True)
 
     def __enter__(self):
         self.thread.start()
+        self.history_thread.start()
         return self
 
     def __exit__(self, *_):
         self.stop_event.set()
+        self.history_wake.set()
         self.thread.join(timeout=5)
+        self.history_thread.join(timeout=5)
         # Best-effort final state; abrupt shutdown/network failure still expires presence.
+
+    def flush_history(self, timeout=45):
+        """Bounded final drain after capture/backfill ends; capture is already independent."""
+        self.history_flushed.clear()
+        self.history_flush_generation += 1
+        self.history_wake.set()
+        if not self.history_flushed.wait(timeout):
+            self.emit("Some full transcript history is not synced yet. Resume this live command to retry; all text remains local.")
 
     def run(self):
         config, failed = None, False
@@ -87,6 +104,7 @@ class Publisher:
                 if config is None:
                     config = cloud.configuration()
                 cloud.api(config, "POST", "/recordings/live", json=payload)
+                self.presence_ready.set()
                 write_json(
                     self.root / "web-status.json",
                     {"state": "published", "checkedAt": time.time()},
