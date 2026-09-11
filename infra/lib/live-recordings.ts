@@ -22,6 +22,14 @@ export class LiveRecordings extends Construct {
       timeToLiveAttribute: "expiresAt",
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    const history = new dynamodb.Table(this, "History", {
+      partitionKey: { name: "feedId", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "partIndex", type: dynamodb.AttributeType.NUMBER },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      timeToLiveAttribute: "expiresAt",
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
     const fn = new lambda.Function(this, "Api", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
       handler: "live_recordings.handler", memorySize: 128, timeout: Duration.seconds(10),
@@ -29,13 +37,19 @@ export class LiveRecordings extends Construct {
         exclude: ["**/__pycache__/**", "**/*.pyc"],
       }),
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_WEEK }),
-      environment: { LIVE_RECORDINGS_TABLE: table.tableName, LIVE_RECORDING_PUBLISHERS: "stu,other_stu" },
+      environment: { LIVE_RECORDINGS_TABLE: table.tableName, LIVE_HISTORY_TABLE: history.tableName,
+        LIVE_RECORDING_PUBLISHERS: "stu,other_stu" },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ["dynamodb:Query", "dynamodb:PutItem"], resources: [table.tableArn],
+      actions: ["dynamodb:Query", "dynamodb:PutItem", "dynamodb:GetItem"], resources: [table.tableArn],
+    }));
+    fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["dynamodb:Query", "dynamodb:PutItem"], resources: [history.tableArn],
     }));
     const integration = new integrations.HttpLambdaIntegration("LiveRecordingIntegration", fn);
     props.api.addRoutes({ path: "/recordings/live", methods: [api.HttpMethod.GET, api.HttpMethod.POST],
+      integration, authorizer: props.authorizer });
+    props.api.addRoutes({ path: "/recordings/live/history", methods: [api.HttpMethod.GET, api.HttpMethod.POST],
       integration, authorizer: props.authorizer });
   }
 }

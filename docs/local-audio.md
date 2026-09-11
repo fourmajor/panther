@@ -219,7 +219,7 @@ the text label conveys the same state. Keep both the capture terminal and live w
 Typical latency is one completed chunk (normally 30 seconds), recognition time and publishing/browser
 polling (each up to 20 seconds); it is not a fixed latency promise. Speakers remain unassigned.
 
-An independent thread publishes at most sixty recent speech segments and capture presence every
+An independent heartbeat thread publishes at most sixty recent speech segments and capture presence every
 20 seconds using authenticated `POST /recordings/live`. Network/auth failures do not block recognition
 or capture; the terminal warns and retries. Use `panther login` in another terminal if needed.
 The red badge requires a fresh heartbeat and recent capture-journal progress, not merely an open
@@ -227,14 +227,39 @@ process. Stalled capture is labeled separately; after 75 seconds without a heart
 shows **signal lost**, never implies recording stopped safely. Closing the preview also loses presence
 even if capture continues. A heartbeat does not establish good microphone quality or successful backup.
 
-The authenticated GET endpoint is polled only by visible signed-in pages. It returns a bounded recent
+The viewer is not limited to those sixty heartbeat entries. A separate publisher sends complete,
+immutable per-chunk history (including typed gap notices) through `/recordings/live/history`.
+The viewer has **Beginning**, **Earlier**, **Later**, and **Live** controls, with ten audio chunks per
+page. Browsing history stays on that passage during heartbeat updates; Live rejoins incoming speech.
+Text is not truncated to the heartbeat's 500-character excerpt limit. API bounds still protect each
+history chunk (250 KB request, 1,000 entries, 10,000 characters per entry); oversize results remain
+local with an explicit upload warning, never silently truncated.
+
+Default live workers automatically backfill from chunk zero whenever no new chunk is queued,
+including on resuming existing previews that originally joined late. New chunks have priority.
+Backfill needs local recognition time; the Beginning page explicitly warns if the earliest audio
+is not available yet, and missing intervals are labeled rather than presented as silence.
+Previously completed recognizer results and failed attempts are not replaced. `--once` still only
+processes one current chunk, does not backfill extra chunks and does not publish.
+
+History upload uses its own thread so slow uploads cannot hold up presence/recognition/capture.
+Private `history-synced/` acknowledgements support restart and daily retention renewal; conditional
+server writes accept identical retries but reject changed content at an existing chunk index. Input
+audio/model/recognizer hashes accompany each history chunk. `history-status.json` distinguishes
+available text synced from upload failures; `backfillPendingChunks` in local status tracks remaining
+earlier recognition. At normal completion, the worker allows a bounded final history drain; on timeout
+it explains how to resume. Interrupted capture/worker/network leaves local evidence and acknowledgements
+recoverable. Run the same live command to finish recognition/upload; do not delete or reinitialize it.
+
+The authenticated heartbeat GET endpoint is polled only by visible signed-in pages. It returns a bounded recent
 window (up to ten recording feeds) for the selected game, using the existing shared-group authorization
 model. Only `stu` and `other_stu` can publish; a different authenticated user cannot overwrite another
 publisher's recording. Older updates cannot replace newer ones. The feed is an explicitly ephemeral
-read-time projection: DynamoDB TTL removes it after seven days, and reads hide expired items even before
+read-time projection: DynamoDB TTL removes each heartbeat/history chunk seven days after its last sync,
+and reads hide expired items even before
 physical deletion. Complete original audio and immutable local recognizer/chunk results are retained.
 There is no S3 asset, editorial trigger, transcript overwrite or asset-storage migration for this new
-projection. CDK defines its on-demand table, narrowly scoped Lambda permissions and JWT API routes;
+projection. CDK defines its on-demand presence/history tables, narrowly scoped Lambda permissions and JWT API routes;
 no provisioned compute, subscription inference charge or always-on server is introduced.
 
 ## Several speakers

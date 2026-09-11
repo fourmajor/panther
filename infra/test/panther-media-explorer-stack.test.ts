@@ -22,7 +22,7 @@ function mediaExplorerTemplate(): Template {
 
 test("live recording preview has authenticated routes and only expiring on-demand storage", () => {
   const template = mediaExplorerTemplate();
-  for (const route of ["GET /recordings/live", "POST /recordings/live"]) {
+  for (const route of ["GET /recordings/live", "POST /recordings/live", "GET /recordings/live/history", "POST /recordings/live/history"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:route, AuthorizationType:"JWT"});
   }
   template.hasResourceProperties("AWS::DynamoDB::Table", {
@@ -32,6 +32,10 @@ test("live recording preview has authenticated routes and only expiring on-deman
   const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("LiveRecordings")));
   assert.match(policies, /dynamodb:PutItem/);
   assert.doesNotMatch(policies, /s3:|states:|bedrock:|sagemaker:/);
+  template.hasResourceProperties("AWS::DynamoDB::Table", {
+    BillingMode:"PAY_PER_REQUEST", TimeToLiveSpecification:{AttributeName:"expiresAt",Enabled:true},
+    KeySchema:[{AttributeName:"feedId",KeyType:"HASH"},{AttributeName:"partIndex",KeyType:"RANGE"}],
+  });
 });
 
 test("roster character profile initialization is authenticated and create-only", () => {
@@ -315,7 +319,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 41);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 43);
   for (const route of ["GET /assets", "GET /asset-document"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

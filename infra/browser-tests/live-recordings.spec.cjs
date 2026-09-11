@@ -6,12 +6,12 @@ const origin = 'https://panther.place', api = 'https://test.execute-api.us-west-
 const headers = {'access-control-allow-origin':origin};
 
 function recording(overrides = {}) {
-  return {recordingId:'recording-'+'a'.repeat(32), sessionId:'synthetic-session', captureState:'recording',
+  return {recordingId:'recording-'+'a'.repeat(32), previewId:'v1-'+'b'.repeat(24), sessionId:'synthetic-session', captureState:'recording',
     heartbeatAgeSeconds:0, connectionStale:false, previewState:'waiting-for-chunk', omittedChunks:0,
     segments:[{start:1,end:3,text:'The synthetic lantern is lit.'}], ...overrides};
 }
 async function fixture(page) {
-  const state = {records:[recording()], fail:false, reads:0};
+  const state = {records:[recording()], fail:false, historyFail:false, chunks:null, reads:0};
   await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'stu'}))+'.test'})));
   await page.route(`${origin}/**`, route => {
     const pathname = new URL(route.request().url()).pathname;
@@ -27,6 +27,15 @@ async function fixture(page) {
       state.reads++;
       if (state.fail) return route.abort('failed');
       body = {recordings:game==='test-game'?state.records:[],staleAfterSeconds:75};
+    }
+    if (u.pathname === '/recordings/live/history') {
+      if (state.historyFail) return route.abort('failed');
+      let chunks = state.chunks || [{partIndex:0,start:0,end:120,segments:state.records[0]?.segments || []}];
+      const position = u.searchParams.get('position'), cursor = Number(u.searchParams.get('cursor'));
+      if (position === 'before') chunks = chunks.filter(c=>c.partIndex<cursor).slice(-10);
+      else if (position === 'after') chunks = chunks.filter(c=>c.partIndex>cursor).slice(0,10);
+      else chunks = position === 'beginning' ? chunks.slice(0,10) : chunks.slice(-10);
+      body = {chunks:game==='test-game'?chunks:[],pageSize:10,position};
     }
     if (u.pathname === '/games') body = {games};
     if (u.pathname === '/game') body = {game:games.find(g=>g.id===game),players:[],memberships:[],characters:[]};
@@ -72,7 +81,9 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await expect(badge).toHaveText('Recording in progress');
   const gapBox = await gap.boundingBox();
   expect(gapBox.x).toBeGreaterThanOrEqual(0); expect(gapBox.x+gapBox.width).toBeLessThanOrEqual(width);
-  expect(gapBox.y+gapBox.height).toBeLessThanOrEqual(1000);
+  // History controls increase panel height: scroll as a reader would, not by forced click.
+  await page.mouse.wheel(0, Math.max(0,gapBox.y+gapBox.height-900));
+  await expect(gap).toBeInViewport();
   await page.screenshot({path:test.info().outputPath(`live-gap-${width}.png`),fullPage:true});
   feed.records[0].captureState = 'stalled';
   await page.getByRole('button',{name:'Refresh live feed'}).click();
@@ -111,4 +122,42 @@ test('automatic feed polling, cross-game isolation and sign-out cleanup', async(
   await expect(page.locator('#live-recordings')).toBeEmpty();
   await expect(page.locator('#recording-badge')).toBeHidden();
   const requests = feed.reads; await page.clock.fastForward(40000); expect(feed.reads).toBe(requests);
+});
+
+for (const width of [1280,390]) test(`full live history beginning, paging and live return at ${width}`, async({page}) => {
+  await page.setViewportSize({width,height:1000});
+  const feed = await fixture(page); await page.clock.install();
+  feed.chunks = Array.from({length:45},(_,i)=>({partIndex:i,start:i*30,end:(i+1)*30,
+    segments:[{start:i*30,end:i*30+2,text:`Historical speech ${i}.`}]}));
+  await page.goto(`${origin}/games/test-game/transcripts`);
+  const panel = page.getByRole('region',{name:'Live transcript',exact:true});
+  await expect(panel).toContainText('Historical speech 44.');
+  await expect(panel).not.toContainText('Historical speech 0.');
+  for (const label of ['Beginning','Earlier','Later','Live']) {
+    const button = panel.getByRole('button',{name:label,exact:true}), box = await button.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
+    expect(box.y+box.height).toBeLessThanOrEqual(1000);
+    expect(await button.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+  }
+  await panel.getByRole('button',{name:'Beginning',exact:true}).click();
+  await expect(panel).toContainText('Historical speech 0.');
+  await expect(panel).toContainText('Historical speech 9.');
+  await expect(panel.getByRole('button',{name:'Earlier',exact:true})).toBeDisabled();
+  feed.chunks.push({partIndex:45,start:1350,end:1380,segments:[{start:1350,end:1352,text:'New live speech 45.'}]});
+  await page.clock.fastForward(21000);
+  await expect(panel).toContainText('Historical speech 0.');
+  await expect(panel).not.toContainText('New live speech 45.');
+  await panel.getByRole('button',{name:'Later',exact:true}).click();
+  await expect(panel).toContainText('Historical speech 10.');
+  await expect(panel).not.toContainText('Historical speech 0.');
+  await panel.getByRole('button',{name:'Earlier',exact:true}).click();
+  await expect(panel).toContainText('Historical speech 0.');
+  await page.screenshot({path:test.info().outputPath(`history-${width}.png`),fullPage:true});
+  await panel.getByRole('button',{name:'Live',exact:true}).click();
+  await expect(panel).toContainText('New live speech 45.');
+  feed.historyFail = true;
+  await panel.getByRole('button',{name:'Beginning',exact:true}).click();
+  await expect(panel).toContainText('Transcript history unavailable');
+  await expect(page.locator('#recording-badge')).toHaveText('Recording in progress');
+  await expect(panel).toContainText('New live speech 45.');
 });

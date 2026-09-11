@@ -26,7 +26,7 @@ def slug(value):
     return isinstance(value, str) and len(value) <= 96 and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value)
 
 
-def validate(body, now):
+def validate(body, now, *, max_segments=60, max_text=500):
     if not isinstance(body, dict) or set(body) != {
         "schemaVersion", "gameId", "sessionId", "recordingId", "previewId", "observedAt",
         "captureState", "captureSeconds", "segments", "previewState", "omittedChunks",
@@ -47,8 +47,8 @@ def validate(body, now):
     seconds = body["captureSeconds"]
     if type(seconds) not in (int, float) or not math.isfinite(seconds) or not 0 <= seconds <= 7 * 86400:
         raise ValueError("Invalid capture time")
-    if not isinstance(body["segments"], list) or len(body["segments"]) > 60:
-        raise ValueError("Preview is limited to sixty recent segments")
+    if not isinstance(body["segments"], list) or len(body["segments"]) > max_segments:
+        raise ValueError("Preview segment limit exceeded")
     previous = -1
     for segment in body["segments"]:
         if not isinstance(segment, dict) or not {"start", "end", "text"} <= set(segment) or set(segment) - {"start", "end", "text", "approximateTiming", "kind"}:
@@ -61,7 +61,7 @@ def validate(body, now):
         if any(type(n) not in (int, float) or not math.isfinite(n) for n in (a, b)) or not 0 <= a <= b <= seconds + 1 or a < previous:
             raise ValueError("Invalid preview timestamps")
         previous = a
-        if not isinstance(segment["text"], str) or not 1 <= len(segment["text"]) <= 500:
+        if not isinstance(segment["text"], str) or not 1 <= len(segment["text"]) <= max_text:
             raise ValueError("Invalid preview text")
 
 
@@ -70,6 +70,9 @@ def handle(event, now):
     actor = claims.get("sub")
     if not isinstance(actor, str) or not actor:
         return response(401, {"error": "Sign in required"})
+    if event.get("routeKey") in {"GET /recordings/live/history", "POST /recordings/live/history"}:
+        from live_history import handle as history_handle
+        return history_handle(event, now, table, actor, PUBLISHERS)
     if event.get("routeKey") == "POST /recordings/live":
         if claims.get("cognito:username", claims.get("username")) not in PUBLISHERS:
             return response(403, {"error": "Recording publisher required"})
