@@ -51,8 +51,11 @@ def validate(body, now, *, max_segments=60, max_text=500):
         raise ValueError("Preview segment limit exceeded")
     previous = -1
     for segment in body["segments"]:
-        if not isinstance(segment, dict) or not {"start", "end", "text"} <= set(segment) or set(segment) - {"start", "end", "text", "approximateTiming", "kind"}:
-            raise ValueError("Invalid preview segment; speakers remain unassigned")
+        if not isinstance(segment, dict) or not {"start", "end", "text"} <= set(segment) or set(segment) - {"start", "end", "text", "approximateTiming", "kind", "playerId", "attribution"}:
+            raise ValueError("Invalid preview segment")
+        if 'playerId' in segment or 'attribution' in segment:
+            if not slug(segment.get('playerId')) or segment.get('attribution') != 'provisional-enrolled-voice' or 'kind' in segment:
+                raise ValueError('Invalid provisional speaker identity')
         if "kind" in segment and (segment["kind"] != "preview-gap" or "approximateTiming" in segment):
             raise ValueError("Invalid preview notice")
         if "approximateTiming" in segment and type(segment["approximateTiming"]) is not bool:
@@ -111,7 +114,7 @@ def handle(event, now):
                 age = max(0, now - int(item["receivedAt"]), now - body["observedAt"] / 1000)
                 records.append({**body, "heartbeatAgeSeconds": int(age),
                     "connectionStale": age > STALE_SECONDS, "expiresAt": int(item["expiresAt"]),
-                    "reviewStatus": "provisional", "speakerMethod": "unassigned"})
+                    "reviewStatus": "provisional", "speakerMethod": "provisional-enrolled-voice" if any(s.get('playerId') for s in body['segments']) else "unassigned"})
             if "LastEvaluatedKey" not in page or len(records) >= 100:
                 break
             args["ExclusiveStartKey"] = page["LastEvaluatedKey"]

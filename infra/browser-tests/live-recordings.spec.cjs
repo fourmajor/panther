@@ -38,7 +38,7 @@ async function fixture(page) {
       body = {chunks:game==='test-game'?chunks:[],pageSize:10,position};
     }
     if (u.pathname === '/games') body = {games};
-    if (u.pathname === '/game') body = {game:games.find(g=>g.id===game),players:[],memberships:[],characters:[]};
+    if (u.pathname === '/game') body = {game:games.find(g=>g.id===game),players:[{id:'alex',name:'Alex Example'}],memberships:[],characters:[]};
     if (u.pathname === '/assets') body = {assets:[],cursor:null};
     if (u.pathname === '/characters') body = {characters:[]};
     if (u.pathname === '/objects') body = {prefixes:[],objects:[],nextCursor:null};
@@ -47,6 +47,25 @@ async function fixture(page) {
   return state;
 }
 
+for (const width of [1280,390]) test(`provisional player names in live and earlier speech at ${width}`, async({page}, testInfo) => {
+  await page.setViewportSize({width,height:1000});
+  const feed = await fixture(page);
+  feed.records[0].segments = [
+    {start:1,end:3,text:'Synthetic attributed speech.',playerId:'alex',attribution:'provisional-enrolled-voice'},
+    {start:4,end:5,text:'Synthetic uncertain speech.'},
+    {start:6,end:7,text:'Foreign identity remains unknown.',playerId:'foreign-player',attribution:'provisional-enrolled-voice'},
+  ];
+  await page.goto(`${origin}/games/test-game/transcripts`);
+  const panel = page.getByRole('region',{name:'Live transcript',exact:true});
+  await expect(panel.getByText('Alex Example (provisional):', {exact:true})).toBeVisible();
+  await expect(panel.getByText('Unknown player (provisional):', {exact:true})).toBeVisible();
+  await expect(panel).not.toContainText('foreign-player');
+  await panel.getByRole('button',{name:'Beginning',exact:true}).click();
+  await expect(panel.getByText('Alex Example (provisional):', {exact:true})).toBeVisible();
+  expect(await panel.evaluate(el=>el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await testInfo.attach(`live-speakers-${width}`, {body:await page.screenshot({fullPage:true}),contentType:'image/png'});
+});
+
 for (const width of [1280,390]) test(`live transcript, accessible red badge and stale states at ${width}`, async({page}) => {
   await page.setViewportSize({width,height:1000}); const feed = await fixture(page);
   const errors = []; page.on('pageerror', e=>errors.push(e.message));
@@ -54,7 +73,7 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   const badge = page.locator('#recording-badge'), panel = page.getByRole('region',{name:'Live transcript',exact:true});
   await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
   await expect(panel).toBeVisible(); await expect(panel).toContainText('The synthetic lantern is lit.');
-  await expect(panel).toContainText('speakers not yet identified');
+  await expect(panel).toContainText('player labels are tentative');
   await expect(page.locator('#library-status')).toContainText('No transcripts yet');
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('recording-pulse');
   for (const target of [badge,page.getByRole('button',{name:'Refresh live feed'})]) {

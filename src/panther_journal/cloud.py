@@ -460,6 +460,8 @@ def register(group):
     from panther_journal.video import video
     from panther_journal.video_production import production
     from panther_journal.live_transcript import live
+    from panther_journal.speaker_profiles import enroll
+    from panther_journal.live_finalize import finish_live
 
     group.add_command(model)
     group.add_command(assets)
@@ -474,5 +476,7 @@ def register(group):
     recording.add_command(playback_preview)
     recording.add_command(audit_command)
     recording.add_command(live)
+    recording.add_command(enroll)
+    recording.add_command(finish_live)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

@@ -34,6 +34,9 @@ def chunk_payload(folder, header, root, config, part):
             segment["kind"] = "preview-gap"
         if line.get("timingNote"):
             segment["approximateTiming"] = True
+        if line.get('playerId') and line.get('attribution') == 'provisional-enrolled-voice':
+            segment['playerId'] = line['playerId']
+            segment['attribution'] = line['attribution']
         segments.append(segment)
     return {"schemaVersion": 1, "gameId": header["gameId"], "recordingId": header["id"],
             "previewId": root.name, "partIndex": int(part.file[5:9]), "start": part.start,

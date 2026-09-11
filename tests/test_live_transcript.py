@@ -73,6 +73,54 @@ def recognizer(folder, part, model, attempt):
     return audio.transcript_lines(raw, part, None)
 
 
+def test_enrolled_live_labels_resume_and_finalize_without_inference(capture, tmp_path, monkeypatch):
+    from panther_journal import speaker_profiles as speakers
+    from panther_journal.live_finalize import checkpoint_lines
+    from panther_journal.live_history import chunk_payload
+    folder, header, model = capture
+    part = add_part(capture, 0)
+    speaker_model = tmp_path / 'speaker-model'
+    speaker_model.mkdir()
+    (speaker_model / 'weights.bin').write_bytes(b'synthetic')
+    profile = tmp_path / 'profiles.json'
+    embedding = [1] + [0]*15
+    profile.write_text(json.dumps({'schemaVersion': 1, 'entityType': 'SpeakerRecognitionProfiles',
+        'gameId': header['gameId'], 'modelFiles': speakers.model_pin(speaker_model),
+        'profiles': [{'playerId': 'alex', 'identityEvidence': 'Synthetic confirmed clip', 'embedding': embedding}]}))
+
+    def analyze(self, wav, attempt):
+        result = {'turns': [{'start': 0, 'end': 5, 'speaker': 'SPEAKER_00'}],
+                  'embeddings': {'SPEAKER_00': embedding}}
+        (attempt / 'speaker-result.json').write_text(json.dumps(result))
+        return result
+
+    monkeypatch.setattr(speakers.SpeakerWorker, 'analyze', analyze)
+    options = dict(once=True, from_start=True, transcriber=recognizer, emit=lambda _: None,
+                   speaker_profiles=profile, speaker_model=speaker_model, speaker_runtime=model)
+    root = live.follow(folder, model, **options)
+    config = live.read_json(root / 'preview.json')
+    value = live.read_json(root / 'part-0000.json')
+    assert value['segments'][0]['playerId'] == 'alex'
+    assert value['speakerEvidence']['speaker-result.json']
+    assert chunk_payload(folder, header, root, config, part)['segments'][0]['playerId'] == 'alex'
+    monkeypatch.setattr(speakers.SpeakerWorker, 'analyze', lambda *args: pytest.fail('Do not rerun saved speaker analysis'))
+    assert live.follow(folder, model, **options) == root
+    raw, attributed = checkpoint_lines(folder, root, config, [part])
+    assert raw[0]['playerId'] is None and attributed[0]['playerId'] == 'alex'
+    (root / value['attempt'] / 'speaker-result.json').write_text('{}')
+    with pytest.raises(click.ClickException, match='speaker evidence changed'):
+        checkpoint_lines(folder, root, config, [part])
+
+
+def test_finalization_requires_every_chunk(capture):
+    from panther_journal.live_finalize import checkpoint_lines
+    folder, _, model = capture
+    part = add_part(capture, 0)
+    _, _, _, root, config = live.initialize(folder, model, True)
+    with pytest.raises(click.ClickException, match='incomplete'):
+        checkpoint_lines(folder, root, config, [part])
+
+
 def test_only_completed_chunks_and_capture_is_untouched(capture):
     folder, header, model = capture
     add_part(capture, 0)
