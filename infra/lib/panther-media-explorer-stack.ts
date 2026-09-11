@@ -34,7 +34,7 @@ import { GameCatalog } from "./game-catalog";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
 
-const MEDIA_USERS = ["stu", "other_stu"] as const;
+const MEDIA_USERS = ["stu", "other_stu", "goldsoundz"] as const;
 
 // The module build has bare Three.js imports; static hosting needs this
 // self-contained browser distribution instead.
