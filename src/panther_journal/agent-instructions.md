@@ -214,6 +214,10 @@ speakers remain unassigned, generation metadata records local inference with exa
 and `contextUse: exclude` prevents it becoming correction evidence. Do not upload previews, use
 them as canonical text, or substitute them for blind/full-session transcription and attribution.
 The immutable private chunk results can resume; preview.txt/status.json are rebuildable live views.
+Invalid recognizer data becomes a typed `preview-gap` notice for the verified source chunk, not
+speech or silence; subsequent chunks continue without retrying saved gaps. Preserve original raw
+output and never loosen final-transcript validation. Source/model integrity failures still stop
+the preview. Resume a stopped preview with its original command; never delete failed attempts.
 The worker also publishes an ephemeral recent-text/heartbeat projection to the authenticated web
 app through Panther (not AWS credentials); use `--local-only` to disable that. `--once` never publishes.
 This is not an asset upload or source evidence. The Transcripts/Audio live panel keeps speakers

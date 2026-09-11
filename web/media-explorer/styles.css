@@ -744,5 +744,6 @@ model-viewer,
 .live-transcript article { min-width: 0; }
 .live-lines { max-height: 26rem; overflow-y: auto; overflow-wrap: anywhere; padding: .5rem; border: 1px solid #403e38; border-radius: .4rem; }
 .live-lines p { margin: .5rem 0 1rem; }
+.live-lines .live-gap { color: #edcb80; border-left: 3px solid #edcb80; padding-left: .7rem; }
 .live-lines time { color: #b4aea0; margin-right: .6rem; font-variant-numeric: tabular-nums; }
 .live-transcript .explorer-heading { flex-wrap: wrap; gap: .75rem; }

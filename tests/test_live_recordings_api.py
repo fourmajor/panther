@@ -90,6 +90,8 @@ def test_old_updates_or_other_publisher_cannot_overwrite(service):
         ("segments", [{"start": 1, "end": 2, "text": "Unapproved identity", "playerId": "person"}]),
         ("segments", [{"start": float("nan"), "end": 2, "text": "Bad time"}]),
         ("segments", [{"start": 1, "end": 2, "text": "x" * 501}]),
+        ("segments", [{"start": 1, "end": 2, "text": "x", "kind": "invented"}]),
+        ("segments", [{"start": 1, "end": 2, "text": "x", "kind": "preview-gap", "approximateTiming": True}]),
         ("observedAt", 1),
         ("captureState", "maybe"),
         ("captureSeconds", -1),
@@ -111,3 +113,12 @@ def test_payload_size_and_invalid_json(service):
     assert service.handle(e, 1000)["statusCode"] == 413
     e["body"] = "not json"
     assert service.handler(e, None)["statusCode"] == 400
+
+
+def test_gap_notice_preserved_as_notice_not_speech(service):
+    body = payload()
+    body["segments"] = [{"start": 0, "end": 30, "kind": "preview-gap", "text": "Preview gap"}]
+    assert service.handle(event(body), 1000)["statusCode"] == 200
+    feed = json.loads(service.handle(event(), 1001)["body"])["recordings"][0]
+    assert feed["segments"][0]["kind"] == "preview-gap"
+    assert feed["captureState"] == "recording" and not feed["connectionStale"]

@@ -51,8 +51,10 @@ def validate(body, now):
         raise ValueError("Preview is limited to sixty recent segments")
     previous = -1
     for segment in body["segments"]:
-        if not isinstance(segment, dict) or not {"start", "end", "text"} <= set(segment) or set(segment) - {"start", "end", "text", "approximateTiming"}:
+        if not isinstance(segment, dict) or not {"start", "end", "text"} <= set(segment) or set(segment) - {"start", "end", "text", "approximateTiming", "kind"}:
             raise ValueError("Invalid preview segment; speakers remain unassigned")
+        if "kind" in segment and (segment["kind"] != "preview-gap" or "approximateTiming" in segment):
+            raise ValueError("Invalid preview notice")
         if "approximateTiming" in segment and type(segment["approximateTiming"]) is not bool:
             raise ValueError("Invalid timing annotation")
         a, b = segment["start"], segment["end"]

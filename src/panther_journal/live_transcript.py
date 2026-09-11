@@ -27,6 +27,11 @@ from panther_journal.model_workflow import clean_environment
 VERSION = 1
 DEFAULT_MODEL = Path.home() / ".cache/whisper.cpp/ggml-small.bin"
 NOTICE = "LIVE PREVIEW — provisional, speakers unassigned; not the final transcript."
+GAP_NOTICE = "Preview gap: invalid recognizer output for this audio chunk. Original audio retained; not silence."
+
+
+class PreviewOutputError(click.ClickException):
+    """Recoverable recognition-data failure, never a source/integrity/process failure."""
 
 
 def read_json(path, limit=1024 * 1024):
@@ -261,21 +266,34 @@ def transcribe_part(folder, part, model, attempt):
         "recognizer.log",
     )
     check_part(folder, part)
-    raw = read_json(attempt / "recognizer.json", 8 * 1024 * 1024)
+    try:
+        raw = read_json(attempt / "recognizer.json", 8 * 1024 * 1024)
+    except json.JSONDecodeError as exc:
+        raise PreviewOutputError("Malformed recognizer JSON") from exc
     return preview_lines(raw, part)
 
 
 def preview_lines(raw, part):
+    try:
+        return _preview_lines(raw, part)
+    except (click.ClickException, KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise PreviewOutputError("Invalid recognizer text/timestamps") from exc
+
+
+def _preview_lines(raw, part):
     """Bound small decoder end-time overruns only in the explicitly provisional projection."""
     if not isinstance(raw.get("transcription"), list):
         raise click.ClickException("Invalid recognizer output; no provisional text accepted")
-    lines = []
+    lines, previous = [], -1
     for segment in raw["transcription"]:
         a, b = (segment["offsets"][k] for k in ("from", "to"))
         if any(
             type(v) not in (int, float) or not math.isfinite(v) for v in (a, b)
         ) or not isinstance(segment["text"], str):
             raise click.ClickException("Invalid recognizer text/timestamps")
+        if a < previous:
+            raise click.ClickException("Recognizer timestamps are out of order")
+        previous = a
         clipped = part.duration * 1000 < b <= (part.duration + 2) * 1000
         projected = (
             {**segment, "offsets": {"from": a, "to": part.duration * 1000}} if clipped else segment
@@ -292,7 +310,8 @@ def preview_lines(raw, part):
 
 def render_line(line):
     # Never execute terminal controls embedded in recognized speech or display it as Markdown commands.
-    text = " ".join("".join(c for c in line["text"] if c.isprintable()).split())
+    text = GAP_NOTICE if line.get("kind") == "preview-gap" else line["text"]
+    text = " ".join("".join(c for c in text if c.isprintable()).split())
     seconds = int(line["start"])
     prefix = "~" if line.get("timingNote") else ""
     return f"{prefix}[{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}] {text}"
@@ -321,7 +340,14 @@ def process_part(folder, model, root, config, part, transcriber=transcribe_part)
     attempt = root / f"attempt-{uuid.uuid4().hex}"
     attempt.mkdir(mode=0o700)
     started = time.monotonic()
-    lines = transcriber(folder, part, model, attempt)
+    try:
+        lines = transcriber(folder, part, model, attempt)
+    except PreviewOutputError:
+        # Discard the entire provisional projection, not the preserved raw output. The interval
+        # comes from the verified source chunk, never the recognizer's invalid timestamps.
+        # Persist once so resume advances instead of retrying the same bad recognition forever.
+        lines = [{"kind": "preview-gap", "start": part.start,
+                  "end": part.start + part.duration, "text": GAP_NOTICE}]
     check_part(folder, part)
     # Detect weights changed during execution, not merely at the beginning of the preview.
     if audio.digest(model) != config["settings"]["modelSha256"]:
