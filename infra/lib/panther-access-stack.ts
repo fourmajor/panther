@@ -115,6 +115,26 @@ export class PantherAccessStack extends Stack {
 
     const uploaderPolicy = new iam.PolicyDocument({
       statements: [
+        // AdministratorAccess already includes these. Keep the uploader read-only for costs;
+        // the separate root-only Billing console activation is documented in the runbook.
+        new iam.PolicyStatement({
+          sid: "CostExplorerReadOnly",
+          actions: ["ce:Get*", "ce:Describe*", "ce:List*"],
+          resources: ["*"],
+        }),
+        new iam.PolicyStatement({
+          sid: "CostExplorerConsoleContext",
+          actions: [
+            "account:GetAccountInformation",
+            "billing:GetIAMAccessPreference",
+            "billing:GetBillingView",
+            "billing:GetBillingViewData",
+            "billing:ListBillingViews",
+            "consolidatedbilling:GetAccountBillingRole",
+            "consolidatedbilling:ListLinkedAccounts",
+          ],
+          resources: ["*"],
+        }),
         new iam.PolicyStatement({
           actions: ["s3:GetBucketLocation", "s3:ListBucket"],
           resources: [privateAssets.bucketArn],
@@ -154,7 +174,7 @@ export class PantherAccessStack extends Stack {
       {
         instanceArn: props.identityCenterInstanceArn,
         name: "PantherAssetUploader",
-        description: "Manage private Panther game assets without administrative access",
+        description: "Manage private Panther game assets and read Cost Explorer without administrative access",
         inlinePolicy: uploaderPolicy.toJSON(),
         sessionDuration: "PT12H",
       },

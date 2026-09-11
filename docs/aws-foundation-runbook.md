@@ -18,8 +18,9 @@ and all permission sets and assignments. Because CloudFormation does not expose 
 user resource in `us-west-2`, CDK manages that user with an on-demand custom resource. Its Lambda
 runs only when the stack creates, updates, or deletes the user.
 
-Enabling the organization-level IAM Identity Center instance is the one access-related console
-exception. AWS does not expose that operation through CloudFormation, CDK, or a public API.
+Enabling the organization-level IAM Identity Center instance and activating IAM access to the
+Billing console are access-related console exceptions. AWS does not expose those operations
+through CloudFormation, CDK, or a supported public API.
 
 ## 2. Confirm the target
 
@@ -93,10 +94,45 @@ AWS_PROFILE=panther-admin npm run deploy -- PantherAccess \
 CDK creates the first Identity Center user and two assigned permission sets:
 
 - `PantherAdministrator` for infrastructure administration
-- `PantherAssetUploader` for routine access to private game assets
+- `PantherAssetUploader` for routine access to private game assets and read-only Cost Explorer
 
 Use `PantherAssetUploader` for game-specific sessions. Reserve `PantherAdministrator` for CDK and
 account-administration work. The temporary root profile is only for account bootstrap and recovery.
+
+### Cost Explorer: role permissions and the separate console gate
+
+`PantherAdministrator` already has Cost Explorer access through `AdministratorAccess`.
+The uploader's CDK inline policy allows Cost Explorer Get/Describe/List operations, including
+forecasts, saved-report viewing and preferences viewing, plus the account/billing-view context
+needed by the console. It does not grant billing changes, paid-feature activation, report writes,
+payment-method access or administration. Do not attach full Billing or AdministratorAccess to
+the uploader to resolve a console error.
+
+AWS separately requires the root user to activate IAM access to the Billing console. **A successful
+Cost Explorer API request does not verify this console gate.** If both roles cannot use the console:
+
+1. As root, open **Account → IAM user and role access to Billing information → Edit**.
+2. Enable **Activate IAM Access** and save, then sign out of root.
+3. Open fresh Identity Center console sessions for each role and verify Cost Explorer.
+
+This is an unavoidable manual operation: AWS documents a root-only console setting and provides
+no supported public API or CloudFormation resource for it, so CDK cannot set it (including via a
+custom resource). Do not automate private console endpoints or create root keys. Owner completion
+is tracked in [#85](https://github.com/fourmajor/panther/issues/85); do not assume it is enabled.
+If already enabled, collect the exact console error and confirm the account/role rather than
+adding redundant permissions to the administrator.
+
+After a `PantherAccess` deployment, verify provisioning reached the existing IAM role using
+`iam simulate-principal-policy` for allowed CE reads and denied CE/billing writes, then make one
+small real Cost Explorer query with each CLI profile. API requests may have a small per-request
+charge; do not poll them. Cost Explorer's global API uses `us-east-1`; this is an endpoint exception,
+not a change to Panther's `us-west-2` infrastructure region. Deploy `PantherAccess` with
+`--exclusively` and its existing Identity Center inputs; preview the diff and leave users and
+assignments unchanged.
+
+Sources: [AWS console activation](https://docs.aws.amazon.com/cost-management/latest/userguide/control-access-billing.html),
+[Cost Management actions](https://docs.aws.amazon.com/cost-management/latest/userguide/billing-permissions-ref.html),
+[console-only Billing operations](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/migrate-granularaccess-whatis.html).
 
 ## 8. Activate the Identity Center user
 
