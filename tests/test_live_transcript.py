@@ -155,6 +155,11 @@ def test_latest_preview_and_from_start_are_distinct(capture):
     beginning = live.initialize(folder, model, True)
     assert latest[3] != beginning[3]
     assert latest[4]["startIndex"] == 1 and beginning[4]["startIndex"] == 0
+    add_part(capture, 2)
+    named = live.initialize(folder, model, False, "web-live")
+    assert named[3] != latest[3] and named[4]["startIndex"] == 2
+    add_part(capture, 3)
+    assert live.initialize(folder, model, False, "web-live")[4]["startIndex"] == 2
 
 
 def test_terminal_controls_are_not_emitted():
@@ -333,3 +338,22 @@ def test_publisher_sends_final_capture_state_without_cloud_credentials(capture, 
     publisher.run()
     assert [p["captureState"] for p in sent] == ["recording", "stopped"]
     assert live.read_json(root / "web-status.json")["state"] == "published"
+
+
+def test_preview_clips_small_decoder_overrun_without_changing_raw(capture):
+    part = add_part(capture, 0)
+    raw = {
+        "transcription": [
+            {"offsets": {"from": 29040, "to": 31040}, "text": "Synthetic boundary speech"}
+        ]
+    }
+    original = json.dumps(raw)
+    lines = live.preview_lines(raw, part)
+    assert lines[0]["start"] == 29.04 and lines[0]["end"] == 30
+    assert lines[0]["timingNote"] and live.render_line(lines[0]).startswith("~[")
+    assert json.dumps(raw) == original
+    with pytest.raises(click.ClickException):
+        audio.transcript_lines(raw, part, None)  # Final transcript remains strict.
+    raw["transcription"][0]["offsets"]["to"] = 40000
+    with pytest.raises(click.ClickException):
+        live.preview_lines(raw, part)

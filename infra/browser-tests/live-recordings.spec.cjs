@@ -56,9 +56,10 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await page.screenshot({path:test.info().outputPath(`live-${width}.png`),fullPage:true});
   await page.emulateMedia({reducedMotion:'reduce'});
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
-  feed.records[0].segments.push({start:4,end:8,text:'<img src=x onerror=window.attacked=true> Synthetic second line.'});
+  feed.records[0].segments.push({start:4,end:8,approximateTiming:true,text:'<img src=x onerror=window.attacked=true> Synthetic second line.'});
   await page.getByRole('button',{name:'Refresh live feed'}).click();
   await expect(panel).toContainText('Synthetic second line.'); await expect(panel.locator('img')).toHaveCount(0);
+  await expect(panel.locator('time').last()).toHaveText('~0:04');
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
   feed.records[0].captureState = 'stalled';
   await page.getByRole('button',{name:'Refresh live feed'}).click();

@@ -1706,7 +1706,7 @@ function drawLive() {
   badge.hidden = mode === "none"; badge.dataset.state = mode; badge.href = gamePath("transcripts");
   document.getElementById("recording-label").textContent = labels[mode] || "";
   status.textContent = liveFailure ? "Live feed unavailable. Recording may still be running locally. Retrying automatically."
-    : liveRecords.length ? "Updates about every 20 seconds, after audio chunks finish and local recognition completes."
+    : liveRecords.length ? "Updates automatically as completed audio chunks are transcribed."
     : "No live recording reported for this game. Start the live worker from the recording laptop.";
   const projected = liveRecords.map(r => ({recordingId:r.recordingId, sessionId:r.sessionId, mode:liveState(r), previewState:r.previewState, segments:r.segments, omittedChunks:r.omittedChunks}));
   const key = JSON.stringify(projected);
@@ -1718,12 +1718,13 @@ function drawLive() {
   for (const record of projected) {
     const article = document.createElement("article"), heading = document.createElement("h3"), note = document.createElement("p"), lines = document.createElement("div");
     heading.textContent = record.sessionId;
-    note.textContent = `${labels[record.mode] || "Recording status unknown"} · ${record.previewState.replaceAll("-", " ")}. ${record.omittedChunks ? "Preview joined after recording began. " : ""}Latest 60 speech segments at most; not the complete session.`;
+    note.textContent = `${labels[record.mode] || "Recording status unknown"} · ${record.previewState.replaceAll("-", " ")}.${record.omittedChunks ? " Joined after recording began." : ""}`;
     lines.className = "live-lines"; lines.dataset.recording = record.recordingId; lines.tabIndex = 0;
     lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Recent provisional speech for ${record.sessionId}`);
     for (const segment of record.segments) {
       const p = document.createElement("p"), timestamp = document.createElement("time"), seconds = Math.floor(segment.start);
-      timestamp.textContent = `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
+      timestamp.textContent = `${segment.approximateTiming ? "~" : ""}${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
+      if (segment.approximateTiming) timestamp.title = "Approximate timing: recognizer end time was clipped to the audio chunk boundary. Original output retained.";
       p.append(timestamp, document.createTextNode(segment.text)); lines.append(p);
     }
     if (!record.segments.length) lines.textContent = "Waiting for recognized speech. This does not prove silence or confirm microphone quality.";

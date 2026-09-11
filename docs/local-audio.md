@@ -175,6 +175,8 @@ checksum-verified FLAC checkpoints, never the active WAV or uncheckpointed files
 starts with the latest completed chunk so a long session does not impose an initial backlog.
 Use `--from-start` to create a separate preview that catches up from the beginning. `--once`
 processes at most one newly available chunk for diagnostics; subsequent invocations resume.
+To join current audio while retaining an older preview's backlog, choose a new
+`--preview-name NAME`. Reuse that name to resume it. This never skips or alters source audio.
 
 It defaults to the existing local weights at `~/.cache/whisper.cpp/ggml-small.bin`; specify
 `--model /private/path/WEIGHTS.bin` when installed elsewhere. It never downloads models, uses a paid
@@ -189,6 +191,9 @@ guarantee against a full disk—recording itself continues to consume space.
 Text is **provisional, not a raw or corrected transcript**, with unknown speakers and original
 recording-relative timestamps. Chunk boundaries can split sentences and recognition may hallucinate,
 especially in noise/silence. No speech recognized does not prove that the microphone heard nothing.
+Whisper can overshoot a chunk's end. For this preview only, end-time overruns of at most two seconds
+are clipped to the source boundary and marked `~` (approximate timing); larger/invalid timestamps
+stop the preview. Exact original recognizer output is retained, and final-transcript validation is unchanged.
 There is no roster prompting, character substitution, speaker guessing, automatic editorial trigger,
 or asset upload. After capture, run the ordinary whole-recording transcription and player attribution;
 do not use the preview as factual context or as a substitute for a held-out `--blind` transcript.

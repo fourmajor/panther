@@ -97,7 +97,7 @@ def check_part(folder, part):
     return path
 
 
-def initialize(folder, model, from_start):
+def initialize(folder, model, from_start, preview_name=None):
     folder, model = folder.expanduser().resolve(), model.expanduser().resolve()
     if folder in (Path.home(), Path("/")) or any(
         (p / ".git").exists() for p in (folder, *folder.parents)
@@ -128,6 +128,9 @@ def initialize(folder, model, from_start):
         "bestOf": 1,
         "context": "one-completed-chunk",
     }
+    if preview_name is not None:
+        audio.cloud.slug(preview_name)
+        settings["previewName"] = preview_name
     identity = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
     root = folder / "live-preview" / f"v{VERSION}-{identity[:24]}"
     if (folder / "live-preview").is_symlink() or root.is_symlink():
@@ -259,22 +262,40 @@ def transcribe_part(folder, part, model, attempt):
     )
     check_part(folder, part)
     raw = read_json(attempt / "recognizer.json", 8 * 1024 * 1024)
+    return preview_lines(raw, part)
+
+
+def preview_lines(raw, part):
+    """Bound small decoder end-time overruns only in the explicitly provisional projection."""
     if not isinstance(raw.get("transcription"), list):
         raise click.ClickException("Invalid recognizer output; no provisional text accepted")
+    lines = []
     for segment in raw["transcription"]:
         a, b = (segment["offsets"][k] for k in ("from", "to"))
         if any(
             type(v) not in (int, float) or not math.isfinite(v) for v in (a, b)
         ) or not isinstance(segment["text"], str):
             raise click.ClickException("Invalid recognizer text/timestamps")
-    return audio.transcript_lines(raw, part, None)
+        clipped = part.duration * 1000 < b <= (part.duration + 2) * 1000
+        projected = (
+            {**segment, "offsets": {"from": a, "to": part.duration * 1000}} if clipped else segment
+        )
+        segment_lines = audio.transcript_lines({"transcription": [projected]}, part, None)
+        if clipped:
+            for line in segment_lines:
+                line["timingNote"] = (
+                    "Recognizer end time exceeded the chunk; preview end clipped to source duration."
+                )
+        lines.extend(segment_lines)
+    return lines
 
 
 def render_line(line):
     # Never execute terminal controls embedded in recognized speech or display it as Markdown commands.
     text = " ".join("".join(c for c in line["text"] if c.isprintable()).split())
     seconds = int(line["start"])
-    return f"[{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}] {text}"
+    prefix = "~" if line.get("timingNote") else ""
+    return f"{prefix}[{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}] {text}"
 
 
 def process_part(folder, model, root, config, part, transcriber=transcribe_part):
@@ -357,8 +378,9 @@ def follow(
     transcriber=transcribe_part,
     emit=click.echo,
     publish=False,
+    preview_name=None,
 ):
-    folder, model, header, root, config = initialize(folder, model, from_start)
+    folder, model, header, root, config = initialize(folder, model, from_start, preview_name)
     emit(NOTICE)
     emit(
         f"Preview file: {root / 'preview.txt'}\nCtrl+C stops ONLY this preview; keep the recording terminal open."
@@ -406,6 +428,10 @@ def follow(
                     )
                     value = process_part(folder, model, root, config, parts[index], transcriber)
                     values.append(value)
+                    if any(line.get("timingNote") for line in value["segments"]):
+                        emit(
+                            "~ Approximate timing: decoder end time clipped to this chunk; original output retained."
+                        )
                     for line in value["segments"]:
                         emit(render_line(line))
                     if not value["segments"]:
@@ -489,12 +515,23 @@ def follow(
 @click.option(
     "--local-only", is_flag=True, help="Do not publish the provisional web feed/heartbeat."
 )
-def live(folder, model, from_start, once, local_only):
+@click.option(
+    "--preview-name",
+    help="Named resumable preview; a new name joins the latest chunk without replacing older previews.",
+)
+def live(folder, model, from_start, once, local_only, preview_name):
     """Follow provisional local transcript text in a second terminal; Ctrl+C leaves capture running."""
     for name in ("ffmpeg", "whisper-cli", "nice"):
         audio.executable(name)
     try:
-        follow(folder, model, from_start=from_start, once=once, publish=not local_only and not once)
+        follow(
+            folder,
+            model,
+            from_start=from_start,
+            once=once,
+            publish=not local_only and not once,
+            preview_name=preview_name,
+        )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise click.ClickException(
             "Live preview failed; capture is unaffected. Check the private preview logs and inputs."
