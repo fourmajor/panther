@@ -317,7 +317,7 @@ export class PantherMediaExplorerStack extends Stack {
       apiName: "panther-media-explorer",
       corsPreflight: {
         allowHeaders: ["authorization", "content-type"],
-        allowMethods: [apigwv2.CorsHttpMethod.GET],
+        allowMethods: [apigwv2.CorsHttpMethod.GET, apigwv2.CorsHttpMethod.POST],
         allowOrigins: [siteUrl],
         maxAge: Duration.days(1),
       },

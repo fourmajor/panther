@@ -158,6 +158,15 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
+Movie review plans appear under Videos before generation. Publish immutable `movie-review-plan`
+JSON assets following `docs/movie-review.md`; pin character portraits/source keys, disclose uncertain
+dialogue, and leave missing frames/prices explicitly null. Never fabricate price checks or substitute
+a portrait for a shot composition to unlock approval. The website saves revision-bound feedback and
+owner approval but cannot start generation. For a reviewed project, check its current exact-hash
+approval and cap before the separate existing CLI spending/rights gates. Changed plans need renewed
+approval; there is no automatic executor integration. Planning artifacts remain intermediate and
+excluded from factual transcript context.
+
 For shot preparation and actual editing, use `panther video production --help` and the trusted
 `docs/video-production.md`. Pin selected character appearances, prepared full-frame starting images
 and optional verified Kling ending images before generation. Preparation reviews existing plates;

@@ -269,11 +269,15 @@ async function api(path, parameters = {}, options = {}) {
   }
   let response = await fetch(url, {
     signal: options.signal,
-    headers: { authorization: `Bearer ${state.tokens.id_token}` },
+    method: options.body ? "POST" : "GET",
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) },
   });
   if (response.status === 401) {
     await ensureSession({ force: true });
-    response = await fetch(url, { signal: options.signal, headers: { authorization: `Bearer ${state.tokens.id_token}` } });
+    response = await fetch(url, { signal: options.signal, method: options.body ? "POST" : "GET",
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) } });
   }
   if (response.status === 401) {
     clearSession();
@@ -1314,6 +1318,8 @@ function sameGameKey(key) {
 }
 
 function clearLibrary() {
+  document.getElementById("movie-workspace").replaceChildren();
+  document.getElementById("movie-workspace").hidden = true;
   document.getElementById("session-library").hidden = true;
   document.getElementById("library-list").replaceChildren();
   if (!state.tokens) assetIndex = null;
@@ -1364,6 +1370,8 @@ async function loadLibrary(section, epoch) {
   status.textContent = "Loading session assets…";
   try {
     const assets = await allAssets(gameId);
+    if (!current()) return;
+    if (section === "videos") await loadMovies(assets, epoch);
     if (!current()) return;
     const manifests = new Set(assets.filter(a => a.recording?.partCount > 0).map(a => a.key.split("/")[3]));
     const keys = new Set(assets.map(a => a.key));
@@ -1521,6 +1529,206 @@ async function renderAssetLinks(key, epoch) {
 function detailBlock(title, value) {
   const details = document.createElement("details"), summary = document.createElement("summary"), pre = document.createElement("pre");
   summary.textContent = title; pre.textContent = JSON.stringify(value, null, 2); details.append(summary, pre); return details;
+}
+
+// Movie review is intentionally separate from the paid local generation CLI.
+function movieNode(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+function movieButton(text, action, className = "quiet-button") {
+  const button = movieNode("button", text, className); button.type = "button";
+  button.addEventListener("click", action); return button;
+}
+function movieMoney(value) { return value === null || value === undefined ? "Not quoted" : `$${Number(value).toFixed(2)}`; }
+
+async function loadMovies(assets, epoch) {
+  const host = document.getElementById("movie-workspace"), gameId = state.gameId;
+  const current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
+  host.hidden = false; host.replaceChildren();
+  const plans = assets.filter(a => a.kind === "movie-review-plan" && sameGameKey(a.key));
+  const key = new URLSearchParams(location.search).get("project");
+  if (!key) {
+    const intro = movieNode("div", undefined, "movie-intro");
+    const text = movieNode("div"); text.append(movieNode("p", "THE CUTTING ROOM", "eyebrow"),
+      movieNode("h2", "A good film starts before the first frame."),
+      movieNode("p", "Review the story, cast and shot-by-shot budget. Nothing generates until you approve.", "movie-muted"));
+    intro.append(text, movieNode("span", "Planning costs ≠ generation spend", "movie-tag")); host.append(intro);
+    const grid = movieNode("div", undefined, "movie-projects");
+    for (const asset of plans.sort((a,b) => b.lastModified.localeCompare(a.lastModified))) {
+      const card = movieNode("article", undefined, "movie-project-card");
+      card.append(movieNode("p", "MOVIE PLAN · REVIEW BEFORE GENERATION", "eyebrow"),
+        movieNode("h3", asset.metadata?.title || asset.name),
+        movieNode("p", asset.metadata?.description || "Open the screenplay, planned shots and budget.", "movie-muted"));
+      const link = movieNode("a", "Open review workspace →", "movie-open");
+      link.href = `${gamePath("videos")}?project=${encodeURIComponent(asset.key)}`;
+      link.onclick = event => { if (!event.metaKey && !event.ctrlKey) { event.preventDefault(); navigate(link.href); } };
+      card.append(link); grid.append(card);
+    }
+    if (!plans.length) grid.append(movieNode("p", "No movie plans yet. A prepared plan will appear here before any paid generation.", "movie-empty"));
+    host.append(grid, movieNode("h2", "Video library", "movie-library-heading")); return;
+  }
+  host.append(movieNode("p", "Opening the production plan…", "status"));
+  try {
+    if (!sameGameKey(key)) throw new Error("This movie plan does not belong to the selected game");
+    const data = await api("/movie-review", {gameId, key});
+    if (!current()) return;
+    if (data.plan?.gameId !== gameId || data.plan?.entityType !== "MovieReviewPlan") throw new Error("Invalid movie plan");
+    drawMovieWorkspace(host, data, key, assets, current);
+  } catch (error) {
+    if (!current()) return;
+    host.replaceChildren(movieNode("p", `${error.message}. Use Refresh to retry.`, "error"),
+      movieButton("← All videos", () => navigate(gamePath("videos"))));
+  }
+}
+
+function drawMovieWorkspace(host, data, key, assets, current) {
+  const plan = data.plan, reviewed = new Set(), notes = new Map();
+  let selected = 0, tab = "Storyboard", saving = false;
+  host.replaceChildren();
+  document.getElementById("library-title").textContent = "Movie review";
+  const header = movieNode("header", undefined, "movie-hero");
+  header.append(movieButton("← All videos", () => navigate(gamePath("videos")), "back-button"));
+  const heading = movieNode("div", undefined, "movie-hero-heading");
+  const title = movieNode("div");
+  title.append(movieNode("p", `PRE-PRODUCTION / ${plan.revisionId}`, "eyebrow"), movieNode("h2", plan.title), movieNode("p", plan.summary, "movie-synopsis"));
+  heading.append(title, movieNode("span", "No generation started", "movie-tag")); header.append(heading);
+  const stats = movieNode("div", undefined, "movie-stats");
+  stats.append(movieNode("span", `${plan.shots.length} planned shots`), movieNode("span", `${data.readiness.durationSeconds}s planned runtime`), movieNode("span", "AI adaptation · not a verbatim record"));
+  header.append(stats); host.append(header);
+  const layout = movieNode("div", undefined, "movie-layout"), main = movieNode("div", undefined, "movie-main"), aside = movieNode("aside", undefined, "movie-budget");
+  aside.setAttribute("aria-label", "Budget and approval");
+  const tabs = movieNode("nav", undefined, "movie-tabs"); tabs.setAttribute("aria-label", "Movie plan views");
+  const content = movieNode("div", undefined, "movie-content");
+  main.append(tabs, content); layout.append(main, aside); host.append(layout);
+  const feedbackStatus = movieNode("p", "", "movie-feedback-status"); feedbackStatus.setAttribute("role", "status");
+  async function attachImage(container, assetKey, alt) {
+    if (!assetKey || !sameGameKey(assetKey) || !plan.sourceKeys.includes(assetKey)) return;
+    try {
+      const file = await api("/object-url", {key:assetKey});
+      if (!current() || !container.isConnected || !file.contentType?.startsWith("image/")) return;
+      const img = movieNode("img"); img.alt = alt; img.loading = "lazy";
+      img.onload = () => { if (current() && container.isConnected) container.classList.add("has-image"); };
+      img.onerror = () => { img.remove(); container.classList.remove("has-image"); };
+      img.src = file.url; container.append(img);
+    } catch { /* Keep an honest labeled placeholder and usable navigation. */ }
+  }
+  function renderAside() {
+    aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));
+    const cost = movieNode("div", undefined, "movie-cost");
+    cost.append(movieNode("strong", data.readiness.costComplete ? movieMoney(data.readiness.knownCostUsd) : "Unquoted"),
+      movieNode("span", "estimated generation cost", "movie-muted")); aside.append(cost);
+    aside.append(movieNode("p", `${movieMoney(plan.budget.capUsd)} total budget ceiling · USD`, "movie-cap"));
+    const budgetBar = movieNode("div", undefined, "movie-budget-bar");
+    const fill = movieNode("span"); fill.style.width = `${Math.min(100, Number(data.readiness.knownCostUsd) / Number(plan.budget.capUsd) * 100)}%`; budgetBar.append(fill); aside.append(budgetBar);
+    aside.append(movieNode("p", plan.budget.notes || "Includes retries. Quotes must be refreshed before approval. Unknown costs are not zero.", "movie-small"));
+    const count = movieNode("p", `${reviewed.size} of ${plan.shots.length} shots reviewed`, "movie-reviewed-count"); aside.append(count);
+    if (data.readiness.blockers.length) {
+      const details = movieNode("details", undefined, "movie-blockers"); details.open = true;
+      details.append(movieNode("summary", `${data.readiness.blockers.length} items need attention`));
+      const list = movieNode("ul"); for (const blocker of data.readiness.blockers) list.append(movieNode("li", blocker)); details.append(list); aside.append(details);
+    }
+    if (data.review) {
+      const saved = movieNode("div", undefined, "movie-saved-review");
+      saved.append(movieNode("strong", data.review.action === "approved" ? "This revision was approved" : "Changes requested"),
+        movieNode("p", new Date(data.review.createdAt*1000).toLocaleString(), "movie-small"));
+      for (const comment of data.review.comments || []) saved.append(movieNode("p", `${comment.shotId || "Overall"}: ${comment.text}`));
+      aside.append(saved);
+    }
+    const feedback = movieButton("Save change requests", () => save("changes-requested"), "quiet-button movie-wide");
+    feedback.disabled = saving || ![...notes.values()].some(v => v.trim()); aside.append(feedback);
+    const approve = movieButton("Review approval…", approvalDialog, "primary-button movie-wide");
+    approve.disabled = saving || !data.canApprove || !data.readiness.ready || reviewed.size !== plan.shots.length || [...notes.values()].some(v=>v.trim());
+    aside.append(approve, movieNode("p", !data.canApprove ? "An owner must approve the budget." : "Resolve blockers, review each shot, and save any requested changes first.", "movie-small"),
+      movieNode("p", "Approval records your decision only. It does not start generation or charge your account.", "movie-safety"), feedbackStatus);
+  }
+  async function save(action, confirmation) {
+    if (saving || !current()) return;
+    saving = true; feedbackStatus.textContent = "Saving your review…"; renderAside();
+    try {
+      const result = await api("/movie-review", {}, {body:{gameId:plan.gameId, key, sha256:data.sha256,
+        expectedReviewId:data.review?.id || null, action, capUsd:plan.budget.capUsd,
+        reviewedShotIds:[...reviewed], comments:[...notes].filter(([,v])=>v.trim()).map(([shotId,text])=>({shotId,text:text.trim()}))}});
+      if (!current()) return;
+      data.review = result.review; notes.clear(); feedbackStatus.textContent = "Review saved. No generation was started.";
+      confirmation?.close(); confirmation?.remove(); renderContent();
+    } catch (error) { if (current()) feedbackStatus.textContent = `${error.message} Your notes are still here; copy them before refreshing.`; }
+    finally { if (current()) { saving = false; renderAside(); } }
+  }
+  function approvalDialog() {
+    const dialog = movieNode("dialog", undefined, "movie-confirm");
+    dialog.setAttribute("aria-label", "Confirm movie plan approval");
+    dialog.append(movieNode("p", "EXACT REVISION APPROVAL", "eyebrow"), movieNode("h2", "Ready for production?"),
+      movieNode("p", `Approve ${plan.revisionId}, ${plan.shots.length} shots, with a hard ceiling of ${movieMoney(plan.budget.capUsd)} USD including retries.`),
+      movieNode("p", "Content, model, references or cost changes require a new plan and fresh approval. This button will not generate footage."));
+    const label = movieNode("label", undefined, "movie-check"), check = document.createElement("input"); check.type = "checkbox";
+    label.append(check, "I approve this exact plan and budget ceiling."); dialog.append(label);
+    const confirm = movieButton("Approve this plan", () => { confirm.disabled=true; void save("approved", dialog); }, "primary-button");
+    confirm.disabled = true; check.onchange = () => {confirm.disabled=!check.checked;};
+    dialog.append(movieButton("Keep reviewing", () => {dialog.close(); dialog.remove();}), confirm);
+    dialog.addEventListener("cancel", () => dialog.remove()); host.append(dialog); dialog.showModal();
+  }
+  function renderContent() {
+    tabs.replaceChildren(); content.replaceChildren();
+    for (const name of ["Storyboard", "Screenplay", "Cast & sources"]) {
+      const button = movieButton(name, () => {tab=name; renderContent();}); button.setAttribute("aria-pressed", String(tab===name)); tabs.append(button);
+    }
+    if (tab === "Screenplay") {
+      const paper = movieNode("article", undefined, "movie-script"); paper.setAttribute("aria-label", "Movie screenplay");
+      paper.append(movieNode("p", "SHOOTING DRAFT · CREATIVE ADAPTATION", "eyebrow"), movieNode("h3", plan.title));
+      const prose = movieNode("div"); proseMarkdown(prose, plan.screenplay); paper.append(prose); content.append(paper); return;
+    }
+    if (tab === "Cast & sources") {
+      content.append(movieNode("h3", "The selected cast"), movieNode("p", "These are pinned visual references, not final shot compositions.", "movie-muted"));
+      const cast = movieNode("div", undefined, "movie-cast");
+      for (const character of plan.characters) {
+        const card = movieNode("article"), image = movieNode("div", "Portrait unavailable", "movie-portrait");
+        card.append(image, movieNode("h4", character.name)); cast.append(card);
+        void attachImage(image, character.portraitKey, `Selected portrait of ${character.name}`);
+      }
+      content.append(cast, movieNode("h3", "Source material"), movieNode("p", "Open the original evidence to check story choices. Adaptations are not new factual evidence.", "movie-muted"));
+      const list = movieNode("ul", undefined, "movie-sources");
+      for (const source of plan.sourceKeys) if (sameGameKey(source)) {
+        const li = movieNode("li"); li.append(assetLink(assets.find(a=>a.key===source) || {key:source})); list.append(li);
+      }
+      content.append(list); return;
+    }
+    const grid = movieNode("div", undefined, "movie-shot-grid");
+    plan.shots.forEach((shot, index) => {
+      const button = movieButton("", () => {selected=index; renderContent();}, "movie-shot");
+      button.setAttribute("aria-label", `Inspect shot ${index+1}: ${shot.title}`); button.setAttribute("aria-pressed", String(selected===index));
+      const frame = movieNode("div", undefined, "movie-frame");
+      const placeholder = movieNode("div", undefined, "movie-frame-placeholder");
+      placeholder.append(movieNode("span", String(index+1).padStart(2,"0"), "movie-frame-number"),
+        movieNode("span", shot.frameKey ? "Loading starting frame" : "Composition to be prepared", "movie-frame-label")); frame.append(placeholder);
+      const meta = movieNode("div", undefined, "movie-shot-meta");
+      meta.append(movieNode("span", `SHOT ${String(index+1).padStart(2,"0")} · ${shot.durationSeconds}s`, "eyebrow"),
+        movieNode("h3", shot.title), movieNode("p", `${shot.model} · ${movieMoney(shot.costUsd)}`, "movie-small"),
+        movieNode("span", reviewed.has(shot.id) ? "Reviewed" : shot.warnings?.some(w=>w.severity==="blocker") ? "Needs attention" : "To review", "movie-shot-state"));
+      button.append(frame,meta); grid.append(button);
+    });
+    content.append(grid);
+    // Images are fetched after insertion so stale routes cannot attach them.
+    grid.querySelectorAll(".movie-frame").forEach((frame,i)=>{ if(plan.shots[i].frameKey) void attachImage(frame,plan.shots[i].frameKey,`Starting composition: ${plan.shots[i].title}`); });
+    const shot = plan.shots[selected], inspector = movieNode("section", undefined, "movie-inspector"); inspector.setAttribute("aria-label", "Selected shot details");
+    inspector.append(movieNode("p", `SHOT ${String(selected+1).padStart(2,"0")} / ${plan.shots.length}`, "eyebrow"), movieNode("h3", shot.title), movieNode("p", shot.description));
+    const facts = movieNode("dl", undefined, "movie-shot-facts");
+    for (const [label,value] of [["Camera",shot.camera],["Continuity",shot.continuity],["Model choice",`${shot.model} — ${shot.modelReason}`],["Dialogue",shot.dialogue || "No spoken dialogue planned."]]) {
+      const row = movieNode("div"); row.append(movieNode("dt",label),movieNode("dd",value)); facts.append(row);
+    } inspector.append(facts);
+    for (const warning of shot.warnings || []) inspector.append(movieNode("p", `${warning.severity==="blocker" ? "Needs attention" : "Production note"}: ${warning.message}`, "movie-warning"));
+    const checkLabel = movieNode("label", undefined, "movie-check"), check = document.createElement("input"); check.type="checkbox"; check.checked=reviewed.has(shot.id);
+    check.onchange = () => {check.checked ? reviewed.add(shot.id) : reviewed.delete(shot.id);
+      grid.children[selected].querySelector('.movie-shot-state').textContent=check.checked ? 'Reviewed' : 'To review'; renderAside();};
+    checkLabel.append(check, "I have reviewed this shot"); inspector.append(checkLabel);
+    const noteLabel=movieNode("label","Request a change to this shot", "movie-note-label"); noteLabel.htmlFor="movie-shot-note";
+    const note=document.createElement("textarea"); note.id="movie-shot-note"; note.maxLength=2000; note.rows=3; note.value=notes.get(shot.id)||""; note.placeholder="Wrong character, unclear action, a line to change…";
+    note.oninput = () => { notes.set(shot.id,note.value); feedbackStatus.textContent="Unsaved changes — use Save change requests."; renderAside(); };
+    inspector.append(noteLabel,note,movieNode("p","Notes are saved only when you choose Save change requests.","movie-small")); content.append(inspector);
+  }
+  renderContent(); renderAside();
 }
 
 function timestamp(seconds) {
