@@ -39,6 +39,16 @@
         <select id="game-selector" aria-label="Game"></select>
         <span id="game-purpose" class="game-purpose"></span>
         <span id="game-ruleset" class="game-ruleset"></span>
+        <details id="game-style" class="game-style" hidden>
+          <summary>Visual style</summary>
+          <form id="game-style-form">
+            <label for="visual-style">Generated visuals</label>
+            <select id="visual-style" aria-describedby="style-help"></select>
+            <button type="submit">Save style</button>
+            <p id="style-help">For new generated visuals in this game. Uploaded originals and existing assets stay unchanged.</p>
+            <p id="style-status" role="status"></p>
+          </form>
+        </details>
         <a id="recording-badge" class="recording-badge" hidden><span class="recording-dot" aria-hidden="true"></span><span id="recording-label" role="status"></span></a>
       </div>
       <section class="welcome" id="welcome">

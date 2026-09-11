@@ -7,14 +7,21 @@ const games = [{ id: 'campaign-a', name: 'Campaign A', purpose: 'campaign', rule
 const jsonHeaders = { 'access-control-allow-origin': 'https://panther.place' };
 async function fixture(page) {
   const requests = [];
+  const styles = new Map(games.map(g => [g.id, 'photorealistic']));
+  const visualStyles = ['photorealistic','anime','illustrated-fantasy','comic-book','watercolor','oil-painting','stylized-3d','pixel-art'].map(id=>({id,label:id === 'photorealistic' ? 'Photorealistic' : id === 'anime' ? 'Anime' : id}));
   await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({ id_token: 'test.' + btoa(JSON.stringify({ exp: Date.now()/1000+3600, 'cognito:username': 'test' })) + '.test' })));
   await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
     const url = new URL(route.request().url());
     requests.push(url);
-    const id = url.searchParams.get('gameId');
+    const posted = url.pathname === '/game/style' ? route.request().postDataJSON() : null;
+    const id = posted?.gameId || url.searchParams.get('gameId');
+    if (posted) {
+      if (posted.expectedStyle !== styles.get(id)) return route.fulfill({status:409,json:{error:'Style changed'},headers:jsonHeaders});
+      styles.set(id, posted.visualStyle);
+    }
     let body = {};
     if (url.pathname === '/games') body = { games };
-    if (url.pathname === '/game') body = { game: games.find(g=>g.id===id),
+    if (url.pathname === '/game' || posted) body = { game: {...games.find(g=>g.id===id), visualStyle:styles.get(id)}, visualStyles,
       players:[{id:'person',name: id === 'test-b' ? 'Test Person' : 'Campaign Person'}],
       characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id}] : [],
       memberships:[{playerId:'person',role:'dungeon-master',characterIds:[]}] };
@@ -33,6 +40,31 @@ async function fixture(page) {
 }
 
 for (const width of [1280, 390]) {
+  test(`visual style persists per game at ${width}px`, async ({page})=>{
+    await page.setViewportSize({width,height:900});
+    await fixture(page);
+    await page.goto('https://panther.place/media');
+    await page.getByText('Visual style',{exact:true}).click();
+    const style = page.getByLabel('Generated visuals');
+    await expect(style).toHaveValue('photorealistic');
+    await expect(style.locator('option')).toHaveCount(8);
+    await style.selectOption('anime');
+    await page.getByRole('button',{name:'Save style'}).click();
+    await expect(page.getByRole('status').filter({hasText:'Style saved'})).toBeVisible();
+    const box = await style.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    await page.screenshot({path:test.info().outputPath(`visual-style-${width}.png`),fullPage:true});
+    await page.reload();
+    await page.getByText('Visual style',{exact:true}).click();
+    await expect(style).toHaveValue('anime');
+    await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('test-b');
+    await expect(style).toHaveValue('photorealistic');
+    await page.route('**/game/style', route=>route.fulfill({status:409,json:{error:'Style changed'},headers:jsonHeaders}));
+    await style.selectOption('anime');
+    await page.getByRole('button',{name:'Save style'}).click();
+    await expect(page.locator('#style-status')).toContainText('Could not save');
+  });
   test(`game selector scopes media, roster, character links and reload at ${width}px`, async ({page})=>{
     await page.setViewportSize({width,height:900});
     const requests = await fixture(page);
