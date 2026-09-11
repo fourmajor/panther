@@ -16,6 +16,10 @@ Keep source clips, consent evidence and profiles outside Git. See `docs/live-spe
 in the repository for setup, matching thresholds and performance limitations.
 `panther recording finish-live PREVIEW_DIRECTORY` reuses complete checkpoints to create separate
 local raw and provisionally attributed versions without another inference run or automatic upload.
+For batch speaker detection, read `panther recording speaker-status RUN_DIRECTORY --json`.
+Report `stagePercent` only as progress within its named stage. Overall progress stays unknown
+until completion; never invent an overall percentage from runtime, CPU activity or stage counts.
+Older running jobs may have no progress snapshot. Do not restart them just to add instrumentation.
 When authorized to publish voice profiles, use immutable Panther assets (`speaker-recognition-profile`
 versus `voice-synthesis-profile`) with explicit `extra.playerIds`, consent/source provenance, and
 local/remote model metadata. Keep reference clips as linked `voice-reference-audio` assets. Do not
