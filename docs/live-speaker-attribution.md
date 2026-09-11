@@ -47,6 +47,8 @@ assignment. No existing transcript evidence is rewritten by enabling this featur
 ## Performance and final review
 
 Measure the combined recognition/transcription time against chunk duration on the target laptop.
+The live CLI allows Whisper GPU acceleration by default; `--cpu` disables it. This setting is
+pinned in the preview identity, so changing it preserves the prior preview rather than overwriting it.
 The live worker keeps the speaker pipeline resident, with two CPU threads, low
 priority and a 180-second per-chunk deadline, using Apple MPS with bounded batches when available.
 It may fall behind; no real-time guarantee is made. The first chunk includes model startup time.

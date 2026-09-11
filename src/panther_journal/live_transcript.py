@@ -102,7 +102,7 @@ def check_part(folder, part):
     return path
 
 
-def initialize(folder, model, from_start, preview_name=None, speaker_settings=None):
+def initialize(folder, model, from_start, preview_name=None, speaker_settings=None, use_gpu=False):
     folder, model = folder.expanduser().resolve(), model.expanduser().resolve()
     if folder in (Path.home(), Path("/")) or any(
         (p / ".git").exists() for p in (folder, *folder.parents)
@@ -127,7 +127,7 @@ def initialize(folder, model, from_start, preview_name=None, speaker_settings=No
         "modelSha256": model_hash,
         "fromStart": from_start,
         "threads": 2,
-        "gpu": False,
+        "gpu": use_gpu,
         "language": "en",
         "beamSize": 1,
         "bestOf": 1,
@@ -202,7 +202,7 @@ def run_process(command, attempt, log_name, *, timeout=180):
                     child.wait()
 
 
-def transcribe_part(folder, part, model, attempt):
+def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
     source = check_part(folder, part)
     wav = attempt / "input.wav"
     run_process(
@@ -252,7 +252,7 @@ def transcribe_part(folder, part, model, attempt):
             "2",
             "-p",
             "1",
-            "-ng",
+            *([] if use_gpu else ['-ng']),
             "-bs",
             "1",
             "-bo",
@@ -418,7 +418,11 @@ def follow(
     speaker_profiles=None,
     speaker_model=audio.DEFAULT_SPEAKER_MODEL,
     speaker_runtime=audio.DEFAULT_RUNTIME,
+    use_gpu=False,
 ):
+    if use_gpu and transcriber is transcribe_part:
+        def transcriber(folder, part, model, attempt):
+            return transcribe_part(folder, part, model, attempt, use_gpu=True)
     speaker_settings = None
     if speaker_profiles is not None:
         from panther_journal import speaker_profiles as speakers
@@ -449,7 +453,7 @@ def follow(
                 write_json(attempt / 'speaker-error.json', {'state': 'unassigned', 'reason': 'speaker-analysis-failed'})
                 return lines
 
-    folder, model, header, root, config = initialize(folder, model, from_start, preview_name, speaker_settings)
+    folder, model, header, root, config = initialize(folder, model, from_start, preview_name, speaker_settings, use_gpu)
     speaker_worker = speakers.SpeakerWorker(root, speaker_model, speaker_runtime) if speaker_settings else None
     emit(NOTICE)
     emit(
@@ -610,7 +614,8 @@ def follow(
               type=click.Path(file_okay=False, path_type=Path))
 @click.option('--speaker-runtime', default=audio.DEFAULT_RUNTIME,
               type=click.Path(dir_okay=False, path_type=Path))
-def live(folder, model, from_start, once, local_only, preview_name, speaker_profiles, speaker_model, speaker_runtime):
+@click.option('--gpu/--cpu', 'use_gpu', default=True, help='Allow local Whisper GPU acceleration (default); --cpu disables it.')
+def live(folder, model, from_start, once, local_only, preview_name, speaker_profiles, speaker_model, speaker_runtime, use_gpu):
     """Follow provisional local transcript text in a second terminal; Ctrl+C leaves capture running."""
     for name in ("ffmpeg", "whisper-cli", "nice"):
         audio.executable(name)
@@ -625,6 +630,7 @@ def live(folder, model, from_start, once, local_only, preview_name, speaker_prof
             speaker_profiles=speaker_profiles,
             speaker_model=speaker_model,
             speaker_runtime=speaker_runtime,
+            use_gpu=use_gpu,
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise click.ClickException(
