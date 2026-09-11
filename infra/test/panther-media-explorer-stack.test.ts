@@ -264,10 +264,10 @@ test("media explorer uses private static hosting and Cognito authentication", ()
   });
 });
 
-test("media explorer provisions two users without exposing password values", () => {
+test("media explorer provisions configured users without exposing passwords or expanding management access", () => {
   const template = mediaExplorerTemplate();
 
-  template.resourceCountIs("Custom::PantherMediaUser", 2);
+  template.resourceCountIs("Custom::PantherMediaUser", 3);
   template.hasResourceProperties("Custom::PantherMediaUser", {
     Username: "stu",
     PasswordParameterName: "/panther/media-explorer/users/stu/password",
@@ -276,6 +276,19 @@ test("media explorer provisions two users without exposing password values", () 
     Username: "other_stu",
     PasswordParameterName: "/panther/media-explorer/users/other_stu/password",
   });
+  template.hasResourceProperties("Custom::PantherMediaUser", {
+    Username: "goldsoundz",
+    PasswordParameterName: "/panther/media-explorer/users/goldsoundz/password",
+  });
+  for (const fn of Object.values(template.findResources("AWS::Lambda::Function"))) {
+    for (const [name, value] of Object.entries(fn.Properties.Environment?.Variables || {})) {
+      if (/(PUBLISHERS|EDITORS|WORKERS|ADMINS)$/.test(name)) {
+        assert.doesNotMatch(String(value), /goldsoundz/);
+      }
+    }
+  }
+  const users = Object.values(template.findResources("Custom::PantherMediaUser"));
+  for (const user of users) assert.equal(user.Properties.Password, undefined);
   template.hasResourceProperties("AWS::IAM::Policy", {
     PolicyDocument: Match.objectLike({
       Statement: Match.arrayWith([

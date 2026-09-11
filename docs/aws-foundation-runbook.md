@@ -156,7 +156,15 @@ in use. `--exclusively` prevents this focused deployment from also updating the 
 stack without its deployment-time budget email context.
 
 The two initial usernames are `stu` and `other_stu`. Their generated passwords are stored as standard
-SSM SecureString parameters. Retrieve each password with administrative access:
+SSM SecureString parameters.
+
+Additional accounts are declared in `MEDIA_USERS` in the media-explorer CDK stack; `goldsoundz`
+uses the same generated-password provisioning at `/panther/media-explorer/users/goldsoundz/password`.
+Adding an account does not add it to management/publisher allowlists, create a Player record, or
+grant an application admin role. Formal member/admin roles are tracked in issue #83. Passwords
+must be handed off privately, never committed, placed in an issue, or exposed in deployment output.
+
+Retrieve the initial account passwords with administrative access:
 
 ```bash
 AWS_PROFILE=panther-sso-admin aws ssm get-parameter \

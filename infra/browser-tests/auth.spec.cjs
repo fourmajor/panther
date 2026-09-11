@@ -13,9 +13,9 @@ const stack = new PantherMediaExplorerStack(new App(), 'AuthBrowserTest', {
 const policy = Object.values(Template.fromStack(stack).findResources('AWS::CloudFront::ResponseHeadersPolicy'))[0]
   .Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
 const COOKIE = '__Host-panther-refresh';
-const jwt = (expired = false) => 'test.' + Buffer.from(JSON.stringify({ exp: Date.now() / 1000 + (expired ? -60 : 3600), 'cognito:username': 'test' })).toString('base64url') + '.test';
+const jwt = (expired = false, username = 'test') => 'test.' + Buffer.from(JSON.stringify({ exp: Date.now() / 1000 + (expired ? -60 : 3600), 'cognito:username': username })).toString('base64url') + '.test';
 
-async function fixture(context, { remembered = true } = {}) {
+async function fixture(context, { remembered = true, username = 'test' } = {}) {
   const state = { refreshes: 0, exchanges: [], revocations: 0, failure: 0, apiFailureOnce: false, apiTokens: [], apiPaths: [] };
   if (remembered) await context.addCookies([{ name: COOKIE, value: 'synthetic-cookie', domain: 'panther.place', path: '/', httpOnly: true, secure: true, sameSite: 'Strict', expires: Math.floor(Date.now()/1000) + 34560000 }]);
   await context.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
@@ -47,7 +47,7 @@ async function fixture(context, { remembered = true } = {}) {
         const status = state.failure || 401;
         return route.fulfill({ status, json: {}, headers: status === 401 ? { 'set-cookie': expiredCookie } : {} });
       }
-      return route.fulfill({ json: { id_token: jwt(), expires_in: 3600 }, headers: {
+      return route.fulfill({ json: { id_token: jwt(false, username), expires_in: 3600 }, headers: {
         'set-cookie': `${COOKIE}=synthetic-rotated; Max-Age=34560000; Path=/; Secure; HttpOnly; SameSite=Strict`, 'cache-control': 'no-store',
       } });
     }
@@ -57,6 +57,16 @@ async function fixture(context, { remembered = true } = {}) {
   });
   return state;
 }
+
+test('additional configured account uses the same authenticated browser session', async ({context, page}) => {
+  const state = await fixture(context, {username:'goldsoundz'}); // Synthetic session, never real credentials.
+  await page.goto('https://panther.place/transcripts');
+  await expect(page.locator('#account')).toBeVisible();
+  await expect(page.locator('#username')).toHaveText('goldsoundz');
+  await expect(page.locator('#live-status')).toContainText('No live recording reported');
+  expect(state.refreshes).toBe(1);
+  expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);
+});
 
 for (const width of [1280, 390]) {
   test(`remembered sign-in survives a browser-context restart at ${width}px without JS-readable refresh credentials`, async ({ browser }) => {
