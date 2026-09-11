@@ -382,8 +382,8 @@ export class PantherMediaExplorerStack extends Stack {
         authorizer,
       });
     }
-    mediaApi.addRoutes({
-      path: "/character-model",
+    for (const path of ["/character-model", "/character-portrait"]) mediaApi.addRoutes({
+      path,
       methods: [apigwv2.HttpMethod.PUT],
       integration: mediaIntegration,
       authorizer,

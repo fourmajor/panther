@@ -434,6 +434,19 @@ def character_set_model(
     click.echo(json.dumps(api(configuration(), "PUT", "/character-model", json=body), indent=2))
 
 
+@character.command("set-portrait")
+@click.option("--game", required=True)
+@click.option("--character", "character_id", required=True)
+@click.option("--portrait-key", required=True)
+@click.option("--expected-revision", required=True)
+@click.option("--reason", required=True)
+def character_set_portrait(game, character_id, portrait_key, expected_revision, reason):
+    """Replace the selected portrait, preserving old assets, profile history and model."""
+    body = {"gameId": slug(game), "characterId": slug(character_id), "portraitKey": portrait_key,
+            "expectedRevision": expected_revision, "reason": reason}
+    click.echo(json.dumps(api(configuration(), "PUT", "/character-portrait", json=body), indent=2))
+
+
 def register(group):
     from panther_journal.asset_migrations import assets
     from panther_journal.model_workflow import model

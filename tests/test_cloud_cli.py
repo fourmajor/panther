@@ -43,6 +43,7 @@ def test_instructions_ship_with_cli():
     result = CliRunner().invoke(main, ["instructions"])
     assert result.exit_code == 0
     assert "sourceKeys" in result.output
+    assert "character set-portrait" in result.output
     assert "Inputs and outputs for every asset" in result.output
     assert "inputArtifacts" in result.output
     assert "extra.relationshipRole" in result.output
