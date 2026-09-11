@@ -6,6 +6,7 @@ const { Template } = require('aws-cdk-lib/assertions');
 const { PantherMediaExplorerStack, MODEL_VIEWER_BUNDLE_PATH } = require('../dist/lib/panther-media-explorer-stack');
 
 const stack = new PantherMediaExplorerStack(new App(), 'AuthBrowserTest', {
+  identities: require('../dist/lib/deployment-identities').loadIdentities('000000000000'),
   env: { account: '123456789012', region: 'us-west-2' },
   certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000',
   cognitoDomainPrefix: 'panther-browser-test', domainName: 'panther.place', hostedZoneId: 'Z1234567890',
