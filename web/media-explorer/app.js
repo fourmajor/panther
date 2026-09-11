@@ -1,5 +1,30 @@
 const config = window.PANTHER_CONFIG;
 
+// One loading treatment everywhere. Counts come from responses, never simulated percentages.
+const loadingStates = new WeakMap();
+function showLoading(host, message) {
+  loadingStates.get(host)?.stop();
+  const root = document.createElement("span"), spinner = document.createElement("span");
+  const copy = document.createElement("span"), label = document.createElement("span"), detail = document.createElement("span");
+  root.className = "loading-state"; root.setAttribute("role", "status");
+  spinner.className = "loading-spinner"; spinner.setAttribute("aria-hidden", "true");
+  label.className = "loading-label"; label.textContent = message;
+  detail.className = "loading-detail"; detail.setAttribute("aria-live", "off");
+  detail.textContent = "Waiting for Panther…";
+  copy.append(label, detail); root.append(spinner, copy); host.replaceChildren(root);
+  const started = Date.now();
+  const observer = new MutationObserver(() => { if (!host.contains(root) || host.hidden) stop(); });
+  const timer = setInterval(() => {
+    if (!host.contains(root) || !host.isConnected || host.hidden) { stop(); return; }
+    const seconds = Math.floor((Date.now() - started) / 1000);
+    detail.textContent = seconds >= 15 ? `Taking longer than usual · ${seconds}s elapsed. You can refresh to retry.` : `${seconds}s elapsed · waiting for a response`;
+  }, 1000);
+  function stop() { clearInterval(timer); observer.disconnect(); }
+  observer.observe(host, {childList:true, attributes:true, attributeFilter:["hidden"]});
+  const control = {stop, update(text) { if (host.contains(root)) label.textContent = text; }};
+  loadingStates.set(host, control); return control;
+}
+
 const elements = {
   gameToolbar: document.querySelector("#game-toolbar"),
   gameSelector: document.querySelector("#game-selector"),
@@ -290,6 +315,7 @@ async function api(path, parameters = {}, options = {}) {
 }
 
 function showWelcome(message = "") {
+  document.getElementById("page-loading").hidden = true;
   clearLibrary();
   elements.gameToolbar.hidden = true;
   elements.welcome.hidden = false;
@@ -370,6 +396,7 @@ function gamePath(section) {
 
 async function selectGame(requested, epoch) {
   if (!state.games) {
+    showLoading(document.getElementById("page-loading"), "Fetching your games…");
     const result = await api("/games");
     if (epoch !== routeEpoch) return false;
     state.games = result.games;
@@ -406,6 +433,7 @@ async function selectGame(requested, epoch) {
   elements.gameSelector.value = selected;
   elements.gamePurpose.textContent = state.games.find(g => g.id === selected).purpose === "test" ? "Test game · separate from campaign material" : "";
   if (!state.gameDetail) {
+    showLoading(document.getElementById("page-loading"), "Fetching the selected game and player roster…");
     const detail = await api("/game", { gameId: selected });
     if (epoch !== routeEpoch || state.gameId !== selected) return false;
     state.gameDetail = detail;
@@ -463,7 +491,7 @@ async function loadCharacters() {
   elements.characterProfile.hidden = true;
   elements.characterList.hidden = false;
   elements.charactersStatus.hidden = false;
-  elements.charactersStatus.textContent = "Loading characters…";
+  showLoading(elements.charactersStatus, "Fetching character profiles…");
   if (state.charactersLoaded) {
     elements.charactersStatus.hidden = true;
     return;
@@ -545,11 +573,11 @@ function configureCharacter(profile) {
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   document.getElementById("character-assets-list").replaceChildren();
-  document.getElementById("character-assets-status").textContent = "Loading associated assets…";
+  showLoading(document.getElementById("character-assets-status"), "Finding this character’s images, models and media…");
   elements.characterList.hidden = true;
   elements.characterProfile.hidden = true;
   elements.charactersStatus.hidden = false;
-  elements.charactersStatus.textContent = "Loading character…";
+  showLoading(elements.charactersStatus, "Fetching character details and portrait…");
   try {
     const profile = await api("/character", { gameId, characterId });
     if (epoch !== routeEpoch) return;
@@ -604,7 +632,7 @@ async function loadCharacterModel() {
   }
   elements.modelLoad.disabled = true;
   elements.modelLoad.textContent = "Loading…";
-  elements.modelStatus.textContent = "Preparing a fresh private model link…";
+  showLoading(elements.modelStatus, "Preparing a secure link to the 3D model…");
   try {
     const profile = await api("/character", state.currentCharacter);
     await Promise.race([
@@ -616,7 +644,7 @@ async function loadCharacterModel() {
     if (epoch !== routeEpoch) return;
     elements.characterModel.src = profile.model.url;
     elements.characterModel.dismissPoster();
-    elements.modelStatus.textContent = "Loading the 3D model…";
+    showLoading(elements.modelStatus, "Downloading the 3D model…");
   } catch (error) {
     if (epoch !== routeEpoch) return;
     showModelFallback(
@@ -637,11 +665,13 @@ function resetCharacterModel() {
 async function renderRoute() {
   dismissNarrativePreview(true);
   const epoch = ++routeEpoch;
+  const pageLoading = document.getElementById("page-loading");
+  pageLoading.hidden = false; showLoading(pageLoading, "Checking your sign-in…");
   clearLibrary();
   closePreview();
   elements.novel.hidden = true;
   clearNovel();
-  try { await ensureSession(); } catch (error) { showWelcome(error.message); return; }
+  try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
   const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel|audio|transcripts|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
@@ -658,6 +688,8 @@ async function renderRoute() {
     elements.status.hidden = false;
     elements.status.textContent = error.message;
     return;
+  } finally {
+    if (epoch === routeEpoch) pageLoading.hidden = true;
   }
   if (epoch !== routeEpoch) return;
   const section = gameRoute?.[2] || window.location.pathname.slice(1);
@@ -733,7 +765,7 @@ async function loadPrefix(prefix, cursor = null) {
   if (!state.gameId || !prefix.startsWith(`games/${state.gameId}/`)) return;
   const epoch = ++listingEpoch;
   elements.status.hidden = false;
-  elements.status.textContent = cursor ? "Loading more…" : "Loading…";
+  showLoading(elements.status, cursor ? "Fetching the next files…" : "Fetching folders and files…");
   elements.loadMore.hidden = true;
   if (!cursor) {
     state.currentPrefix = prefix;
@@ -766,10 +798,14 @@ async function loadPrefix(prefix, cursor = null) {
 
 function previewElement(contentType, url, title) {
   if (contentType.startsWith("image/")) {
+    const wrapper = document.createElement("div"), activity = document.createElement("p");
+    wrapper.append(activity); showLoading(activity, "Downloading the image preview…");
     const image = document.createElement("img");
+    image.onload = () => activity.remove();
+    image.onerror = () => { activity.textContent = "Image preview unavailable. Try Open original or reopen this preview."; };
     image.src = url;
     image.alt = title;
-    return image;
+    wrapper.append(image); return wrapper;
   }
   if (contentType.startsWith("video/")) {
     const video = document.createElement("video");
@@ -795,9 +831,9 @@ async function previewFile(file) {
   for (const media of elements.previewBody.querySelectorAll("audio, video")) media.pause();
   const epoch = ++previewEpoch;
   elements.previewTitle.textContent = file.name;
-  elements.previewBody.textContent = "Preparing preview…";
+  showLoading(elements.previewBody, "Preparing a secure asset preview…");
   document.getElementById("asset-generation").replaceChildren();
-  document.getElementById("asset-links").textContent = "Loading connections…";
+  showLoading(document.getElementById("asset-links"), "Finding this asset’s inputs and outputs…");
   elements.previewDetails.textContent = formatBytes(file.size);
   elements.openOriginal.removeAttribute("href");
   if (!elements.previewDialog.open) elements.previewDialog.showModal();
@@ -809,7 +845,7 @@ async function previewFile(file) {
     // Physical folders may change; connections/readers use the API's stable asset identity.
     const assetRef = result.key || file.key;
     const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
-    if (structured) elements.previewBody.textContent = "Loading structured document…";
+    if (structured) showLoading(elements.previewBody, "Reading the document and its metadata…");
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
@@ -1126,7 +1162,7 @@ async function showNarrativePreview(anchor, target, touch = false) {
   close.addEventListener("click", () => { dismissNarrativePreview(); anchor.focus({preventScroll:true}); dismissNarrativePreview(); });
   const heading = document.createElement("h3"); heading.textContent = anchor.textContent;
   const summary = document.createElement("p"); summary.id = "narrative-preview-summary";
-  summary.setAttribute("aria-live", "polite"); summary.textContent = "Loading preview…";
+  summary.setAttribute("aria-live", "polite"); showLoading(summary, "Fetching link preview…");
   const label = document.createElement("p"); label.className = "preview-caption";
   const open = document.createElement("a"); open.href = anchor.href; open.textContent = "Open linked page →";
   open.addEventListener("click", e => {
@@ -1224,7 +1260,7 @@ function chapterDetails(chapter, versions) {
   const sourceTitle = document.createElement("h3"); sourceTitle.textContent = "Connected assets";
   const sources = document.createElement("div"); sources.className = "novel-connections asset-links";
   const creation = document.createElement("section"); creation.className = "generation-details";
-  sources.textContent = "Loading finished assets…";
+  showLoading(sources, "Finding the chapter’s source assets…");
   const gameId = state.gameId, epoch = routeEpoch;
   void allAssets(gameId).then(assets => {
     if (epoch !== routeEpoch || state.gameId !== gameId || currentChapter !== chapter || !state.tokens) return;
@@ -1248,7 +1284,7 @@ function chapterDetails(chapter, versions) {
 async function loadNovel(chapterId, epoch) {
   const gameId = state.gameId;
   const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
-  novel.status.textContent = "Loading chapters…";
+  const loading = showLoading(novel.status, "Fetching the chapter list…");
   novel.status.hidden = false;
   try {
     const chapters = [];
@@ -1257,6 +1293,7 @@ async function loadNovel(chapterId, epoch) {
       const page = await api("/novel", {gameId, cursor});
       if (!current()) return;
       chapters.push(...page.chapters);
+      loading.update(`Found ${chapters.length} chapters · fetching remaining editions…`);
       cursor = page.cursor;
     } while (cursor);
     // A session can have multiple immutable editions; only the latest appears in the TOC.
@@ -1279,6 +1316,7 @@ async function loadNovel(chapterId, epoch) {
       }
       return;
     }
+    loading.update("Reading the selected chapter…");
     const chapter = await api("/novel-chapter", {gameId, chapterId});
     if (!current()) return;
     currentChapter = chapter;
@@ -1327,15 +1365,20 @@ function clearLibrary() {
   if (!state.tokens) assetIndex = null;
 }
 
-async function allAssets(gameId) {
-  if (assetIndex?.gameId === gameId) return assetIndex.promise;
-  const entry = {gameId};
+async function allAssets(gameId, onProgress = () => {}) {
+  if (assetIndex?.gameId === gameId) {
+    const entry = assetIndex; entry.listeners.add(onProgress); onProgress(entry.count);
+    try { return await entry.promise; } finally { entry.listeners.delete(onProgress); }
+  }
+  const entry = {gameId, count:0, listeners:new Set([onProgress])};
   entry.promise = (async () => {
     const assets = []; let cursor = null; const seen = new Set();
     do {
       const page = await api("/assets", {gameId, cursor});
       if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
       assets.push(...page.assets);
+      entry.count = assets.length;
+      for (const listener of entry.listeners) listener(entry.count);
       if (assets.length > 5000) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
       cursor = page.cursor;
       if (cursor && (seen.has(cursor) || seen.size >= 200)) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
@@ -1344,7 +1387,7 @@ async function allAssets(gameId) {
     return assets;
   })().catch(error => { if (assetIndex === entry) assetIndex = null; throw error; });
   assetIndex = entry;
-  return entry.promise;
+  try { return await entry.promise; } finally { entry.listeners.delete(onProgress); }
 }
 
 function assetLink(asset, label) {
@@ -1369,10 +1412,12 @@ async function loadLibrary(section, epoch) {
     for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
   document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
-  status.textContent = "Loading session assets…";
+  status.hidden = false;
+  const loading = showLoading(status, "Fetching the game’s asset catalog…");
   try {
-    const assets = await allAssets(gameId);
+    const assets = await allAssets(gameId, count => { if (current() && count) loading.update(`Found ${count} assets · checking for more…`); });
     if (!current()) return;
+    loading.update("Organizing recordings, transcripts and videos…");
     if (section === "videos") await loadMovies(assets, epoch);
     if (!current()) return;
     status.hidden = section === "videos" && new URLSearchParams(location.search).has("project");
@@ -1577,7 +1622,7 @@ async function loadMovies(assets, epoch) {
     if (!plans.length) grid.append(movieNode("p", "No movie plans yet. A prepared plan will appear here before any paid generation.", "movie-empty"));
     host.append(grid, movieNode("h2", "Video library", "movie-library-heading")); return;
   }
-  host.append(movieNode("p", "Opening the production plan…", "status"));
+  showLoading(host, "Reading the screenplay, shots and budget review…");
   try {
     if (!sameGameKey(key)) throw new Error("This movie plan does not belong to the selected game");
     const data = await api("/movie-review", {gameId, key});
@@ -1614,14 +1659,16 @@ function drawMovieWorkspace(host, data, key, assets, current) {
   const feedbackStatus = movieNode("p", "", "movie-feedback-status"); feedbackStatus.setAttribute("role", "status");
   async function attachImage(container, assetKey, alt) {
     if (!assetKey || !sameGameKey(assetKey) || !plan.sourceKeys.includes(assetKey)) return;
+    showLoading(container, "Fetching reference image…");
     try {
       const file = await api("/object-url", {key:assetKey});
-      if (!current() || !container.isConnected || !file.contentType?.startsWith("image/")) return;
+      if (!current() || !container.isConnected) return;
+      if (!file.contentType?.startsWith("image/")) throw new Error("Invalid image");
       const img = movieNode("img"); img.alt = alt; img.loading = "lazy";
-      img.onload = () => { if (current() && container.isConnected) container.classList.add("has-image"); };
-      img.onerror = () => { img.remove(); container.classList.remove("has-image"); };
+      img.onload = () => { if (current() && container.isConnected) { container.replaceChildren(img); container.classList.add("has-image"); } };
+      img.onerror = () => { container.textContent = "Image unavailable. Refresh to retry."; container.classList.remove("has-image"); };
       img.src = file.url; container.append(img);
-    } catch { /* Keep an honest labeled placeholder and usable navigation. */ }
+    } catch { if (current() && container.isConnected) container.textContent = "Image unavailable. Refresh to retry."; }
   }
   function renderAside() {
     aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));
@@ -1746,6 +1793,11 @@ function timestamp(seconds) {
 
 function attachMediaRecovery(audio, key, current) {
   audio.preload = "metadata";
+  const activity = document.createElement("p"); audio.after(activity);
+  const waiting = () => { if (current()) { activity.hidden = false; showLoading(activity, "Buffering audio/video for playback…"); } };
+  const ready = () => { activity.hidden = true; activity.replaceChildren(); };
+  audio.addEventListener("loadstart", waiting); audio.addEventListener("waiting", waiting);
+  for (const event of ["loadedmetadata", "canplay", "playing", "ended", "error"]) audio.addEventListener(event, ready);
   const warning = document.createElement("p"), retry = document.createElement("button");
   warning.hidden = true; warning.className = "error";
   retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Refresh playback link";
@@ -1796,7 +1848,7 @@ function renderStructuredAsset(asset, epoch) {
   } else if (doc.entityType === "Recording" && Array.isArray(doc.parts)) {
     const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} lossless original parts retained. One continuous listening copy; assembly does not repair capture gaps.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
-    const status = document.createElement("p"); status.setAttribute("role", "status"); status.textContent = "Loading continuous recording…";
+    const status = document.createElement("p"); status.setAttribute("role", "status"); showLoading(status, "Finding the continuous audio playback file…");
     const parts = document.createElement("div"); parts.className = "recording-parts";
     host.append(notice, audio, status, parts);
     const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
@@ -1946,7 +1998,7 @@ function resetLive() {
   liveHistoryControllers.clear(); liveHistory.clear();
   document.getElementById("recording-badge").hidden = true;
   document.getElementById("live-recordings").replaceChildren();
-  document.getElementById("live-status").textContent = "Checking for live recordings…";
+  showLoading(document.getElementById("live-status"), "Checking for active recording sessions…");
 }
 function liveState(record) {
   if (!liveFailure && record.captureState === "stopped") return "stopped";
@@ -1994,6 +2046,7 @@ function drawLive() {
       : view?.position === "beginning" && first>0 ? "The beginning is still being transcribed. Retry Beginning shortly."
       : view?.mode === "history" ? "Browsing earlier speech. Choose Live to follow new speech."
       : "Following new speech. Use Beginning or Earlier to browse the full session.");
+    if (view?.loading && !view?.error) showLoading(historyNote, "Fetching transcript history…");
     lines.className = "live-lines"; lines.dataset.recording = record.recordingId; lines.tabIndex = 0;
     lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Provisional transcript for ${record.sessionId}`);
     const displayed = view?.loaded ? chunks.flatMap((chunk,index) => {
@@ -2076,10 +2129,13 @@ async function start() {
     return;
   }
   try {
+    const initial = document.getElementById("page-loading"); initial.hidden = false;
+    showLoading(initial, "Restoring your Panther session…");
     await completeLogin();
     await ensureSession();
     await renderRoute();
   } catch (error) {
+    document.getElementById("page-loading").hidden = true;
     // Offline/5xx failures must not discard a valid remembered session or route.
     showWelcome(error.message);
   }

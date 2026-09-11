@@ -54,6 +54,44 @@ async function fixture(page) {
   });
 }
 
+for (const width of [1280,390]) test(`loading feedback reports real catalog progress at ${width}`, async ({page}) => {
+  await page.setViewportSize({width,height:900});
+  await fixture(page);
+  let releaseFirst, releaseSecond;
+  const first = new Promise(resolve => { releaseFirst=resolve; });
+  const second = new Promise(resolve => { releaseSecond=resolve; });
+  await page.route(`${api}/assets?**`, async route => {
+    await (new URL(route.request().url()).searchParams.get('cursor') ? second : first);
+    await route.fallback();
+  });
+  await page.clock.install();
+  await page.goto(`${origin}/games/test-game/videos`);
+  const status=page.locator('#library-status');
+  await expect(status).toContainText('Fetching the game’s asset catalog');
+  await expect(status.locator('.loading-spinner')).toBeVisible();
+  expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-loading');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.clock.fastForward(16000);
+  await expect(status).toContainText('Taking longer than usual');
+  await expect(status).not.toContainText('%');
+  await page.screenshot({path:test.info().outputPath(`loading-${width}.png`),fullPage:true});
+  releaseFirst();
+  await expect(status).toContainText('Found 3 assets');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
+  releaseSecond();
+  await expect(status).toContainText('Episodes, experiments');
+  await expect(status.locator('.loading-state')).toHaveCount(0);
+});
+
+test('failed catalog removes activity and offers recovery', async ({page}) => {
+  await fixture(page);
+  await page.route(`${api}/assets?**`,route=>route.fulfill({status:503,json:{error:'Temporarily unavailable'},headers}));
+  await page.goto(`${origin}/games/test-game/videos`);
+  await expect(page.locator('#library-status')).toContainText('Use Refresh to retry');
+  await expect(page.locator('#library-status .loading-state')).toHaveCount(0);
+});
+
 for (const width of [1280,390]) test(`image creation metadata distinguishes costs and inference at ${width}`, async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page);
   const key=prefix+'portrait-a/original/portrait.png';
