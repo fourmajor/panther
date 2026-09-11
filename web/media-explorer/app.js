@@ -427,6 +427,7 @@ async function selectGame(requested, epoch) {
     elements.characterProfile.hidden = true;
     elements.playerRoster.replaceChildren();
     elements.gameRuleset.textContent = "";
+    document.getElementById("game-style").hidden = true;
     elements.characterModel.removeAttribute("src");
     closePreview();
   }
