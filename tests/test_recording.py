@@ -226,7 +226,8 @@ def test_attribution_preserves_text_and_rejects_mixed_or_insufficient_speech():
         audio.SpeakerTurn(start=2.0, end=1.0, speaker="SPEAKER_00")
 
 
-def test_attribution_creates_version_and_requires_matching_source_and_players(tmp_path):
+@pytest.mark.parametrize('word_level', [False, True])
+def test_attribution_creates_version_and_requires_matching_source_and_players(tmp_path, word_level):
     folder, record = recording_fixture(tmp_path)
     original = folder / ("transcript-" + "b" * 32)
     original.mkdir()
@@ -256,6 +257,13 @@ def test_attribution_creates_version_and_requires_matching_source_and_players(tm
         "--mapping",
         str(mapping),
     ]
+    if word_level:
+        (original / 'asr-output').mkdir()
+        audio.write_new(original / 'asr-output/transcription.json', {
+            'transcription': [{'text': ' Hello', 'offsets': {'from': 0, 'to': 2000},
+                               'tokens': [{'id': 1, 'text': ' Hello',
+                                           'offsets': {'from': 0, 'to': 2000}}]}]})
+        args.append('--word-level')
     result = CliRunner().invoke(main, args)
     assert result.exit_code == 0, result.output
     versions = [p for p in folder.glob("transcript-*") if p != original]
@@ -263,6 +271,12 @@ def test_attribution_creates_version_and_requires_matching_source_and_players(tm
     new = json.loads((versions[0] / f"{versions[0].name}.json").read_text())
     assert new["segments"][0]["playerId"] == "test-person"
     assert new["sourceTranscriptId"] == original.name
+    if word_level:
+        progress = json.loads((versions[0] / 'progress.json').read_text())
+        assert progress['status'] == 'completed'
+        assert progress['processingPercent'] == 100
+        assert new['speakerAttributionPolicy']['timingEvidenceSha256'] == audio.digest(
+            original / 'asr-output/transcription.json')
     assert json.loads((original / f"{original.name}.json").read_text()) == document
     mapping.write_text(json.dumps({"SPEAKER_00": "fictional-character"}))
     assert CliRunner().invoke(main, args).exit_code != 0
