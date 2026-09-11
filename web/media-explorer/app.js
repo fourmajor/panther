@@ -859,6 +859,7 @@ async function previewFile(file) {
   } catch (error) {
     if (epoch !== previewEpoch) return;
     elements.previewBody.textContent = error.message;
+    document.getElementById("asset-links").textContent = "Connections unavailable. Close and reopen the asset to retry.";
   }
 }
 
