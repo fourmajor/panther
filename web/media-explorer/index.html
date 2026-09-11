@@ -38,6 +38,7 @@
         <select id="game-selector" aria-label="Game"></select>
         <span id="game-purpose" class="game-purpose"></span>
         <span id="game-ruleset" class="game-ruleset"></span>
+        <a id="recording-badge" class="recording-badge" hidden><span class="recording-dot" aria-hidden="true"></span><span id="recording-label" role="status"></span></a>
       </div>
       <section class="welcome" id="welcome">
         <p class="eyebrow">Private game archive</p>
@@ -154,6 +155,12 @@
           <div><p class="eyebrow">The session record</p><h1 id="library-title"></h1></div>
           <button class="quiet-button" id="library-refresh" type="button">Refresh</button>
         </div>
+        <section id="live-transcript" class="live-transcript" aria-label="Live transcript" hidden>
+          <div class="explorer-heading"><h2>Live transcript</h2><button id="live-refresh" class="quiet-button" type="button">Refresh live feed</button></div>
+          <p>Provisional preview · speakers not yet identified. Recent text only; saved raw and corrected transcripts appear separately below.</p>
+          <p id="live-status" role="status">Checking for live recordings…</p>
+          <div id="live-recordings"></div>
+        </section>
         <p id="library-status" class="status" role="status"></p>
         <div id="library-list" class="novel-list"></div>
       </section>

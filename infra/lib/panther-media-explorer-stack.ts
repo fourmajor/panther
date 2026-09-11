@@ -25,6 +25,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as route53 from "aws-cdk-lib/aws-route53";
+import { LiveRecordings } from "./live-recordings";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
@@ -365,6 +366,7 @@ export class PantherMediaExplorerStack extends Stack {
     new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer });
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
     new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer });
+    new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer });
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/characters", "/character", "/character-profile"]) {
       mediaApi.addRoutes({
         path: route,

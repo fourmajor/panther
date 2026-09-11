@@ -172,6 +172,7 @@ function storeTokens(tokens) {
 }
 
 function clearSession() {
+  resetLive();
   state.games = null;
   state.gameId = null;
   state.gameDetail = null;
@@ -260,18 +261,19 @@ async function logout() {
   window.location.assign(`${config.cognitoDomain}/logout?${parameters}`);
 }
 
-async function api(path, parameters = {}) {
+async function api(path, parameters = {}, options = {}) {
   await ensureSession();
   const url = new URL(path, config.apiUrl);
   for (const [key, value] of Object.entries(parameters)) {
     if (value) url.searchParams.set(key, value);
   }
   let response = await fetch(url, {
+    signal: options.signal,
     headers: { authorization: `Bearer ${state.tokens.id_token}` },
   });
   if (response.status === 401) {
     await ensureSession({ force: true });
-    response = await fetch(url, { headers: { authorization: `Bearer ${state.tokens.id_token}` } });
+    response = await fetch(url, { signal: options.signal, headers: { authorization: `Bearer ${state.tokens.id_token}` } });
   }
   if (response.status === 401) {
     clearSession();
@@ -381,6 +383,7 @@ async function selectGame(requested, epoch) {
   if (!state.games.some(g => g.id === selected)) throw new Error("Game not found. Choose an available game.");
   elements.gameToolbar.hidden = false;
   if (selected !== state.gameId) {
+    resetLive();
     state.gameId = selected;
     state.gameDetail = null;
     state.charactersLoaded = false;
@@ -412,6 +415,7 @@ async function selectGame(requested, epoch) {
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
   elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
+  if (liveGame !== selected) { liveGame = selected; void refreshLive(); }
   return true;
 }
 
@@ -1351,6 +1355,7 @@ async function loadLibrary(section, epoch) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
+  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section);
   document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
   status.textContent = "Loading session assets…";
   try {
@@ -1675,6 +1680,89 @@ document.addEventListener("visibilitychange", () => {
     ensureSession().catch(error => showWelcome(error.message));
   }
 });
+
+// Live previews are ephemeral, game-scoped projections; never add them to the asset catalog.
+let liveGame = null, liveTimer = null, liveController = null, liveSerial = 0;
+let liveRecords = [], liveFetchedAt = 0, liveFailure = false, liveRenderKey = null;
+function resetLive() {
+  liveSerial += 1; clearTimeout(liveTimer); liveController?.abort(); liveController = null;
+  liveGame = null; liveRecords = []; liveRenderKey = null; liveFailure = false;
+  document.getElementById("recording-badge").hidden = true;
+  document.getElementById("live-recordings").replaceChildren();
+  document.getElementById("live-status").textContent = "Checking for live recordings…";
+}
+function liveState(record) {
+  if (liveFailure || record.connectionStale || record.heartbeatAgeSeconds + (Date.now() - liveFetchedAt) / 1000 > 75) return "lost";
+  return record.captureState;
+}
+function drawLive() {
+  if (!state.tokens || !liveGame || liveGame !== state.gameId) return;
+  const badge = document.getElementById("recording-badge"), status = document.getElementById("live-status");
+  const active = liveRecords.find(r => liveState(r) === "recording");
+  const current = active || liveRecords[0];
+  const mode = current ? liveState(current) : liveFailure ? "lost" : "none";
+  const labels = {recording:"Recording in progress", stalled:"Recording progress stalled", stopped:"Recording stopped", lost:"Recording signal lost"};
+  badge.hidden = mode === "none"; badge.dataset.state = mode; badge.href = gamePath("transcripts");
+  document.getElementById("recording-label").textContent = labels[mode] || "";
+  status.textContent = liveFailure ? "Live feed unavailable. Recording may still be running locally. Retrying automatically."
+    : liveRecords.length ? "Updates about every 20 seconds, after audio chunks finish and local recognition completes."
+    : "No live recording reported for this game. Start the live worker from the recording laptop.";
+  const projected = liveRecords.map(r => ({recordingId:r.recordingId, sessionId:r.sessionId, mode:liveState(r), previewState:r.previewState, segments:r.segments, omittedChunks:r.omittedChunks}));
+  const key = JSON.stringify(projected);
+  if (key === liveRenderKey) return;
+  liveRenderKey = key;
+  const host = document.getElementById("live-recordings"), positions = new Map();
+  for (const el of host.querySelectorAll(".live-lines")) positions.set(el.dataset.recording, {top:el.scrollTop, bottom:el.scrollHeight-el.scrollTop-el.clientHeight<30});
+  host.replaceChildren();
+  for (const record of projected) {
+    const article = document.createElement("article"), heading = document.createElement("h3"), note = document.createElement("p"), lines = document.createElement("div");
+    heading.textContent = record.sessionId;
+    note.textContent = `${labels[record.mode] || "Recording status unknown"} · ${record.previewState.replaceAll("-", " ")}. ${record.omittedChunks ? "Preview joined after recording began. " : ""}Latest 60 speech segments at most; not the complete session.`;
+    lines.className = "live-lines"; lines.dataset.recording = record.recordingId; lines.tabIndex = 0;
+    lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Recent provisional speech for ${record.sessionId}`);
+    for (const segment of record.segments) {
+      const p = document.createElement("p"), timestamp = document.createElement("time"), seconds = Math.floor(segment.start);
+      timestamp.textContent = `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
+      p.append(timestamp, document.createTextNode(segment.text)); lines.append(p);
+    }
+    if (!record.segments.length) lines.textContent = "Waiting for recognized speech. This does not prove silence or confirm microphone quality.";
+    article.append(heading, note, lines); host.append(article);
+    const previous = positions.get(record.recordingId);
+    lines.scrollTop = !previous || previous.bottom ? lines.scrollHeight : previous.top;
+  }
+}
+async function refreshLive() {
+  clearTimeout(liveTimer);
+  if (!state.tokens || !liveGame || document.hidden) return;
+  liveController?.abort();
+  const controller = new AbortController(), serial = ++liveSerial, game = liveGame;
+  liveController = controller;
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const result = await api("/recordings/live", {gameId:game}, {signal:controller.signal});
+    if (serial !== liveSerial || game !== state.gameId || !state.tokens) return;
+    if (!Array.isArray(result.recordings)) throw new Error("Invalid live feed");
+    liveRecords = result.recordings; liveFetchedAt = Date.now(); liveFailure = false;
+  } catch {
+    if (serial !== liveSerial || game !== state.gameId || !state.tokens) return;
+    liveFailure = true;
+  } finally {
+    clearTimeout(timeout);
+    if (serial === liveSerial && game === state.gameId && state.tokens) {
+      drawLive(); liveTimer = setTimeout(refreshLive, 20000);
+    }
+  }
+}
+document.getElementById("live-refresh").addEventListener("click", refreshLive);
+document.getElementById("recording-badge").addEventListener("click", event => {
+  if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault(); navigate(gamePath("transcripts"));
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearTimeout(liveTimer); liveController?.abort(); }
+  else { drawLive(); void refreshLive(); }
+});
+setInterval(() => { if (!document.hidden) drawLive(); }, 5000);
 
 async function start() {
   if (!config?.apiUrl || !config?.clientId || !config?.cognitoDomain || !config?.redirectUri) {
