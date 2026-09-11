@@ -205,6 +205,21 @@ The administrator key is used only for GET billing checks; the lower-scope key h
 
 Use `panther recording --help` for local FLAC capture/import, transcription, speaker detection,
 attribution, and explicit upload. Obtain recording consent and readiness before opening a microphone.
+For an authorized in-progress recording, `panther recording live RECORDING_DIR` attaches a local
+provisional text preview in a separate terminal, starting with the latest completed chunk. Use
+`--from-start` for backlog or `--once` for one new chunk. It reads verified closed checkpoints only,
+uses low-priority local Whisper, and never touches the active capture or sends audio to a provider.
+Ctrl+C stops only the preview. Keep preview text distinct from raw/corrected PlayerTranscript assets:
+speakers remain unassigned, generation metadata records local inference with exact model/audio pins,
+and `contextUse: exclude` prevents it becoming correction evidence. Do not upload previews, use
+them as canonical text, or substitute them for blind/full-session transcription and attribution.
+The immutable private chunk results can resume; preview.txt/status.json are rebuildable live views.
+The worker also publishes an ephemeral recent-text/heartbeat projection to the authenticated web
+app through Panther (not AWS credentials); use `--local-only` to disable that. `--once` never publishes.
+This is not an asset upload or source evidence. The Transcripts/Audio live panel keeps speakers
+unassigned. A blinking red badge requires recent capture progress and a fresh heartbeat; stalled
+capture and lost contact must not look active. Closing the worker loses presence, not source audio.
+Keep the projection out of editorial inputs and the finished-asset catalog; it expires after seven days.
 Retain source audio, checksums, and all transcript versions outside Git. Never delete the user's
 WAV original after conversion without permission. Upload uses the existing immutable asset layout:
 one recording asset with ordered FLAC parts, its manifest, and uniquely named transcript versions.

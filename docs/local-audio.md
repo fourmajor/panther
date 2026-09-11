@@ -162,6 +162,75 @@ Whisper implementation/build reference: <https://github.com/ggml-org/whisper.cpp
 deleting it. A saved `panther game show GAME_ID` response can be passed as `--roster` for offline
 transcription. Otherwise the command obtains the current roster through Panther authentication.
 
+## Live transcript preview
+
+While recording runs in its existing terminal, open a **second terminal**:
+
+```sh
+panther recording live RECORDING_DIR
+```
+
+This attaches without opening another microphone or restarting capture. It reads only completed,
+checksum-verified FLAC checkpoints, never the active WAV or uncheckpointed files. The default
+starts with the latest completed chunk so a long session does not impose an initial backlog.
+Use `--from-start` to create a separate preview that catches up from the beginning. `--once`
+processes at most one newly available chunk for diagnostics; subsequent invocations resume.
+To join current audio while retaining an older preview's backlog, choose a new
+`--preview-name NAME`. Reuse that name to resume it. This never skips or alters source audio.
+
+It defaults to the existing local weights at `~/.cache/whisper.cpp/ggml-small.bin`; specify
+`--model /private/path/WEIGHTS.bin` when installed elsewhere. It never downloads models, uses a paid
+service or sends audio to an inference provider. Web publishing uses Panther login, not AWS login;
+`--local-only` disables all network publishing, and `--once` is always local-only. Decoding and local Whisper run at
+reduced priority, with two CPU threads, GPU disabled and bounded subprocess timeouts. A slow preview
+queues work and reports lag; it cannot signal, stop, recover or finalize the independent recorder.
+Resource contention is still possible on a busy laptop; stop the preview if capture health degrades.
+The preview refuses new inference when less than 1 GiB disk space remains. This is a buffer, not a
+guarantee against a full disk—recording itself continues to consume space.
+
+Text is **provisional, not a raw or corrected transcript**, with unknown speakers and original
+recording-relative timestamps. Chunk boundaries can split sentences and recognition may hallucinate,
+especially in noise/silence. No speech recognized does not prove that the microphone heard nothing.
+Whisper can overshoot a chunk's end. For this preview only, end-time overruns of at most two seconds
+are clipped to the source boundary and marked `~` (approximate timing); larger/invalid timestamps
+stop the preview. Exact original recognizer output is retained, and final-transcript validation is unchanged.
+There is no roster prompting, character substitution, speaker guessing, automatic editorial trigger,
+or asset upload. After capture, run the ordinary whole-recording transcription and player attribution;
+do not use the preview as factual context or as a substitute for a held-out `--blind` transcript.
+
+Each preview saves immutable recognizer output and per-chunk JSON with exact audio/model hashes,
+source references, local-inference metadata and provisional/excluded-context status. Partial failed
+attempts are retained. A separately rebuildable `preview.txt` presents the growing text, while
+`status.json` reports pending work/errors. Both live under the recording's private `live-preview/`
+directory; none of these files are picked up by the existing uploader or final transcriber.
+Model/settings changes produce a separate preview version. An interruption can be resumed using
+the same command without replacing completed chunks. Ctrl+C in the preview terminal stops only
+the preview; **Ctrl+C in the recording terminal stops recording**. No always-on worker is installed.
+
+Open **Transcripts** (or Audio) for the selected game in Panther to view the feed. The game toolbar
+has a blinking red recording badge linking to Transcripts. Reduced-motion users get a steady dot;
+the text label conveys the same state. Keep both the capture terminal and live worker running.
+Typical latency is one completed chunk (normally 30 seconds), recognition time and publishing/browser
+polling (each up to 20 seconds); it is not a fixed latency promise. Speakers remain unassigned.
+
+An independent thread publishes at most sixty recent speech segments and capture presence every
+20 seconds using authenticated `POST /recordings/live`. Network/auth failures do not block recognition
+or capture; the terminal warns and retries. Use `panther login` in another terminal if needed.
+The red badge requires a fresh heartbeat and recent capture-journal progress, not merely an open
+process. Stalled capture is labeled separately; after 75 seconds without a heartbeat the web view
+shows **signal lost**, never implies recording stopped safely. Closing the preview also loses presence
+even if capture continues. A heartbeat does not establish good microphone quality or successful backup.
+
+The authenticated GET endpoint is polled only by visible signed-in pages. It returns a bounded recent
+window (up to ten recording feeds) for the selected game, using the existing shared-group authorization
+model. Only `stu` and `other_stu` can publish; a different authenticated user cannot overwrite another
+publisher's recording. Older updates cannot replace newer ones. The feed is an explicitly ephemeral
+read-time projection: DynamoDB TTL removes it after seven days, and reads hide expired items even before
+physical deletion. Complete original audio and immutable local recognizer/chunk results are retained.
+There is no S3 asset, editorial trigger, transcript overwrite or asset-storage migration for this new
+projection. CDK defines its on-demand table, narrowly scoped Lambda permissions and JWT API routes;
+no provisioned compute, subscription inference charge or always-on server is introduced.
+
 ## Several speakers
 
 Ask everyone for recording consent. At the beginning, each person speaks alone for roughly 20–30

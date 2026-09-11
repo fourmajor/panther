@@ -446,6 +446,7 @@ def register(group):
     from panther_journal.capture_audit import audit_command
     from panther_journal.video import video
     from panther_journal.video_production import production
+    from panther_journal.live_transcript import live
 
     group.add_command(model)
     group.add_command(assets)
@@ -459,5 +460,6 @@ def register(group):
     recording.add_command(playback)
     recording.add_command(playback_preview)
     recording.add_command(audit_command)
+    recording.add_command(live)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)
