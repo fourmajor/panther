@@ -8,6 +8,19 @@ to Panther's source repository.
 
 ## Start here
 
+Live player recognition: use `panther recording enroll-speakers` with private, explicitly
+identified clean speech, then `panther recording live --speaker-profiles FILE`. Profiles are
+recognition embeddings, not voice clones or authentication credentials. Names remain provisional;
+never infer enrollment identity from character dialogue or train profiles from guessed matches.
+Keep source clips, consent evidence and profiles outside Git. See `docs/live-speaker-attribution.md`
+in the repository for setup, matching thresholds and performance limitations.
+`panther recording finish-live PREVIEW_DIRECTORY` reuses complete checkpoints to create separate
+local raw and provisionally attributed versions without another inference run or automatic upload.
+When authorized to publish voice profiles, use immutable Panther assets (`speaker-recognition-profile`
+versus `voice-synthesis-profile`) with explicit `extra.playerIds`, consent/source provenance, and
+local/remote model metadata. Keep reference clips as linked `voice-reference-audio` assets. Do not
+publish local filesystem paths or mislabel recognition embeddings as a voice clone.
+
 1. Read `panther --help` and `panther upload --help`. Use Panther, not AWS/S3 commands.
 2. Sign in interactively with `panther login --username YOUR_USERNAME`. Do not put passwords in
    arguments, environment variables, chat, scripts, or logs. Tokens belong in the OS credential

@@ -41,6 +41,9 @@ def snapshot(folder, header, root, config, now=None):
                     segment["kind"] = "preview-gap"
                 if line.get("timingNote"):
                     segment["approximateTiming"] = True
+                if line.get('playerId') and line.get('attribution') == 'provisional-enrolled-voice':
+                    segment['playerId'] = line['playerId']
+                    segment['attribution'] = line['attribution']
                 lines.append(segment)
     payload = {
         "schemaVersion": 1,

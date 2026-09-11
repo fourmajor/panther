@@ -1792,6 +1792,13 @@ function drawLive() {
       timestamp.textContent = `${segment.approximateTiming ? "~" : ""}${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
       if (segment.approximateTiming) timestamp.title = "Approximate timing: recognizer end time was clipped to the audio chunk boundary. Original output retained.";
       const gap = segment.kind === "preview-gap";
+      if (segment.playerId && segment.attribution === "provisional-enrolled-voice") {
+        const speaker = document.createElement("span");
+        const person = state.gameDetail?.players?.find(p => p.id === segment.playerId);
+        speaker.textContent = `${person?.name || "Unknown player"} (provisional): `;
+        speaker.className = "live-speaker";
+        p.append(speaker);
+      }
       if (gap || ["history-pending","no-speech"].includes(segment.kind)) { p.className = "live-gap"; p.setAttribute("role", "note"); }
       p.append(timestamp, document.createTextNode(gap
         ? "Preview gap: invalid recognizer output for this audio chunk. Original audio retained; not silence."

@@ -73,6 +73,21 @@ def test_authenticated_scoped_preview_freshness_and_expiration(service):
     assert json.loads(service.handle(event(game="other-game"), 1001)["body"])["recordings"] == []
     assert json.loads(service.handle(event(), 1080)["body"])["recordings"][0]["connectionStale"]
     assert json.loads(service.handle(event(), 1000 + service.TTL)["body"])["recordings"] == []
+
+
+def test_provisional_player_annotation(service):
+    body = payload()
+    body['segments'][0].update(playerId='alex', attribution='provisional-enrolled-voice')
+    assert service.handle(event(body), 1000)['statusCode'] == 200
+    record = json.loads(service.handle(event(), 1001)['body'])['recordings'][0]
+    assert record['segments'][0]['playerId'] == 'alex'
+    assert record['speakerMethod'] == 'provisional-enrolled-voice'
+    for invalid in [{'playerId': 'alex'}, {'playerId': 'alex', 'attribution': 'confirmed'},
+                    {'playerId': '<script>', 'attribution': 'provisional-enrolled-voice'},
+                    {'playerId': 'alex', 'attribution': 'provisional-enrolled-voice', 'kind': 'preview-gap'}]:
+        body['segments'] = [{'start': 1, 'end': 2, 'text': 'Synthetic', **invalid}]
+        with pytest.raises(ValueError):
+            service.validate(body, 1000)
     assert service.handle({"routeKey": "GET /recordings/live"}, 1000)["statusCode"] == 401
     assert service.handle(event(payload(), username="viewer"), 1000)["statusCode"] == 403
 

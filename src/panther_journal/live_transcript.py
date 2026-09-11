@@ -26,7 +26,7 @@ from panther_journal.model_workflow import clean_environment
 
 VERSION = 1
 DEFAULT_MODEL = Path.home() / ".cache/whisper.cpp/ggml-small.bin"
-NOTICE = "LIVE PREVIEW — provisional, speakers unassigned; not the final transcript."
+NOTICE = "LIVE PREVIEW — provisional text and speaker labels; not the final transcript."
 GAP_NOTICE = "Preview gap: invalid recognizer output for this audio chunk. Original audio retained; not silence."
 
 
@@ -102,7 +102,7 @@ def check_part(folder, part):
     return path
 
 
-def initialize(folder, model, from_start, preview_name=None):
+def initialize(folder, model, from_start, preview_name=None, speaker_settings=None, use_gpu=False):
     folder, model = folder.expanduser().resolve(), model.expanduser().resolve()
     if folder in (Path.home(), Path("/")) or any(
         (p / ".git").exists() for p in (folder, *folder.parents)
@@ -127,7 +127,7 @@ def initialize(folder, model, from_start, preview_name=None):
         "modelSha256": model_hash,
         "fromStart": from_start,
         "threads": 2,
-        "gpu": False,
+        "gpu": use_gpu,
         "language": "en",
         "beamSize": 1,
         "bestOf": 1,
@@ -136,6 +136,8 @@ def initialize(folder, model, from_start, preview_name=None):
     if preview_name is not None:
         audio.cloud.slug(preview_name)
         settings["previewName"] = preview_name
+    if speaker_settings is not None:
+        settings['speakerRecognition'] = speaker_settings
     identity = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
     root = folder / "live-preview" / f"v{VERSION}-{identity[:24]}"
     if (folder / "live-preview").is_symlink() or root.is_symlink():
@@ -200,7 +202,7 @@ def run_process(command, attempt, log_name, *, timeout=180):
                     child.wait()
 
 
-def transcribe_part(folder, part, model, attempt):
+def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
     source = check_part(folder, part)
     wav = attempt / "input.wav"
     run_process(
@@ -250,7 +252,7 @@ def transcribe_part(folder, part, model, attempt):
             "2",
             "-p",
             "1",
-            "-ng",
+            *([] if use_gpu else ['-ng']),
             "-bs",
             "1",
             "-bo",
@@ -314,7 +316,8 @@ def render_line(line):
     text = " ".join("".join(c for c in text if c.isprintable()).split())
     seconds = int(line["start"])
     prefix = "~" if line.get("timingNote") else ""
-    return f"{prefix}[{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}] {text}"
+    player = f"{line['playerId']} (provisional): " if line.get('playerId') else ''
+    return f"{prefix}[{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}] {player}{text}"
 
 
 def process_part(folder, model, root, config, part, transcriber=transcribe_part):
@@ -331,6 +334,9 @@ def process_part(folder, model, root, config, part, transcriber=transcribe_part)
         raw = root / value["attempt"] / "recognizer.json"
         if raw.is_symlink() or audio.digest(raw) != value["recognizerSha256"]:
             raise click.ClickException("Preserved recognizer output changed")
+        for name, digest in value.get('speakerEvidence', {}).items():
+            if name not in {'speaker-result.json', 'speaker-error.json'} or audio.digest(root / value['attempt'] / name) != digest:
+                raise click.ClickException('Preserved speaker evidence changed')
         return value
     check_part(folder, part)
     if shutil.disk_usage(root).free < 1024**3:
@@ -367,6 +373,10 @@ def process_part(folder, model, root, config, part, transcriber=transcribe_part)
         "segments": lines,
         "extra": config["extra"],
     }
+    if config['settings'].get('speakerRecognition'):
+        value['speakerEvidence'] = {p.name: audio.digest(p) for p in
+                                   (attempt / 'speaker-result.json', attempt / 'speaker-error.json') if p.exists()}
+        value['speakerProfilesSha256'] = config['settings']['speakerRecognition']['profilesSha256']
     write_json(final, value)
     return value
 
@@ -405,8 +415,46 @@ def follow(
     emit=click.echo,
     publish=False,
     preview_name=None,
+    speaker_profiles=None,
+    speaker_model=audio.DEFAULT_SPEAKER_MODEL,
+    speaker_runtime=audio.DEFAULT_RUNTIME,
+    use_gpu=False,
 ):
-    folder, model, header, root, config = initialize(folder, model, from_start, preview_name)
+    if use_gpu and transcriber is transcribe_part:
+        def transcriber(folder, part, model, attempt):
+            return transcribe_part(folder, part, model, attempt, use_gpu=True)
+    speaker_settings = None
+    if speaker_profiles is not None:
+        from panther_journal import speaker_profiles as speakers
+        if not speaker_runtime.is_file():
+            raise click.ClickException('Install the local speaker runtime before enabling attribution')
+        game_id = read_json(folder / 'capture.json')['gameId']
+        profiles = speakers.load_profiles(speaker_profiles, game_id, speaker_model)
+        speaker_settings = {'profilesSha256': audio.digest(speaker_profiles),
+                            'modelFiles': profiles['modelFiles'], 'model': 'pyannote-community-1',
+                            'inference': 'local', 'method': 'provisional-enrolled-voice-v1',
+                            'workerSha256': audio.digest(Path(speakers.__file__).with_name('speaker_profile_worker.py')),
+                            'threshold': 0.75, 'margin': 0.15}
+        base_transcriber = transcriber
+
+        def transcriber(folder, part, model, attempt):
+            lines = base_transcriber(folder, part, model, attempt)
+            if audio.digest(speaker_profiles) != speaker_settings['profilesSha256']:
+                raise click.ClickException('Speaker enrollment changed; start a new preview revision')
+            try:
+                result = speaker_worker.analyze(attempt / 'input.wav', attempt)
+                if any(t['start'] < 0 or t['end'] > part.duration + 0.1 for t in result['turns']):
+                    raise click.ClickException('Speaker timestamps exceed source chunk')
+                if speakers.model_pin(speaker_model) != speaker_settings['modelFiles']:
+                    raise click.ClickException('Speaker weights changed')
+                return speakers.label_lines(lines, result, profiles['profiles'], part.start)
+            except (click.ClickException, ValueError, KeyError, TypeError, OSError):
+                emit('Speaker recognition failed for this chunk; text saved without player labels. Capture is unaffected.')
+                write_json(attempt / 'speaker-error.json', {'state': 'unassigned', 'reason': 'speaker-analysis-failed'})
+                return lines
+
+    folder, model, header, root, config = initialize(folder, model, from_start, preview_name, speaker_settings, use_gpu)
+    speaker_worker = speakers.SpeakerWorker(root, speaker_model, speaker_runtime) if speaker_settings else None
     emit(NOTICE)
     emit(
         f"Preview file: {root / 'preview.txt'}\nCtrl+C stops ONLY this preview; keep the recording terminal open."
@@ -418,6 +466,7 @@ def follow(
     with (
         lock(root, "preview.lock"),
         publisher if publisher else nullcontext(),
+        speaker_worker if speaker_worker else nullcontext(),
     ):
         try:
             parts = completed_parts(folder, header)
@@ -559,7 +608,14 @@ def follow(
     "--preview-name",
     help="Named resumable preview; a new name joins the latest chunk without replacing older previews.",
 )
-def live(folder, model, from_start, once, local_only, preview_name):
+@click.option('--speaker-profiles', type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help='Private enrolled recognition profiles; provisional player labels, no voice synthesis.')
+@click.option('--speaker-model', default=audio.DEFAULT_SPEAKER_MODEL,
+              type=click.Path(file_okay=False, path_type=Path))
+@click.option('--speaker-runtime', default=audio.DEFAULT_RUNTIME,
+              type=click.Path(dir_okay=False, path_type=Path))
+@click.option('--gpu/--cpu', 'use_gpu', default=True, help='Allow local Whisper GPU acceleration (default); --cpu disables it.')
+def live(folder, model, from_start, once, local_only, preview_name, speaker_profiles, speaker_model, speaker_runtime, use_gpu):
     """Follow provisional local transcript text in a second terminal; Ctrl+C leaves capture running."""
     for name in ("ffmpeg", "whisper-cli", "nice"):
         audio.executable(name)
@@ -571,6 +627,10 @@ def live(folder, model, from_start, once, local_only, preview_name):
             once=once,
             publish=not local_only and not once,
             preview_name=preview_name,
+            speaker_profiles=speaker_profiles,
+            speaker_model=speaker_model,
+            speaker_runtime=speaker_runtime,
+            use_gpu=use_gpu,
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise click.ClickException(
