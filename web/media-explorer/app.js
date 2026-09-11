@@ -1725,7 +1725,11 @@ function drawLive() {
       const p = document.createElement("p"), timestamp = document.createElement("time"), seconds = Math.floor(segment.start);
       timestamp.textContent = `${segment.approximateTiming ? "~" : ""}${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
       if (segment.approximateTiming) timestamp.title = "Approximate timing: recognizer end time was clipped to the audio chunk boundary. Original output retained.";
-      p.append(timestamp, document.createTextNode(segment.text)); lines.append(p);
+      const gap = segment.kind === "preview-gap";
+      if (gap) { p.className = "live-gap"; p.setAttribute("role", "note"); }
+      p.append(timestamp, document.createTextNode(gap
+        ? "Preview gap: invalid recognizer output for this audio chunk. Original audio retained; not silence."
+        : segment.text)); lines.append(p);
     }
     if (!record.segments.length) lines.textContent = "Waiting for recognized speech. This does not prove silence or confirm microphone quality.";
     article.append(heading, note, lines); host.append(article);

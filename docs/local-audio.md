@@ -192,8 +192,14 @@ Text is **provisional, not a raw or corrected transcript**, with unknown speaker
 recording-relative timestamps. Chunk boundaries can split sentences and recognition may hallucinate,
 especially in noise/silence. No speech recognized does not prove that the microphone heard nothing.
 Whisper can overshoot a chunk's end. For this preview only, end-time overruns of at most two seconds
-are clipped to the source boundary and marked `~` (approximate timing); larger/invalid timestamps
-stop the preview. Exact original recognizer output is retained, and final-transcript validation is unchanged.
+are clipped to the source boundary and marked `~` (approximate timing). Larger/invalid timestamps
+or malformed recognition data produce a clearly labeled **preview gap** for that entire source
+chunk, then processing continues. A gap is a typed notice (`kind: preview-gap`), not spoken text,
+silence, or a fabricated repair. The private result pins the original raw output, including malformed
+JSON, and resume does not retry a saved gap. Following valid chunks still appear in CLI and web.
+Source/checkpoint/model corruption, process failures and low disk remain fail-closed. Final-transcript
+validation is unchanged. To resume an already stopped preview, rerun its original live command;
+earlier completed results and failed attempts remain intact.
 There is no roster prompting, character substitution, speaker guessing, automatic editorial trigger,
 or asset upload. After capture, run the ordinary whole-recording transcription and player attribution;
 do not use the preview as factual context or as a substitute for a held-out `--blind` transcript.

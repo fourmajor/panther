@@ -37,6 +37,8 @@ def snapshot(folder, header, root, config, now=None):
             text = " ".join("".join(c for c in line["text"] if c.isprintable()).split())[:500]
             if text:
                 segment = {"start": line["start"], "end": line["end"], "text": text}
+                if line.get("kind") == "preview-gap":
+                    segment["kind"] = "preview-gap"
                 if line.get("timingNote"):
                     segment["approximateTiming"] = True
                 lines.append(segment)

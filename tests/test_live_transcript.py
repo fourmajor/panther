@@ -357,3 +357,89 @@ def test_preview_clips_small_decoder_overrun_without_changing_raw(capture):
     raw["transcription"][0]["offsets"]["to"] = 40000
     with pytest.raises(click.ClickException):
         live.preview_lines(raw, part)
+
+
+@pytest.mark.parametrize("segment", [
+    {"offsets": {"from": 28000, "to": 38160}, "text": "Synthetic overrun"},
+    {"offsets": {"from": -1, "to": 1000}, "text": "Negative"},
+    {"offsets": {"from": float("nan"), "to": 1000}, "text": "Nonfinite"},
+    {"offsets": {"from": 2000, "to": 1000}, "text": "Reversed"},
+    {"text": "Missing offsets"},
+    {"offsets": {"from": 0, "to": 1000}, "text": None},
+    None,
+])
+def test_invalid_recognition_is_preserved_gap_and_following_chunk_continues(capture, segment):
+    from panther_journal.live_publish import snapshot
+
+    folder, header, model = capture
+    add_part(capture, 0)
+    add_part(capture, 1)
+    raw = json.dumps({"transcription": [segment]})
+    messages = []
+
+    def bad_then_good(folder, part, model, attempt):
+        if part.start == 0:
+            (attempt / "recognizer.json").write_text(raw)
+            return live.preview_lines(json.loads(raw), part)
+        return recognizer(folder, part, model, attempt)
+
+    root = live.follow(folder, model, from_start=True, transcriber=bad_then_good, emit=messages.append)
+    saved = live.read_json(root / "part-0000.json")
+    assert saved["segments"] == [{"kind": "preview-gap", "start": 0.0, "end": 30.0,
+                                 "text": live.GAP_NOTICE}]
+    assert (root / saved["attempt"] / "recognizer.json").read_text() == raw
+    assert live.read_json(root / "status.json")["chunksTranscribed"] == 2
+    assert any(live.GAP_NOTICE in message for message in messages)
+    assert "No speech recognized" not in (root / "preview.txt").read_text()
+    config = live.read_json(root / "preview.json")
+    web = snapshot(folder, header, root, config)
+    assert web["segments"][0]["kind"] == "preview-gap"
+    assert web["segments"][1]["text"] == "Synthetic preview"
+    before = (root / "part-0000.json").read_bytes()
+    live.follow(folder, model, from_start=True,
+                transcriber=lambda *a: pytest.fail("Do not retry a saved gap"), emit=lambda _: None)
+    assert (root / "part-0000.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("target", ["audio", "model"])
+def test_invalid_recognition_never_bypasses_input_integrity(capture, target):
+    folder, _, model = capture
+    add_part(capture, 0)
+
+    def corrupt(folder, part, model, attempt):
+        (attempt / "recognizer.json").write_text("{}")
+        (model if target == "model" else folder / part.file).write_bytes(b"changed")
+        raise live.PreviewOutputError("Synthetic bad output")
+
+    with pytest.raises(click.ClickException, match="changed"):
+        live.follow(folder, model, once=True, transcriber=corrupt, emit=lambda _: None)
+    assert not list((folder / "live-preview").glob("*/part-0000.json"))
+
+
+def test_out_of_order_recognition_is_not_published(capture):
+    part = add_part(capture, 0)
+    with pytest.raises(live.PreviewOutputError):
+        live.preview_lines({"transcription": [
+            {"offsets": {"from": 5000, "to": 6000}, "text": "Later"},
+            {"offsets": {"from": 1000, "to": 2000}, "text": "Earlier"},
+        ]}, part)
+
+
+def test_malformed_json_gap_retains_raw_and_detects_later_tampering(capture, monkeypatch):
+    folder, _, model = capture
+    add_part(capture, 0)
+
+    def mock_process(command, attempt, log_name, **kwargs):
+        if log_name == "recognizer.log":
+            (attempt / "recognizer.json").write_text("{malformed")
+
+    monkeypatch.setattr(live, "run_process", mock_process)
+    monkeypatch.setattr(audio, "executable", lambda name: name)
+    root = live.follow(folder, model, once=True, emit=lambda _: None)
+    result = live.read_json(root / "part-0000.json")
+    raw = root / result["attempt"] / "recognizer.json"
+    assert raw.read_text() == "{malformed"
+    assert result["segments"][0]["kind"] == "preview-gap"
+    raw.write_text("{changed")
+    with pytest.raises(click.ClickException, match="Preserved recognizer output changed"):
+        live.follow(folder, model, once=True, emit=lambda _: None)
