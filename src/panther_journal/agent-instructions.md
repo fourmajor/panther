@@ -529,3 +529,12 @@ before retrying or choosing a new key. Never delete originals to resolve a confl
 ambiguous game, identity, canonical status, or destructive replacement outside an authorized workflow,
 ask the user. Within authorized editorial workflows, make and record routine decisions automatically;
 use unclassified/uncertain status rather than inventing identity or asserting canon.
+# Per-game visual style
+
+Before generating images or preparing video shots, run `panther game show GAME` and use
+the persisted `game.visualStyle` and its `visualStyles` prompt guidance. Do not infer the
+desired rendering style from reference portraits: preserve identity and costume while
+applying the selected style. Record the selected style in the preparation document.
+Missing style is a catalog setup problem, not permission to guess. Preserve uploaded
+originals and previous revisions; changing style does not regenerate assets or authorize
+paid requests. See `docs/game-visual-style.md` for the setting and migration contract.

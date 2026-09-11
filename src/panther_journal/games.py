@@ -79,3 +79,25 @@ def set_ruleset(game_id, ruleset, if_unset, expected_ruleset):
 @player.command("list")
 def list_players():
     click.echo(json.dumps(cloud.api(cloud.configuration(), "GET", "/players"), indent=2))
+
+
+@game.command("set-style")
+@click.argument("game_id")
+@click.option("--style", required=True, help="Visual style ID from game show.")
+@click.option("--if-unset", is_flag=True)
+@click.option("--expected-style", help="Exact prior style; refuse concurrent changes.")
+def set_style(game_id, style, if_unset, expected_style):
+    """Change future visual direction without rewriting or regenerating assets."""
+    if if_unset == (expected_style is not None):
+        raise click.UsageError("Choose --if-unset or --expected-style.")
+    result = cloud.api(
+        cloud.configuration(),
+        "POST",
+        "/game/style",
+        json={
+            "gameId": cloud.slug(game_id),
+            "visualStyle": style,
+            "expectedStyle": None if if_unset else expected_style,
+        },
+    )
+    click.echo(json.dumps(result, indent=2))

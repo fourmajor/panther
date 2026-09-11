@@ -28,6 +28,16 @@ class GameMembership(BaseModel):
 
 
 class GameSetup(NamedEntity):
+    visualStyle: Literal[
+        "photorealistic",
+        "anime",
+        "illustrated-fantasy",
+        "comic-book",
+        "watercolor",
+        "oil-painting",
+        "stylized-3d",
+        "pixel-art",
+    ] = "photorealistic"
     purpose: Literal["campaign", "test"]
     ruleset: str = Field(min_length=1, max_length=120)
     players: list[Player] = Field(default_factory=list, max_length=20)

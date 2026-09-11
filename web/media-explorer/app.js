@@ -427,6 +427,7 @@ async function selectGame(requested, epoch) {
     elements.characterProfile.hidden = true;
     elements.playerRoster.replaceChildren();
     elements.gameRuleset.textContent = "";
+    document.getElementById("game-style").hidden = true;
     elements.characterModel.removeAttribute("src");
     closePreview();
   }
@@ -447,8 +448,56 @@ async function selectGame(requested, epoch) {
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
   elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
+  renderGameStyle();
   if (liveGame !== selected) { liveGame = selected; void refreshLive(); }
   return true;
+}
+
+function renderGameStyle() {
+  const panel = document.getElementById("game-style");
+  const form = document.getElementById("game-style-form");
+  const select = document.getElementById("visual-style");
+  const status = document.getElementById("style-status");
+  const detail = state.gameDetail;
+  panel.hidden = !detail?.visualStyles?.length;
+  if (panel.hidden) return;
+  const gameId = state.gameId;
+  const expectedStyle = detail.game.visualStyle ?? null;
+  select.replaceChildren();
+  for (const style of detail.visualStyles) {
+    const option = document.createElement("option");
+    option.value = style.id;
+    option.textContent = style.label;
+    select.append(option);
+  }
+  if (!expectedStyle) {
+    const unset = new Option("Choose a style", "", true, true);
+    unset.disabled = true;
+    select.prepend(unset);
+  } else select.value = expectedStyle;
+  select.disabled = false;
+  form.querySelector("button").disabled = false;
+  status.textContent = "";
+  form.onsubmit = async event => {
+    event.preventDefault();
+    if (!select.value || select.disabled) return;
+    const epoch = routeEpoch;
+    select.disabled = true;
+    form.querySelector("button").disabled = true;
+    status.textContent = "Saving this game’s visual style…";
+    try {
+      const updated = await api("/game/style", {}, { body: { gameId, visualStyle: select.value, expectedStyle } });
+      if (state.gameId !== gameId || routeEpoch !== epoch) return;
+      state.gameDetail = updated;
+      renderGameStyle();
+      status.textContent = "Style saved. Existing assets are unchanged.";
+    } catch (error) {
+      if (state.gameId !== gameId || routeEpoch !== epoch) return;
+      status.textContent = `Could not save style. ${error.message} Refresh before retrying.`;
+      select.disabled = false;
+      form.querySelector("button").disabled = false;
+    }
+  };
 }
 
 function navigate(path, { replace = false } = {}) {

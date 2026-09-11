@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -12,6 +13,7 @@ from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 import index as media
+from visual_styles import STYLES, validate_style
 
 table = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
 serializer = TypeSerializer()
@@ -70,10 +72,11 @@ def validate(body):
     if (
         not isinstance(body, dict)
         or not required <= set(body)
-        or set(body) - required - {"ruleset"}
+        or set(body) - required - {"ruleset", "visualStyle"}
     ):
         raise ValueError("Expected id, name, purpose, players, characters, memberships")
     identifier(body["id"])
+    validate_style(body.get("visualStyle", "photorealistic"))
     name(body["name"])
     if "ruleset" in body:
         name(body["ruleset"])
@@ -159,6 +162,7 @@ def detail(game_id):
             "players": players,
             "memberships": members,
             "characters": [clean(r) for r in entries if r["entityType"] == "Character"],
+            "visualStyles": STYLES,
         },
     )
 
@@ -180,6 +184,7 @@ def create(body, actor):
             "schemaVersion": 1,
             **{k: body[k] for k in ("id", "name", "purpose")},
             "ruleset": body.get("ruleset"),
+            "visualStyle": body.get("visualStyle", "photorealistic"),
             "fingerprint": fingerprint,
             "createdAt": now,
             "createdBy": actor,
@@ -301,6 +306,62 @@ def set_ruleset(body, actor):
     return detail(game_id)
 
 
+def set_style(body, actor):
+    if not isinstance(body, dict) or set(body) != {"gameId", "visualStyle", "expectedStyle"}:
+        raise ValueError("Expected gameId, visualStyle and expectedStyle")
+    game_id = identifier(body["gameId"])
+    style = validate_style(body["visualStyle"])
+    expected = body["expectedStyle"]
+    if expected is not None:
+        validate_style(expected)
+    old = read("GAMES", game_id)
+    if not old:
+        return media._response(404, {"error": "Create the structured game header first"})
+    if old.get("visualStyle") != expected:
+        return media._response(409, {"error": "Visual style changed. Refresh before saving."})
+    now = datetime.now(timezone.utc).isoformat()
+    history = {
+        "pk": f"GAME#{game_id}",
+        "sk": f"STYLE#{uuid.uuid4().hex}",
+        "entityType": "GameStyleChange",
+        "schemaVersion": 1,
+        "previousStyle": expected,
+        "visualStyle": style,
+        "changedAt": now,
+        "changedBy": actor,
+    }
+    condition = "attribute_exists(pk) AND (#s = :old"
+    condition += " OR attribute_not_exists(#s))" if expected is None else ")"
+
+    def encode(value):
+        return {k: serializer.serialize(v) for k, v in value.items()}
+
+    boto3.client("dynamodb").transact_write_items(
+        TransactItems=[
+            {
+                "Update": {
+                    "TableName": table.name,
+                    "Key": encode({"pk": "GAMES", "sk": game_id}),
+                    "UpdateExpression": "SET #s = :new, styleUpdatedAt = :now",
+                    "ConditionExpression": condition,
+                    "ExpressionAttributeNames": {"#s": "visualStyle"},
+                    "ExpressionAttributeValues": encode(
+                        {":old": expected, ":new": style, ":now": now}
+                    ),
+                }
+            },
+            {
+                "Put": {
+                    "TableName": table.name,
+                    "Item": encode(history),
+                    "ConditionExpression": "attribute_not_exists(pk)",
+                }
+            },
+        ]
+    )
+    return detail(game_id)
+
+
 def create_character_profile(body, actor):
     """Initialize a roster character without inventing identity or replacing history."""
     if not isinstance(body, dict) or set(body) != {
@@ -375,13 +436,20 @@ def handler(event, _context):
             return detail(media._query(event, "gameId"))
         if route == "GET /players":
             return media._response(200, {"players": [clean(p) for p in query("PLAYERS")]})
-        if route in ("POST /games", "POST /game/ruleset", "POST /character-profile"):
+        if route in (
+            "POST /games",
+            "POST /game/ruleset",
+            "POST /game/style",
+            "POST /character-profile",
+        ):
             raw = event.get("body") or ""
             if len(raw) > 24000:
                 raise ValueError("Game setup is too large")
             if event.get("isBase64Encoded"):
                 raw = base64.b64decode(raw, validate=True)
             body = json.loads(raw)
+            if route == "POST /game/style":
+                return set_style(body, claims["sub"])
             if route == "POST /character-profile":
                 return create_character_profile(body, claims["sub"])
             return (

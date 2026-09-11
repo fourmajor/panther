@@ -57,6 +57,44 @@ def setup(game="test-game"):
     }
 
 
+def test_visual_style_settings_and_history(catalog):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    body = {"gameId": "test-game", "visualStyle": "anime", "expectedStyle": "photorealistic"}
+    assert request(catalog, "POST /game/style", body, username="outsider")["statusCode"] == 403
+    before = catalog.read("GAMES", "test-game")
+    result = request(catalog, "POST /game/style", body)
+    assert result["statusCode"] == 200
+    detail = json.loads(result["body"])
+    assert detail["game"]["visualStyle"] == "anime"
+    assert len(detail["visualStyles"]) == 8
+    assert detail["game"]["ruleset"] == before["ruleset"]
+    assert len(detail["memberships"]) == 2
+    assert request(catalog, "POST /game/style", body)["statusCode"] == 409
+    assert (
+        request(catalog, "POST /game/style", {**body, "visualStyle": "unknown"})["statusCode"]
+        == 400
+    )
+    history = [r for r in catalog.query("GAME#test-game") if r["entityType"] == "GameStyleChange"]
+    assert len(history) == 1
+    assert history[0]["previousStyle"] == "photorealistic"
+
+
+def test_visual_style_backfill_is_guarded(catalog):
+    catalog.table.put_item(
+        Item={
+            "pk": "GAMES",
+            "sk": "old-game",
+            "id": "old-game",
+            "entityType": "Game",
+            "name": "Example",
+            "purpose": "test",
+        }
+    )
+    body = {"gameId": "old-game", "visualStyle": "photorealistic", "expectedStyle": None}
+    assert request(catalog, "POST /game/style", body)["statusCode"] == 200
+    assert request(catalog, "POST /game/style", body)["statusCode"] == 409
+
+
 def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, monkeypatch):
     assert request(catalog, "POST /games", setup())["statusCode"] == 200
     portrait = "games/test-game/assets/portrait/original/portrait.png"
