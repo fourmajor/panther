@@ -1117,7 +1117,6 @@ def publish_locked(folder):
         # Stable identity only. Physical destinations always come from the server location builder.
         key = f"games/{plan.gameId}/assets/{asset}/original/{path.name}"
         meta = {
-            "schemaVersion": 1,
             "title": f"{plan.title} — {name}",
             "category": "creative-reimagining",
             "characterIds": sorted({a.characterId for s in plan.shots for a in s.appearances}),
