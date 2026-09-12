@@ -375,6 +375,11 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         file = kw["file"]
         key = f"games/{kw['game']}/assets/{kw['asset']}/original/{file.name}"
         meta = json.loads(kw["metadata"].read_text())
+        # /uploads owns the stored metadata schema version; callers may not supply it.
+        assert set(meta) <= {
+            "title", "description", "category", "characterIds", "sessionId",
+            "tags", "sourceKeys", "extra",
+        }
         assert meta["extra"]["generation"]["cost"] == {"status": "subscription"}
         assets[key] = {
             "sha256": base64.b64encode(bytes.fromhex(p.digest(file))).decode(),
