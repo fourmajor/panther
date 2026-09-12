@@ -29,6 +29,30 @@ def token_hash(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def pinned_preview(key, item):
+    if (
+        not isinstance(key, str)
+        or not KEY.fullmatch(key)
+        or key.split("/")[1] != item["key"].split("/")[1]
+    ):
+        raise ValueError("Same-game preview required")
+    storage = media.s3.resolve(key)
+    head = media.raw_s3.head_object(Bucket=media.BUCKET_NAME, Key=storage)
+    metadata = json.loads(base64.b64decode(head.get("Metadata", {}).get("panther", "e30=")))
+    if (
+        head.get("ContentType") not in ("image/jpeg", "image/png", "image/webp")
+        or head.get("ContentLength", 0) > 8 * 1024 * 1024
+        or not head.get("VersionId")
+        or head["VersionId"] == "null"
+        or item["key"] not in metadata.get("sourceKeys", [])
+        or metadata.get("extra", {}).get("sourceVersionId") != item["versionId"]
+    ):
+        raise ValueError("Preview must derive from the exact shared video version")
+    return dict(
+        key=key, storageKey=storage, versionId=head["VersionId"], contentType=head["ContentType"]
+    )
+
+
 def response(status, body="", content_type="text/html; charset=utf-8", **headers):
     return {
         "statusCode": status,
@@ -57,6 +81,23 @@ def manage(event, _context):
         token = data.get("token")
         digest = token_hash(token)
         route = event.get("routeKey")
+        if route == "POST /asset-shares/preview":
+            item = table().get_item(Key={"pk": digest}, ConsistentRead=True).get("Item")
+            if not item or "revokedAt" in item or item.get("contentType") != "video/mp4":
+                return media._response(409, {"error": "Active video share required"})
+            preview = pinned_preview(data.get("previewKey"), item)
+            # Immutable attachment: retries are safe; changing an existing poster needs a new share.
+            table().update_item(
+                Key={"pk": digest},
+                UpdateExpression="SET preview = :preview, previewAddedBy = if_not_exists(previewAddedBy, :actor), previewAddedAt = if_not_exists(previewAddedAt, :now)",
+                ConditionExpression="attribute_exists(pk) AND attribute_not_exists(revokedAt) AND (attribute_not_exists(preview) OR preview = :preview)",
+                ExpressionAttributeValues={
+                    ":preview": preview,
+                    ":actor": claims["sub"],
+                    ":now": int(time.time()),
+                },
+            )
+            return media._response(200, {"previewAttached": True})
         if route == "POST /asset-shares/revoke":
             # A tombstone is permanent; creating with this token can never reactivate it.
             table().update_item(
@@ -68,6 +109,9 @@ def manage(event, _context):
             return media._response(200, {"revoked": True, "existingDownloadGraceSeconds": 300})
         if route != "POST /asset-shares":
             return media._response(404, {"error": "Unknown operation"})
+        prior = table().get_item(Key={"pk": digest}, ConsistentRead=True).get("Item", {})
+        if "revokedAt" in prior:
+            return media._response(409, {"error": "Share token already used"})
         key = data.get("key")
         if (
             data.get("confirmPublic") is not True
@@ -94,6 +138,8 @@ def manage(event, _context):
             createdAt=int(time.time()),
             createdBy=claims["sub"],
         )
+        if item["contentType"] == "video/mp4":
+            item["preview"] = pinned_preview(data.get("previewKey"), item)
         try:
             table().put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
         except ClientError as exc:
@@ -130,12 +176,35 @@ def manage(event, _context):
 def public(event, _context):
     try:
         route = event.get("routeKey")
-        if route not in ("GET /s/{token}", "GET /s/{token}/watch", "GET /s/{token}/download"):
+        if route not in (
+            "GET /s/{token}",
+            "GET /s/{token}/watch",
+            "GET /s/{token}/download",
+            "GET /s/{token}/preview",
+        ):
             raise ValueError()
         token = (event.get("pathParameters") or {}).get("token")
         item = table().get_item(Key={"pk": token_hash(token)}, ConsistentRead=True).get("Item")
         if not item or "revokedAt" in item:
             return response(410, "This sharing link is unavailable or has been revoked.")
+        if item["contentType"] == "video/mp4" and not item.get("preview"):
+            return response(503, "Video preview needs preparation.")
+        if route.endswith("/preview"):
+            preview = item.get("preview")
+            if not preview:
+                return response(410, "Preview unavailable.")
+            url = media.raw_s3.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": media.BUCKET_NAME,
+                    "Key": preview["storageKey"],
+                    "VersionId": preview["versionId"],
+                    "ResponseContentType": preview["contentType"],
+                    "ResponseContentDisposition": "inline",
+                },
+                ExpiresIn=300,
+            )
+            return response(302, location=url)
         if route.endswith("/watch") or route.endswith("/download"):
             # HTML/SVG and other active formats are always attachments, never same-origin content.
             safe_inline = item["contentType"] in (
@@ -165,7 +234,8 @@ def public(event, _context):
         src = "/s/" + token + "/watch"
         mime = item["contentType"]
         if mime == "video/mp4":
-            player = f'<video controls playsinline preload="metadata" src="{src}" aria-label="Shared video"></video>'
+            poster = f' poster="/s/{token}/preview"'
+            player = f'<video controls playsinline preload="metadata" src="{src}"{poster} aria-label="Shared video"></video>'
         elif mime in ("audio/mpeg", "audio/wav"):
             player = (
                 f'<audio controls preload="metadata" src="{src}" aria-label="Shared audio"></audio>'
@@ -189,6 +259,16 @@ def public(event, _context):
             else "Panther — shared media",
         }
         if mime == "video/mp4":
+            # Video previews always use a frame pinned to this shared version.
+            tags.pop("og:image")
+            tags.pop("og:image:alt")
+            tags.update(
+                {
+                    "og:image": url + "/preview",
+                    "og:image:type": item["preview"]["contentType"],
+                    "og:image:alt": "Frame from " + item["title"],
+                }
+            )
             tags.update(
                 {
                     "og:video": url + "/watch",

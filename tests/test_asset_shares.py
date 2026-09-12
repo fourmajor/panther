@@ -10,6 +10,7 @@ from test_model_jobs import broker  # noqa: F401
 
 TOKEN = "a" * 64
 KEY = "games/test-game/assets/film/original/film.mp4"
+PREVIEW = "games/test-game/assets/film-preview/original/frame.jpg"
 
 
 @pytest.fixture
@@ -45,6 +46,22 @@ def shares(broker, monkeypatch):  # noqa: F811
 
 
 def manage(m, route="POST /asset-shares", **data):
+    if route == "POST /asset-shares" and "previewKey" not in data:
+        version = m.media.raw_s3.head_object(Bucket=m.media.BUCKET_NAME, Key=KEY)["VersionId"]
+        m.media.raw_s3.put_object(
+            Bucket=m.media.BUCKET_NAME,
+            Key=PREVIEW,
+            Body=b"frame",
+            ContentType="image/jpeg",
+            Metadata={
+                "panther": base64.b64encode(
+                    json.dumps(
+                        {"sourceKeys": [KEY], "extra": {"sourceVersionId": version}}
+                    ).encode()
+                ).decode()
+            },
+        )
+        data["previewKey"] = PREVIEW
     return m.manage(
         {
             "routeKey": route,
@@ -104,6 +121,7 @@ def test_share_pinned_download_revoke(shares):
 def test_closed_boundaries(shares):
     assert shares.manage({"body": "{}"}, None)["statusCode"] == 403
     assert manage(shares, confirmPublic=False)["statusCode"] == 400
+    assert manage(shares, previewKey=None)["statusCode"] == 400
     assert manage(shares, key="games/test-game/characters/hero/profile.json")["statusCode"] == 400
     for token in ["../secret", "b" * 64, "invalid"]:
         assert public(shares, token=token)["statusCode"] == 410
@@ -165,3 +183,53 @@ def test_cli_explicit_confirmation_and_revoke(monkeypatch):
     assert runner.invoke(cli.share, ["revoke", "https://panther.place/s/" + TOKEN]).exit_code == 0
     assert calls[-1] == {"token": TOKEN}
     assert runner.invoke(cli.share, ["revoke", "https://evil.example/s/" + TOKEN]).exit_code != 0
+    assert (
+        runner.invoke(
+            cli.share, ["set-preview", "https://panther.place/s/" + TOKEN, PREVIEW]
+        ).exit_code
+        == 0
+    )
+    assert calls[-1] == {"token": TOKEN, "previewKey": PREVIEW}
+
+
+def test_video_preview_is_pinned_private_and_revocable(shares):
+    assert manage(shares)["statusCode"] == 200
+    page = public(shares)["body"]
+    assert 'poster="/s/' + TOKEN + '/preview"' in page
+    assert 'property="og:image" content="https://panther.place/s/' + TOKEN + '/preview"' in page
+    assert "share-preview.png" not in page
+    first = public(shares, "/preview")
+    assert first["statusCode"] == 302
+    version = parse_qs(urlsplit(first["headers"]["location"]).query)["versionId"]
+    shares.media.raw_s3.put_object(Bucket=shares.media.BUCKET_NAME, Key=PREVIEW, Body=b"new bytes")
+    assert (
+        parse_qs(urlsplit(public(shares, "/preview")["headers"]["location"]).query)["versionId"]
+        == version
+    )
+    assert manage(shares, "POST /asset-shares/revoke")["statusCode"] == 200
+    assert public(shares, "/preview")["statusCode"] == 410
+
+
+def test_backfill_preserves_link_and_refuses_unrelated_preview(shares):
+    assert manage(shares)["statusCode"] == 200
+    shares.table().update_item(
+        Key={"pk": shares.token_hash(TOKEN)}, UpdateExpression="REMOVE preview"
+    )
+    assert (
+        manage(
+            shares,
+            "POST /asset-shares/preview",
+            previewKey="games/another-game/assets/a/original/b.jpg",
+        )["statusCode"]
+        == 400
+    )
+    assert manage(shares, "POST /asset-shares/preview", previewKey=PREVIEW)["statusCode"] == 200
+    assert manage(shares, "POST /asset-shares/preview", previewKey=PREVIEW)["statusCode"] == 200
+    original = shares.table().get_item(Key={"pk": shares.token_hash(TOKEN)})["Item"]["preview"]
+    shares.media.raw_s3.put_object(
+        Bucket=shares.media.BUCKET_NAME, Key=PREVIEW, Body=b"bad", ContentType="image/jpeg"
+    )
+    assert manage(shares, "POST /asset-shares/preview", previewKey=PREVIEW)["statusCode"] == 400
+    assert (
+        shares.table().get_item(Key={"pk": shares.token_hash(TOKEN)})["Item"]["preview"] == original
+    )

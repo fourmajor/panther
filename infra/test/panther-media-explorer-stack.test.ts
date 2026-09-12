@@ -24,10 +24,10 @@ function mediaExplorerTemplate(): Template {
 
 test("unlisted shares isolate public version reads from publisher mutations", () => {
   const template = mediaExplorerTemplate();
-  for (const route of ["POST /asset-shares", "POST /asset-shares/revoke"]) {
+  for (const route of ["POST /asset-shares", "POST /asset-shares/revoke", "POST /asset-shares/preview"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }
-  for (const route of ["GET /s/{token}", "GET /s/{token}/watch", "GET /s/{token}/download"]) {
+  for (const route of ["GET /s/{token}", "GET /s/{token}/watch", "GET /s/{token}/download", "GET /s/{token}/preview"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "NONE"});
   }
   const tables = Object.entries(template.findResources("AWS::DynamoDB::Table")).filter(([id]) => id.startsWith("AssetShares"));
@@ -371,7 +371,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 52);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 54);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -382,7 +382,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,
       ["POST /auth/session", "POST /auth/refresh", "POST /auth/logout", "GET /s/{token}",
-        "GET /s/{token}/watch", "GET /s/{token}/download"].includes(route) ? "NONE" : "JWT");
+        "GET /s/{token}/watch", "GET /s/{token}/download", "GET /s/{token}/preview"].includes(route) ? "NONE" : "JWT");
   }
   template.hasResourceProperties("AWS::Lambda::Function", {
     Environment: {

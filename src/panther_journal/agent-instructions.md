@@ -5,6 +5,10 @@ to give anyone with the link access to that exact file. It returns permanent pag
 URLs. Use `panther share revoke URL` to disable sharing; issued redirects may survive five minutes,
 and downloaded copies cannot be recalled. Keep bearer links outside Git. Never publicize a bucket
 or related assets. Sharing uses Panther authentication, not AWS. See `docs/asset-sharing.md`.
+Video shares require `--preview-key`: extract and inspect a frame from the exact video, upload it
+with video sourceKeys, `extra.sourceVersionId`, sampled timestamp and local processing metadata.
+Use `share set-preview URL KEY` to backfill a missing poster without changing the existing link.
+Never use generic branding or unrelated artwork as a video's preview.
 
 Read this guide before uploading or organizing game data. Retrieve the installed version with
 `panther instructions`. These are application usage rules, not permission to upload anything the
