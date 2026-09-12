@@ -115,7 +115,7 @@ export class PantherMediaExplorerStack extends Stack {
               "frame-ancestors 'none'",
               "frame-src https://*.amazonaws.com",
               "img-src 'self' data: blob: https://*.amazonaws.com",
-              "media-src https://*.amazonaws.com",
+              "media-src 'self' https://*.amazonaws.com",
               "object-src 'none'",
               // Model-viewer's bundled decoder initializes WebAssembly; this
               // permits WASM without enabling JavaScript eval.
@@ -326,6 +326,47 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
+    const shares = new dynamodb.Table(this, "AssetShares", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    for (const publicAccess of [false, true]) {
+      const name = publicAccess ? "PublicAssetShares" : "ManageAssetShares";
+      const fn = new lambda.Function(this, name, {
+        runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+        handler: `asset_shares.${publicAccess ? "public" : "manage"}`,
+        code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api"), {
+          exclude: ["**/__pycache__/**", "**/*.pyc"],
+        }),
+        timeout: Duration.seconds(10), memorySize: 128,
+        logGroup: new logs.LogGroup(this, `${name}Logs`, {
+          retention: logs.RetentionDays.ONE_WEEK, removalPolicy: RemovalPolicy.DESTROY,
+        }),
+        environment: { ASSET_BUCKET_NAME: privateAssets.bucketName,
+          ASSET_SHARES_TABLE: shares.tableName, SITE_ORIGIN: siteUrl,
+          ...(publicAccess ? {} : { MODEL_PUBLISHERS: accessEnvironment.MODEL_PUBLISHERS }) },
+      });
+      shares.grant(fn, "dynamodb:GetItem", ...(publicAccess ? [] : ["dynamodb:PutItem", "dynamodb:UpdateItem"]));
+      fn.addToRolePolicy(new iam.PolicyStatement({
+        actions: publicAccess ? ["s3:GetObjectVersion"] : ["s3:GetObject"],
+        resources: [privateAssets.arnForObjects("games/*/content/*"),
+          ...(publicAccess ? [] : [privateAssets.arnForObjects("games/*/catalog/assets/*")])],
+      }));
+      const integration = new apigwv2Integrations.HttpLambdaIntegration(`${name}Integration`, fn);
+      for (const route of publicAccess ? ["/s/{token}", "/s/{token}/watch", "/s/{token}/download"] : ["/asset-shares", "/asset-shares/revoke"]) {
+        mediaApi.addRoutes({ path: route,
+          methods: [publicAccess ? apigwv2.HttpMethod.GET : apigwv2.HttpMethod.POST],
+          integration, ...(publicAccess ? {} : { authorizer }) });
+      }
+    }
+    distribution.addBehavior("/s/*", new origins.HttpOrigin(Fn.select(2, Fn.split("/", mediaApi.apiEndpoint))), {
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      responseHeadersPolicy,
+    });
     const migrationLogs = new logs.LogGroup(this, "AssetMigrationLogs", {
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: RemovalPolicy.DESTROY,

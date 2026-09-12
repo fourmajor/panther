@@ -448,6 +448,7 @@ def character_set_portrait(game, character_id, portrait_key, expected_revision, 
 
 
 def register(group):
+    from panther_journal.shares import share
     from panther_journal.asset_migrations import assets
     from panther_journal.model_workflow import model
     from panther_journal.games import game, player
@@ -464,6 +465,7 @@ def register(group):
     from panther_journal.live_finalize import finish_live
 
     group.add_command(model)
+    group.add_command(share)
     group.add_command(assets)
     group.add_command(game)
     group.add_command(player)
