@@ -354,7 +354,7 @@ export class PantherMediaExplorerStack extends Stack {
           ...(publicAccess ? [] : [privateAssets.arnForObjects("games/*/catalog/assets/*")])],
       }));
       const integration = new apigwv2Integrations.HttpLambdaIntegration(`${name}Integration`, fn);
-      for (const route of publicAccess ? ["/s/{token}", "/s/{token}/watch", "/s/{token}/download"] : ["/asset-shares", "/asset-shares/revoke"]) {
+      for (const route of publicAccess ? ["/s/{token}", "/s/{token}/watch", "/s/{token}/download", "/s/{token}/preview"] : ["/asset-shares", "/asset-shares/revoke", "/asset-shares/preview"]) {
         mediaApi.addRoutes({ path: route,
           methods: [publicAccess ? apigwv2.HttpMethod.GET : apigwv2.HttpMethod.POST],
           integration, ...(publicAccess ? {} : { authorizer }) });
