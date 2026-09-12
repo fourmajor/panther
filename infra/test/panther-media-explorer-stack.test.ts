@@ -22,6 +22,32 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("unlisted shares isolate public version reads from publisher mutations", () => {
+  const template = mediaExplorerTemplate();
+  for (const route of ["POST /asset-shares", "POST /asset-shares/revoke"]) {
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
+  }
+  for (const route of ["GET /s/{token}", "GET /s/{token}/watch", "GET /s/{token}/download"]) {
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "NONE"});
+  }
+  const tables = Object.entries(template.findResources("AWS::DynamoDB::Table")).filter(([id]) => id.startsWith("AssetShares"));
+  assert.equal(tables.length, 1);
+  assert.equal(tables[0][1].Properties.BillingMode, "PAY_PER_REQUEST");
+  assert.equal(tables[0][1].DeletionPolicy, "Retain");
+  const policy = Object.entries(template.findResources("AWS::IAM::Policy")).find(([id]) => id.startsWith("PublicAssetSharesServiceRoleDefaultPolicy"));
+  assert.ok(policy);
+  const statements = policy[1].Properties.PolicyDocument.Statement;
+  const actions = statements.flatMap((s: {Action: string | string[]}) => [s.Action].flat());
+  assert.deepEqual(actions.sort(), ["dynamodb:GetItem", "s3:GetObjectVersion"].sort());
+  assert.ok(JSON.stringify(statements).includes("games/*/content/*"));
+  assert.ok(!JSON.stringify(statements).includes("catalog"));
+  template.hasResourceProperties("AWS::CloudFront::Distribution", {
+    DistributionConfig: Match.objectLike({CacheBehaviors: Match.arrayWith([Match.objectLike({
+      PathPattern: "/s/*", CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+    })])}),
+  });
+});
+
 test("movie review saves decisions without any generation or workflow permissions", () => {
   const template = mediaExplorerTemplate();
   for (const route of ["GET /movie-review", "POST /movie-review"]) {
@@ -345,7 +371,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 47);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 52);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -355,7 +381,8 @@ test("media API is JWT protected with limited conditional upload permissions", (
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,
-      ["POST /auth/session", "POST /auth/refresh", "POST /auth/logout"].includes(route) ? "NONE" : "JWT");
+      ["POST /auth/session", "POST /auth/refresh", "POST /auth/logout", "GET /s/{token}",
+        "GET /s/{token}/watch", "GET /s/{token}/download"].includes(route) ? "NONE" : "JWT");
   }
   template.hasResourceProperties("AWS::Lambda::Function", {
     Environment: {

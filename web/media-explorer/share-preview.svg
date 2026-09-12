@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#11140f"/>
+  <rect x="24" y="24" width="1152" height="582" rx="24" fill="#1c241b" stroke="#dfb45e" stroke-width="2"/>
+  <text x="600" y="300" text-anchor="middle" font-family="Georgia,serif" font-size="110" fill="#f1eee5">Panther</text>
+  <text x="600" y="385" text-anchor="middle" font-family="Helvetica,sans-serif" font-size="30" letter-spacing="5" fill="#dfb45e">SHARED MEDIA</text>
+</svg>
