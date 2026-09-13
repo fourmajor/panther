@@ -224,6 +224,11 @@ def test_real_finishing_and_idempotency(media, tmp_path):
     streams = p.probe(result["delivery"]["browser"], tmp_path)["streams"]
     assert [s["codec_name"] for s in streams] == ["h264", "aac"]
     assert result["delivery"]["browserCaptions"] == "burned-in"
+    assert result["delivery"]["browserAudioGainDb"] == -1.5
+    master_sound = result["delivery"]["audioQc"]["master.mov"]
+    browser_sound = result["delivery"]["audioQc"]["browser.mp4"]
+    assert browser_sound["peakPassed"]
+    assert browser_sound["input_i"] == pytest.approx(master_sound["input_i"] - 1.5, abs=0.3)
     pixels = subprocess.run(
         [
             "ffmpeg",

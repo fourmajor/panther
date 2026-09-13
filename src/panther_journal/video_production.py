@@ -870,6 +870,11 @@ def deliver(plan, edits, sound, folder):
             "yuv420p",
             "-c:a",
             "aac",
+            # Lossy encoding can reconstruct intersample peaks above the PCM mix.
+            # Keep the editable master unchanged and reserve delivery headroom;
+            # decoded AAC is still measured below, never exempted from peak QC.
+            "-af",
+            "volume=-1.5dB",
             "-b:a",
             "192k",
             "-movflags",
@@ -898,6 +903,7 @@ def deliver(plan, edits, sound, folder):
         "captionCount": len(captions),
         "audioQc": measurements,
         "browserCaptions": "burned-in" if captions else "none-supplied",
+        "browserAudioGainDb": -1.5,
         "masterProfile": "720p24 ProRes 422 HQ / PCM; not an upscale or restored detail",
     }
 
