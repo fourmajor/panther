@@ -362,6 +362,35 @@ def set_style(body, actor):
     return detail(game_id)
 
 
+def add_character(body, actor):
+    """Add a character without changing people, membership, or existing identities."""
+    if not isinstance(body, dict) or set(body) != {"gameId", "id", "name"}:
+        raise ValueError("Expected gameId, id and name")
+    game, character, label = identifier(body["gameId"]), identifier(body["id"]), name(body["name"])
+    if not read("GAMES", game):
+        return media._response(404, {"error": "Game not found"})
+    old = read(f"GAME#{game}", f"CHARACTER#{character}")
+    if old:
+        return (
+            media._response(200, {"character": clean(old)})
+            if old["name"] == label
+            else media._response(409, {"error": "Character already exists with another name"})
+        )
+    item = {
+        "pk": f"GAME#{game}",
+        "sk": f"CHARACTER#{character}",
+        "entityType": "Character",
+        "schemaVersion": 1,
+        "gameId": game,
+        "id": character,
+        "name": label,
+        "createdBy": actor,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+    table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
+    return media._response(201, {"character": clean(item)})
+
+
 def create_character_profile(body, actor):
     """Initialize a roster character without inventing identity or replacing history."""
     if not isinstance(body, dict) or set(body) != {
@@ -441,6 +470,7 @@ def handler(event, _context):
             "POST /game/ruleset",
             "POST /game/style",
             "POST /character-profile",
+            "POST /game/characters",
         ):
             raw = event.get("body") or ""
             if len(raw) > 24000:
@@ -448,6 +478,8 @@ def handler(event, _context):
             if event.get("isBase64Encoded"):
                 raw = base64.b64decode(raw, validate=True)
             body = json.loads(raw)
+            if route == "POST /game/characters":
+                return add_character(body, claims["sub"])
             if route == "POST /game/style":
                 return set_style(body, claims["sub"])
             if route == "POST /character-profile":

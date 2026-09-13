@@ -57,6 +57,21 @@ def setup(game="test-game"):
     }
 
 
+def test_add_character_preserves_people_memberships_and_prior_identity(catalog):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    before = json.loads(request(catalog, "GET /game")["body"])
+    body = {"gameId": "test-game", "id": "guide", "name": "Lantern Guide"}
+    assert request(catalog, "POST /game/characters", body, username="outsider")["statusCode"] == 403
+    assert request(catalog, "POST /game/characters", body)["statusCode"] == 201
+    assert request(catalog, "POST /game/characters", body)["statusCode"] == 200
+    assert (
+        request(catalog, "POST /game/characters", {**body, "name": "Changed"})["statusCode"] == 409
+    )
+    after = json.loads(request(catalog, "GET /game")["body"])
+    assert after["players"] == before["players"] and after["memberships"] == before["memberships"]
+    assert len(after["characters"]) == len(before["characters"]) + 1
+
+
 def test_visual_style_settings_and_history(catalog):
     assert request(catalog, "POST /games", setup())["statusCode"] == 200
     body = {"gameId": "test-game", "visualStyle": "anime", "expectedStyle": "photorealistic"}

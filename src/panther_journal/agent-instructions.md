@@ -88,6 +88,11 @@ a new CLI capability; distinguish that deployment need from routine game-data ac
 
 ## Games and players
 
+Add an authorized NPC or other new character with `panther game add-character GAME_ID --id ID
+--name NAME`. This is create-only and idempotent for the same ID/name; it never creates a Player,
+login account, or membership. Then upload character-tagged artwork and use `character create-profile`.
+Do not replace the whole game roster to add one character or attribute an NPC to a real player.
+
 Use `panther game list` and `panther game show GAME_ID` before choosing a game. Use
 `panther player list` to reuse existing stable person IDs. Players are not characters or login
 accounts; never infer an account association. Dungeon Master is a membership role.
