@@ -34,6 +34,10 @@ resource, idle cloud polling, API-key inference, voice cloning or automatic paid
    provenance through Panther authentication. Finished media and hidden processing assets retain
    exact lineage; originals are never overwritten.
 
+The browser AAC export reserves an additional 1.5 dB of gain headroom because lossy encoding can
+reconstruct peaks above the PCM mix. The master and stems are unchanged. The actual gain is recorded
+in delivery provenance, and both decoded exports must still pass the same true-peak check.
+
 The 720p24 profile is bounded and repeatable, not a claim that resampling restores detail. It handles
 SDR inputs through 4K, rejects HDR until a reviewed tone-map profile exists, and preserves originals
 at their native resolution. Masters can be large; the existing 1 GiB upload limit remains a hard
