@@ -54,5 +54,6 @@ export class GameCatalog extends Construct {
     props.api.addRoutes({ path: "/game/ruleset", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
     props.api.addRoutes({ path: "/game/style", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
     props.api.addRoutes({ path: "/character-profile", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
+    props.api.addRoutes({ path: "/game/characters", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
   }
 }

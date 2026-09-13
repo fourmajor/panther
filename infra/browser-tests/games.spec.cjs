@@ -23,7 +23,7 @@ async function fixture(page) {
     if (url.pathname === '/games') body = { games };
     if (url.pathname === '/game' || posted) body = { game: {...games.find(g=>g.id===id), visualStyle:styles.get(id)}, visualStyles,
       players:[{id:'person',name: id === 'test-b' ? 'Test Person' : 'Campaign Person'}],
-      characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id}] : [],
+      characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}] : [],
       memberships:[{playerId:'person',role:'dungeon-master',characterIds:[]}] };
     if (url.pathname === '/objects') body = { prefixes:[],objects:[{name: url.searchParams.get('prefix').includes('test-b') ? 'test-only.flac' : 'campaign-only.flac', key: url.searchParams.get('prefix')+'assets/test/original/audio.flac',size:10,lastModified:'2026-01-01T00:00:00Z'}] };
     if (url.pathname === '/characters') body = {characters:[]};
@@ -89,6 +89,10 @@ for (const width of [1280, 390]) {
     await expect(page.locator('#breadcrumbs')).not.toContainText('Campaign A');
     await page.getByRole('link',{name:'Characters',exact:true}).click();
     await expect(page.locator('#player-roster')).toContainText('Test Person — Dungeon Master');
+    await expect(page.locator('#player-roster')).not.toContainText('Lantern Guide');
+    await page.getByRole('button',{name:/Lantern Guide/}).click();
+    await expect(page.locator('#character-name')).toHaveText('Lantern Guide');
+    await page.goBack();
     await page.getByRole('button',{name:/Test Hero/}).click();
     await expect(page).toHaveURL('https://panther.place/games/test-b/characters/hero');
     await expect(page.locator('#character-no-model')).toBeVisible();

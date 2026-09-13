@@ -18,6 +18,21 @@ def list_games():
     click.echo(json.dumps(cloud.api(cloud.configuration(), "GET", "/games"), indent=2))
 
 
+@game.command("add-character")
+@click.argument("game_id")
+@click.option("--id", "character_id", required=True)
+@click.option("--name", required=True)
+def add_character(game_id, character_id, name):
+    """Register a character/NPC; never create a player, login, or membership."""
+    result = cloud.api(
+        cloud.configuration(),
+        "POST",
+        "/game/characters",
+        json={"gameId": cloud.slug(game_id), "id": cloud.slug(character_id), "name": name},
+    )
+    click.echo(json.dumps(result, indent=2))
+
+
 @game.command("show")
 @click.argument("game_id")
 def show_game(game_id):
