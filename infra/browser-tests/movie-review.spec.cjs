@@ -94,6 +94,7 @@ for(const width of [1440,390]) test(`campaign storyboard has readable narration 
   await expect(page.locator('.movie-narrator-sample a')).toHaveAttribute('href',/voice.mp3/);
   await expect(page.locator('.movie-shot').first()).toContainText('The sea remembers every promise.');
   await expect(page.locator('.movie-shot').first()).toContainText('8s new motion + 7s still detail.');
+  await expect(page.locator('.movie-shot .movie-action').first()).toContainText('Mira stands in the doorway');
   await expect(page.locator('.movie-inspector')).toContainText('Mira Vale');
   await expect(page.locator('#movie-workspace video, #movie-workspace audio')).toHaveCount(0);
   await expect(page.locator('.movie-frame img').first()).toBeVisible();
@@ -102,4 +103,9 @@ for(const width of [1440,390]) test(`campaign storyboard has readable narration 
   const card=page.locator('.movie-shot').first();
   await card.scrollIntoViewIfNeeded();
   expect(await card.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,Math.min(innerHeight-1,r.y+r.height/2)));})).toBe(true);
+  await card.click();
+  const bounds=await page.locator('.movie-inspector').boundingBox();
+  expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y).toBeLessThan(100);
+  await page.getByRole('button',{name:'Back to storyboard',exact:true}).click();
+  await expect(card).toBeFocused();
 });

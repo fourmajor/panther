@@ -1808,7 +1808,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
     }
     const grid = movieNode("div", undefined, "movie-shot-grid");
     plan.shots.forEach((shot, index) => {
-      const button = movieButton("", () => {selected=index; renderContent();}, "movie-shot");
+      const button = movieButton("", () => {selected=index; renderContent(); content.querySelector('.movie-inspector').scrollIntoView({block:"start"});}, "movie-shot");
       button.setAttribute("aria-label", `Inspect shot ${index+1}: ${shot.title}`); button.setAttribute("aria-pressed", String(selected===index));
       const frame = movieNode("div", undefined, "movie-frame");
       const placeholder = movieNode("div", undefined, "movie-frame-placeholder");
@@ -1820,7 +1820,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
         movieNode("span", reviewed.has(shot.id) ? "Reviewed" : shot.warnings?.some(w=>w.severity==="blocker") ? "Needs attention" : "To review", "movie-shot-state"));
       if (shot.footagePlan) meta.append(movieNode("p", shot.footagePlan, "movie-footage-plan"));
       if (shot.narration) {
-        meta.append(movieNode("p", "NARRATION", "eyebrow"), movieNode("p", shot.narration, "movie-narration"));
+        meta.append(movieNode("p", "ACTION", "eyebrow"), movieNode("p", shot.description, "movie-action"), movieNode("p", "NARRATION", "eyebrow"), movieNode("p", shot.narration, "movie-narration"));
       }
       button.append(frame,meta); grid.append(button);
     });
@@ -1842,6 +1842,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
     const note=document.createElement("textarea"); note.id="movie-shot-note"; note.maxLength=2000; note.rows=3; note.value=notes.get(shot.id)||""; note.placeholder="Wrong character, unclear action, a line to change…";
     note.oninput = () => { notes.set(shot.id,note.value); feedbackStatus.textContent="Unsaved changes — use Save change requests."; renderAside(); };
     inspector.append(noteLabel,note,movieNode("p","Notes are saved only when you choose Save change requests.","movie-small")); content.append(inspector);
+    inspector.append(movieButton("Back to storyboard", () => {grid.children[selected].scrollIntoView({block:"center"}); grid.children[selected].focus({preventScroll:true});}));
   }
   renderContent(); renderAside();
 }

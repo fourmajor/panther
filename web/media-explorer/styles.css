@@ -51,10 +51,10 @@ main:has(.movie-hero) { padding-top:2rem; }
 .movie-tabs button { border:0; border-radius:.35rem; color:var(--muted); font-size:.85rem; }
 .movie-tabs button[aria-pressed=true] { color:var(--ink); background:var(--panel-raised); box-shadow:inset 0 -2px var(--accent); }
 .movie-shot-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
-.movie-shot { text-align:left; padding:0; background:var(--panel); border:1px solid var(--line); border-radius:.7rem; overflow:hidden; cursor:pointer; min-width:0; }
+.movie-shot { display:flex; flex-direction:column; text-align:left; padding:0; background:var(--panel); border:1px solid var(--line); border-radius:.7rem; overflow:hidden; cursor:pointer; min-width:0; }
 .movie-shot:hover { border-color:#8e794f; }
 .movie-shot[aria-pressed=true] { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
-.movie-frame { aspect-ratio:16/9; position:relative; overflow:hidden; background:#222621; }
+.movie-frame { width:100%; flex-shrink:0; aspect-ratio:16/9; position:relative; overflow:hidden; background:#222621; }
 .movie-frame-placeholder { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.65rem; background:radial-gradient(ellipse at 50% 70%,#3a4136,transparent 70%),linear-gradient(135deg,#202720,#1b1a17); }
 .movie-frame-placeholder::before { content:""; position:absolute; inset:12%; border:1px solid #a8ad8b22; }
 .movie-frame-number { font:400 2.5rem Georgia,serif; color:#bcc3ad; opacity:.6; }
@@ -64,7 +64,9 @@ main:has(.movie-hero) { padding-top:2rem; }
 .movie-shot-meta .eyebrow { font-size:.62rem; margin:0 0 .5rem; }
 .movie-shot-meta h3 { font:500 1.02rem/1.4 system-ui,sans-serif; margin:.35rem 0; }
 .movie-shot-meta p { margin:.5rem 0; }
-.movie-shot-meta .movie-narration { font:400 .95rem/1.65 Georgia,serif; color:var(--text); }
+.movie-shot-meta .movie-narration { font:400 .95rem/1.65 Georgia,serif; color:var(--ink); }
+.movie-shot-meta .movie-action { font-size:.85rem; line-height:1.6; }
+.movie-narrator-sample a { color:var(--accent); }
 .movie-shot-meta .movie-footage-plan { border-top:1px solid #45463b; padding-top:.75rem; font-size:.8rem; line-height:1.5; }
 @media(max-width:600px) { .movie-shot-grid { grid-template-columns:1fr; } }
 .movie-shot-state { display:inline-block; font-size:.7rem; color:#d9c192; }
