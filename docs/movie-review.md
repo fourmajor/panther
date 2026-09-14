@@ -36,6 +36,15 @@ Prior plans remain available as separate cards. Existing video files are not rew
 
 Version 1 document fields:
 
+Campaign-wide plans explicitly use `scope: campaign` and `sessionId: null`; session plans
+retain their real session identifier (`scope: session` is optional). This additive contract
+does not invalidate existing plans or require inventing sessions. Optional shot `narration`
+and `footagePlan` plain text appear on the storyboard cards and in the inspector. Distinguish
+new motion, reused clips and still-image treatments, including their individual durations.
+Optional `narratorSampleKey` references a separately uploaded same-game audio audition in
+`sourceKeys`; it links to the asset player without autoplay or embedding a narrated slideshow.
+Neither a scratch narrator nor an animatic replaces a requested storyboard review.
+
 - `schemaVersion: 1`, `entityType: MovieReviewPlan`, `gameId`, `projectId`, `revisionId`, `sessionId`.
 - `title`, `summary`, `screenplay` (safe prose Markdown), `sourceKeys` (same-game immutable keys).
 - `characters: [{id, name, portraitKey}]`; portraits must also occur in `sourceKeys`.

@@ -64,6 +64,9 @@ main:has(.movie-hero) { padding-top:2rem; }
 .movie-shot-meta .eyebrow { font-size:.62rem; margin:0 0 .5rem; }
 .movie-shot-meta h3 { font:500 1.02rem/1.4 system-ui,sans-serif; margin:.35rem 0; }
 .movie-shot-meta p { margin:.5rem 0; }
+.movie-shot-meta .movie-narration { font:400 .95rem/1.65 Georgia,serif; color:var(--text); }
+.movie-shot-meta .movie-footage-plan { border-top:1px solid #45463b; padding-top:.75rem; font-size:.8rem; line-height:1.5; }
+@media(max-width:600px) { .movie-shot-grid { grid-template-columns:1fr; } }
 .movie-shot-state { display:inline-block; font-size:.7rem; color:#d9c192; }
 .movie-inspector { margin-top:1.5rem; padding:1.5rem; border:1px solid var(--line); border-radius:.8rem; background:var(--panel); }
 .movie-inspector h3 { font:400 1.6rem Georgia,serif; margin:.5rem 0 1rem; }
