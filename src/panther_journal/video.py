@@ -27,6 +27,7 @@ from panther_journal.audio_storage import flush_directory, flush_file, write_jso
 
 ROOT = Path.home() / "Library/Application Support/Panther/video-comparison"
 LIMIT_CENTS = 5000
+EXTENDED_LIMIT_CENTS = 5100  # Explicitly owner-approved extension ceiling, never automatic.
 PLATFORM = "https://api.fal.ai/v1"
 QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
@@ -168,6 +169,7 @@ def database(*, initialize=False):
             )
         if db.execute("SELECT limit_cents FROM budget WHERE id=1").fetchone()[0] != LIMIT_CENTS:
             fail("Unexpected budget configuration; refusing to spend.")
+        effective_limit(db)  # Validate any extension before reads or writes.
         yield db
         db.commit()
     except sqlite3.Error:
@@ -182,12 +184,29 @@ def database(*, initialize=False):
         os.umask(old_umask)
 
 
+def effective_limit(db):
+    exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='budget_extension'").fetchone()
+    if not exists:
+        return LIMIT_CENTS
+    rows = db.execute("SELECT * FROM budget_extension").fetchall()
+    if len(rows) != 1:
+        fail("Invalid budget extension audit; refusing to spend.")
+    row = rows[0]
+    if (row["id"] != 1 or row["from_cents"] != LIMIT_CENTS
+            or row["to_cents"] != EXTENDED_LIMIT_CENTS
+            or not isinstance(row["reason"], str) or not row["reason"].strip()
+            or not isinstance(row["approved_at"], int) or row["approved_at"] <= 0):
+        fail("Invalid budget extension audit; refusing to spend.")
+    return row["to_cents"]
+
+
 def totals(db):
     held = db.execute("SELECT COALESCE(SUM(reserved_cents),0) FROM attempts").fetchone()[0]
+    limit = effective_limit(db)
     return {
-        "limitUsd": "50.00",
+        "limitUsd": f"{limit / 100:.2f}",
         "reservedLifetimeUsd": f"{held / 100:.2f}",
-        "availableToReserveUsd": f"{max(0, LIMIT_CENTS - held) / 100:.2f}",
+        "availableToReserveUsd": f"{max(0, limit - held) / 100:.2f}",
         "actualProviderSpendUsd": None,
         "reservationCents": held,
     }
@@ -547,8 +566,8 @@ def prepare(value, fal):
             "0" * 64,
         )
     with database() as db:
-        if totals(db)["reservationCents"] + plan["worstCaseReservationCents"] > LIMIT_CENTS:
-            fail("Plan including all retries exceeds the remaining $50 budget.")
+        if totals(db)["reservationCents"] + plan["worstCaseReservationCents"] > effective_limit(db):
+            fail("Plan including all retries exceeds the remaining configured budget.")
         db.execute(
             "INSERT OR IGNORE INTO plans (id,content) VALUES (?,?)", (plan_id, canonical(plan))
         )
@@ -687,8 +706,8 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
                 fail("Retries require the previous attempt and an explicit reason.")
             if prior["state"] == "UNAVAILABLE":
                 fail("Unavailable results cannot be retried; inspect provider history first.")
-        if totals(db)["reservationCents"] + reserve > LIMIT_CENTS:
-            fail("The $50 total budget cannot cover this attempt.")
+        if totals(db)["reservationCents"] + reserve > effective_limit(db):
+            fail("The configured total budget cannot cover this attempt.")
         db.execute(
             "INSERT INTO attempts VALUES (?,?,?,?,?,?,?)",
             (attempt_id, plan_id, shot_id, ordinal, reserve, "SUBMITTING", canonical(content)),
@@ -935,7 +954,7 @@ def download(attempt_id):
 
 @click.group()
 def video():
-    """Explicitly approved fal video comparisons with a single lifetime $50 local budget."""
+    """Explicitly approved fal comparisons with one audited lifetime budget (initially $50)."""
 
 
 @video.command("check")
@@ -1005,6 +1024,31 @@ def budget_status():
         )
 
 
+@budget.command("extend")
+@click.option("--expected-limit", required=True)
+@click.option("--limit", required=True)
+@click.option("--reason", required=True)
+@click.option("--owner-approved", is_flag=True, required=True)
+def extend_budget(expected_limit, limit, reason, owner_approved):
+    """Explicit one-time $50 → $51 extension, preserving every reservation and approval."""
+    if (not owner_approved or number(expected_limit) != Decimal("50")
+            or number(limit) != Decimal("51") or not reason.strip() or len(reason) > 1000):
+        fail("Only an explicitly approved $50 to $51 extension with a reason is supported.")
+    with database() as db:
+        current = effective_limit(db)
+        if current == EXTENDED_LIMIT_CENTS:
+            prior = db.execute("SELECT reason FROM budget_extension WHERE id=1").fetchone()
+            if prior["reason"] != reason.strip():
+                fail("Budget extension already recorded with different approval evidence.")
+        else:
+            if db.execute("SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone():
+                fail("Resolve outstanding requests before extending the budget.")
+            db.execute("CREATE TABLE budget_extension (id INTEGER PRIMARY KEY CHECK(id=1), from_cents INTEGER NOT NULL CHECK(from_cents=5000), to_cents INTEGER NOT NULL CHECK(to_cents=5100), reason TEXT NOT NULL, approved_at INTEGER NOT NULL)")
+            db.execute("INSERT INTO budget_extension VALUES (1,?,?,?,?)",
+                       (LIMIT_CENTS, EXTENDED_LIMIT_CENTS, reason.strip(), int(time.time())))
+        click.echo(json.dumps({**totals(db), "extension": dict(db.execute("SELECT * FROM budget_extension WHERE id=1").fetchone())}, indent=2))
+
+
 @video.command("prepare")
 @click.argument("manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 def prepare_command(manifest):
@@ -1047,7 +1091,7 @@ def approve(plan_id, models_and_rights_approved, auto_topup_disabled):
         fail("Both owner declarations are required.")
     with database() as db:
         plan, _ = read_plan(db, plan_id)
-        if totals(db)["reservationCents"] + plan["worstCaseReservationCents"] > LIMIT_CENTS:
+        if totals(db)["reservationCents"] + plan["worstCaseReservationCents"] > effective_limit(db):
             fail("Plan no longer fits the remaining budget.")
         db.execute("UPDATE plans SET approved=1 WHERE id=?", (plan_id,))
     click.echo("Plan approved; no generation submitted.")

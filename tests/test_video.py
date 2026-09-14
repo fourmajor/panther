@@ -355,6 +355,67 @@ def test_initialization_never_resets_lifetime_reservations(setup):
     assert request["headers"]["x-app-fal-disable-fallback"] == "true"
 
 
+def test_explicit_extension_preserves_history_and_is_idempotent(setup):
+    plan = approved(setup)
+    attempt = v.submit(plan, "scene-veo", 1, "", setup)
+    v.poll(attempt["attemptId"], setup)
+    with v.database() as db:
+        history = [tuple(r) for r in db.execute("SELECT * FROM attempts")]
+        plans = [tuple(r) for r in db.execute("SELECT * FROM plans")]
+    args = ["video", "budget", "extend", "--expected-limit", "50", "--limit", "51",
+            "--reason", "Explicit synthetic approval", "--owner-approved"]
+    runner = CliRunner()
+    first = runner.invoke(main, args)
+    assert first.exit_code == 0, first.output
+    assert json.loads(first.output)["availableToReserveUsd"] == "49.50"
+    assert runner.invoke(main, args).output == first.output
+    assert runner.invoke(main, args[:-1]).exit_code != 0
+    assert runner.invoke(main, [a if a != "51" else "52" for a in args]).exit_code != 0
+    assert runner.invoke(main, [a if a != "Explicit synthetic approval" else "different" for a in args]).exit_code != 0
+    with v.database(initialize=True) as db:
+        assert v.totals(db)["limitUsd"] == "51.00"
+        assert [tuple(r) for r in db.execute("SELECT * FROM attempts")] == history
+        assert [tuple(r) for r in db.execute("SELECT * FROM plans")] == plans
+        assert db.execute("SELECT limit_cents FROM budget").fetchone()[0] == 5000
+
+
+def test_extension_ceiling_is_used_by_prepare_approve_and_submit(setup):
+    attempt = v.submit(approved(setup), "scene-veo", 1, "", setup)
+    v.poll(attempt["attemptId"], setup)
+    with v.database() as db:
+        db.execute("UPDATE attempts SET reserved_cents=4950")  # Synthetic boundary fixture.
+    value = manifest()
+    value["shots"][0]["maxAttempts"] = 1
+    with pytest.raises(click.ClickException, match="budget"):
+        v.prepare(value, setup)
+    args = ["video", "budget", "extend", "--expected-limit", "50", "--limit", "51",
+            "--reason", "Synthetic boundary approval", "--owner-approved"]
+    assert CliRunner().invoke(main, args).exit_code == 0
+    plan = v.prepare(value, setup)["planId"]
+    result = CliRunner().invoke(main, ["video", "approve", plan,
+        "--models-and-rights-approved", "--auto-topup-disabled"])
+    assert result.exit_code == 0, result.output
+    v.submit(plan, "scene-veo", 1, "", setup)
+    with v.database() as db:
+        assert v.totals(db)["availableToReserveUsd"] == "0.00"
+    with pytest.raises(click.ClickException, match="budget"):
+        v.prepare(value, setup)
+
+
+def test_extension_fails_closed_on_outstanding_and_invalid_audit(setup):
+    attempt = v.submit(approved(setup), "scene-veo", 1, "", setup)
+    args = ["video", "budget", "extend", "--expected-limit", "50", "--limit", "51",
+            "--reason", "Synthetic approval", "--owner-approved"]
+    assert CliRunner().invoke(main, args).exit_code != 0
+    v.poll(attempt["attemptId"], setup)
+    assert CliRunner().invoke(main, args).exit_code == 0
+    with v.database() as db:
+        db.execute("DELETE FROM budget_extension")
+    with pytest.raises(click.ClickException, match="extension audit"):
+        with v.database():
+            pass
+
+
 def test_uncertain_submit_holds_funds_and_blocks_duplicates_and_other_requests(setup):
     fal = setup
     plan = approved(fal)

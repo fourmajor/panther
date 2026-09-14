@@ -211,7 +211,11 @@
 ## Cost posture
 
 - Explicitly owner-approved fal video comparisons use `panther video` and the persistent local
-  $50 total budget guard described in `docs/fal-video-comparison.md`. This is a narrow paid-video
+  budget guard. The initial $50 ceiling supports a narrowly bounded, explicitly owner-approved
+  one-time $51 extension through `panther video budget extend`; retain its audit and all history.
+  Never use the extension without explicit approval, mutate the ledger directly, or treat it as
+  permission for other spending or top-ups. See `docs/fal-video-comparison.md`.
+  This is a narrow paid-video
   integration, never an editorial/Blender inference fallback. Do not call fal generation directly,
   erase/reinitialize its ledger to recover budget, infer model/rights approval, or enable top-ups.
   Unknown submissions retain their reservation and block new submissions. The generation key and

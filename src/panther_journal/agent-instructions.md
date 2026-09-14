@@ -222,8 +222,11 @@ and actual model provenance; never relabel old videos to match today's preferenc
 
 Use `panther video --help` and the trusted `docs/fal-video-comparison.md` for the separate local
 comparison integration. `video check` checks live pricing and balance without generation;
-`video budget status` reports lifetime reservations, **not** measured provider spend. The $50
-ledger is shared across every plan on this laptop. Never erase, relocate or reset it to regain
+`video budget status` reports lifetime reservations, **not** measured provider spend. The initially $50
+ledger is shared across every plan on this laptop. A one-time extension to $51 requires explicit
+owner approval and `video budget extend --expected-limit 50 --limit 51 --reason 'APPROVAL EVIDENCE'
+--owner-approved`; this preserves the base limit, all reservations and an atomic audit record.
+It never buys credits or changes top-ups. No other increase is supported. Never erase, relocate or reset it to regain
 budget, use another machine to bypass it, or invoke fal generation outside this guard.
 
 Prepare a version-1 manifest with `gameId`, `sessionId`, same-game immutable `sourceKeys` and
