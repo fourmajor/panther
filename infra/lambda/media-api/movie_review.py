@@ -25,15 +25,24 @@ def validate(plan, game):
     if (plan.get('schemaVersion') != 1 or plan.get('entityType') != 'MovieReviewPlan'
             or plan.get('gameId') != game):
         raise ValueError('Invalid movie plan identity')
-    for field in ('projectId', 'revisionId', 'sessionId'):
+    for field in ('projectId', 'revisionId'):
         if not media._valid_slug(plan.get(field)) or len(plan[field]) > 96:
             raise ValueError('Invalid movie plan identifier')
+    if plan.get('scope', 'session') not in ('session', 'campaign'):
+        raise ValueError('Invalid movie scope')
+    if plan.get('scope') == 'campaign':
+        if 'sessionId' not in plan or plan['sessionId'] is not None:
+            raise ValueError('Campaign plans must not invent a session')
+    elif not media._valid_slug(plan.get('sessionId')) or len(plan['sessionId']) > 96:
+        raise ValueError('Invalid movie session')
     for field in ('title', 'summary', 'screenplay'):
         if not isinstance(plan.get(field), str) or not 0 < len(plan[field]) <= 40000:
             raise ValueError('Missing or oversized movie plan text')
     sources = plan.get('sourceKeys')
     if not isinstance(sources, list) or len(sources) > 100 or not all(valid_key(media, game, k) for k in sources):
         raise ValueError('Invalid source assets')
+    if plan.get('narratorSampleKey') and plan['narratorSampleKey'] not in sources:
+        raise ValueError('Narrator sample must reference a source asset')
     budget = plan['budget']
     cap = money(budget['capUsd'])
     if budget['currency'] != 'USD' or not 0 < cap <= 1000:
@@ -61,6 +70,9 @@ def validate(plan, game):
         for field in ('title', 'description', 'camera', 'continuity', 'model', 'modelReason'):
             if not isinstance(shot.get(field), str) or not 0 < len(shot[field]) <= 6000:
                 raise ValueError('Missing shot details')
+        for field in ('narration', 'footagePlan'):
+            if field in shot and (not isinstance(shot[field], str) or len(shot[field]) > 6000):
+                raise ValueError('Invalid storyboard text')
         seconds = shot['durationSeconds']
         if type(seconds) not in (float, int) or not 0 < seconds <= 30:
             raise ValueError('Invalid shot duration')

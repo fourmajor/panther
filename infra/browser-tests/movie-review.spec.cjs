@@ -4,13 +4,20 @@ const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-sta
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const key='games/test-game/assets/movie-plan/original/plan.json',frame='games/test-game/assets/frame/original/frame.svg';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{blocked=false,conflict=false}={}) {
+async function fixture(page,{blocked=false,conflict=false,campaign=false}={}) {
   const writes=[];
   const plan={schemaVersion:1,entityType:'MovieReviewPlan',gameId:'test-game',projectId:'lantern',revisionId:'draft-01',sessionId:'session-one',title:'The House Beneath the Tide',summary:'A locked gate. An impossible light. Two companions discover that the abandoned lighthouse is not as empty as it seems.',
     screenplay:'## INT. LIGHTHOUSE — NIGHT\n\nSalt water drips from the ceiling. Mira lifts her lantern.\n\n**MIRA**\n\nSomeone left the light on.\n\n<svg onload="window.attacked=true">',
     sourceKeys:[frame],characters:[{id:'mira',name:'Mira Vale',portraitKey:frame}],budget:{capUsd:'10.00',currency:'USD',notes:'The ceiling includes retries. No automatic generation.'},
     shots:[{id:'gate',title:'The last light',description:'Mira stands in the doorway, lantern raised. A pale light answers from the far end of the hall.',camera:'Slow push-in. Eye-level, 35 mm. Hold the doorway on screen left.',continuity:'Lantern stays in the right hand. Wet blue stone, warm amber practical light.',model:'Veo 3.1 Fast',modelReason:'Atmospheric establishing shot.',durationSeconds:8,characterIds:['mira'],referenceKeys:[frame],frameKey:blocked?null:frame,costUsd:blocked?null:'0.80',warnings:blocked?[{severity:'blocker',message:'Character identity needs checking.'}]:[]},
       {id:'answer',title:'Someone is still here',description:'A close-up on Mira as the realization lands. She does not turn away from the light.',camera:'Locked close-up, 85 mm. Leave room in her eyeline.',continuity:'Same wet costume and lantern position.',dialogue:'MIRA: Someone left the light on.',model:'MiniMax H3 Max',modelReason:'Character performance and dialogue.',durationSeconds:8,characterIds:['mira'],referenceKeys:[frame],frameKey:frame,costUsd:'0.32',warnings:[{severity:'note',message:'Dialogue is adapted, not quoted from the recording.'}]}]};
+  if(campaign) {
+    plan.scope='campaign'; plan.sessionId=null;
+    plan.narratorSampleKey='games/test-game/assets/audition/original/voice.mp3';
+    plan.sourceKeys.push(plan.narratorSampleKey);
+    plan.shots[0].narration='The sea remembers every promise.';
+    plan.shots[0].footagePlan='8s new motion + 7s still detail.';
+  }
   let review=null;
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-operator'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
@@ -80,4 +87,25 @@ test('conflicts retain unsaved feedback and do not show success',async({page})=>
   await fixture(page,{conflict:true});await open(page); await page.getByLabel('Request a change to this shot').fill('Change this shot.');
   await page.getByRole('button',{name:'Save change requests'}).click();await expect(page.locator('.movie-feedback-status')).toContainText('Refresh before saving');
   await expect(page.getByLabel('Request a change to this shot')).toHaveValue('Change this shot.');
+});
+for(const width of [1440,390]) test(`campaign storyboard has readable narration and separate audition at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000}); await fixture(page,{campaign:true}); await open(page);
+  await expect(page.locator('.movie-hero')).toContainText('Campaign-wide storyboard');
+  await expect(page.locator('.movie-narrator-sample a')).toHaveAttribute('href',/voice.mp3/);
+  await expect(page.locator('.movie-shot').first()).toContainText('The sea remembers every promise.');
+  await expect(page.locator('.movie-shot').first()).toContainText('8s new motion + 7s still detail.');
+  await expect(page.locator('.movie-shot .movie-action').first()).toContainText('Mira stands in the doorway');
+  await expect(page.locator('.movie-inspector')).toContainText('Mira Vale');
+  await expect(page.locator('#movie-workspace video, #movie-workspace audio')).toHaveCount(0);
+  await expect(page.locator('.movie-frame img').first()).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`campaign-storyboard-${width}.png`),fullPage:true});
+  const card=page.locator('.movie-shot').first();
+  await card.scrollIntoViewIfNeeded();
+  expect(await card.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,Math.min(innerHeight-1,r.y+r.height/2)));})).toBe(true);
+  await card.click();
+  const bounds=await page.locator('.movie-inspector').boundingBox();
+  expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y).toBeLessThan(100);
+  await page.getByRole('button',{name:'Back to storyboard',exact:true}).click();
+  await expect(card).toBeFocused();
 });

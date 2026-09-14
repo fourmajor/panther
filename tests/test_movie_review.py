@@ -92,3 +92,24 @@ def test_auth_scope_and_feedback_validation(movie):
     plan['shots'][0]['frameKey'] = 'games/other-game/assets/x/original/a.png'
     store(movie, key, plan)
     assert request(movie, 'GET /movie-review', query=params)['statusCode'] == 400
+
+
+def test_campaign_storyboard_and_separate_sample(movie):
+    key, plan = setup(movie)
+    plan.update(scope='campaign', sessionId=None, narratorSampleKey=plan['sourceKeys'][0])
+    plan['shots'][0].update(narration='The sea remembers.', footagePlan='8s new motion + 7s still detail.')
+    assert movie.validate(plan, 'test-game')['ready']
+    store(movie, key, plan)
+    data = unpack(request(movie, 'GET /movie-review', query=dict(gameId='test-game', key=key)))
+    assert data['plan']['sessionId'] is None
+    for changes in [dict(sessionId='invented'), dict(scope='unknown'),
+                    dict(narratorSampleKey='games/other-game/assets/a/original/a.mp3')]:
+        with pytest.raises(ValueError):
+            movie.validate({**plan, **changes}, 'test-game')
+    for field in ('narration', 'footagePlan'):
+        plan['shots'][0][field] = {'html': 'invalid'}
+        with pytest.raises(ValueError):
+            movie.validate(plan, 'test-game')
+        plan['shots'][0][field] = 'Valid prose'
+    with pytest.raises(ValueError):
+        movie.validate({**plan, 'scope': 'session'}, 'test-game')
