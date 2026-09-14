@@ -1,6 +1,12 @@
 # Local fal video comparison
 
-Panther's owner-funded comparison has a **$50 total ceiling**, not $50 per model, shot or session.
+Panther's owner-funded comparison starts with a **$50 total ceiling**, not $50 per model, shot or session.
+An explicitly approved one-time extension to **$51** is supported by `panther video budget extend
+--expected-limit 50 --limit 51 --reason 'EXPLICIT APPROVAL EVIDENCE' --owner-approved`.
+Never invoke it without fresh owner permission. It adds an atomic audit record, preserves the original
+$50 base and every plan/reservation, refuses unresolved requests, and is idempotent for identical
+approval evidence. No credits are purchased and no top-up setting is changed. Other increases are
+unsupported. A missing extension means the original $50 limit; an invalid audit fails closed.
 This opt-in local CLI does not run in the editorial worker or change AWS infrastructure. Planning
 continues through subscription-backed Codex; fal inference is the separately authorized exception
 for video generation. No paid request is made by installation, `check`, `budget`, `prepare` or `approve`.
@@ -28,7 +34,7 @@ panther video budget status
 
 State lives in `~/Library/Application Support/Panther/video-comparison/` outside Git: one private
 SQLite ledger with full-sync transactions for all plans/attempts, plus original downloads.
-Repeated `budget init` does not reset reservations. There is no reset, increase-limit, refund or
+Repeated `budget init` does not reset reservations. There is no reset, arbitrary increase-limit, refund or
 alternate-state-directory command. Keep this directory backed up privately. Do not delete it or
 run a second independent copy on another laptop; that defeats a local-only budget. Migration must
 transfer the ledger and stop the old writer before enabling the new one. Corrupt/missing state fails
