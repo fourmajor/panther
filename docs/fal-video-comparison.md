@@ -265,6 +265,12 @@ the local regression suite; CI is not needed for this CLI-only change. Real veri
 check` only. No production key, prompt, game data or generated video is committed to Git.
 # Separately approved production allocations
 
+If MP4 bytes were saved but metadata/final bookkeeping failed, use `panther video download
+ATTEMPT --recover-existing`. It redownloads only the existing provider result to verify an
+exact checksum match, preserves the original file, and finishes missing metadata/ledger fields.
+It never submits generation, overwrites changed bytes/metadata, or resets a completed download.
+The compact metadata ceiling leaves room within the server's encoded metadata limit.
+
 Owner-authorized replacement models can use `panther video reconcile-rejection ATTEMPT
 --owner-approved --reason 'Owner replacement authorization'` only after a terminal production
 content-policy rejection or explicit `no_media_generated` failure has an exact, same-account,

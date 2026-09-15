@@ -990,14 +990,14 @@ def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, r
         },
     }
     # Leave headroom for S3's base64 encoding and Panther's authenticated metadata headers.
-    if len(canonical(metadata).encode()) > 1100:
+    if len(canonical(metadata).encode()) > 1200:
         fail(
             "Upload metadata is too large. Reference a compact same-game provenance asset instead of many source keys."
         )
     return metadata
 
 
-def download(attempt_id):
+def download(attempt_id, *, recover_existing=False):
     with database() as db:
         row = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
         if not row or row["state"] != "COMPLETED":
@@ -1009,7 +1009,10 @@ def download(attempt_id):
     folder.mkdir(mode=0o700, exist_ok=True)
     target = folder / f"{attempt_id}.mp4"
     metadata = folder / f"{attempt_id}.metadata.json"
-    if target.exists():
+    recovering = target.exists() and recover_existing
+    if recover_existing and (not target.is_file() or target.is_symlink() or data.get("downloadPath")):
+        fail("Recovery requires an incomplete regular original, not an already finished download.")
+    if target.exists() and not recovering:
         fail(
             f"Original already exists at {target}; inspect it instead of overwriting or regenerating."
         )
@@ -1039,7 +1042,12 @@ def download(attempt_id):
             if size < 12 or stream.read(12)[4:8] != b"ftyp":
                 fail("Expected an MP4 original; inspect the provider output without rerunning it.")
         flush_file(temporary)
-        os.link(temporary, target)
+        if recovering:
+            with target.open("rb") as existing:
+                if hashlib.file_digest(existing, "sha256").hexdigest() != digest.hexdigest():
+                    fail("Existing original differs from provider bytes; preserved both evidence and reservation. No overwrite.")
+        else:
+            os.link(temporary, target)
         flush_directory(folder)
     except requests.RequestException:
         fail("Download interrupted. Retry the download, not the generation.")
@@ -1053,9 +1061,7 @@ def download(attempt_id):
             billed = event["amount"]
     except click.ClickException:
         pass  # Preserve the download; unavailable/delayed billing is explicitly unknown.
-    write_json(
-        metadata,
-        upload_metadata(
+    details = upload_metadata(
             manifest,
             row["shot"],
             data["endpoint"],
@@ -1065,8 +1071,12 @@ def download(attempt_id):
             row["reserved_cents"],
             digest.hexdigest(),
             billed,
-        ),
-    )
+        )
+    if metadata.exists():
+        if json.loads(metadata.read_text()) != details:
+            fail("Existing metadata differs; no overwrite. Inspect the incomplete download.")
+    else:
+        write_json(metadata, details)
     return update_attempt(
         attempt_id,
         "COMPLETED",
@@ -1248,9 +1258,10 @@ def poll_command(attempt_id):
 
 @video.command("download")
 @click.argument("attempt_id")
-def download_command(attempt_id):
+@click.option("--recover-existing", is_flag=True, help="Verify an incomplete original against provider bytes and finish metadata; never overwrite or generate.")
+def download_command(attempt_id, recover_existing):
     """Keep the original MP4 and upload-ready metadata privately; no generation or S3 write."""
-    click.echo(json.dumps(download(attempt_id), indent=2))
+    click.echo(json.dumps(download(attempt_id, recover_existing=recover_existing), indent=2))
 
 
 @video.command("reconcile-unavailable")

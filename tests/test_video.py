@@ -1014,3 +1014,38 @@ def test_download_preserves_original_and_writes_upload_metadata_without_credenti
     assert "headers" not in calls[0] and not calls[0]["allow_redirects"]
     with pytest.raises(click.ClickException, match="already exists"):
         v.download(attempt["attemptId"])
+
+
+@pytest.mark.parametrize('changed',[False,True])
+def test_recover_incomplete_download_verifies_provider_bytes_without_overwrite(setup,monkeypatch,changed):
+    monkeypatch.setattr(v.Fal,'billing_events',lambda ids:{})
+    pid=approved(setup);a=v.submit(pid,'scene-veo',1,'',setup);v.poll(a['attemptId'],setup)
+    original=b'\x00\x00\x00\x18ftypisomSynthetic'
+    class Response:
+        status_code=200
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def iter_content(self,size):yield original
+    class Session(Response):
+        def get(self,url,**kwargs):
+            assert 'headers' not in kwargs
+            return Response()
+    monkeypatch.setattr(v.requests,'Session',Session)
+    build=v.upload_metadata
+    monkeypatch.setattr(v,'upload_metadata',lambda *a,**k:v.fail('Synthetic metadata failure'))
+    with pytest.raises(click.ClickException,match='metadata failure'):v.download(a['attemptId'])
+    path=v.ROOT/'outputs'/(a['attemptId']+'.mp4')
+    assert path.read_bytes()==original
+    monkeypatch.setattr(v,'upload_metadata',build)
+    if changed:
+        path.write_bytes(original+b'Changed')
+        with pytest.raises(click.ClickException,match='differs from provider'):
+            v.download(a['attemptId'],recover_existing=True)
+        assert path.read_bytes()==original+b'Changed'
+    else:
+        recovered=v.download(a['attemptId'],recover_existing=True)
+        assert recovered['downloadPath']==str(path)
+        assert path.read_bytes()==original
+        with pytest.raises(click.ClickException,match='already finished'):
+            v.download(a['attemptId'],recover_existing=True)
+    assert len(setup.posts)==1
