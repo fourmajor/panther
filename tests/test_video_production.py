@@ -276,6 +276,22 @@ def test_real_finishing_and_idempotency(media, tmp_path):
         p.execute(media, tmp_path / "runs", verify_cloud=False, reviewer=reviewer)
 
 
+def test_oversize_master_requires_explicit_local_retention(media, tmp_path, monkeypatch):
+    folder,result=p.execute(media,tmp_path/'runs',verify_cloud=False,reviewer=lambda *a:report())
+    master=Path(result['delivery']['master']);original=p.digest(master)
+    monkeypatch.setattr(p.cloud,'MAX_UPLOAD_BYTES',master.stat().st_size-1)
+    with pytest.raises(click.ClickException,match='exceeds the upload limit'):
+        p.package(folder,result)
+    assert not (folder/'publication'/'production.json').exists()
+    _,files=p.package(folder,result,retain_oversize_master_locally=True)
+    assert 'master' not in [name for name,_,_,_ in files]
+    assert 'browser' in [name for name,_,_,_ in files]
+    provenance=json.loads(files[0][1].read_text())
+    assert provenance['outputs']['master']['publication']=='retained-locally-upload-size-limit'
+    assert provenance['outputs']['master']['sha256']==original
+    assert p.digest(master)==original
+
+
 def test_unresolved_continuity_is_working_draft_not_owner_gate(media, tmp_path):
     def reviewer(*args):
         value = report()

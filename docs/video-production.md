@@ -44,6 +44,13 @@ at their native resolution. Masters can be large; the existing 1 GiB upload limi
 limit, never silently lower quality or split the master to bypass it. Local jobs allow up to 20
 shots, 30 seconds each, and five minutes total. Future profiles require a workflow version bump.
 
+Publishing stops before any upload when the master exceeds that limit. Explicitly use
+`panther video production publish RUN_DIRECTORY --retain-oversize-master-locally` to keep the
+unchanged full-quality master locally while publishing the browser movie, captions, stems and
+mix. Provenance records the master's checksum, size and local-only disposition; no nonexistent
+cloud master link is created. Preserve the run directory in durable private storage. This does
+not enable multipart uploads or lower the master quality.
+
 ## Sound and review honesty
 
 A generator's soundtrack is a **native mix**, not isolated dialogue/music/effects. This workflow
