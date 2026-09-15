@@ -1727,18 +1727,56 @@ function drawMovieWorkspace(host, data, key, assets, current) {
   const content = movieNode("div", undefined, "movie-content");
   main.append(tabs, content); layout.append(main, aside); host.append(layout);
   const feedbackStatus = movieNode("p", "", "movie-feedback-status"); feedbackStatus.setAttribute("role", "status");
-  async function attachImage(container, assetKey, alt) {
+  const imageLinks = new Map(), imageQueue = [];
+  let activeImages = 0;
+  function drainImages() {
+    while (activeImages < 3 && imageQueue.length) {
+      const run = imageQueue.shift(); activeImages++;
+      void run().finally(() => { activeImages--; drainImages(); });
+    }
+  }
+  function attachImage(container, assetKey, alt) {
     if (!assetKey || !sameGameKey(assetKey) || !plan.sourceKeys.includes(assetKey)) return;
-    showLoading(container, "Fetching reference image…");
-    try {
-      const file = await api("/object-url", {key:assetKey});
-      if (!current() || !container.isConnected) return;
-      if (!file.contentType?.startsWith("image/")) throw new Error("Invalid image");
-      const img = movieNode("img"); img.alt = alt; img.loading = "lazy";
-      img.onload = () => { if (current() && container.isConnected) { container.replaceChildren(img); container.classList.add("has-image"); } };
-      img.onerror = () => { container.textContent = "Image unavailable. Refresh to retry."; container.classList.remove("has-image"); };
-      img.src = file.url; container.append(img);
-    } catch { if (current() && container.isConnected) container.textContent = "Image unavailable. Refresh to retry."; }
+    showLoading(container, "Waiting to load reference image…");
+    imageQueue.push(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (!current() || !container.isConnected) return;
+        showLoading(container, attempt ? "Retrying reference image…" : "Fetching reference image…");
+        try {
+          let cached = imageLinks.get(assetKey);
+          if (!cached || cached.expiresAt <= Date.now()) {
+            const file = await api("/object-url", {key:assetKey});
+            if (!file.contentType?.startsWith("image/")) throw new Error("Invalid image");
+            cached = {file, expiresAt: Date.now() + Math.max(0, Number(file.expiresIn || 300) - 30) * 1000};
+            imageLinks.set(assetKey, cached);
+          }
+          if (!current() || !container.isConnected) return;
+          const img = movieNode("img"); img.alt = alt;
+          // Start bytes now: lazy images can outlive their short-lived signed URL.
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => finish(new Error("Image timed out")), 20000);
+            function finish(error) {
+              clearTimeout(timer); img.onload = null; img.onerror = null;
+              if (error) { img.removeAttribute("src"); reject(error); } else resolve();
+            }
+            img.onload = () => finish(); img.onerror = () => finish(new Error("Image request failed"));
+            img.src = cached.file.url;
+          });
+          if (current() && container.isConnected) { container.replaceChildren(img); container.classList.add("has-image"); }
+          return;
+        } catch {
+          imageLinks.delete(assetKey);
+          if (!current() || !container.isConnected) return;
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 600 * (attempt + 1)));
+        }
+      }
+      if (current() && container.isConnected) {
+        container.textContent = "Image could not load. Select this shot or reopen this view to retry.";
+        container.classList.remove("has-image");
+      }
+    });
+    // Cast cards are inserted after attachImage is called.
+    queueMicrotask(drainImages);
   }
   function renderAside() {
     aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));
