@@ -217,7 +217,7 @@ def has_unresolved(db):
     if db.execute("SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone():
         return True
     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='narration_attempts'").fetchone():
-        return bool(db.execute("SELECT 1 FROM narration_attempts WHERE state NOT IN ('COMPLETED','FAILED')").fetchone())
+        return bool(db.execute("SELECT 1 FROM narration_attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone())
     return False
 
 

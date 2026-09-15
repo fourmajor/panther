@@ -107,6 +107,7 @@ def test_premium_payload_quotes_and_idempotent_submission(fal):
         apply_text_normalization="auto",
     )
     assert fal.posts[0]["headers"]["X-Fal-No-Retry"] == "1"
+    assert fal.posts[0]["headers"]["X-Fal-Store-IO"] == "1"
     assert n.poll(first["attemptId"], fal)["state"] == "COMPLETED"
     with v.database() as db:
         assert v.totals(db)["reservationCents"] == 0  # Historical comparison allocation unchanged.
@@ -291,3 +292,40 @@ def test_voice_policy_is_shipped_and_model_metadata_is_exact():
     assert "Never propose Chatterbox" in BRIEFS["video-voice-casting"]
     assert n.ENDPOINT in {"fal-ai/elevenlabs/tts/eleven-v3"}
     assert n.generation.fal(n.ENDPOINT, "synthetic-request")["model"] == "ElevenLabs Eleven v3"
+
+
+@pytest.mark.parametrize('blocker', [None, 'running', 'billing', 'account', 'available', 'identity'])
+def test_lost_narration_requires_verified_completion_and_keeps_money(fal, monkeypatch, blocker):
+    aid = n.submit(approved(fal), fal)['attemptId']
+    original = fal.request
+    def request(method, url, **kwargs):
+        if url.endswith('/status'):
+            return dict(status='IN_PROGRESS' if blocker == 'running' else 'COMPLETED',
+                        request_id='other' if blocker == 'identity' else 'fake-request')
+        if kwargs.get('completed_result') and blocker != 'available':
+            raise v.UnavailableResult()
+        return original(method, url, **kwargs)
+    monkeypatch.setattr(fal, 'request', request)
+    monkeypatch.setattr(fal, 'billing_events', lambda ids: {} if blocker == 'billing' else
+                        {'fake-request': {'endpoint': n.ENDPOINT, 'amount': '.004'}}, raising=False)
+    if blocker == 'account':
+        fal.account = 'changed'
+    with v.database() as db:
+        before = n.budget_status(db, 'test-film')
+    if blocker:
+        with pytest.raises(click.ClickException):
+            n.reconcile_unavailable(aid, fal, 'Owner approves a replacement take')
+        with v.database() as db:
+            assert v.has_unresolved(db)
+    else:
+        result = n.reconcile_unavailable(aid, fal, 'Owner approves a replacement take')
+        assert result['state'] == 'UNAVAILABLE'
+        assert n.reconcile_unavailable(aid, fal, 'Same authorization') == result
+        with v.database() as db:
+            assert not v.has_unresolved(db)
+            content = json.loads(db.execute('SELECT content FROM narration_attempts WHERE id=?', (aid,)).fetchone()['content'])
+            assert content['reconciliation']['billingEvent']['amount'] == '.004'
+            assert content['reconciliation']['reservationRetained'] is True
+    with v.database() as db:
+        assert n.budget_status(db, 'test-film') == before
+    assert len(fal.posts) == 1

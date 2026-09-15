@@ -36,6 +36,10 @@ requires its own approved text/plan. Never infer voice approval from successful 
 completion. Preserve original takes and model/provider/cost metadata. Keep storyboards
 readable, with narration alongside images and the voice audition linked separately.
 Read `docs/narration-workflow.md` in the trusted repository before paid operations.
+Narration queue requests retain approved text/settings and response JSON under fal's standard
+30-day policy so results remain retrievable. A completed but lost output needs explicit owner
+authorization and verified billing via `narration reconcile-unavailable`; retain its full spend
+and reservation. Reconciliation never authorizes or submits a replacement take.
 
 Live player recognition: use `panther recording enroll-speakers` with private, explicitly
 identified clean speech, then `panther recording live --speaker-profiles FILE`. Profiles are
