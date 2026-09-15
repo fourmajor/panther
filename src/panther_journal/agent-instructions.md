@@ -18,6 +18,19 @@ to Panther's source repository.
 
 ## Start here
 
+Generated narration/voice performances use the premium `panther narration` workflow with
+ElevenLabs Eleven v3 through fal. Never use Chatterbox or system TTS as a preview/fallback.
+Prepare a private version-1 manifest with gameId, projectId, purpose (audition/production),
+text, voice, direction and exact sourceKeys. Only text and bounded voice settings leave the
+laptop; source files are not automatically sent. Obtain project budget and text-sharing
+approval, allocate the total with a protected allowance for other media, then prepare,
+approve, submit, poll and download. Review the separate audition before accept-voice;
+production manifests require that accepted same-project audition. Full narration still
+requires its own approved text/plan. Never infer voice approval from successful ASR or API
+completion. Preserve original takes and model/provider/cost metadata. Keep storyboards
+readable, with narration alongside images and the voice audition linked separately.
+Read `docs/narration-workflow.md` in the trusted repository before paid operations.
+
 Live player recognition: use `panther recording enroll-speakers` with private, explicitly
 identified clean speech, then `panther recording live --speaker-profiles FILE`. Profiles are
 recognition embeddings, not voice clones or authentication credentials. Names remain provisional;

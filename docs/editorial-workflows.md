@@ -31,6 +31,13 @@ Future workflows require a new version instead of silently changing an execution
 
 ## Process and artifacts
 
+Separately generated speech follows the owner's premium narration policy: ElevenLabs Eleven
+v3 through fal, no Chatterbox or system-TTS fallback. Casting and performance direction are
+still subscription-backed planning; the separately approved local
+[narration workflow](narration-workflow.md) owns paid auditions and synthesis. Neither this
+policy nor an editorial completion event authorizes spending. A storyboard preview is a
+readable image-and-text review, with a separate audition, not a narrated slideshow.
+
 The versioned plan is bundled in the CLI and used by CDK. Every row below is one or more named
 Step Functions callback states, not one giant prompt. Each stage gets a fresh AI session and saves
 JSON provenance plus a readable Markdown artifact. Version 2 resolves routine editorial uncertainty
