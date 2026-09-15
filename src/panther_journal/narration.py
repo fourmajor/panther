@@ -55,6 +55,7 @@ def budget_status(db, project):
         "narrationReservedCents": held,
         "availableNarrationCents": max(0, b["capCents"] - b["otherHeldCents"] - held),
         "videoReservedCents": v.reserved_for(db, project),
+        "videoZeroChargeCreditsCents": v.rejection_credits(db, project),
         "availableVideoCents": max(0, b["otherHeldCents"] - v.reserved_for(db, project)),
     }
 

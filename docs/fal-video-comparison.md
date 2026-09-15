@@ -265,6 +265,15 @@ the local regression suite; CI is not needed for this CLI-only change. Real veri
 check` only. No production key, prompt, game data or generated video is committed to Git.
 # Separately approved production allocations
 
+Owner-authorized replacement models can use `panther video reconcile-rejection ATTEMPT
+--owner-approved --reason 'Owner replacement authorization'` only after a terminal production
+content-policy rejection has an exact, same-account, same-request, same-endpoint **zero-charge**
+billing event. An additive audit credits its allowance; the original attempt and full reservation
+remain unchanged. Missing/delayed billing, positive charges, unknown outcomes, non-policy failures
+and historical comparison requests cannot receive this credit. Repetition cannot credit twice.
+The replacement still needs its own pinned model/quote/approval and must fit the original project
+cap. This is not a generic refund/reset command or permission for automatic model fallback.
+
 An optional `projectId` binds an executable video manifest to an existing audited
 `panther narration allocate` project allocation. Video consumes only its protected
 `otherHeldCents` allowance; narration retains its separate portion of the same total.
