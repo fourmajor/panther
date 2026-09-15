@@ -99,17 +99,19 @@ def test_initial_cutover_fails_closed(index):
         index.page("example", "videos")
 
 
-def test_older_observation_cannot_replace_newer_record(index, monkeypatch):
+def test_overlapping_source_read_cannot_replace_newer_commit(index, monkeypatch):
     library = importlib.import_module("asset_library")
     current = asset()
-    monkeypatch.setattr(library, "describe", lambda *_: current)
-    monkeypatch.setattr(index.time, "time_ns", lambda: 200)
-    index.refresh(None, current["key"])
-    current = {**current, "kind": "corrected-transcript", "name": "x.json", "contentType": "application/json"}
-    monkeypatch.setattr(index.time, "time_ns", lambda: 100)
-    index.refresh(None, current["key"])
-    assert index.page("example", "videos")["assets"][0]["kind"] == "video-comparison"
-    assert index.page("example", "transcripts")["assets"] == []
+    updated = {**current, "kind": "corrected-transcript", "name": "x.json", "contentType": "application/json"}
+    def overlap(*_):
+        monkeypatch.setattr(library, "describe", lambda *_: updated)
+        index.refresh(None, current["key"])
+        return current
+    monkeypatch.setattr(library, "describe", overlap)
+    with pytest.raises(RuntimeError, match="Concurrent index update"):
+        index.refresh(None, current["key"])
+    assert index.page("example", "videos")["assets"] == []
+    assert index.page("example", "transcripts")["assets"] == [updated]
 
 
 def test_chunks_and_exports_dont_become_duplicate_listing_cards(index, monkeypatch):

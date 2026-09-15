@@ -47,18 +47,17 @@ def refresh(media, reference, *, write=True):
     import storage_layout
     observed = time.time_ns()
     game = storage_layout.parts(reference)["game"]
+    db = table() if write else None
+    # Capture the CAS revision BEFORE reading S3. Even with clock skew, a worker
+    # whose source read overlaps a newer commit cannot replace that commit.
+    previous = db.get_item(Key={"pk": partition(game, "all"), "sk": reference}, ConsistentRead=True).get("Item") if write else None
     asset = asset_library.describe(media, game, reference)
     payload = json.dumps(asset, separators=(",", ":"), allow_nan=False)
     if len(payload.encode()) > 350_000:
         raise ValueError("Catalog record exceeds index limit; no provenance was discarded")
     if not write:
         return asset
-    db = table()
     # A per-asset revision gate and all section memberships change atomically.
-    # Read the previous revision before fetching again on conflict, never retry stale content.
-    previous = db.get_item(Key={"pk": partition(game, "all"), "sk": reference}, ConsistentRead=True).get("Item")
-    if previous and int(previous["observed"]) >= observed:
-        return asset
     from boto3.dynamodb.types import TypeSerializer
     serializer = TypeSerializer()
     def encode(item):
