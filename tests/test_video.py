@@ -47,6 +47,57 @@ class FakeFal:
         return {"video": {"url": "https://v3.fal.media/files/synthetic.mp4"}}
 
 
+@pytest.mark.parametrize("model,base,reserve", [
+    ("veo-3.1-fast-image-silent", "0.15", 100),
+    ("kling-3-pro-image-silent", "0.14", 112),
+])
+def test_silent_profiles_pin_settings_and_fail_on_price_change(setup, tmp_path, monkeypatch, model, base, reserve):
+    m, _ = image_manifest(tmp_path, monkeypatch)
+    m["shots"][0]["model"] = model
+    setup.rate = Decimal(base)
+    assert v.quote(setup, model)["reserveCents"] == reserve
+    body = v.payload(m["shots"][0])
+    assert body["generate_audio"] is False
+    assert body["duration"] in {"8", "8s"}
+    setup.rate += Decimal("0.001")
+    with pytest.raises(click.ClickException, match="pricing changed"):
+        v.quote(setup, model)
+
+
+def test_project_spends_existing_hold_without_changing_comparison_or_narration(setup):
+    from panther_journal import narration as n
+    n.create_budget("test-film", "synthetic-game", "15", "1.50", "Synthetic approval", setup)
+    m = manifest()
+    m.update(projectId="test-film")
+    m["shots"][0]["maxAttempts"] = 1
+    pid = v.prepare(m, setup)["planId"]
+    result = CliRunner().invoke(main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"])
+    assert result.exit_code == 0, result.output
+    first = v.submit(pid, "scene-veo", 1, "", setup)
+    assert v.submit(pid, "scene-veo", 1, "", setup) == first
+    assert len(setup.posts) == 1
+    assert setup.posts[0][1]["headers"]["X-Fal-Store-IO"] == "1"
+    with v.database() as db:
+        assert v.totals(db)["reservationCents"] == 0
+        assert v.reserved_for(db, "test-film") == 150
+        assert n.budget_status(db, "test-film")["availableNarrationCents"] == 1350
+    with pytest.raises(click.ClickException, match="allowance"):
+        v.prepare(m, setup)
+    with v.database() as db:
+        v.check_budget(db, {"manifest": manifest()}, 5000)
+
+
+def test_project_requires_existing_matching_allocation(setup):
+    from panther_journal import narration as n
+    m = manifest()
+    m.update(projectId="test-film")
+    with pytest.raises(click.ClickException, match="No approved project"):
+        v.prepare(m, setup)
+    n.create_budget("test-film", "another-game", "15", "13", "Synthetic approval", setup)
+    with pytest.raises(click.ClickException, match="mismatch"):
+        v.prepare(m, setup)
+
+
 def test_h3_image_profile_is_bounded_and_reserves_regular_not_promo_price(setup, tmp_path, monkeypatch):
     m, _ = image_manifest(tmp_path, monkeypatch)
     m["shots"][0]["model"] = "h3-max-image"
@@ -485,7 +536,7 @@ def test_all_plans_share_one_cap_and_all_planned_retries_must_fit(setup):
     plan = approved(fal)
     # Synthetic historical reservations, not real game or billing data.
     with v.database() as db:
-        db.execute("INSERT INTO attempts VALUES ('history','old','old',1,4999,'COMPLETED','{}')")
+        db.execute("INSERT INTO attempts VALUES ('history',?,'old',1,4999,'COMPLETED','{}')", (plan,))
     with pytest.raises(click.ClickException, match="cannot cover"):
         v.submit(plan, "scene-veo", 1, "", fal)
     assert not fal.posts
