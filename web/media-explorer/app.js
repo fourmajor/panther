@@ -1501,7 +1501,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     }
     if (page.cursor) {
       const more = document.createElement("button");
-      more.type = "button"; more.textContent = `Load more ${section}`;
+      more.type = "button"; more.className = "load-more"; more.textContent = `Load more ${section}`;
       more.addEventListener("click", () => {
         more.disabled = true; more.textContent = "Loading more…";
         void loadLibrary(section, epoch, assets, page.cursor);
