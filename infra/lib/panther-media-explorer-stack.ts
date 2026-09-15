@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { webRelease } from "./web-release";
 import * as path from "node:path";
 import {
   CfnOutput,
@@ -158,6 +159,13 @@ export class PantherMediaExplorerStack extends Stack {
       certificate,
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket),
+        cachePolicy: new cloudfront.CachePolicy(this, "SiteCachePolicy", {
+          minTtl: Duration.seconds(0),
+          defaultTtl: Duration.days(1),
+          maxTtl: Duration.days(365),
+          enableAcceptEncodingGzip: true,
+          enableAcceptEncodingBrotli: true,
+        }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         responseHeadersPolicy,
       },
@@ -544,12 +552,30 @@ export class PantherMediaExplorerStack extends Stack {
       });
     }
 
-    new s3deploy.BucketDeployment(this, "SiteDeployment", {
+    const siteDirectory = path.join(__dirname, "../../../web/media-explorer");
+    const release = webRelease(
+      fs.readFileSync(path.join(siteDirectory, "index.html"), "utf8")
+        .replace("</head>", '<script src="/release.js" defer></script>\n  </head>'),
+      Object.fromEntries([
+        ...["app.js", "styles.css", "release.js"].map(name =>
+          [name, fs.readFileSync(path.join(siteDirectory, name), "utf8")]),
+        ["vendor/model-viewer.min.js", fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8")],
+      ]),
+    );
+    const releaseFiles = new s3deploy.BucketDeployment(this, "VersionedSiteFiles", {
       destinationBucket: siteBucket,
-      // Unversioned application URLs must revalidate rather than retain old loaders.
+      sources: Object.entries(release.files).map(([name, content]) => s3deploy.Source.data(name, content)),
+      cacheControl: [s3deploy.CacheControl.fromString("public,max-age=31536000,immutable")],
+      // Old documents and open tabs can still request their exact release's files.
+      prune: false,
+    });
+    const siteDeployment = new s3deploy.BucketDeployment(this, "SiteDeployment", {
+      destinationBucket: siteBucket,
+      // Entry points must revalidate; publish only after immutable files exist.
       cacheControl: [s3deploy.CacheControl.noCache()],
       sources: [
-        s3deploy.Source.asset(path.join(__dirname, "../../../web/media-explorer")),
+        s3deploy.Source.data("index.html", release.html),
+        s3deploy.Source.data("release.json", release.manifest),
         s3deploy.Source.data("cli-config.json", JSON.stringify({
           apiUrl: mediaApi.apiEndpoint,
           clientId: cliClient.userPoolClientId,
@@ -569,15 +595,12 @@ export class PantherMediaExplorerStack extends Stack {
             ";\n",
           ].join(""),
         ),
-        s3deploy.Source.data(
-          "vendor/model-viewer.min.js",
-          fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8"),
-        ),
       ],
       distribution,
       distributionPaths: ["/*"],
-      prune: true,
+      prune: false,
     });
+    siteDeployment.node.addDependency(releaseFiles);
 
     new CfnOutput(this, "MediaExplorerUrl", {
       value: siteUrl,
