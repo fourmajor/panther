@@ -39,6 +39,16 @@ BRIEFS = {
     "video-preflight": "Independently review the whole preproduction package for story/scene/shot coverage, timing, visual consistency, sound/VFX dependencies, rights and practical feasibility. Distinguish planning completeness from production approval. Video generation MUST remain blocked pending human discussion of provider/model, budget, rights and final plan. No approval can be inferred from passing this review.",
 }
 
+# Standing casting direction, not provider authorization or a workflow-generation trigger.
+BRIEFS["video-voice-casting"] += (
+    " Production policy for separately synthesized speech: plan premium ElevenLabs Eleven v3"
+    " through fal, subject to a separately approved paid narration plan. Never propose Chatterbox"
+    " or system TTS as a preview/fallback. Cast and direct for the intended genre; cinematic trailer"
+    " narration needs resonant tone, deliberate pauses and controlled escalation, not neutral reading."
+    " Plan a separate short audition and pin the accepted voice before full narration. Preserve"
+    " pronunciation and performance-review criteria; successful ASR is not performance approval."
+)
+
 
 def apply_corrections(raw, proposal, evidence_ids):
     result = copy.deepcopy(raw)

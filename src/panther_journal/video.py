@@ -212,6 +212,15 @@ def totals(db):
     }
 
 
+def has_unresolved(db):
+    """One shared submission lock across video and separately allocated narration."""
+    if db.execute("SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone():
+        return True
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='narration_attempts'").fetchone():
+        return bool(db.execute("SELECT 1 FROM narration_attempts WHERE state NOT IN ('COMPLETED','FAILED')").fetchone())
+    return False
+
+
 class Fal:
     def __init__(self):
         key = cloud.credential_store().get_password("panther.place/fal", "api-key")
@@ -693,9 +702,7 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         previous = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
         if previous:
             return summary(previous)
-        if db.execute(
-            "SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')"
-        ).fetchone():
+        if has_unresolved(db):
             fail("An outstanding or uncertain request must be resolved before another submission.")
         if ordinal > 1:
             prior = db.execute(

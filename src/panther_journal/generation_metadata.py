@@ -20,6 +20,7 @@ def local(tool, *, method="procedural"):
 
 def fal(endpoint, request_id, billed=None):
     models = {
+        "fal-ai/elevenlabs/tts/eleven-v3": "ElevenLabs Eleven v3",
         "minimax/h3-max/text-to-video": "MiniMax H3 Max (post-trained by fal)",
         "minimax/h3-max/image-to-video": "MiniMax H3 Max (post-trained by fal)",
         "fal-ai/veo3.1/fast": "Veo 3.1 Fast",

@@ -82,6 +82,19 @@
 
 ## Editorial workflows
 
+- High-quality speech is a standing production requirement. Use ElevenLabs Eleven v3 through
+  fal for separately generated narration/voice performances via `panther narration`; see
+  `docs/narration-workflow.md`. Do not use Chatterbox, macOS/system TTS, or another cheaper
+  fallback, even for previews. Preserve existing historical assets and honest provenance;
+  this is a forward production policy, not authority to regenerate or relabel history.
+  Cast an appropriate voice and direct its performance; model choice alone is not quality
+  approval. Trailer narration needs deliberate dramatic pacing, not a neutral reading.
+  Present a separate short audition when voice approval is requested, then pin the accepted
+  voice for full narration. Never substitute a narrated slideshow for a storyboard review.
+  Each paid project needs explicit model/text-sharing/budget approval. No automatic paid
+  retries, credit purchases, cloning, or fallback. Keep narration and video within the same
+  owner-approved total by protecting the other-media allowance in the local budget ledger.
+
 - Video production uses the separate completed-manifest local workflow in `docs/video-production.md`.
   Pin selected appearance revisions and prepared shot frames; review generated footage for face,
   costume, weapon-hand, prop, motion and cross-shot continuity. Preserve the original take and
