@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import boto3
+from botocore.exceptions import ClientError
 import pytest
 from moto import mock_aws
 
@@ -17,6 +18,7 @@ def index(monkeypatch):
     module = importlib.import_module("browse_index")
     # Older handler tests intentionally import with a stub boto3 module.
     monkeypatch.setattr(module, "boto3", boto3)
+    monkeypatch.setattr(module, "ClientError", ClientError)
     with mock_aws():
         boto3.resource("dynamodb").create_table(TableName="synthetic-browse",
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
