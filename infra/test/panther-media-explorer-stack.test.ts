@@ -22,6 +22,12 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("gallery image links use one JWT-authorized batch route", () => {
+  mediaExplorerTemplate().hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "POST /image-links", AuthorizationType: "JWT", AuthorizerId: Match.anyValue(),
+  });
+});
+
 test("browsing uses retained on-demand indexes and event-driven read-only S3 indexing", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:"POST /asset-index/rebuild", AuthorizationType:"JWT"});
@@ -388,7 +394,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 56);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 57);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

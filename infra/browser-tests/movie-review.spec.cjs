@@ -47,6 +47,7 @@ async function fixture(page,{blocked=false,conflict=false,campaign=false,crowded
       } else body={plan,sha256:'a'.repeat(64),review,canApprove:true,readiness:{knownCostUsd:blocked?'0.32':'1.12',costComplete:!blocked,durationSeconds:16,ready:!blocked,blockers:blocked?['gate: starting composition has not been prepared','gate: generation cost is not quoted','gate: Character identity needs checking.']:[]}};
     }
     if(u.pathname==='/object-url') body={url:'https://images.example/frame.svg',contentType:'image/svg+xml'};
+    if(u.pathname==='/image-links') body={images:Object.fromEntries(route.request().postDataJSON().keys.map(k=>[k,{url:'https://images.example/frame.svg'}])),expiresIn:300};
     if(u.pathname==='/recordings/live') body={recordings:[]};
     return route.fulfill({headers,json:body});
   });
@@ -114,26 +115,29 @@ for(const width of [1440,390]) test(`campaign storyboard has readable narration 
   await expect(card).toBeFocused();
 });
 
-for(const width of [1440,390]) test(`sixteen storyboard frames survive request bursts and expired image links at ${width}`,async({page})=>{
+for(const width of [1440,390]) test(`gallery batch recovers failures and loads sixteen images without per-image API calls at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000});
   await fixture(page,{crowded:true});
-  let active=0,peak=0,total=0,failed=false;
-  await page.route(`${api}/object-url?**`,async route=>{
-    total++; active++; peak=Math.max(peak,active);
-    const asset=new URL(route.request().url()).searchParams.get('key');
-    await new Promise(resolve=>setTimeout(resolve,50));
-    active--;
-    if(!failed) {failed=true;return route.fulfill({status:429,headers,json:{message:'Too Many Requests'}});}
-    return route.fulfill({headers,json:{url:`https://images.example/frame.svg?attempt=${total}&key=${encodeURIComponent(asset)}`,contentType:'image/svg+xml',expiresIn:300}});
+  let total=0,failed=false,individualCalls=0;
+  await page.route(`${api}/object-url?**`,route=>{individualCalls++;return route.fulfill({status:503,headers,json:{message:'No per-image API allowed'}});});
+  await page.route(`${api}/image-links`,async route=>{
+    total++;
+    const body=route.request().postDataJSON();
+    expect(body.gameId).toBe('test-game'); expect(body.keys).toHaveLength(17);
+    if(!failed) {failed=true;return route.fulfill({status:503,headers,json:{message:'Service Unavailable'}});}
+    return route.fulfill({headers,json:{images:Object.fromEntries(body.keys.map(asset=>[asset,{url:`https://images.example/frame.svg?attempt=${total}&key=${encodeURIComponent(asset)}`}])) ,expiresIn:300}});
   });
-  let badImage=false;
-  await page.route('https://images.example/**',route=>{
+  let badImage=false,imageActive=0,imagePeak=0;
+  await page.route('https://images.example/**',async route=>{
     if(!badImage) {badImage=true;return route.fulfill({status:403,body:'Expired URL'});}
+    imageActive++; imagePeak=Math.max(imagePeak,imageActive);
+    await new Promise(resolve=>setTimeout(resolve,100)); imageActive--;
     return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#596a50"/></svg>'});
   });
   await open(page);
   await expect(page.locator('.movie-frame.has-image')).toHaveCount(16);
-  expect(peak).toBeLessThanOrEqual(3); expect(failed&&badImage).toBe(true);
+  expect(total).toBe(3); expect(individualCalls).toBe(0); expect(failed&&badImage).toBe(true);
+  expect(imagePeak).toBeGreaterThan(3);
   expect(await page.locator('.movie-frame img').evaluateAll(imgs=>imgs.every(img=>img.complete&&img.naturalWidth>0))).toBe(true);
   const before=total;
   await page.getByRole('button',{name:'Inspect shot 1: Frame 0',exact:true}).click();
