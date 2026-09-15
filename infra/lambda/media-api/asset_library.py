@@ -1,24 +1,22 @@
-"""Bounded read-only asset catalog and provenance projection, without a new database."""
+"""Source-to-catalog projection and bounded document reads; browsing uses the durable index."""
 
 import base64
 import binascii
-from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import re
 
 MAX_DOCUMENT = 2 * 1024**2
-PAGE_SIZE = 25
 
 
 def valid_key(media, game, key):
     return media._valid_key(key) and key.startswith(f"games/{game}/assets/") and not key.endswith("/")
 
 
-def document(media, key, size):
+def document(media, key, size, version=None):
     if not key.endswith(".json") or not 0 < size <= MAX_DOCUMENT:
         return None
-    response = media.s3.get_object(Bucket=media.BUCKET_NAME, Key=key)
+    response = media.s3.get_object(Bucket=media.BUCKET_NAME, Key=key, **({"VersionId": version} if version else {}))
     with response["Body"] as body:
         data = body.read(MAX_DOCUMENT + 1)
     if len(data) > MAX_DOCUMENT:
@@ -47,7 +45,7 @@ def describe(media, game, key, *, include_document=False):
     doc = None
     if key.endswith(".json"):
         try:
-            doc = document(media, key, result["size"])
+            doc = document(media, key, result["size"], head.get("VersionId"))
         except (ValueError, UnicodeError):
             result["lineageWarning"] = "Structured provenance could not be read. Original retained."
         if result["size"] > MAX_DOCUMENT:
@@ -109,22 +107,10 @@ def handle(event, media):
         if not valid_key(media, game, key):
             return media._response(400, {"error": "Invalid asset for selected game"})
         return media._response(200, describe(media, game, key, include_document=True))
-    args = {"Bucket": media.BUCKET_NAME, "Prefix": f"games/{game}/assets/", "MaxKeys": PAGE_SIZE}
-    if query.get("cursor"):
-        try:
-            cursor = json.loads(base64.urlsafe_b64decode(query["cursor"]))
-            if cursor["gameId"] != game or not isinstance(cursor["token"], str):
-                raise ValueError("Wrong cursor scope")
-            args["ContinuationToken"] = cursor["token"]
-        except (ValueError, KeyError, TypeError, binascii.Error):
-            return media._response(400, {"error": "Invalid asset page cursor"})
-    page = media.s3.list_objects_v2(**args)
-    keys = [o["Key"] for o in page.get("Contents", []) if valid_key(media, game, o["Key"])]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        assets = list(pool.map(lambda key: describe(media, game, key), keys))
-    cursor = None
-    if page.get("NextContinuationToken"):
-        cursor = base64.urlsafe_b64encode(json.dumps({
-            "gameId": game, "token": page["NextContinuationToken"],
-        }).encode()).decode()
-    return media._response(200, {"assets": assets, "cursor": cursor})
+    import browse_index
+    try:
+        return media._response(200, browse_index.page(game, query.get("section", "all"), query.get("cursor")))
+    except ValueError as error:
+        return media._response(400, {"error": str(error)})
+    except browse_index.IndexNotReady as error:
+        return media._response(503, {"error": str(error)})

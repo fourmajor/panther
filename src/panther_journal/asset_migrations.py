@@ -30,6 +30,39 @@ def catalog(game):
     click.echo(json.dumps({"gameId": game, "assets": records}, indent=2))
 
 
+@assets.command("rebuild-index")
+@click.option("--mode", type=click.Choice(["dry-run", "apply", "verify"]), default="dry-run")
+@click.option("--report", required=True, type=click.Path(path_type=Path))
+def rebuild_index(mode, report):
+    """Rebuild/verify the browsing projection for ALL games; never change source files."""
+    config = cloud.configuration()
+    failures = 0
+    with report.open("x") as stream:
+        report.chmod(0o600)
+        for game in cloud.api(config, "GET", "/games")["games"]:
+            cursor, seen, count = None, set(), 0
+            while True:
+                page = cloud.api(config, "POST", "/asset-index/rebuild", json={
+                    "gameId": game["id"], "mode": mode, "cursor": cursor})
+                stream.write(json.dumps(page) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+                count += len(page["records"])
+                failures += sum(r["status"] == "mismatch" for r in page["records"])
+                click.echo(f"{game['id']}: {count} records {mode}", err=True)
+                cursor = page.get("cursor")
+                if not cursor:
+                    break
+                if cursor in seen:
+                    raise click.ClickException("Repeated maintenance cursor; stopped")
+                seen.add(cursor)
+    if failures:
+        raise click.ClickException(f"{failures} index mismatches; inspect the private report")
+    if mode == "verify":
+        cloud.api(config, "POST", "/asset-index/rebuild", json={"mode": "activate"})
+        click.echo("All games verified; indexed browsing is active.")
+
+
 def generation_plan(records, facts):
     """Version-1 backfill: preserve metadata/bytes; only explicitly evidenced facts enrich defaults."""
     if not isinstance(facts, dict) or set(facts) - {r["key"] for r in records}:

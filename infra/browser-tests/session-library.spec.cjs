@@ -43,7 +43,7 @@ async function fixture(page) {
     let body={};
     if(u.pathname==='/games') body={games};
     if(u.pathname==='/game') body={game:games.find(g=>g.id===game),players:[],memberships:[],characters:[]};
-    if(u.pathname==='/assets') body=game==='test-game'?{assets:u.searchParams.get('cursor')?assets.slice(3):assets.slice(0,3),cursor:u.searchParams.get('cursor')?null:'next'}:{assets:[],cursor:null};
+    if(u.pathname==='/assets') body=game==='test-game'?{assets,cursor:null}:{assets:[],cursor:null};
     if(u.pathname==='/objects') body={prefixes:[],objects:[],nextCursor:null};
     if(u.pathname==='/object-url') body={...assets.find(a=>a.key===key),url:`https://audio.example/${key.split('/').at(-1)}`,expiresIn:300};
     if(u.pathname==='/asset-document') {
@@ -60,14 +60,18 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   let releaseFirst, releaseSecond;
   const first = new Promise(resolve => { releaseFirst=resolve; });
   const second = new Promise(resolve => { releaseSecond=resolve; });
+  let catalogRequests=0;
   await page.route(`${api}/assets?**`, async route => {
-    await (new URL(route.request().url()).searchParams.get('cursor') ? second : first);
-    await route.fallback();
+    catalogRequests++;
+    const u=new URL(route.request().url());
+    expect(u.searchParams.get('section')).toBe('videos');
+    await (u.searchParams.get('cursor') ? second : first);
+    await route.fulfill({headers,json:{assets:[assets.find(a=>a.key===video)],cursor:u.searchParams.get('cursor')?null:'next'}});
   });
   await page.clock.install();
   await page.goto(`${origin}/games/test-game/videos`);
   const status=page.locator('#library-status');
-  await expect(status).toContainText('Fetching the game’s asset catalog');
+  await expect(status).toContainText('Fetching videos from the catalog');
   await expect(status.locator('.loading-spinner')).toBeVisible();
   expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-loading');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -76,12 +80,21 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   await expect(status).not.toContainText('%');
   await page.screenshot({path:test.info().outputPath(`loading-${width}.png`),fullPage:true});
   releaseFirst();
-  await expect(status).toContainText('Found 3 assets');
+  await expect(page.locator('.session-card')).toHaveCount(1);
+  const more=page.getByRole('button',{name:'Load more videos'});
+  await expect(more).toBeVisible();
+  await expect(status.locator('.loading-state')).toHaveCount(0);
+  expect(catalogRequests).toBe(1);
+  await page.screenshot({path:test.info().outputPath(`catalog-first-page-${width}.png`),fullPage:true});
+  await more.click();
+  await expect(page.locator('.session-card')).toHaveCount(1);
   await page.emulateMedia({reducedMotion:'reduce'});
   expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   releaseSecond();
   await expect(status).toContainText('Episodes, experiments');
   await expect(status.locator('.loading-state')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Load more videos'})).toHaveCount(0);
+  await expect(page.locator('.session-card')).toHaveCount(1);
 });
 
 test('failed catalog removes activity and offers recovery', async ({page}) => {

@@ -17,6 +17,11 @@
 
 ## Panther CLI and game assets
 
+- Keep browsing off the source-storage scan path. Maintain the versioned materialized catalog for
+  uploads and metadata changes; query bounded game/section pages. New asset contracts must update
+  the projection and all-game rebuild/verification. Never silently fall back to scanning S3 on a
+  page view or present an incomplete index as a complete library. See `docs/asset-browse-index.md`.
+
 - Record structured generation metadata for every asset using `docs/generation-metadata.md`:
   actual model/version when known, provider, inference location distinct from local coordination,
   tools, and evidence-backed cost status. Unknown is not zero; subscriptions and budget reservations

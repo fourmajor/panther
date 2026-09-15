@@ -22,6 +22,22 @@ function mediaExplorerTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+test("browsing uses retained on-demand indexes and event-driven read-only S3 indexing", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:"POST /asset-index/rebuild", AuthorizationType:"JWT"});
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"browse_index.event_handler"});
+  template.hasResourceProperties("AWS::Events::Rule", {EventPattern: Match.objectLike({
+    source:["aws.s3"], "detail-type":["Object Created"],
+  })});
+  const tables = Object.entries(template.findResources("AWS::DynamoDB::Table")).filter(([id])=>id.startsWith("AssetBrowseIndex"));
+  assert.equal(tables.length,1);
+  assert.equal(tables[0][1].Properties.BillingMode,"PAY_PER_REQUEST");
+  assert.equal(tables[0][1].DeletionPolicy,"Retain");
+  const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("AssetBrowseIndex")));
+  assert.doesNotMatch(policies,/s3:PutObject|bedrock:|sagemaker:|states:StartExecution/);
+  template.resourceCountIs("AWS::EC2::NatGateway",0);
+});
+
 test("unlisted shares isolate public version reads from publisher mutations", () => {
   const template = mediaExplorerTemplate();
   for (const route of ["POST /asset-shares", "POST /asset-shares/revoke", "POST /asset-shares/preview"]) {
@@ -371,7 +387,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 55);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 56);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
