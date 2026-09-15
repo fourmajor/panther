@@ -1038,7 +1038,7 @@ def public_document(value):
     return value
 
 
-def package(folder, result):
+def package(folder, result, *, retain_oversize_master_locally=False):
     plan = read_plan(folder / "manifest.json")
     files = [
         ("browser", Path(result["delivery"]["browser"]), "tv-episode", "finished"),
@@ -1050,6 +1050,10 @@ def package(folder, result):
         (f"stem-{role}", Path(path), "video-sound-stem", "intermediate")
         for role, path in zip(ROLES, result["sound"]["stems"], strict=True)
     ]
+    local_master = next((path for name, path, _, _ in files
+                         if name == "master" and path.stat().st_size > cloud.MAX_UPLOAD_BYTES), None)
+    if local_master and not retain_oversize_master_locally:
+        raise click.ClickException("Full-quality master exceeds the upload limit. Use --retain-oversize-master-locally to publish the other outputs without reducing master quality.")
     provenance = public_document(result)
     provenance["outputs"] = {
         name: {
@@ -1062,6 +1066,9 @@ def package(folder, result):
         for name, path, kind, role in files
     }
     provenance["manifest"] = public_document(plan.model_dump())
+    if local_master:
+        provenance["outputs"]["master"]["publication"] = "retained-locally-upload-size-limit"
+        files = [entry for entry in files if entry[0] != "master"]
     directory = folder / "publication"
     directory.mkdir(exist_ok=True, mode=0o700)
     doc = directory / "production.json"
@@ -1072,14 +1079,14 @@ def package(folder, result):
     return plan, [("provenance", doc, "video-production", "intermediate"), *files]
 
 
-def publish(folder):
+def publish(folder, *, retain_oversize_master_locally=False):
     """Revalidate checkpoints and use Panther's ordinary immutable upload protocol."""
     folder = private(folder)
     with lock(folder, "publication.lock"):
-        return publish_locked(folder)
+        return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally)
 
 
-def publish_locked(folder):
+def publish_locked(folder, *, retain_oversize_master_locally=False):
     receipt = json.loads((folder / "result-sha256.json").read_text())
     if receipt != {
         "sha256": digest(folder / "result.json"),
@@ -1111,7 +1118,7 @@ def publish_locked(folder):
         raise click.ClickException("Production identity does not match its checkpoint directory")
     if result.get("sourceVerification") != "panther":
         raise click.ClickException("Synthetic/unverified production runs cannot be published")
-    plan, files = package(folder, result)
+    plan, files = package(folder, result, retain_oversize_master_locally=retain_oversize_master_locally)
     config = cloud.configuration()
     sources, published = [], {}
     for name, path, kind, role in files:
@@ -1244,6 +1251,8 @@ def worker(inbox, work_dir, once):
 
 @production.command("publish")
 @click.argument("run_directory", type=click.Path(exists=True, path_type=Path))
-def publish_command(run_directory):
+@click.option("--retain-oversize-master-locally", is_flag=True,
+              help="Explicitly retain a master over the upload limit locally; publish browser video and remaining outputs unchanged.")
+def publish_command(run_directory, retain_oversize_master_locally):
     """Upload verified final assets, stems and provenance through Panther, keeping originals."""
-    click.echo(json.dumps(publish(run_directory), indent=2))
+    click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally), indent=2))
