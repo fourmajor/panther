@@ -231,7 +231,73 @@ def reserved_for(db, project):
         plan, _ = read_plan(db, row["plan_id"])
         if plan["manifest"].get("projectId") == project:
             held += row["held"]
-    return held
+    return held - rejection_credits(db, project)
+
+
+def rejection_credits(db, project):
+    """An additive evidence ledger, never deletion or mutation of original reservations."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='video_rejection_credits'").fetchone():
+        return 0
+    credit = 0
+    for audit in db.execute("SELECT * FROM video_rejection_credits"):
+        row = db.execute("SELECT * FROM attempts WHERE id=?", (audit["attempt_id"],)).fetchone()
+        if not row:
+            fail("Rejection credit has no original attempt; refusing to spend.")
+        plan, _ = read_plan(db, row["plan_id"])
+        data, evidence = json.loads(row["content"]), json.loads(audit["content"])
+        scope = plan["manifest"].get("projectId")
+        if (not scope or row["state"] != "FAILED"
+                or "content_policy_violation" not in data.get("providerErrorTypes", [])
+                or evidence.get("projectId") != scope
+                or evidence.get("planId") != row["plan_id"]
+                or evidence.get("requestId") != data.get("requestId")
+                or not evidence.get("requestId")
+                or evidence.get("billingAccount") != plan["billingAccount"]
+                or data.get("endpoint") != plan["inputs"][row["shot"]]["endpoint"]
+                or evidence.get("creditedCents") != row["reserved_cents"]
+                or evidence.get("billingEvent", {}).get("endpoint") != data.get("endpoint")
+                or number(evidence.get("billingEvent", {}).get("amount")) != 0
+                or not evidence.get("ownerAuthorization")
+                or type(evidence.get("verifiedAt")) is not int
+                or evidence["verifiedAt"] <= 0):
+            fail("Invalid zero-charge rejection credit; refusing to spend.")
+        if scope == project:
+            credit += row["reserved_cents"]
+    return credit
+
+
+def reconcile_rejection(attempt_id, fal, reason):
+    if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1000:
+        fail("Explicit owner replacement authorization is required.")
+    with database() as db:
+        row = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+        if not row:
+            fail("Unknown attempt.")
+        plan, _ = read_plan(db, row["plan_id"])
+        data = json.loads(row["content"])
+        if (not plan["manifest"].get("projectId") or row["state"] != "FAILED"
+                or "content_policy_violation" not in data.get("providerErrorTypes", [])
+                or not data.get("requestId")):
+            fail("Only a terminal production content-policy rejection is eligible.")
+        original = dict(row)
+    if fal.billing()["account"] != plan["billingAccount"]:
+        fail("Billing account changed.")
+    event = fal.billing_events([data["requestId"]]).get(data["requestId"])
+    if (not event or event.get("endpoint") != data["endpoint"]
+            or number(event.get("amount")) != 0):
+        fail("An exact zero-charge billing event is required; reservation retained.")
+    evidence = dict(projectId=plan["manifest"]["projectId"], planId=row["plan_id"],
+                    requestId=data["requestId"], billingAccount=plan["billingAccount"],
+                    billingEvent=event, creditedCents=row["reserved_cents"],
+                    verifiedAt=int(time.time()), ownerAuthorization=reason.strip())
+    with database() as db:
+        current = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+        if dict(current) != original:
+            fail("Attempt changed during verification; inspect before reconciling.")
+        db.execute("CREATE TABLE IF NOT EXISTS video_rejection_credits (attempt_id TEXT PRIMARY KEY, content TEXT NOT NULL)")
+        db.execute("INSERT OR IGNORE INTO video_rejection_credits VALUES (?,?)", (attempt_id, canonical(evidence)))
+        rejection_credits(db, plan["manifest"]["projectId"])
+        return json.loads(db.execute("SELECT content FROM video_rejection_credits WHERE attempt_id=?", (attempt_id,)).fetchone()[0])
 
 
 def check_budget(db, plan, amount):
@@ -1115,6 +1181,17 @@ def prepare_command(manifest):
     except ValueError:
         fail("Invalid JSON manifest.")
     click.echo(json.dumps(prepare(value, Fal()), indent=2))
+
+
+@video.command("reconcile-rejection")
+@click.argument("attempt_id")
+@click.option("--owner-approved", is_flag=True, required=True)
+@click.option("--reason", required=True)
+def reconcile_rejection_command(attempt_id, owner_approved, reason):
+    """Credit a proven zero-charge production rejection, preserving its full history."""
+    if not owner_approved:
+        fail("Owner replacement authorization is required.")
+    click.echo(json.dumps(reconcile_rejection(attempt_id, Fal(), reason), indent=2))
 
 
 @video.command("show-plan")

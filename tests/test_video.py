@@ -98,6 +98,52 @@ def test_project_requires_existing_matching_allocation(setup):
         v.prepare(m, setup)
 
 
+def test_zero_charge_production_rejection_credit_is_audited_and_idempotent(setup, monkeypatch):
+    from panther_journal import narration as n
+    n.create_budget("test-film", "synthetic-game", "15", "1.50", "Synthetic approval", setup)
+    m=manifest();m.update(projectId="test-film");m['shots'][0]['maxAttempts']=1
+    pid=v.prepare(m,setup)['planId']
+    CliRunner().invoke(main,['video','approve',pid,'--models-and-rights-approved','--auto-topup-disabled'])
+    a=v.submit(pid,'scene-veo',1,'',setup)
+    monkeypatch.setattr(setup,'billing_events',lambda ids:{'synthetic-request':{'endpoint':v.PROFILES['veo-3.1-fast']['endpoint'],'amount':'0'}},raising=False)
+    with pytest.raises(click.ClickException,match='terminal'):
+        v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
+    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':['content_policy_violation']})
+    with v.database() as db:
+        before=dict(db.execute('SELECT * FROM attempts').fetchone())
+    first=v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
+    assert v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')==first
+    with v.database() as db:
+        assert dict(db.execute('SELECT * FROM attempts').fetchone())==before
+        assert v.reserved_for(db,'test-film')==0
+        assert v.totals(db)['reservationCents']==0
+        assert db.execute('SELECT COUNT(*) FROM video_rejection_credits').fetchone()[0]==1
+    m['shots'][0]['prompt']+=' Different approved model treatment.'
+    assert v.prepare(m,setup)['planId']!=pid
+
+
+@pytest.mark.parametrize('event',[{}, {'endpoint':'wrong','amount':'0'}, {'endpoint':'fal-ai/veo3.1/fast','amount':'0.01'}])
+def test_rejection_credit_requires_exact_zero_billing(setup,monkeypatch,event):
+    from panther_journal import narration as n
+    n.create_budget('test-film','synthetic-game','15','13','Synthetic approval',setup)
+    m=manifest();m.update(projectId='test-film')
+    pid=v.prepare(m,setup)['planId']
+    CliRunner().invoke(main,['video','approve',pid,'--models-and-rights-approved','--auto-topup-disabled'])
+    a=v.submit(pid,'scene-veo',1,'',setup)
+    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':['content_policy_violation']})
+    monkeypatch.setattr(setup,'billing_events',lambda ids:{'synthetic-request':event},raising=False)
+    with pytest.raises(click.ClickException,match='zero-charge'):
+        v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
+    with v.database() as db:assert v.reserved_for(db,'test-film')==150
+
+
+def test_comparison_rejection_cannot_release_historical_budget(setup):
+    pid=approved(setup);a=v.submit(pid,'scene-veo',1,'',setup)
+    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':['content_policy_violation']})
+    with pytest.raises(click.ClickException,match='terminal production'):
+        v.reconcile_rejection(a['attemptId'],setup,'Synthetic owner approval')
+
+
 def test_h3_image_profile_is_bounded_and_reserves_regular_not_promo_price(setup, tmp_path, monkeypatch):
     m, _ = image_manifest(tmp_path, monkeypatch)
     m["shots"][0]["model"] = "h3-max-image"
