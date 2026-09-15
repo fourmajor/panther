@@ -1727,29 +1727,41 @@ function drawMovieWorkspace(host, data, key, assets, current) {
   const content = movieNode("div", undefined, "movie-content");
   main.append(tabs, content); layout.append(main, aside); host.append(layout);
   const feedbackStatus = movieNode("p", "", "movie-feedback-status"); feedbackStatus.setAttribute("role", "status");
-  const imageLinks = new Map(), imageQueue = [];
-  let activeImages = 0;
-  function drainImages() {
-    while (activeImages < 3 && imageQueue.length) {
-      const run = imageQueue.shift(); activeImages++;
-      void run().finally(() => { activeImages--; drainImages(); });
+  const galleryKeys = [...new Set([...plan.shots.map(s => s.frameKey), ...plan.characters.map(c => c.portraitKey)])]
+    .filter(key => key && sameGameKey(key) && plan.sourceKeys.includes(key));
+  let galleryPromise = null, galleryExpires = 0, galleryGeneration = 0;
+  function galleryLinks(failedGeneration) {
+    if (failedGeneration === galleryGeneration) galleryPromise = null;
+    if (!galleryPromise || Date.now() >= galleryExpires) {
+      const generation = ++galleryGeneration;
+      galleryExpires = Date.now() + 240000;
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 20000);
+      galleryPromise = api("/image-links", {}, {body: {gameId: plan.gameId, keys: galleryKeys}, signal: controller.signal})
+        .then(result => {
+          galleryExpires = Date.now() + Math.max(0, Number(result.expiresIn) - 30) * 1000;
+          return {...result, generation};
+        }).finally(() => clearTimeout(timer));
     }
+    return galleryPromise;
   }
-  function attachImage(container, assetKey, alt) {
+  const retryImages = movieButton("Retry gallery images", () => {
+    galleryPromise = null; retryImages.hidden = true; renderContent();
+  });
+  retryImages.hidden = true; header.append(retryImages);
+  async function attachImage(container, assetKey, alt) {
     if (!assetKey || !sameGameKey(assetKey) || !plan.sourceKeys.includes(assetKey)) return;
-    showLoading(container, "Waiting to load reference image…");
-    imageQueue.push(async () => {
+    // Let cast cards be inserted before checking whether their view is still active.
+    await Promise.resolve();
+    let failedGeneration;
       for (let attempt = 0; attempt < 3; attempt++) {
         if (!current() || !container.isConnected) return;
-        showLoading(container, attempt ? "Retrying reference image…" : "Fetching reference image…");
+        showLoading(container, attempt ? "Refreshing gallery access…" : "Loading gallery image…");
         try {
-          let cached = imageLinks.get(assetKey);
-          if (!cached || cached.expiresAt <= Date.now()) {
-            const file = await api("/object-url", {key:assetKey});
-            if (!file.contentType?.startsWith("image/")) throw new Error("Invalid image");
-            cached = {file, expiresAt: Date.now() + Math.max(0, Number(file.expiresIn || 300) - 30) * 1000};
-            imageLinks.set(assetKey, cached);
-          }
+          const pending = galleryLinks(failedGeneration);
+          failedGeneration = galleryGeneration;
+          const gallery = await pending;
+          const file = gallery.images[assetKey];
+          if (!file?.url) throw new Error(file?.error || "Image link unavailable");
           if (!current() || !container.isConnected) return;
           const img = movieNode("img"); img.alt = alt;
           // Start bytes now: lazy images can outlive their short-lived signed URL.
@@ -1760,23 +1772,20 @@ function drawMovieWorkspace(host, data, key, assets, current) {
               if (error) { img.removeAttribute("src"); reject(error); } else resolve();
             }
             img.onload = () => finish(); img.onerror = () => finish(new Error("Image request failed"));
-            img.src = cached.file.url;
+            img.src = file.url;
           });
           if (current() && container.isConnected) { container.replaceChildren(img); container.classList.add("has-image"); }
           return;
         } catch {
-          imageLinks.delete(assetKey);
           if (!current() || !container.isConnected) return;
-          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 600 * (attempt + 1)));
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 800));
         }
       }
       if (current() && container.isConnected) {
-        container.textContent = "Image could not load. Select this shot or reopen this view to retry.";
+        container.textContent = "Image could not load. Use Retry gallery images above.";
         container.classList.remove("has-image");
+        retryImages.hidden = false;
       }
-    });
-    // Cast cards are inserted after attachImage is called.
-    queueMicrotask(drainImages);
   }
   function renderAside() {
     aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));

@@ -430,6 +430,8 @@ export class PantherMediaExplorerStack extends Stack {
         authorizer,
       });
     }
+    mediaApi.addRoutes({ path: "/image-links", methods: [apigwv2.HttpMethod.POST],
+      integration: mediaIntegration, authorizer });
     for (const path of ["/character-model", "/character-portrait"]) mediaApi.addRoutes({
       path,
       methods: [apigwv2.HttpMethod.PUT],
@@ -544,6 +546,8 @@ export class PantherMediaExplorerStack extends Stack {
 
     new s3deploy.BucketDeployment(this, "SiteDeployment", {
       destinationBucket: siteBucket,
+      // Unversioned application URLs must revalidate rather than retain old loaders.
+      cacheControl: [s3deploy.CacheControl.noCache()],
       sources: [
         s3deploy.Source.asset(path.join(__dirname, "../../../web/media-explorer")),
         s3deploy.Source.data("cli-config.json", JSON.stringify({

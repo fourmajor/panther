@@ -698,6 +698,10 @@ def _upload(event):
 def handler(event, _context):
     route_key = event.get("routeKey", "")
     try:
+        if route_key == "POST /image-links":
+            import image_delivery
+            import sys
+            return image_delivery.handle(event, sys.modules[__name__])
         if route_key in {"GET /assets", "GET /asset-document"}:
             import asset_library
             import sys
