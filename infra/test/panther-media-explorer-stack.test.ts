@@ -174,7 +174,8 @@ test("indexed storage is consistent across readers and only permits create-only 
   const policy = Object.entries(template.findResources("AWS::IAM::Policy"))
     .find(([id]) => id.startsWith("MediaApiFunction"))![1];
   const statements = policy.Properties.PolicyDocument.Statement;
-  const uploads = statements.filter((s: any) => JSON.stringify(s.Resource).includes("/content/"));
+  const uploads = statements.filter((s: any) => [s.Action].flat().includes("s3:PutObject") && JSON.stringify(s.Resource).includes("/content/"));
+  assert.ok(statements.some((s: any) => s.Action === "s3:GetObjectVersion" && JSON.stringify(s.Resource).includes("/content/")));
   assert.equal(uploads.length, 1);
   assert.equal(uploads[0].Condition.StringEquals["s3:if-none-match"], "*");
   assert.match(JSON.stringify(uploads[0].Resource), /catalog\/assets/);
