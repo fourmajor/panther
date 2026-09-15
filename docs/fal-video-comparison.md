@@ -263,3 +263,22 @@ behavior differs from expectations; reconcile with fal before resuming. No AWS r
 Tests use synthetic data and fake provider responses only. Run `pytest -q tests/test_video.py` and
 the local regression suite; CI is not needed for this CLI-only change. Real verification uses `video
 check` only. No production key, prompt, game data or generated video is committed to Git.
+# Separately approved production allocations
+
+An optional `projectId` binds an executable video manifest to an existing audited
+`panther narration allocate` project allocation. Video consumes only its protected
+`otherHeldCents` allowance; narration retains its separate portion of the same total.
+This does not create new money, increase a cap, release historical reservations, or
+reuse the comparison allowance. Prepare, approve and submit check the game/account
+binding and cumulative reservations under the shared SQLite transaction. Unknown
+requests block both media types. Never reset the ledger or create a project alias
+to recover budget. Omitted project IDs retain the historical comparison scope.
+
+Explicit profiles `veo-3.1-fast-image-silent` and `kling-3-pro-image-silent` generate
+eight seconds without native audio, for separately narrated productions. The public
+fal model pages list $0.10/second (Veo 720p) and $0.112/second (Kling Pro), reviewed
+2026-09-15 against API base prices $0.15/$0.14. These profiles fail closed if that
+base changes; the base is not a binding settings-aware quote. Reservations include
+25% headroom. Historical audio-enabled profiles are unchanged. Production requests
+retain provider output for recovery (`X-Fal-Store-IO: 1`); references are sent to fal
+and originals remain private Panther assets. No automatic retries or fallback.

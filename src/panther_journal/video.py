@@ -33,6 +33,18 @@ QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
+    "veo-3.1-fast-image-silent": {
+        "endpoint": "fal-ai/veo3.1/fast/image-to-video",
+        "floor": "0.10", "multiplier": "1", "reviewedBase": "0.15",
+        "source": "https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video",
+        "imageField": "image_url",
+    },
+    "kling-3-pro-image-silent": {
+        "endpoint": "fal-ai/kling-video/v3/pro/image-to-video",
+        "floor": "0.112", "multiplier": "1", "reviewedBase": "0.14",
+        "source": "https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video",
+        "imageField": "start_image_url",
+    },
     "h3-max": {
         "endpoint": "minimax/h3-max/text-to-video",
         "floor": "0.08",
@@ -201,7 +213,7 @@ def effective_limit(db):
 
 
 def totals(db):
-    held = db.execute("SELECT COALESCE(SUM(reserved_cents),0) FROM attempts").fetchone()[0]
+    held = reserved_for(db, None)
     limit = effective_limit(db)
     return {
         "limitUsd": f"{limit / 100:.2f}",
@@ -210,6 +222,32 @@ def totals(db):
         "actualProviderSpendUsd": None,
         "reservationCents": held,
     }
+
+
+def reserved_for(db, project):
+    """Immutable plan scope; historical attempts can never be relabeled or erased."""
+    held = 0
+    for row in db.execute("SELECT plan_id, SUM(reserved_cents) AS held FROM attempts GROUP BY plan_id"):
+        plan, _ = read_plan(db, row["plan_id"])
+        if plan["manifest"].get("projectId") == project:
+            held += row["held"]
+    return held
+
+
+def check_budget(db, plan, amount):
+    project = plan["manifest"].get("projectId")
+    if project is None:
+        if reserved_for(db, None) + amount > effective_limit(db):
+            fail("Plan including all retries exceeds the remaining configured budget; it cannot cover this reservation.")
+        return
+    from panther_journal import narration
+    narration.schema(db)
+    allocation = narration.budget_status(db, project)
+    if (allocation["gameId"] != plan["manifest"]["gameId"]
+            or allocation["billingAccount"] != plan["billingAccount"]):
+        fail("Project allocation game or billing account mismatch.")
+    if reserved_for(db, project) + amount > allocation["otherHeldCents"]:
+        fail("Project video allowance cannot cover this reservation; narration remains protected.")
 
 
 def has_unresolved(db):
@@ -361,6 +399,12 @@ def quote(fal, model):
     # fal pricing API returns a base, not a settings-aware binding quotation. Audio can be
     # a multiplier (Kling); use the higher reviewed rate, then reserve another 25% headroom.
     rate = max(number(profile["floor"]), base * number(profile["multiplier"]))
+    if "reviewedBase" in profile:
+        # Public settings-specific rate reviewed against this exact API base. Never infer
+        # a permanent discount ratio from the API's non-settings-aware number.
+        if base != number(profile["reviewedBase"]):
+            fail("Silent profile pricing changed; review settings-specific pricing before spending.")
+        rate = number(profile["floor"])
     estimate = rate * 8
     details = {}
     if model in {"seedance-2.0", "seedance-2.0-image"}:
@@ -387,11 +431,13 @@ def validate_manifest(value):
     if (
         not isinstance(value, dict)
         or not fields <= set(value)
-        or set(value) - fields - {"characterIds"}
+        or set(value) - fields - {"characterIds", "projectId"}
         or value["schemaVersion"] != 1
     ):
         fail("Expected a version-1 video comparison manifest; see docs/fal-video-comparison.md.")
     identifier(value["gameId"])
+    if "projectId" in value:
+        identifier(value["projectId"])
     if value["sessionId"] is not None:
         identifier(value["sessionId"])
     sources = value["sourceKeys"]
@@ -430,7 +476,7 @@ def validate_manifest(value):
         seen.add(shot["id"])
         if bool(PROFILES[shot["model"]].get("imageField")) != ("image" in shot):
             fail("Image profiles require exactly one pinned image; text profiles forbid it.")
-        if "endImage" in shot and shot["model"] != "kling-3-pro-image":
+        if "endImage" in shot and shot["model"] not in {"kling-3-pro-image", "kling-3-pro-image-silent"}:
             fail("Ending frames are verified only for kling-3-pro-image; no silent fallback.")
         for name in ("image", "endImage"):
             if name not in shot:
@@ -458,11 +504,14 @@ def validate_manifest(value):
 
 def payload(shot):
     body = {"prompt": shot["prompt"], "aspect_ratio": "16:9", "generate_audio": True}
-    if shot["model"] in {"veo-3.1-fast", "veo-3.1-fast-image"}:
+    model = shot["model"].removesuffix("-silent")
+    if shot["model"].endswith("-silent"):
+        body["generate_audio"] = False
+    if model in {"veo-3.1-fast", "veo-3.1-fast-image"}:
         body.update(duration="8s", resolution="720p", auto_fix=False)
-    elif shot["model"] in {"kling-3-pro", "kling-3-pro-image"}:
+    elif model in {"kling-3-pro", "kling-3-pro-image"}:
         body.update(duration="8", shot_type="customize")
-        if shot["model"].endswith("-image"):
+        if model.endswith("-image"):
             body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.
     elif shot["model"] in {"seedance-2.0", "seedance-2.0-image"}:
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
@@ -575,8 +624,7 @@ def prepare(value, fal):
             "0" * 64,
         )
     with database() as db:
-        if totals(db)["reservationCents"] + plan["worstCaseReservationCents"] > effective_limit(db):
-            fail("Plan including all retries exceeds the remaining configured budget.")
+        check_budget(db, plan, plan["worstCaseReservationCents"])
         db.execute(
             "INSERT OR IGNORE INTO plans (id,content) VALUES (?,?)", (plan_id, canonical(plan))
         )
@@ -598,6 +646,7 @@ def read_plan(db, plan_id):
         or plan.get("profileVersion") != 1
     ):
         fail("Pinned plan changed or is incompatible. Refusing to spend.")
+    validate_manifest(plan["manifest"])
     for shot in plan["manifest"]["shots"]:
         if plan["inputs"][shot["id"]] != {
             "endpoint": PROFILES[shot["model"]]["endpoint"],
@@ -713,8 +762,7 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
                 fail("Retries require the previous attempt and an explicit reason.")
             if prior["state"] == "UNAVAILABLE":
                 fail("Unavailable results cannot be retried; inspect provider history first.")
-        if totals(db)["reservationCents"] + reserve > effective_limit(db):
-            fail("The configured total budget cannot cover this attempt.")
+        check_budget(db, plan, reserve)
         db.execute(
             "INSERT INTO attempts VALUES (?,?,?,?,?,?,?)",
             (attempt_id, plan_id, shot_id, ordinal, reserve, "SUBMITTING", canonical(content)),
@@ -730,7 +778,7 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
                 "X-Fal-No-Retry": "1",
                 "x-app-fal-disable-fallback": "true",
                 "X-Fal-Request-Timeout": "300",
-                "X-Fal-Store-IO": "0",
+                "X-Fal-Store-IO": "1" if plan["manifest"].get("projectId") else "0",
             },
         )
         request_id = result["request_id"]
@@ -1098,8 +1146,7 @@ def approve(plan_id, models_and_rights_approved, auto_topup_disabled):
         fail("Both owner declarations are required.")
     with database() as db:
         plan, _ = read_plan(db, plan_id)
-        if totals(db)["reservationCents"] + plan["worstCaseReservationCents"] > effective_limit(db):
-            fail("Plan no longer fits the remaining budget.")
+        check_budget(db, plan, plan["worstCaseReservationCents"])
         db.execute("UPDATE plans SET approved=1 WHERE id=?", (plan_id,))
     click.echo("Plan approved; no generation submitted.")
 
