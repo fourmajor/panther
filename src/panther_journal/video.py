@@ -28,6 +28,7 @@ from panther_journal.audio_storage import flush_directory, flush_file, write_jso
 ROOT = Path.home() / "Library/Application Support/Panther/video-comparison"
 LIMIT_CENTS = 5000
 EXTENDED_LIMIT_CENTS = 5100  # Explicitly owner-approved extension ceiling, never automatic.
+ZERO_OUTPUT_ERRORS = {"content_policy_violation", "no_media_generated"}
 PLATFORM = "https://api.fal.ai/v1"
 QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
@@ -247,7 +248,7 @@ def rejection_credits(db, project):
         data, evidence = json.loads(row["content"]), json.loads(audit["content"])
         scope = plan["manifest"].get("projectId")
         if (not scope or row["state"] != "FAILED"
-                or "content_policy_violation" not in data.get("providerErrorTypes", [])
+                or not ZERO_OUTPUT_ERRORS.intersection(data.get("providerErrorTypes", []))
                 or evidence.get("projectId") != scope
                 or evidence.get("planId") != row["plan_id"]
                 or evidence.get("requestId") != data.get("requestId")
@@ -276,9 +277,9 @@ def reconcile_rejection(attempt_id, fal, reason):
         plan, _ = read_plan(db, row["plan_id"])
         data = json.loads(row["content"])
         if (not plan["manifest"].get("projectId") or row["state"] != "FAILED"
-                or "content_policy_violation" not in data.get("providerErrorTypes", [])
+                or not ZERO_OUTPUT_ERRORS.intersection(data.get("providerErrorTypes", []))
                 or not data.get("requestId")):
-            fail("Only a terminal production content-policy rejection is eligible.")
+            fail("Only a terminal production content-policy or no-output rejection is eligible.")
         original = dict(row)
     if fal.billing()["account"] != plan["billingAccount"]:
         fail("Billing account changed.")

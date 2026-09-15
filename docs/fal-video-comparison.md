@@ -267,10 +267,12 @@ check` only. No production key, prompt, game data or generated video is committe
 
 Owner-authorized replacement models can use `panther video reconcile-rejection ATTEMPT
 --owner-approved --reason 'Owner replacement authorization'` only after a terminal production
-content-policy rejection has an exact, same-account, same-request, same-endpoint **zero-charge**
+content-policy rejection or explicit `no_media_generated` failure has an exact, same-account,
+same-request, same-endpoint **zero-charge**
 billing event. An additive audit credits its allowance; the original attempt and full reservation
-remain unchanged. Missing/delayed billing, positive charges, unknown outcomes, non-policy failures
-and historical comparison requests cannot receive this credit. Repetition cannot credit twice.
+remain unchanged. Missing/delayed billing, positive charges, unknown outcomes, other failure types
+and historical comparison requests cannot receive this credit. `no_media_generated` is not proof
+of censorship; preserve that distinction in reports. Repetition cannot credit twice.
 The replacement still needs its own pinned model/quote/approval and must fit the original project
 cap. This is not a generic refund/reset command or permission for automatic model fallback.
 

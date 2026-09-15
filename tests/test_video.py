@@ -98,7 +98,8 @@ def test_project_requires_existing_matching_allocation(setup):
         v.prepare(m, setup)
 
 
-def test_zero_charge_production_rejection_credit_is_audited_and_idempotent(setup, monkeypatch):
+@pytest.mark.parametrize('failure',['content_policy_violation','no_media_generated'])
+def test_zero_charge_production_rejection_credit_is_audited_and_idempotent(setup, monkeypatch, failure):
     from panther_journal import narration as n
     n.create_budget("test-film", "synthetic-game", "15", "1.50", "Synthetic approval", setup)
     m=manifest();m.update(projectId="test-film");m['shots'][0]['maxAttempts']=1
@@ -108,7 +109,7 @@ def test_zero_charge_production_rejection_credit_is_audited_and_idempotent(setup
     monkeypatch.setattr(setup,'billing_events',lambda ids:{'synthetic-request':{'endpoint':v.PROFILES['veo-3.1-fast']['endpoint'],'amount':'0'}},raising=False)
     with pytest.raises(click.ClickException,match='terminal'):
         v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
-    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':['content_policy_violation']})
+    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':[failure]})
     with v.database() as db:
         before=dict(db.execute('SELECT * FROM attempts').fetchone())
     first=v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
