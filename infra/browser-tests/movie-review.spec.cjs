@@ -4,7 +4,7 @@ const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-sta
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const key='games/test-game/assets/movie-plan/original/plan.json',frame='games/test-game/assets/frame/original/frame.svg';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{blocked=false,conflict=false,campaign=false}={}) {
+async function fixture(page,{blocked=false,conflict=false,campaign=false,crowded=false}={}) {
   const writes=[];
   const plan={schemaVersion:1,entityType:'MovieReviewPlan',gameId:'test-game',projectId:'lantern',revisionId:'draft-01',sessionId:'session-one',title:'The House Beneath the Tide',summary:'A locked gate. An impossible light. Two companions discover that the abandoned lighthouse is not as empty as it seems.',
     screenplay:'## INT. LIGHTHOUSE — NIGHT\n\nSalt water drips from the ceiling. Mira lifts her lantern.\n\n**MIRA**\n\nSomeone left the light on.\n\n<svg onload="window.attacked=true">',
@@ -17,6 +17,10 @@ async function fixture(page,{blocked=false,conflict=false,campaign=false}={}) {
     plan.sourceKeys.push(plan.narratorSampleKey);
     plan.shots[0].narration='The sea remembers every promise.';
     plan.shots[0].footagePlan='8s new motion + 7s still detail.';
+  }
+  if(crowded) {
+    plan.shots=Array.from({length:16},(_,i)=>({...plan.shots[0],id:`shot-${i}`,title:`Frame ${i}`,frameKey:`games/test-game/assets/frame-${i}/original/frame.svg`,referenceKeys:[`games/test-game/assets/frame-${i}/original/frame.svg`]}));
+    plan.sourceKeys.push(...plan.shots.map(s=>s.frameKey));
   }
   let review=null;
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-operator'}))+'.test'})));
@@ -108,4 +112,34 @@ for(const width of [1440,390]) test(`campaign storyboard has readable narration 
   expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y).toBeLessThan(100);
   await page.getByRole('button',{name:'Back to storyboard',exact:true}).click();
   await expect(card).toBeFocused();
+});
+
+for(const width of [1440,390]) test(`sixteen storyboard frames survive request bursts and expired image links at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000});
+  await fixture(page,{crowded:true});
+  let active=0,peak=0,total=0,failed=false;
+  await page.route(`${api}/object-url?**`,async route=>{
+    total++; active++; peak=Math.max(peak,active);
+    const asset=new URL(route.request().url()).searchParams.get('key');
+    await new Promise(resolve=>setTimeout(resolve,50));
+    active--;
+    if(!failed) {failed=true;return route.fulfill({status:429,headers,json:{message:'Too Many Requests'}});}
+    return route.fulfill({headers,json:{url:`https://images.example/frame.svg?attempt=${total}&key=${encodeURIComponent(asset)}`,contentType:'image/svg+xml',expiresIn:300}});
+  });
+  let badImage=false;
+  await page.route('https://images.example/**',route=>{
+    if(!badImage) {badImage=true;return route.fulfill({status:403,body:'Expired URL'});}
+    return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#596a50"/></svg>'});
+  });
+  await open(page);
+  await expect(page.locator('.movie-frame.has-image')).toHaveCount(16);
+  expect(peak).toBeLessThanOrEqual(3); expect(failed&&badImage).toBe(true);
+  expect(await page.locator('.movie-frame img').evaluateAll(imgs=>imgs.every(img=>img.complete&&img.naturalWidth>0))).toBe(true);
+  const before=total;
+  await page.getByRole('button',{name:'Inspect shot 1: Frame 0',exact:true}).click();
+  await expect(page.locator('.movie-frame.has-image')).toHaveCount(16);
+  expect(total).toBe(before);
+  await page.getByRole('button',{name:'Back to storyboard',exact:true}).click();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`image-recovery-${width}.png`)});
 });
