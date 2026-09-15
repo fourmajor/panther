@@ -102,6 +102,18 @@ only and cannot release them. A new take requires a new explicitly approved plan
 project. Poll/download failures never cause resubmission. Existing downloaded originals are never
 overwritten; interrupted metadata publication requires recovery of those bytes, not generation.
 
+Queue narration requests use `X-Fal-Store-IO: 1`: fal's standard 30-day JSON input/output
+retention makes delayed result retrieval possible. Only the approved text and stock-voice settings
+are sent; no journal files or player recordings. Do not disable response retention for this
+asynchronous workflow. Media-file retention is a separate provider setting.
+
+If a known completed request repeatedly returns HTTP 404, owner-authorized
+`panther narration reconcile-unavailable ATTEMPT --owner-approved --reason 'authorization'`
+verifies account, request completion, missing result and exact billing before recording a terminal
+lost-output state. It preserves every reservation, billed amount and original request. Unknown
+submissions, absent billing and still-running requests remain blocked. This command neither refunds
+nor retries: prepare/approve a new take only when the owner explicitly authorizes its expense.
+
 ## References
 
 - [fal v3-specific schema](https://fal.ai/models/fal-ai/elevenlabs/tts/eleven-v3/api)

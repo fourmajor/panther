@@ -320,7 +320,7 @@ def submit(pid, fal):
                 "X-Fal-No-Retry": "1",
                 "x-app-fal-disable-fallback": "true",
                 "X-Fal-Request-Timeout": "300",
-                "X-Fal-Store-IO": "0",
+                "X-Fal-Store-IO": "1",
             },
         )
         rid = result["request_id"]
@@ -342,7 +342,7 @@ def poll(aid, fal):
         row = db.execute("SELECT * FROM narration_attempts WHERE id=?", (aid,)).fetchone()
         if not row:
             v.fail("Unknown narration attempt.")
-        if row["state"] in {"COMPLETED", "FAILED"}:
+        if row["state"] in {"COMPLETED", "FAILED", "UNAVAILABLE"}:
             return summary(row)
         d = json.loads(row["content"])
     if not d.get("urls") or not d.get("requestId"):
@@ -374,6 +374,51 @@ def poll(aid, fal):
         v.fail("No audio result. Reservation retained.")
     v.media_url(result["audio"]["url"])
     return update(aid, "COMPLETED", {"result": result})
+
+
+def reconcile_unavailable(aid, fal, reason):
+    """Acknowledge a verifiably finished lost result; retain its charge and reservation."""
+    if not reason.strip() or len(reason) > 1000:
+        v.fail("Provide the owner's explicit lost-result/retry authorization.")
+    with v.database() as db:
+        row = db.execute("SELECT * FROM narration_attempts WHERE id=?", (aid,)).fetchone()
+        if not row:
+            v.fail("Unknown narration attempt.")
+        if row['state'] == 'UNAVAILABLE':
+            return summary(row)
+        if row['state'] not in {'SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS'}:
+            v.fail("Only acknowledged submissions can be reconciled; uncertainty stays blocked.")
+        old_state, old_content = row['state'], row['content']
+        data = json.loads(old_content)
+        plan, _ = read_plan(db, row['plan_id'])
+    if fal.billing()['account'] != plan['billingAccount']:
+        v.fail("Billing account changed.")
+    rid = data.get('requestId')
+    if not rid or not data.get('urls'):
+        v.fail("Missing verified request identity.")
+    status = fal.request('GET', v.queue_url(data['urls']['status'], rid, ENDPOINT, 'status'))
+    if status.get('request_id') != rid or status.get('status') != 'COMPLETED':
+        v.fail("Request is not verifiably completed.")
+    try:
+        fal.request('GET', v.queue_url(data['urls']['response'], rid, ENDPOINT, 'response'), completed_result=True)
+    except v.UnavailableResult:
+        pass
+    else:
+        v.fail("Result is available; use poll/download.")
+    billed = fal.billing_events([rid]).get(rid)
+    if not billed or billed.get('endpoint') != ENDPOINT or not v.number(billed.get('amount')).is_finite() or v.number(billed['amount']) < 0:
+        v.fail("Exact valid billing evidence required.")
+    evidence = dict(verifiedAt=int(time.time()), requestId=rid, billingEvent=billed,
+                    responseHttpStatus=404, queueStatus='COMPLETED', ownerAuthorization=reason,
+                    reservationRetained=True, outcome='output-unavailable', previousState=old_state,
+                    previousContentSha256=hashlib.sha256(old_content.encode()).hexdigest())
+    with v.database() as db:
+        current = db.execute('SELECT * FROM narration_attempts WHERE id=?', (aid,)).fetchone()
+        if current['state'] != old_state or current['content'] != old_content:
+            v.fail("Attempt changed; inspect before retrying reconciliation.")
+        data['reconciliation'] = evidence
+        db.execute("UPDATE narration_attempts SET state='UNAVAILABLE',content=? WHERE id=?", (v.canonical(data), aid))
+        return summary(db.execute('SELECT * FROM narration_attempts WHERE id=?', (aid,)).fetchone())
 
 
 def download(aid, fal):
@@ -539,6 +584,16 @@ def poll_command(attempt_id):
 @click.argument("attempt_id")
 def download_command(attempt_id):
     click.echo(json.dumps(download(attempt_id, v.Fal()), indent=2))
+
+
+@narration.command("reconcile-unavailable")
+@click.argument("attempt_id")
+@click.option("--owner-approved", is_flag=True, required=True)
+@click.option("--reason", required=True)
+def reconcile_command(attempt_id, owner_approved, reason):
+    if not owner_approved:
+        v.fail("Explicit owner approval required.")
+    click.echo(json.dumps(reconcile_unavailable(attempt_id, v.Fal(), reason), indent=2))
 
 
 @narration.command("accept-voice")
