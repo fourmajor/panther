@@ -857,3 +857,6 @@ model-viewer,
 .live-history-status { color: #b4aea0; }
 .live-lines time { color: #b4aea0; margin-right: .6rem; font-variant-numeric: tabular-nums; }
 .live-transcript .explorer-heading { flex-wrap: wrap; gap: .75rem; }
+/* In normal document flow: never cover navigation, reading, or editing controls. */
+.release-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .75rem; padding: .75rem 1rem; background: #292719; color: #f5eedc; border-bottom: 1px solid #c69d43; }
+.release-notice span { max-width: 55ch; }

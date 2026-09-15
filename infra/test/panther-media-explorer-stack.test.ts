@@ -32,6 +32,20 @@ test("gallery image links use one JWT-authorized batch route", () => {
   });
 });
 
+test("web release uploads immutable files before revalidated entry points", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::CloudFront::CachePolicy", {
+    CachePolicyConfig: Match.objectLike({ MinTTL: 0 }),
+  });
+  const deployments = template.findResources("Custom::CDKBucketDeployment");
+  const [versionedId, versioned] = Object.entries(deployments).find(([id]) => id.startsWith("VersionedSiteFiles"))!;
+  const [, entry] = Object.entries(deployments).find(([id]) => id.startsWith("SiteDeployment"))!;
+  assert.equal(versioned.Properties.Prune, false);
+  assert.equal(entry.Properties.Prune, false);
+  assert.match(versioned.Properties.SystemMetadata["cache-control"], /immutable/);
+  assert.ok(entry.DependsOn.includes(versionedId));
+});
+
 test("browsing uses retained on-demand indexes and event-driven read-only S3 indexing", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:"POST /asset-index/rebuild", AuthorizationType:"JWT"});
