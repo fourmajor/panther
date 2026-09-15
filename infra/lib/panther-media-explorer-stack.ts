@@ -26,6 +26,7 @@ import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { LiveRecordings } from "./live-recordings";
+import { AssetBrowseIndex } from "./asset-browse-index";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
@@ -287,6 +288,10 @@ export class PantherMediaExplorerStack extends Stack {
         resources: [privateAssets.arnForObjects("games/*")],
       }),
     );
+    mediaApiFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:GetObjectVersion"],
+      resources: [privateAssets.arnForObjects("games/*/content/*")],
+    }));
     mediaApiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["s3:PutObject"],
@@ -326,6 +331,8 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
+    new AssetBrowseIndex(this, "AssetBrowseIndex", { bucket: privateAssets, api: mediaApi,
+      authorizer, reader: mediaApiFunction, migrators: accessEnvironment.ASSET_MIGRATORS });
     const shares = new dynamodb.Table(this, "AssetShares", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,

@@ -18,6 +18,12 @@ to Panther's source repository.
 
 ## Start here
 
+Asset browsing uses an event-maintained metadata index, not read-time S3 scans. For an authorized
+index migration/reconciliation, use `panther assets rebuild-index --mode dry-run|apply|verify
+--report NEW_PRIVATE_JSONL` across all games; inspect dry-run before apply and verify before calling
+the rollout complete. This uses Panther authentication and never changes source files. New uploads
+and metadata revisions update the same index asynchronously. See `docs/asset-browse-index.md`.
+
 Generated narration/voice performances use the premium `panther narration` workflow with
 ElevenLabs Eleven v3 through fal. Never use Chatterbox or system TTS as a preview/fallback.
 Prepare a private version-1 manifest with gameId, projectId, purpose (audition/production),

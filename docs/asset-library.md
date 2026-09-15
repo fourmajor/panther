@@ -120,15 +120,12 @@ written back onto immutable inputs. Historical absent links are not guessed or b
 change. Large provenance belongs in a separate structured JSON document when compact upload metadata
 is insufficient. Existing editorial JSON already retains full `inputArtifacts` beyond compact metadata.
 
-`GET /assets?gameId=...&cursor=...` lists 25 objects at a time, with at most eight concurrent storage
-reads. JSON provenance parsing is capped at 2 MiB per object; larger/unreadable or foreign-game
-documents show an incomplete-provenance warning. `GET /asset-document?gameId=...&key=...` returns
-the bounded original document for the reader. Both require Cognito plus the current owner/DM
-group policy and validate the selected game. No new access grants are added.
+`GET /assets?gameId=...&section=videos&cursor=...` queries the durable browsing index, at most
+100 entries per request. Audio/Transcripts/Videos render a bounded page with an explicit Load more
+button; unrelated game assets are not scanned. See [indexed browsing](asset-browse-index.md) for
+event maintenance, all-game migration, consistency and failure recovery. Authorization is unchanged.
 
-The browser caches a game catalog only in memory and follows every page before showing output
-relationships; Refresh reloads it. A 5,000-object safety limit fails visibly rather than silently
-showing incomplete reverse links. This initial read-time scan has request costs proportional to
-game size, but no idle polling, database or always-on compute. A durable indexed relation catalog is
-a future scaling improvement. Refresh after uploads to see new outputs. Missing explicit historical
-provenance and unreadable documents can still leave output links incomplete; the UI says so.
+Complete output relationships still load the game's full metadata index, with a visible 5,000-entry
+limit. This does not read every S3 source. JSON provenance extraction is performed during indexing
+with the existing 2 MiB bound and explicit warnings. Selected document readers continue to load
+the bounded original via `/asset-document`. Refresh after uploads to see newly indexed outputs.

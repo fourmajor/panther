@@ -46,6 +46,10 @@ export class PantherFoundationStack extends Stack {
       props.applicationOrigin,
     );
     const publishedAssets = this.createAssetBucket("PublishedAssets");
+    // Native CloudFormation configuration; no notification-management custom Lambda.
+    (privateAssets.node.defaultChild as s3.CfnBucket).notificationConfiguration = {
+      eventBridgeConfiguration: { eventBridgeEnabled: true },
+    };
 
     new ssm.StringParameter(
       this,

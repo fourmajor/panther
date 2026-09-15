@@ -1415,16 +1415,16 @@ function clearLibrary() {
   if (!state.tokens) assetIndex = null;
 }
 
-async function allAssets(gameId, onProgress = () => {}) {
-  if (assetIndex?.gameId === gameId) {
+async function allAssets(gameId, onProgress = () => {}, section = "all") {
+  if (assetIndex?.gameId === gameId && assetIndex.section === section) {
     const entry = assetIndex; entry.listeners.add(onProgress); onProgress(entry.count);
     try { return await entry.promise; } finally { entry.listeners.delete(onProgress); }
   }
-  const entry = {gameId, count:0, listeners:new Set([onProgress])};
+  const entry = {gameId, section, count:0, listeners:new Set([onProgress])};
   entry.promise = (async () => {
     const assets = []; let cursor = null; const seen = new Set();
     do {
-      const page = await api("/assets", {gameId, cursor});
+      const page = await api("/assets", {gameId, cursor, section});
       if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
       assets.push(...page.assets);
       entry.count = assets.length;
@@ -1452,7 +1452,7 @@ function assetLink(asset, label) {
   return link;
 }
 
-async function loadLibrary(section, epoch) {
+async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
@@ -1463,10 +1463,14 @@ async function loadLibrary(section, epoch) {
   }
   document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
   status.hidden = false;
-  const loading = showLoading(status, "Fetching the game’s asset catalog…");
+  const loading = showLoading(status, `Fetching ${section} from the catalog…`);
   try {
-    const assets = await allAssets(gameId, count => { if (current() && count) loading.update(`Found ${count} assets · checking for more…`); });
+    // A bounded page of the selected section, never an automatic whole-game scan.
+    const page = await api("/assets", {gameId, section, cursor});
+    if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
+    const assets = [...new Map([...previousAssets, ...page.assets].map(a => [a.key, a])).values()];
     if (!current()) return;
+    list.replaceChildren();
     loading.update("Organizing recordings, transcripts and videos…");
     if (section === "videos") await loadMovies(assets, epoch);
     if (!current()) return;
@@ -1494,6 +1498,16 @@ async function loadLibrary(section, epoch) {
       kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${section === "videos" ? "Video" : asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
       const date = document.createElement("p"); date.textContent = new Date(asset.lastModified).toLocaleString();
       card.append(heading, kind, date); list.append(card);
+    }
+    if (page.cursor) {
+      const more = document.createElement("button");
+      more.type = "button"; more.className = "load-more"; more.textContent = `Load more ${section}`;
+      more.addEventListener("click", () => {
+        more.disabled = true; more.textContent = "Loading more…";
+        void loadLibrary(section, epoch, assets, page.cursor);
+      });
+      list.append(more);
+      if (!selected.length) status.textContent = `No ${section} to display in these entries. More entries are available.`;
     }
   } catch (error) {
     if (current()) status.textContent = `${error.message}. Use Refresh to retry.`;

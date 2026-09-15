@@ -37,6 +37,8 @@ def library(monkeypatch):
 
 
 def test_library_access_uses_private_configuration_not_a_builtin_identity(library, monkeypatch):
+    import browse_index
+    monkeypatch.setattr(browse_index, "page", lambda *_: {"assets": [], "cursor": None})
     monkeypatch.setenv("MODEL_PUBLISHERS", "custom-account")
     assert call(library, username="custom-account")["statusCode"] == 200
     assert call(library, username="example-operator")["statusCode"] == 403
@@ -79,8 +81,8 @@ def test_explicit_recording_raw_corrected_and_stage_links(library):
         "inputArtifacts": {"recording": {"key": recording}, "foreign": {"key": "games/other/assets/a/a.json"}},
         "payload": {"transcript": {"segments": [{"playerId": "test-player", "text": "Uncertain source"}] }},
     })
-    page = response_body(call(library))
-    indexed = {a["key"]: a for a in page["assets"]}
+    lib, media, _ = library
+    indexed = {key: lib.describe(media, "example-game", key) for key in s3.objects}
     assert indexed[recording]["sourceKeys"] == [part]
     assert indexed[recording]["recording"]["partCount"] == 1
     assert "recording" not in indexed[header]
@@ -92,15 +94,18 @@ def test_explicit_recording_raw_corrected_and_stage_links(library):
     assert not s3.signed_requests  # Catalog never issues URLs or mutations.
 
 
-def test_scope_auth_and_cursor(library):
-    _, _, s3 = library
-    for i in range(30):
-        add(s3, f"test-{i}/original/a.json", "document")
-    page = response_body(call(library))
-    assert len(page["assets"]) == 25 and page["cursor"]
-    assert response_body(call(library, cursor=page["cursor"]))["cursor"] is None
-    assert call(library, gameId="other-game", cursor=page["cursor"])["statusCode"] == 400
+def test_scope_auth_and_cursor(library, monkeypatch):
+    import browse_index
+    calls = []
+    def page(*args):
+        calls.append(args)
+        if args[2]:
+            raise ValueError("Invalid asset cursor")
+        return {"assets": [], "cursor": None}
+    monkeypatch.setattr(browse_index, "page", page)
     assert call(library, cursor="broken")["statusCode"] == 400
+    assert call(library, section="videos")["statusCode"] == 200
+    assert calls[-1] == ("example-game", "videos", None)
     assert call(library, username="outsider")["statusCode"] == 403
     assert call(library, username="example-editor")["statusCode"] == 200
     assert call(library, "/asset-document", key="games/other/assets/a/a.json")["statusCode"] == 400
@@ -120,9 +125,11 @@ def test_bad_large_and_foreign_documents_do_not_invent_lineage(library):
         assert item["sourceKeys"] == []
 
 
-def test_real_handler_routes_and_streaming_storage(broker):  # noqa: F811
+def test_real_handler_routes_and_streaming_storage(broker, monkeypatch):  # noqa: F811
     key = "games/test-game/assets/sample/original/raw.json"
     put(broker, key, json.dumps({"entityType": "PlayerTranscript", "gameId": "test-game", "segments": []}).encode(), "application/json")
+    import browse_index
+    monkeypatch.setattr(browse_index, "page", lambda *_: {"assets": [{"key": key}], "cursor": None})
     page = unpack(request(broker.media, "GET /assets", query={"gameId": "test-game"}))
     assert page["assets"][0]["key"] == key
     detail = unpack(request(broker.media, "GET /asset-document", query={"gameId": "test-game", "key": key}))

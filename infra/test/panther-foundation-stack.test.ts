@@ -14,6 +14,9 @@ test("foundation retains two encrypted and private asset buckets", () => {
   const template = Template.fromStack(stack);
 
   template.resourceCountIs("AWS::S3::Bucket", 2);
+  template.hasResourceProperties("AWS::S3::Bucket", {
+    NotificationConfiguration: { EventBridgeConfiguration: { EventBridgeEnabled: true } },
+  });
   template.allResourcesProperties("AWS::S3::Bucket", {
     BucketEncryption: {
       ServerSideEncryptionConfiguration: [
