@@ -546,6 +546,8 @@ export class PantherMediaExplorerStack extends Stack {
 
     new s3deploy.BucketDeployment(this, "SiteDeployment", {
       destinationBucket: siteBucket,
+      // Unversioned application URLs must revalidate rather than retain old loaders.
+      cacheControl: [s3deploy.CacheControl.noCache()],
       sources: [
         s3deploy.Source.asset(path.join(__dirname, "../../../web/media-explorer")),
         s3deploy.Source.data("cli-config.json", JSON.stringify({

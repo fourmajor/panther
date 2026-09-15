@@ -23,8 +23,12 @@ function mediaExplorerTemplate(): Template {
 }
 
 test("gallery image links use one JWT-authorized batch route", () => {
-  mediaExplorerTemplate().hasResourceProperties("AWS::ApiGatewayV2::Route", {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "POST /image-links", AuthorizationType: "JWT", AuthorizerId: Match.anyValue(),
+  });
+  template.hasResourceProperties("Custom::CDKBucketDeployment", {
+    SystemMetadata: Match.objectLike({"cache-control": "no-cache"}),
   });
 });
 

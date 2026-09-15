@@ -22,3 +22,6 @@ credential storage is required. Existing originals and source references are unc
 asset-format migration is necessary. `/object-url` remains for individual downloads/details,
 not the storyboard gallery. Browser tests cover full galleries, concurrent byte transfers,
 API failures, expired links and zero per-image API calls on desktop/mobile.
+Unversioned static application files use `Cache-Control: no-cache` so page reloads revalidate
+the deployed code instead of keeping an obsolete loader. This does not publish game files or
+change private image cache permissions; it only affects the static application bucket.
