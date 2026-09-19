@@ -1,5 +1,12 @@
 # Panther agent instructions
 
+Approved soundtrack revisions use `panther soundtrack`; read `docs/soundtrack-finishing.md`.
+Reconciliation closes old video/narration submissions for that project, retains their complete
+history and matches every request to billed costs before allocating a bounded soundtrack
+allowance under the unchanged cap. No ad hoc ledger changes or direct generation calls.
+Verify music, effects, ambience and character dialogue individually, not just mixed-track
+non-silence. Narration is not character dialogue; empty stems are not produced sound design.
+
 Unlisted sharing: use `panther share create KEY --confirm-public` only with explicit authorization
 to give anyone with the link access to that exact file. It returns permanent page/direct/download
 URLs. Use `panther share revoke URL` to disable sharing; issued redirects may survive five minutes,

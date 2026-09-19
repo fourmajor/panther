@@ -203,6 +203,7 @@ def read_plan(db, pid):
 
 
 def accepted_voice(db, m):
+    v.assert_generation_open(db, m['projectId'])
     if m["purpose"] == "audition":
         return
     row = db.execute(
