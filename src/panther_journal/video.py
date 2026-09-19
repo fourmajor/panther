@@ -303,6 +303,7 @@ def reconcile_rejection(attempt_id, fal, reason):
 
 def check_budget(db, plan, amount):
     project = plan["manifest"].get("projectId")
+    assert_generation_open(db, project)
     if project is None:
         if reserved_for(db, None) + amount > effective_limit(db):
             fail("Plan including all retries exceeds the remaining configured budget; it cannot cover this reservation.")
@@ -317,12 +318,20 @@ def check_budget(db, plan, amount):
         fail("Project video allowance cannot cover this reservation; narration remains protected.")
 
 
+def assert_generation_open(db, project):
+    if project and db.execute("SELECT 1 FROM sqlite_master WHERE name='soundtrack_projects'").fetchone():
+        if db.execute("SELECT 1 FROM soundtrack_projects WHERE id=?", (project,)).fetchone():
+            fail("Project generation is closed after soundtrack reconciliation; original history is retained.")
+
+
 def has_unresolved(db):
     """One shared submission lock across video and separately allocated narration."""
     if db.execute("SELECT 1 FROM attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone():
         return True
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='narration_attempts'").fetchone():
-        return bool(db.execute("SELECT 1 FROM narration_attempts WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone())
+    for table in ('narration_attempts', 'soundtrack_attempts'):
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            if db.execute(f"SELECT 1 FROM {table} WHERE state NOT IN ('COMPLETED','FAILED','UNAVAILABLE')").fetchone():
+                return True
     return False
 
 

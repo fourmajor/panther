@@ -460,6 +460,7 @@ def register(group):
     from panther_journal.capture_audit import audit_command
     from panther_journal.video import video
     from panther_journal.narration import narration
+    from panther_journal.soundtrack import soundtrack
     from panther_journal.video_production import production
     from panther_journal.live_transcript import live
     from panther_journal.speaker_profiles import enroll
@@ -474,6 +475,7 @@ def register(group):
     group.add_command(editorial)
     group.add_command(video)
     group.add_command(narration)
+    group.add_command(soundtrack)
     video.add_command(production)
     recording.add_command(sync)
     recording.add_command(playback)
