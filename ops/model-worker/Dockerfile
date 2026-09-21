@@ -1,7 +1,9 @@
 FROM node:22-bookworm
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 WORKDIR /opt/panther
 COPY infra/package.json infra/package-lock.json ./infra/
 RUN cd infra && npm ci --no-audit --no-fund && npx playwright install --with-deps chromium
+RUN chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 COPY infra/bin ./infra/bin
 COPY infra/lib ./infra/lib
 COPY infra/test ./infra/test

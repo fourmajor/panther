@@ -19,6 +19,13 @@ def test_qa_image_includes_runtime_plan_and_discovers_tests_before_jobs():
     assert "COPY src/panther_journal/editorial-plan.json" in dockerfile
     assert "!src/panther_journal/editorial-plan.json" in ignore
     assert "playwright test browser-tests/viewer.spec.cjs --list" in dockerfile
+    assert "PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers" in dockerfile
+    assert 'chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"' in dockerfile
+
+
+def test_browser_qa_runs_as_the_private_job_owner():
+    source = (Path(__file__).resolve().parents[1] / "src/panther_journal/model_workflow.py").read_text()
+    assert '"--user",\n                    f"{os.getuid()}:{os.getgid()}",' in source
 
 
 def test_subscription_environment_never_inherits_provider_or_aws_keys(monkeypatch):
