@@ -8,6 +8,9 @@ previous-critique.json. Continue from saved work in this candidate folder after 
 
 Write a self-contained build.py for the local worker to execute in native Blender. Do not run
 Blender inside Codex's sandbox: its macOS GPU initialization is incompatible with that sandbox.
+The worker may run Blender 5.0 or 5.2. Choose a render engine from the enum values available at
+runtime (for example, prefer `BLENDER_EEVEE_NEXT` when present and otherwise use
+`BLENDER_EEVEE`); do not hard-code a version-specific enum without a fallback.
 Resolve all output paths from Path(__file__).resolve().parent. Do not use Blender's // relative
 prefix for the initial save: an unsaved startup scene can resolve it to the filesystem root.
 You may use sandboxed ordinary Python for calculations and data preparation. The build.py must
