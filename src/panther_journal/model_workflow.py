@@ -410,6 +410,8 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
                     "ALL",
                     "--security-opt",
                     "no-new-privileges",
+                    "--user",
+                    f"{os.getuid()}:{os.getgid()}",
                     "--mount",
                     f"type=bind,source={folder},target=/evidence",
                     "-e",
