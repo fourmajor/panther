@@ -40,6 +40,20 @@ def test_subscription_environment_never_inherits_provider_or_aws_keys(monkeypatc
     assert not any("bypass" in value for value in base)
 
 
+def test_native_tools_use_linux_paths_and_default_docker_context(monkeypatch):
+    monkeypatch.setattr(worker.sys, "platform", "linux")
+    monkeypatch.setattr(worker.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert worker.native_blender() == Path("/usr/bin/blender")
+    assert worker.docker_base() == ["docker"]
+
+
+def test_native_tools_keep_macos_application_and_desktop_context(monkeypatch):
+    monkeypatch.setattr(worker.sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "is_file", lambda path: True)
+    assert worker.native_blender() == Path("/Applications/Blender.app/Contents/MacOS/Blender")
+    assert worker.docker_base() == ["docker", "--context", "desktop-linux"]
+
+
 def test_worker_rejects_repository_as_game_output(tmp_path):
     result = CliRunner().invoke(
         main, ["model", "worker", "--repo", str(tmp_path), "--work-dir", str(tmp_path), "--once"]

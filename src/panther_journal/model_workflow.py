@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from urllib.parse import urlparse
 
@@ -55,6 +56,26 @@ def codex_base():
     ]
 
 
+def docker_base():
+    """Use Docker Desktop's VM on macOS and the local engine elsewhere."""
+    if sys.platform == "darwin":
+        return ["docker", "--context", "desktop-linux"]
+    return ["docker"]
+
+
+def native_blender():
+    """Return the supported native Blender executable for this host."""
+    if sys.platform == "darwin":
+        blender = Path("/Applications/Blender.app/Contents/MacOS/Blender")
+        if blender.is_file():
+            return blender
+    else:
+        executable = shutil.which("blender")
+        if executable:
+            return Path(executable)
+    raise click.ClickException("Install native Blender and make its executable available to Panther.")
+
+
 def preflight(repo, qa_image="panther-model-qa:local"):
     repo = repo.resolve()
     if not (repo / ".agents/skills/panther-blender-local/SKILL.md").is_file():
@@ -68,11 +89,9 @@ def preflight(repo, qa_image="panther-model-qa:local"):
     )
     if status.returncode or "Logged in using ChatGPT" not in status.stdout + status.stderr:
         raise click.ClickException("Codex must be signed in with ChatGPT; API-key auth is refused.")
-    blender = Path("/Applications/Blender.app/Contents/MacOS/Blender")
-    if not blender.is_file():
-        raise click.ClickException("Native Blender is required at /Applications/Blender.app.")
+    blender = native_blender()
     docker = subprocess.run(
-        ["docker", "--context", "desktop-linux", "image", "inspect", qa_image],
+        [*docker_base(), "image", "inspect", qa_image],
         capture_output=True,
         timeout=20,
     )
@@ -375,9 +394,7 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
             # Private asset stays out of GitHub. The same owned Docker Playwright gate is used.
             code = run_process(
                 [
-                    "docker",
-                    "--context",
-                    "desktop-linux",
+                    *docker_base(),
                     "run",
                     "--rm",
                     "--init",
@@ -552,11 +569,11 @@ def jobs(job_id):
 @click.option(
     "--allow-unsandboxed-blender",
     is_flag=True,
-    help="Explicitly authorize generated Blender scripts to run with your macOS user's file access.",
+    help="Explicitly authorize generated Blender scripts to run with your user's file access.",
 )
 def worker(repo, work_dir, once, qa_image, allow_unsandboxed_blender):
     """Poll Panther while awake; keep private work/checkpoints outside Git."""
-    import fcntl  # Local Blender worker is macOS-only; ordinary Panther CLI remains portable.
+    import fcntl  # Local Blender workers run on supported Unix hosts; the CLI remains portable.
 
     repo, root = repo.resolve(), work_dir.resolve()
     if root == repo or repo in root.parents or root == Path.home() or root == Path("/"):
