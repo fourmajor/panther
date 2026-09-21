@@ -156,7 +156,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     const area = await viewer.boundingBox();
     await page.mouse.move(area.x + area.width * .6, area.y + area.height * .5);
     await page.mouse.down();
-    await page.mouse.move(area.x + area.width * .3, area.y + area.height * .5, { steps: 20 });
+    // One movement is enough to prove rotation. Many interpolated moves can starve the
+    // Playwright event loop when the isolated Linux runner uses software WebGL.
+    await page.mouse.move(area.x + area.width * .3, area.y + area.height * .5);
     await page.mouse.up();
     await expect.poll(() => viewer.evaluate(el => el.getCameraOrbit().theta)).not.toBeCloseTo(initial, 1);
     await testInfo.attach('rotated-model', { body: await viewer.screenshot(), contentType: 'image/png' });
