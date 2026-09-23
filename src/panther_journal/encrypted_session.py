@@ -6,7 +6,6 @@ portable. A restored worker on a different host must sign in again.
 
 from __future__ import annotations
 
-import fcntl
 import os
 import stat
 import subprocess
@@ -91,6 +90,8 @@ class EncryptedSessionStore:
 
     @contextmanager
     def refresh_lock(self):
+        import fcntl
+
         self._private_directory(True)
         lock_path = self.path.with_name(self.path.name + ".lock")
         descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
