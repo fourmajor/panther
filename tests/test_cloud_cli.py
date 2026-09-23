@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 import time
 from types import SimpleNamespace
 
@@ -9,6 +10,7 @@ import click
 from click.testing import CliRunner
 
 from panther_journal import cloud
+from panther_journal.encrypted_session import EncryptedSessionStore
 from panther_journal.cli import main
 
 
@@ -257,6 +259,50 @@ def test_plaintext_keyring_is_rejected(monkeypatch):
     result = CliRunner().invoke(main, ["login", "--username", "example-editor"])
     assert result.exit_code != 0
     assert "will not save tokens in plaintext" in result.output
+
+
+def test_worker_selects_encrypted_session_without_touching_login_keyring(monkeypatch, tmp_path):
+    monkeypatch.setenv("PANTHER_SESSION_CREDENTIAL_FILE", str(tmp_path / "session.cred"))
+    monkeypatch.setattr(cloud.keyring, "get_keyring", lambda: pytest.fail("login keyring accessed"))
+    assert isinstance(cloud.credential_store(), EncryptedSessionStore)
+
+
+def test_encrypted_session_rotates_without_plaintext_on_disk(monkeypatch, tmp_path):
+    import subprocess
+
+    private_dir = tmp_path / "panther"
+    private_dir.mkdir(mode=0o700)
+    store = EncryptedSessionStore(str(private_dir / "session.cred"))
+
+    def fake_creds(args, *, input=None, check=None, capture_output=None):
+        if args[1] == "encrypt":
+            with open(args[-1], "wb") as encrypted:
+                encrypted.write(b"encrypted:" + input[::-1])
+            return subprocess.CompletedProcess(args, 0)
+        assert args[1] == "decrypt"
+        with open(args[-2], "rb") as encrypted:
+            value = encrypted.read()
+        return subprocess.CompletedProcess(args, 0, stdout=value[len(b"encrypted:"):][::-1])
+
+    monkeypatch.setattr("panther_journal.encrypted_session.subprocess.run", fake_creds)
+    assert store.get_password("panther.place/cli", "session") is None
+    store.set_password("panther.place/cli", "session", "token-one")
+    assert store.path.read_bytes() != b"token-one"
+    assert os.stat(store.path).st_mode & 0o077 == 0
+    assert store.get_password("panther.place/cli", "session") == "token-one"
+    store.set_password("panther.place/cli", "session", "token-two")
+    assert store.get_password("panther.place/cli", "session") == "token-two"
+    assert b"token-two" not in store.path.read_bytes()
+    store.delete_password("panther.place/cli", "session")
+    assert not store.path.exists()
+
+
+def test_encrypted_session_rejects_shared_directory(tmp_path):
+    shared_dir = tmp_path / "shared"
+    shared_dir.mkdir(mode=0o755)
+    store = EncryptedSessionStore(str(shared_dir / "session.cred"))
+    with pytest.raises(Exception, match="private"):
+        store.set_password("panther.place/cli", "session", "synthetic")
 
 
 def test_api_accepts_created_but_not_pending_or_redirect(setup, monkeypatch):

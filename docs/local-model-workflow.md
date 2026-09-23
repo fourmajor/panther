@@ -93,6 +93,25 @@ OpenAI still performs inference remotely under the user's subscription. The CLI/
 user reauthentication when that login expires. Subscription capacity is shared with other work.
 No reset redemption, credit purchase, other provider, or API-key fallback is authorized.
 
+### Unattended Linux workers
+
+On an Ubuntu host with systemd 259 or newer, set
+`PANTHER_SESSION_CREDENTIAL_FILE` to an absolute path in a user-owned directory
+with mode `0700`, such as `/home/stu/.local/share/panther/session.cred`. Run
+`panther login` once with that environment variable set. Panther stores the
+session in a systemd user-scoped, host-key-encrypted file with mode `0600`.
+Workers using the same setting can read and atomically replace the encrypted
+session when Cognito rotates its refresh token. A private file lock prevents
+two workers from refreshing the same token concurrently. No GUI keyring unlock
+is needed after boot. The normal OS keyring remains the default for interactive
+CLI use when the variable is absent.
+
+Back up the ciphertext, not a decrypted token. The host encryption key is not
+portable, so a replacement host or rebuilt system requires a new Panther login.
+Do not copy the encryption key into Git or a general backup. Keep the worker
+environment variable in the user systemd units, and verify authentication
+after each deployment and after any approved reboot.
+
 ### Install the macOS background worker
 
 After merging, deploying, and verifying CLI authentication, use clean `main` matching fetched
