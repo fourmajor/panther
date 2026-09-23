@@ -182,7 +182,6 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     expect(errors).toEqual([]);
     await page.locator('#model-version').selectOption('games/test-game/assets/model-older/original/model.glb');
     await expect(page).toHaveURL(/model=games%2Ftest-game%2Fassets%2Fmodel-older/);
-    await page.locator('#model-load').click();
     await expect.poll(() => viewer.evaluate(el => el.src), { timeout: 30000 }).toMatch(/model-older\.glb$/);
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
     broken = true; version = 3;

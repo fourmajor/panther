@@ -603,7 +603,7 @@ function configureCharacter(profile) {
   configureModelView(model, poster, character.name);
 }
 
-function configureModelView(model, poster, name) {
+function configureModelView(model, poster, name, keepActive = false) {
   state.selectedModelKey = model.key || null;
   elements.characterPoster.src = poster.url;
   elements.characterPoster.alt = `Portrait of ${name}`;
@@ -614,14 +614,14 @@ function configureModelView(model, poster, name) {
   elements.characterModel.fieldOfView = model.fieldOfView;
   elements.characterModel.dataset.defaultCameraOrbit = model.cameraOrbit;
   elements.characterModel.dataset.defaultFieldOfView = model.fieldOfView;
-  elements.characterModel.removeAttribute("src");
-  if (typeof elements.characterModel.showPoster === "function") {
-    elements.characterModel.showPoster();
+  if (!keepActive) {
+    elements.characterModel.removeAttribute("src");
+    if (typeof elements.characterModel.showPoster === "function") elements.characterModel.showPoster();
   }
   elements.characterModel.hidden = false;
   elements.modelFallback.hidden = true;
-  elements.modelLoad.disabled = false;
-  elements.modelLoad.textContent = "Explore 3D model";
+  elements.modelLoad.disabled = keepActive;
+  elements.modelLoad.textContent = keepActive ? "Loading…" : "Explore 3D model";
   elements.modelReset.disabled = true;
   setModelControls(false);
   elements.modelProgressBar.style.transform = "scaleX(0)";
@@ -630,7 +630,7 @@ function configureModelView(model, poster, name) {
     model.sourceRetained && model.provenanceRetained
       ? "Original and provenance retained"
       : "Web representation";
-  elements.modelStatus.textContent = "Portrait ready. Load the model when you want it.";
+  elements.modelStatus.textContent = keepActive ? "Loading the selected model…" : "Portrait ready. Load the model when you want it.";
 }
 
 function versionLabel(entry, index, total) {
@@ -687,10 +687,12 @@ function showSelectedModel() {
   document.getElementById("character-model-area").hidden = false;
   document.getElementById("character-no-model").hidden = true;
   document.getElementById("character-portrait-only").hidden = true;
-  configureModelView(selected, poster, elements.characterName.textContent);
+  const wasActive = elements.characterModel.loaded && !elements.characterModel.hidden;
+  configureModelView(selected, poster, elements.characterName.textContent, wasActive);
   const url = new URL(location.href);
   if (selected.current) url.searchParams.delete("model"); else url.searchParams.set("model", selected.key);
   history.replaceState(null, "", url);
+  if (wasActive) void loadCharacterModel();
 }
 
 async function loadCharacter(gameId, characterId) {

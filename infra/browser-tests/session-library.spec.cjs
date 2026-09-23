@@ -145,7 +145,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('#preview-body')).toContainText('Recording status: interrupted');
   await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Original transcript');
   await expect(page.locator('audio')).toHaveAttribute('controls','');
-  await expect(page.locator('#preview-body [role="status"]')).toContainText('Continuous playback');
+  await expect(page.locator('#preview-body p[role="status"]', {hasText:'Continuous playback'})).toBeVisible();
   await expect(page.getByRole('button',{name:'Jump to part 2',exact:false})).toBeEnabled();
   const playerBox=await page.locator('audio').boundingBox();
   expect(playerBox.x).toBeGreaterThanOrEqual(0);
