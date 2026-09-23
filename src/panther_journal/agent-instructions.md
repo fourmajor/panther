@@ -479,8 +479,10 @@ new turnaround references or authorize model generation. Visually inspect the im
 Publishing is limited to privately configured publisher accounts. It changes only the model selection
 and publication audit fields, preserves the existing portrait and other character information,
 and resets the viewer to its standard front view. A failed concurrent write may retain an unused
-history snapshot; it must never overwrite a newer profile. This is basic safe model replacement,
-not the full appearance timeline or official portrait/model versioning proposed in issue #37.
+history snapshot; it must never overwrite a newer profile. The character page now shows the
+profile-backed sequence of official portrait and model selections. Named appearance states,
+parallel magical variants, and automatic choice of the right appearance for a session remain
+separate future work; a model upload alone does not make it official.
 
 ## Kinds and categories
 
