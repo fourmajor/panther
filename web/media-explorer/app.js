@@ -774,7 +774,6 @@ async function loadCharacterModel() {
     ]);
     if (epoch !== routeEpoch) return;
     elements.characterModel.src = selected.url;
-    elements.characterModel.dismissPoster();
     showLoading(elements.modelStatus, "Downloading the 3D model…");
   } catch (error) {
     if (epoch !== routeEpoch) return;
