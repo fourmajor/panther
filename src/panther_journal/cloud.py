@@ -6,9 +6,11 @@ import base64
 import hashlib
 import json
 import mimetypes
+import os
 import re
 import time
 import uuid
+from contextlib import nullcontext
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,6 +19,7 @@ import boto3
 import click
 import keyring
 import requests
+from panther_journal.encrypted_session import EncryptedSessionStore
 from botocore import UNSIGNED
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
@@ -28,6 +31,9 @@ MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 
 def credential_store():
+    encrypted_file = os.environ.get("PANTHER_SESSION_CREDENTIAL_FILE")
+    if encrypted_file:
+        return EncryptedSessionStore(encrypted_file)
     backend = keyring.get_keyring()
     candidates = getattr(backend, "backends", [backend])
     approved = {
@@ -106,19 +112,22 @@ def remember(result, username, config, refresh_token=None):
 
 
 def token(config):
-    session = saved_session()
-    if not session or session.get("clientId") != config["clientId"]:
-        raise click.ClickException("Sign in first: panther login --username YOUR_USERNAME")
-    if session["expiresAt"] <= time.time() + 60:
-        try:
-            result = cognito(config).get_tokens_from_refresh_token(
-                ClientId=config["clientId"],
-                RefreshToken=session["refreshToken"],
-            )["AuthenticationResult"]
-            session = remember(result, session["username"], config, session["refreshToken"])
-        except (BotoCoreError, ClientError, KeyError):
-            raise click.ClickException("Your session expired. Run panther login again.")
-    return session["idToken"]
+    store = credential_store()
+    lock = store.refresh_lock() if isinstance(store, EncryptedSessionStore) else nullcontext()
+    with lock:
+        session = saved_session()
+        if not session or session.get("clientId") != config["clientId"]:
+            raise click.ClickException("Sign in first: panther login --username YOUR_USERNAME")
+        if session["expiresAt"] <= time.time() + 60:
+            try:
+                result = cognito(config).get_tokens_from_refresh_token(
+                    ClientId=config["clientId"],
+                    RefreshToken=session["refreshToken"],
+                )["AuthenticationResult"]
+                session = remember(result, session["username"], config, session["refreshToken"])
+            except (BotoCoreError, ClientError, KeyError):
+                raise click.ClickException("Your session expired. Run panther login again.")
+        return session["idToken"]
 
 
 def api(config, method, route, **kwargs):
