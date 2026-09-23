@@ -55,6 +55,7 @@ def validate(body):
     if not isinstance(details.get("extra"), dict):
         raise ValueError("Explicit extra metadata required")
     asset_metadata.validate_generation(details["extra"].get("generation"))
+    asset_metadata.validate_version(details["extra"].get("version"), key)
     if details["extra"].get("relationshipRole") not in {"finished", "intermediate"}:
         raise ValueError("Explicit finished/intermediate relationshipRole required")
     if (asset_metadata.internal(body["kind"]) and not (body["kind"] == "recording-manifest" and key.endswith("/recording.json"))

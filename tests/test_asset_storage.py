@@ -34,7 +34,8 @@ def metadata(**extra):
     return {"schemaVersion": 1, "title": "Synthetic fixture", "category": "reference",
             "characterIds": [], "tags": [], "sourceKeys": [],
             "extra": {"relationshipRole": "finished", "generation": {
-                "schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}}}, **extra}
+                "schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}},
+                "version": {"schemaVersion": 1, "seriesId": "source-v1", "number": 1}}, **extra}
 
 
 REF = "games/example/assets/source-v1/original/source.flac"

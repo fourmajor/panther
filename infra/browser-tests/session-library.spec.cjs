@@ -97,6 +97,24 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   await expect(page.locator('.session-card')).toHaveCount(1);
 });
 
+test('an asset preview links its immutable earlier and later versions', async ({page}) => {
+  await fixture(page);
+  const earlier = prefix + 'video-earlier/original/take.mp4';
+  const series = 'synthetic-film-series';
+  const pair = [
+    {...assets.find(asset => asset.key === video), metadata: {title:'Newer cut', extra:{version:{schemaVersion:1,seriesId:series,number:2,previousKey:earlier}}}},
+    {key:earlier, name:'take.mp4', kind:'video-comparison', contentType:'video/mp4', size:100,
+      lastModified:'2025-12-31T12:00:00Z', sourceKeys:[], metadata:{title:'Earlier cut', extra:{version:{schemaVersion:1,seriesId:series,number:1}}}},
+  ];
+  await page.route(`${api}/assets?**`, route => route.fulfill({headers,json:{assets:pair,cursor:null}}));
+  await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(video)}`);
+  const history = page.locator('#asset-versions');
+  await expect(history.getByRole('link',{name:'Version 1 · Earlier cut'})).toBeVisible();
+  await expect(history.getByRole('link',{name:'Version 2 · Newer cut'})).toBeVisible();
+  await history.getByRole('link',{name:'Version 1 · Earlier cut'}).click();
+  await expect(page.locator('#preview-title')).toHaveText('Version 1 · Earlier cut');
+});
+
 test('failed catalog removes activity and offers recovery', async ({page}) => {
   await fixture(page);
   await page.route(`${api}/assets?**`,route=>route.fulfill({status:503,json:{error:'Temporarily unavailable'},headers}));
@@ -145,7 +163,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('#preview-body')).toContainText('Recording status: interrupted');
   await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Original transcript');
   await expect(page.locator('audio')).toHaveAttribute('controls','');
-  await expect(page.locator('#preview-body [role="status"]')).toContainText('Continuous playback');
+  await expect(page.locator('#preview-body p[role="status"]', {hasText:'Continuous playback'})).toBeVisible();
   await expect(page.getByRole('button',{name:'Jump to part 2',exact:false})).toBeEnabled();
   const playerBox=await page.locator('audio').boundingBox();
   expect(playerBox.x).toBeGreaterThanOrEqual(0);

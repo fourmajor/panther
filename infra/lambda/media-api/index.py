@@ -192,7 +192,7 @@ def _character(event):
         if not poster_metadata:
             return _response(422, {"error": "Character portrait is unavailable"})
         return _response(200, {"character": {**summary, "summary": description}, "model": None,
-                               "poster": {**poster_metadata, "url": _signed_asset(poster_key)}})
+                               "poster": {**poster_metadata, "key": poster_key, "url": _signed_asset(poster_key)}})
     if not all(
         isinstance(key, str) and key.startswith(game_prefix) for key in (web_key, poster_key)
     ):
@@ -223,6 +223,7 @@ def _character(event):
             "character": {**summary, "summary": description},
             "model": {
                 **model_metadata,
+                "key": web_key,
                 "url": _signed_asset(web_key),
                 "expiresIn": SIGNED_URL_TTL_SECONDS,
                 "cameraOrbit": camera_orbit,
@@ -230,9 +231,82 @@ def _character(event):
                 "sourceRetained": bool(model.get("sourceKey")),
                 "provenanceRetained": bool(model.get("provenanceKey")),
             },
-            "poster": {**poster_metadata, "url": _signed_asset(poster_key)},
+            "poster": {**poster_metadata, "key": poster_key, "url": _signed_asset(poster_key)},
         },
     )
+
+
+def _character_versions(event):
+    """Published appearance selections, including superseded profile snapshots.
+
+    These are semantic selections of immutable assets, not S3 metadata revisions.
+    A character's small history prefix is the authoritative audit trail.
+    """
+    game_id, character_id = _query(event, "gameId"), _query(event, "characterId")
+    if not _valid_slug(game_id) or not _valid_slug(character_id):
+        return _response(400, {"error": "Invalid character identifier"})
+    base = f"games/{game_id}/characters/{character_id}/"
+    current = _get_json(base + "profile.json")
+    if not _character_summary(current, game_id=game_id, character_id=character_id):
+        return _response(404, {"error": "Character not found"})
+    snapshots = []
+    paginator = raw_s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET_NAME, Prefix=base + "history/"):
+        for item in page.get("Contents", []):
+            if not re.fullmatch(re.escape(base) + r"history/[a-f0-9]{64}\.json", item["Key"]):
+                continue
+            profile = _get_json(item["Key"])
+            if _character_summary(profile, game_id=game_id, character_id=character_id):
+                snapshots.append((item.get("LastModified"), profile))
+            if len(snapshots) > 500:
+                return _response(422, {"error": "Character appearance history exceeds the supported limit"})
+    def selection_time(entry):
+        times = []
+        for field in ("modelPublication", "portraitPublication"):
+            value = (entry[1].get(field) or {}).get("publishedAt")
+            if isinstance(value, str):
+                try:
+                    times.append(datetime.fromisoformat(value))
+                except ValueError:
+                    pass
+        return max(times) if times else entry[0] or datetime.min.replace(tzinfo=timezone.utc)
+    snapshots.sort(key=selection_time)
+    snapshots.append((None, current))
+    output = {"model": [], "portrait": []}
+    seen = {"model": set(), "portrait": set()}
+    for _, profile in snapshots:
+        model = profile.get("model") if isinstance(profile.get("model"), dict) else {}
+        for kind, key_name, limit, types, publication in (
+            ("model", "webKey", MAX_MODEL_BYTES, {"model/gltf-binary", "application/octet-stream"}, "modelPublication"),
+            ("portrait", "posterKey", MAX_POSTER_BYTES, {"image/avif", "image/jpeg", "image/png", "image/webp"}, "portraitPublication"),
+        ):
+            key = model.get(key_name)
+            if not isinstance(key, str) or not key.startswith(f"games/{game_id}/assets/"):
+                continue
+            if key in seen[kind]:
+                if kind == "model":
+                    next(item for item in output[kind] if item["key"] == key)["posterKey"] = model.get("posterKey")
+                continue
+            seen[kind].add(key)
+            metadata = _asset_metadata(key, maximum=limit, expected_types=types)
+            publication_info = profile.get(publication) if isinstance(profile.get(publication), dict) else {}
+            current_model = current.get("model") if isinstance(current.get("model"), dict) else {}
+            entry = {"key": key, "available": bool(metadata),
+                     "selectedAt": publication_info.get("publishedAt"),
+                     "reason": _text(publication_info.get("reason"), maximum=500),
+                     "current": key == current_model.get(key_name)}
+            if metadata:
+                entry.update(metadata)
+                entry["url"] = _signed_asset(key)
+            if kind == "model":
+                default_view = model.get("defaultView") if isinstance(model.get("defaultView"), dict) else {}
+                entry["cameraOrbit"] = _text(default_view.get("cameraOrbit"), maximum=80) or "0deg 75deg auto"
+                entry["fieldOfView"] = _text(default_view.get("fieldOfView"), maximum=40) or "30deg"
+                entry["posterKey"] = model.get("posterKey")
+            output[kind].append(entry)
+    return _response(200, {"gameId": game_id, "characterId": character_id,
+                           "models": list(reversed(output["model"])),
+                           "portraits": list(reversed(output["portrait"]))})
 
 
 def _list_objects(event):
@@ -631,9 +705,29 @@ def _upload(event):
     if "extra" in metadata and not isinstance(metadata["extra"], dict):
         return _response(400, {"error": "Metadata extra must be an object"})
     import asset_metadata
-    metadata = asset_metadata.defaults(kind, metadata, filename, content_type)
+    reference = f"games/{game}/assets/{asset}/original/{filename}"
+    requested_version = (metadata.get("extra") or {}).get("version")
+    if requested_version is not None:
+        if not isinstance(requested_version, dict) or set(requested_version) != {"previousKey"}:
+            return _response(400, {"error": "For a new version, provide only extra.version.previousKey"})
+        previous_key = requested_version["previousKey"]
+        if (not _valid_key(previous_key) or not previous_key.startswith(f"games/{game}/assets/")
+                or previous_key == reference):
+            return _response(400, {"error": "Previous version must be another asset in this game"})
+        try:
+            previous = s3.head_object(Bucket=BUCKET_NAME, Key=previous_key)
+            old_metadata = json.loads(base64.b64decode(previous.get("Metadata", {}).get("panther", ""), validate=True))
+            old_version = asset_metadata.validate_version(old_metadata["extra"]["version"], previous_key)
+            if previous.get("Metadata", {}).get("kind") != kind:
+                return _response(400, {"error": "A version must keep the same asset kind"})
+            metadata["extra"]["version"] = {"schemaVersion": 1, "seriesId": old_version["seriesId"],
+                                               "number": old_version["number"] + 1, "previousKey": previous_key}
+        except (ClientError, ValueError, KeyError, TypeError, binascii.Error):
+            return _response(422, {"error": "Previous asset has no valid version record; migrate it first"})
+    metadata = asset_metadata.defaults(kind, metadata, filename, content_type, reference)
     try:
         asset_metadata.validate_generation(metadata["extra"]["generation"])
+        asset_metadata.validate_version(metadata["extra"]["version"], reference)
     except ValueError as error:
         return _response(400, {"error": str(error)})
     if metadata["extra"]["relationshipRole"] not in {"finished", "intermediate"}:
@@ -708,6 +802,8 @@ def handler(event, _context):
             return asset_library.handle(event, sys.modules[__name__])
         if route_key == "GET /character-profile":
             return _character_profile(event)
+        if route_key == "GET /character-versions":
+            return _character_versions(event)
         if route_key == "PUT /character-model":
             return _publish_model(event)
         if route_key == "PUT /character-portrait":

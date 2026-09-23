@@ -290,6 +290,7 @@ for (const width of [1280,390]) test(`typed narrative links and character appear
   await expect(page).toHaveURL(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-name')).toHaveText('Mira Vale');
   const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
+  await appearance.scrollIntoViewIfNeeded();
   await accessibleInViewport(appearance,width);
   await page.screenshot({path:test.info().outputPath(`character-assets-${width}.png`),fullPage:true});
   await appearance.click(); await expect(page.locator('#preview-body img')).toBeVisible();

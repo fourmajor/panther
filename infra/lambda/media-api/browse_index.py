@@ -175,6 +175,11 @@ def rebuild_handler(event, _context):
                     return {"key": ref, "status": "unpublished-reservation"}
                 raise
             if mode == "verify":
+                import asset_metadata
+                try:
+                    asset_metadata.validate_version(asset.get("metadata", {}).get("extra", {}).get("version"), ref)
+                except ValueError:
+                    return {"key": ref, "status": "mismatch", "reason": "Missing or invalid semantic asset version"}
                 for section in SECTIONS:
                     item = table().get_item(Key={"pk": partition(game, section), "sk": ref}, ConsistentRead=True).get("Item")
                     if (section in sections(asset)) != bool(item) or item and json.loads(item["payload"]) != asset:

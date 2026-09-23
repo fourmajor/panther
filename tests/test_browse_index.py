@@ -31,7 +31,8 @@ def index(monkeypatch):
 def asset(i=1, kind="video-comparison", mime="video/mp4"):
     key = f"games/example/assets/take-{i}/original/take.mp4"
     return {"key": key, "name": "take.mp4", "contentType": mime, "kind": kind,
-            "metadata": {}, "sourceKeys": [], "lastModified": "2026-01-01", "size": 1}
+            "metadata": {"extra": {"version": {"schemaVersion": 1, "seriesId": f"take-{i}", "number": 1}}},
+            "sourceKeys": [], "lastModified": "2026-01-01", "size": 1}
 
 
 def test_indexed_query_has_no_source_reads_and_scoped_pages(index, monkeypatch):

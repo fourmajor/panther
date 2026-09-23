@@ -81,6 +81,7 @@ const state = {
   charactersLoaded: false,
   currentPrefix: "games/",
   currentCharacter: null,
+  appearanceVersions: null,
   mediaLoaded: false,
   nextCursor: null,
   tokens: readTokens(),
@@ -574,6 +575,13 @@ function showModelFallback(message) {
   elements.modelFallbackMessage.textContent = message;
   elements.modelStatus.textContent = message;
   elements.modelReset.disabled = true;
+  setModelControls(false);
+}
+
+function setModelControls(enabled) {
+  for (const id of ["model-pan-up", "model-pan-left", "model-pan-down", "model-pan-right", "model-zoom-in", "model-zoom-out"]) {
+    document.getElementById(id).disabled = !enabled;
+  }
 }
 
 function configureCharacter(profile) {
@@ -591,37 +599,107 @@ function configureCharacter(profile) {
     ? "Portrait ready. No 3D model has been published yet."
     : "No portrait or 3D model has been added yet.";
   if (!model && poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
-  if (!model) { state.currentCharacter = null; return; }
+  if (!model) return;
+  configureModelView(model, poster, character.name);
+}
+
+function configureModelView(model, poster, name, keepActive = false) {
+  state.selectedModelKey = model.key || null;
   elements.characterPoster.src = poster.url;
-  elements.characterPoster.alt = `Portrait of ${character.name}`;
+  elements.characterPoster.alt = `Portrait of ${name}`;
   elements.fallbackPoster.src = poster.url;
-  elements.fallbackPoster.alt = `Portrait of ${character.name}`;
-  elements.characterModel.alt = `Interactive 3D model of ${character.name}`;
+  elements.fallbackPoster.alt = `Portrait of ${name}`;
+  elements.characterModel.alt = `Interactive 3D model of ${name}`;
   elements.characterModel.cameraOrbit = model.cameraOrbit;
   elements.characterModel.fieldOfView = model.fieldOfView;
   elements.characterModel.dataset.defaultCameraOrbit = model.cameraOrbit;
   elements.characterModel.dataset.defaultFieldOfView = model.fieldOfView;
-  elements.characterModel.removeAttribute("src");
-  if (typeof elements.characterModel.showPoster === "function") {
-    elements.characterModel.showPoster();
+  if (!keepActive) {
+    elements.characterModel.removeAttribute("src");
+    if (typeof elements.characterModel.showPoster === "function") elements.characterModel.showPoster();
   }
   elements.characterModel.hidden = false;
   elements.modelFallback.hidden = true;
-  elements.modelLoad.disabled = false;
-  elements.modelLoad.textContent = "Explore 3D model";
+  elements.modelLoad.disabled = keepActive;
+  elements.modelLoad.textContent = keepActive ? "Loading…" : "Explore 3D model";
   elements.modelReset.disabled = true;
+  setModelControls(false);
   elements.modelProgressBar.style.transform = "scaleX(0)";
   elements.modelSize.textContent = `${formatBytes(model.size)} · limit ${formatBytes(5 * 1024 * 1024)}`;
   elements.modelSource.textContent =
     model.sourceRetained && model.provenanceRetained
       ? "Original and provenance retained"
       : "Web representation";
-  elements.modelStatus.textContent = "Portrait ready. Load the model when you want it.";
+  elements.modelStatus.textContent = keepActive ? "Loading the selected model…" : "Portrait ready. Load the model when you want it.";
+}
+
+function versionLabel(entry, index, total) {
+  const label = entry.current ? "Current" : `Earlier version ${total - index}`;
+  const date = entry.selectedAt && !Number.isNaN(Date.parse(entry.selectedAt))
+    ? ` · ${new Date(entry.selectedAt).toLocaleDateString()}` : "";
+  return `${label}${date}${entry.available ? "" : " · unavailable"}`;
+}
+
+async function loadAppearanceVersions(gameId, characterId, epoch) {
+  const status = document.getElementById("appearance-status");
+  const modelSelect = document.getElementById("model-version");
+  const portraitSelect = document.getElementById("portrait-version");
+  const host = document.getElementById("appearance-history");
+  host.hidden = false;
+  showLoading(status, "Finding published portrait and model versions…");
+  try {
+    const versions = await api("/character-versions", { gameId, characterId });
+    if (epoch !== routeEpoch) return;
+    state.appearanceVersions = versions;
+    for (const [select, entries] of [[modelSelect, versions.models], [portraitSelect, versions.portraits]]) {
+      select.replaceChildren();
+      if (!entries.length) { select.add(new Option("None published", "")); select.disabled = true; continue; }
+      entries.forEach((entry, index) => select.add(new Option(versionLabel(entry, index, entries.length), entry.key)));
+      select.value = entries.find(entry => entry.current)?.key || entries[0].key;
+      select.disabled = entries.length < 2;
+    }
+    status.textContent = `Keeping ${versions.models.length} model ${versions.models.length === 1 ? "version" : "versions"} and ${versions.portraits.length} portrait ${versions.portraits.length === 1 ? "version" : "versions"}. Select an earlier one to compare.`;
+    showSelectedPortrait();
+    const requested = new URLSearchParams(location.search).get("model");
+    if (requested && versions.models.some(entry => entry.key === requested && entry.available)) {
+      modelSelect.value = requested;
+      showSelectedModel();
+    }
+  } catch (error) {
+    if (epoch === routeEpoch) status.textContent = `Appearance history unavailable: ${error.message}. Refresh to retry.`;
+  }
+}
+
+function showSelectedPortrait() {
+  const selected = state.appearanceVersions?.portraits.find(entry => entry.key === document.getElementById("portrait-version").value);
+  const preview = document.getElementById("portrait-version-preview");
+  preview.hidden = !selected?.available;
+  if (selected?.available) { preview.src = selected.url; preview.alt = `Selected portrait version of ${elements.characterName.textContent}`; }
+  else preview.removeAttribute("src");
+}
+
+function showSelectedModel() {
+  const selected = state.appearanceVersions?.models.find(entry => entry.key === document.getElementById("model-version").value);
+  if (!selected?.available) return;
+  const poster = state.appearanceVersions.portraits.find(entry => entry.key === selected.posterKey && entry.available)
+    || state.appearanceVersions.portraits.find(entry => entry.current && entry.available);
+  if (!poster) return;
+  document.getElementById("character-model-area").hidden = false;
+  document.getElementById("character-no-model").hidden = true;
+  document.getElementById("character-portrait-only").hidden = true;
+  const wasActive = elements.characterModel.loaded && !elements.characterModel.hidden;
+  configureModelView(selected, poster, elements.characterName.textContent, wasActive);
+  const url = new URL(location.href);
+  if (selected.current) url.searchParams.delete("model"); else url.searchParams.set("model", selected.key);
+  history.replaceState(null, "", url);
+  if (wasActive) void loadCharacterModel();
 }
 
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   document.getElementById("character-assets-list").replaceChildren();
+  document.getElementById("appearance-history").hidden = true;
+  state.appearanceVersions = null;
   showLoading(document.getElementById("character-assets-status"), "Finding this character’s images, models and media…");
   elements.characterList.hidden = true;
   elements.characterProfile.hidden = true;
@@ -633,6 +711,7 @@ async function loadCharacter(gameId, characterId) {
     configureCharacter(profile);
     elements.characterProfile.hidden = false;
     elements.charactersStatus.hidden = true;
+    void loadAppearanceVersions(gameId, characterId, epoch);
     void loadCharacterAssets(gameId, characterId, epoch);
   } catch (error) {
     if (epoch !== routeEpoch) return;
@@ -641,6 +720,7 @@ async function loadCharacter(gameId, characterId) {
       configureCharacter({ character: { ...character, title: "Character", summary: "" } });
       elements.characterProfile.hidden = false;
       elements.charactersStatus.hidden = true;
+      void loadAppearanceVersions(gameId, characterId, epoch);
       void loadCharacterAssets(gameId, characterId, epoch);
       return;
     }
@@ -683,7 +763,9 @@ async function loadCharacterModel() {
   elements.modelLoad.textContent = "Loading…";
   showLoading(elements.modelStatus, "Preparing a secure link to the 3D model…");
   try {
-    const profile = await api("/character", state.currentCharacter);
+    const versions = await api("/character-versions", state.currentCharacter);
+    const selected = versions.models.find(entry => entry.key === state.selectedModelKey && entry.available);
+    if (!selected) throw new Error("Selected model is unavailable");
     await Promise.race([
       customElements.whenDefined("model-viewer"),
       new Promise((_, reject) =>
@@ -691,8 +773,7 @@ async function loadCharacterModel() {
       ),
     ]);
     if (epoch !== routeEpoch) return;
-    elements.characterModel.src = profile.model.url;
-    elements.characterModel.dismissPoster();
+    elements.characterModel.src = selected.url;
     showLoading(elements.modelStatus, "Downloading the 3D model…");
   } catch (error) {
     if (epoch !== routeEpoch) return;
@@ -707,8 +788,34 @@ async function loadCharacterModel() {
 function resetCharacterModel() {
   elements.characterModel.cameraOrbit = elements.characterModel.dataset.defaultCameraOrbit;
   elements.characterModel.fieldOfView = elements.characterModel.dataset.defaultFieldOfView;
+  elements.characterModel.cameraTarget = "auto auto auto";
   elements.characterModel.jumpCameraToGoal();
   elements.modelStatus.textContent = "Default view restored.";
+}
+
+function zoomCharacterModel(factor) {
+  const viewer = elements.characterModel;
+  if (!viewer.loaded) return;
+  const orbit = viewer.getCameraOrbit();
+  const next = Math.max(0.2, Math.min(20, orbit.radius * factor));
+  viewer.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${next}m`;
+  viewer.jumpCameraToGoal();
+}
+
+function panCharacterModel(horizontal, vertical) {
+  const viewer = elements.characterModel;
+  if (!viewer.loaded) return;
+  const target = viewer.getCameraTarget();
+  const orbit = viewer.getCameraOrbit();
+  const step = orbit.radius * 0.12;
+  // Move in the camera's screen plane, not fixed world X/Y after the model rotates.
+  const right = [Math.cos(orbit.theta), 0, -Math.sin(orbit.theta)];
+  const up = [-Math.cos(orbit.phi) * Math.sin(orbit.theta), Math.sin(orbit.phi),
+    -Math.cos(orbit.phi) * Math.cos(orbit.theta)];
+  viewer.cameraTarget = `${target.x + step * (horizontal * right[0] + vertical * up[0])}m `
+    + `${target.y + step * vertical * up[1]}m `
+    + `${target.z + step * (horizontal * right[2] + vertical * up[2])}m`;
+  viewer.jumpCameraToGoal();
 }
 
 async function renderRoute() {
@@ -882,6 +989,7 @@ async function previewFile(file) {
   elements.previewTitle.textContent = file.name;
   showLoading(elements.previewBody, "Preparing a secure asset preview…");
   document.getElementById("asset-generation").replaceChildren();
+  showLoading(document.getElementById("asset-versions"), "Finding earlier and later versions…");
   showLoading(document.getElementById("asset-links"), "Finding this asset’s inputs and outputs…");
   elements.previewDetails.textContent = formatBytes(file.size);
   elements.openOriginal.removeAttribute("href");
@@ -900,6 +1008,7 @@ async function previewFile(file) {
     elements.openOriginal.href = result.url;
     if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
     void renderAssetLinks(assetRef, epoch);
+    void renderAssetVersions(assetRef, epoch);
     if (structured) {
       const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef});
       if (epoch !== previewEpoch) return;
@@ -909,6 +1018,7 @@ async function previewFile(file) {
     if (epoch !== previewEpoch) return;
     elements.previewBody.textContent = error.message;
     document.getElementById("asset-links").textContent = "Connections unavailable. Close and reopen the asset to retry.";
+    document.getElementById("asset-versions").textContent = "Versions unavailable. Close and reopen the asset to retry.";
   }
 }
 
@@ -920,6 +1030,7 @@ function closePreview() {
   elements.openOriginal.removeAttribute("href");
   document.getElementById("asset-links").replaceChildren();
   document.getElementById("asset-generation").replaceChildren();
+  document.getElementById("asset-versions").replaceChildren();
 }
 
 function renderGeneration(host, metadata) {
@@ -1640,6 +1751,30 @@ async function renderAssetLinks(key, epoch) {
   } catch (error) { if (current()) host.textContent = `Connections unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
+async function renderAssetVersions(key, epoch) {
+  const host = document.getElementById("asset-versions"), gameId = state.gameId;
+  const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
+  if (!sameGameKey(key)) { host.textContent = "Versions are available for game assets."; return; }
+  try {
+    const assets = await allAssets(gameId);
+    if (!current()) return;
+    const item = assets.find(asset => asset.key === key);
+    const version = item?.metadata?.extra?.version;
+    if (!version || version.schemaVersion !== 1) { host.textContent = "Version record unavailable; the asset migration is not complete."; return; }
+    const series = assets.filter(asset => asset.metadata?.extra?.version?.seriesId === version.seriesId)
+      .sort((a, b) => a.metadata.extra.version.number - b.metadata.extra.version.number);
+    const heading = document.createElement("h3"), list = document.createElement("ol");
+    heading.textContent = "Versions";
+    for (const asset of series) {
+      const li = document.createElement("li"), record = asset.metadata.extra.version;
+      li.append(assetLink(asset, `Version ${record.number} · ${asset.metadata?.title || asset.name}`));
+      if (asset.key === key) li.append(document.createTextNode(" · viewing now"));
+      list.append(li);
+    }
+    host.replaceChildren(heading, list);
+  } catch (error) { if (current()) host.textContent = `Versions unavailable: ${error.message}. Close and reopen to retry.`; }
+}
+
 function detailBlock(title, value) {
   const details = document.createElement("details"), summary = document.createElement("summary"), pre = document.createElement("pre");
   summary.textContent = title; pre.textContent = JSON.stringify(value, null, 2); details.append(summary, pre); return details;
@@ -2038,6 +2173,14 @@ elements.gameSelector.addEventListener("change", () => {
 });
 elements.modelLoad.addEventListener("click", loadCharacterModel);
 elements.modelReset.addEventListener("click", resetCharacterModel);
+document.getElementById("model-version").addEventListener("change", showSelectedModel);
+document.getElementById("portrait-version").addEventListener("change", showSelectedPortrait);
+document.getElementById("model-zoom-in").addEventListener("click", () => zoomCharacterModel(0.8));
+document.getElementById("model-zoom-out").addEventListener("click", () => zoomCharacterModel(1.25));
+document.getElementById("model-pan-up").addEventListener("click", () => panCharacterModel(0, 1));
+document.getElementById("model-pan-down").addEventListener("click", () => panCharacterModel(0, -1));
+document.getElementById("model-pan-left").addEventListener("click", () => panCharacterModel(-1, 0));
+document.getElementById("model-pan-right").addEventListener("click", () => panCharacterModel(1, 0));
 elements.characterModel.addEventListener("progress", (event) => {
   const progress = Math.max(0, Math.min(1, event.detail.totalProgress || 0));
   elements.modelProgressBar.style.transform = `scaleX(${progress})`;
@@ -2047,6 +2190,7 @@ elements.characterModel.addEventListener("load", () => {
   elements.modelProgressBar.style.transform = "scaleX(1)";
   elements.modelStatus.textContent = "Model ready. Drag, zoom, or use the keyboard to explore.";
   elements.modelReset.disabled = false;
+  setModelControls(true);
 });
 elements.characterModel.addEventListener("error", () => {
   showModelFallback("The 3D model could not be displayed. The portrait is shown instead.");

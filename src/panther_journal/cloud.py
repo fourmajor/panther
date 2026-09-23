@@ -252,10 +252,11 @@ def slug(value):
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Structured metadata JSON; see panther instructions.",
 )
+@click.option("--new-version-of", help="Immutable key of the earlier asset; Panther assigns the next version in that series.")
 @click.option(
     "--json", "as_json", is_flag=True, help="Machine-readable result without signed URLs."
 )
-def upload(file, game, asset, kind, metadata, as_json):
+def upload(file, game, asset, kind, metadata, new_version_of=None, as_json=False):
     """Upload one private asset (up to 1 GiB), with checksum verification and no overwrites."""
     game, kind = slug(game), slug(kind)
     asset = slug(asset) if asset else f"asset-{uuid.uuid4().hex}"
@@ -270,6 +271,11 @@ def upload(file, game, asset, kind, metadata, as_json):
             details.update(provided)
         except (OSError, ValueError):
             raise click.ClickException("Metadata must be a small UTF-8 JSON object.")
+    if new_version_of:
+        extra = details.setdefault("extra", {})
+        if not isinstance(extra, dict) or "version" in extra:
+            raise click.ClickException("Set the predecessor with --new-version-of, not metadata.extra.version.")
+        extra["version"] = {"previousKey": new_version_of}
     content_type = {".glb": "model/gltf-binary", ".md": "text/markdown"}.get(
         file.suffix.lower(), mimetypes.guess_type(file.name)[0] or "application/octet-stream"
     )

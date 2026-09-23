@@ -28,6 +28,13 @@
   are not per-asset billed charges. Backfill older assets through the same versioned migration,
   preserving original bytes/provenance; never guess model identity from appearance or tool names.
 
+- Every asset has an explicit semantic version record (`metadata.extra.version`), separate from
+  S3 object versions and source lineage. New revisions are new immutable assets uploaded with
+  `panther upload --new-version-of`; never overwrite previous content. Official character
+  portraits/models also retain profile-backed selection history so users can view earlier
+  appearances. Use the all-game migration and verification in `docs/asset-versions.md` for
+  earlier assets; do not infer a version family from similar filenames or images.
+
 - Physical storage organization is a versioned application contract. Use the shared server path
   builder and the migration requirements in `docs/asset-storage.md`; never hand-assemble new S3 destinations.
   Group content by game, character/session/shared library, media kind, and immutable asset revision;
