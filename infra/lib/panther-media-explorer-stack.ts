@@ -430,7 +430,7 @@ export class PantherMediaExplorerStack extends Stack {
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });
-    for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/characters", "/character", "/character-profile"]) {
+    for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/characters", "/character", "/character-profile", "/character-versions"]) {
       mediaApi.addRoutes({
         path: route,
         methods: [apigwv2.HttpMethod.GET],

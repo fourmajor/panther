@@ -1,6 +1,7 @@
 """Current asset metadata defaults shared by normal uploads and migration validation."""
 
 from decimal import Decimal, InvalidOperation
+import hashlib
 import re
 
 
@@ -61,7 +62,26 @@ def internal(kind):
     return kind in INTERNAL_KINDS or kind.startswith("editorial-") or "provenance" in kind
 
 
-def defaults(kind, metadata, filename, content_type):
+def first_version(key):
+    return {"schemaVersion": 1, "seriesId": hashlib.sha256(key.encode()).hexdigest()[:24], "number": 1}
+
+
+def validate_version(value, key):
+    if not isinstance(value, dict) or set(value) - {"schemaVersion", "seriesId", "number", "previousKey"}:
+        raise ValueError("Invalid asset version metadata")
+    if type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1:
+        raise ValueError("Asset version schemaVersion 1 required")
+    if not isinstance(value.get("seriesId"), str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value["seriesId"]) or len(value["seriesId"]) > 96:
+        raise ValueError("Invalid asset version series")
+    if type(value.get("number")) is not int or not 1 <= value["number"] <= 10000:
+        raise ValueError("Invalid asset version number")
+    prior = value.get("previousKey")
+    if value["number"] == 1 and prior is not None or value["number"] > 1 and (not isinstance(prior, str) or prior == key or not re.fullmatch(r"games/[a-z0-9-]+/assets/[a-z0-9-]+/(?:original|derived/[a-z0-9-]+|metadata)/[^/]+", prior) or not prior.startswith("/".join(key.split("/")[:2]) + "/assets/")):
+        raise ValueError("Later versions require an earlier asset in the same game")
+    return value
+
+
+def defaults(kind, metadata, filename, content_type, key=None):
     result = dict(metadata)
     result.setdefault("title", filename.rsplit(".", 1)[0])
     for field in ("characterIds", "tags", "sourceKeys"):
@@ -76,5 +96,7 @@ def defaults(kind, metadata, filename, content_type):
         role = "intermediate"
     extra.setdefault("relationshipRole", role)
     extra.setdefault("generation", unknown_generation())
+    if key:
+        extra.setdefault("version", first_version(key))
     result["extra"] = extra
     return result

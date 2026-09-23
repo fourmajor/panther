@@ -31,6 +31,14 @@ index migration/reconciliation, use `panther assets rebuild-index --mode dry-run
 the rollout complete. This uses Panther authentication and never changes source files. New uploads
 and metadata revisions update the same index asynchronously. See `docs/asset-browse-index.md`.
 
+Every uploaded asset has an immutable version record. To revise one, upload a new asset with
+`--new-version-of games/GAME/assets/OLDER/original/FILE`; never overwrite bytes or treat an S3
+VersionId as an artistic version. Official character portraits and web models have a separate
+profile-backed selection history, shown on the character page. For older assets, run `panther
+assets version-plan --output PRIVATE_PLAN.json`, dry-run/apply with `panther assets migrate`, and
+verify the complete catalog across all games. Keep plans/reports outside Git. See
+`docs/asset-versions.md`.
+
 Generated narration/voice performances use the premium `panther narration` workflow with
 ElevenLabs Eleven v3 through fal. Never use Chatterbox or system TTS as a preview/fallback.
 Prepare a private version-1 manifest with gameId, projectId, purpose (audition/production),

@@ -3,6 +3,7 @@
 import json
 import os
 import copy
+import hashlib
 from pathlib import Path
 
 import click
@@ -81,6 +82,73 @@ def generation_plan(records, facts):
                            "expectedVersionId": record["versionId"], "kind": record["kind"],
                            "metadata": details, "reason": "Generation metadata v1: explicit evidence or unknown; original bytes and provenance retained"})
     return {"schemaVersion": 1, "migrations": migrations}
+
+
+def version_plan(records, appearances):
+    """Backfill every asset; group only verified official selections from profile history."""
+    known = {record["key"]: record for record in records}
+    assigned = {}
+    for (game, character, kind), keys in appearances.items():
+        series = "appearance-" + hashlib.sha256(f"{game}/{character}/{kind}".encode()).hexdigest()[:24]
+        previous = None
+        for number, key in enumerate(keys, 1):
+            if key not in known:
+                raise click.ClickException(f"Official appearance is missing from inventory: {key}")
+            if key in assigned:
+                raise click.ClickException(f"Appearance belongs to multiple version series: {key}")
+            assigned[key] = {"schemaVersion": 1, "seriesId": series, "number": number,
+                             **({"previousKey": previous} if previous else {})}
+            previous = key
+    migrations = []
+    for record in records:
+        details = copy.deepcopy(record["metadata"])
+        extra = details.setdefault("extra", {})
+        default = {"schemaVersion": 1, "seriesId": hashlib.sha256(record["key"].encode()).hexdigest()[:24], "number": 1}
+        desired = assigned.get(record["key"], default)
+        if extra.get("version") == desired:
+            continue
+        if "version" in extra and extra["version"] != default:
+            raise click.ClickException(f"Existing version record differs; investigate before replanning: {record['key']}")
+        extra["version"] = desired
+        migrations.append({"schemaVersion": 1, "key": record["key"],
+                           "expectedVersionId": record["versionId"], "kind": record["kind"],
+                           "metadata": details, "reason": "Asset versions v1: profile-backed appearance series or explicit singleton; original bytes retained"})
+    return {"schemaVersion": 1, "migrations": migrations}
+
+
+@assets.command("version-plan")
+@click.option("--output", required=True, type=click.Path(path_type=Path))
+def plan_versions(output):
+    """Inventory ALL games and prepare a private, version-pinned appearance backfill."""
+    config = cloud.configuration()
+    records, appearances = [], {}
+    for game in cloud.api(config, "GET", "/games")["games"]:
+        game_id = game["id"]
+        cursor = None
+        while True:
+            page = cloud.api(config, "GET", "/assets", params={"gameId": game_id, "cursor": cursor})
+            for asset in page["assets"]:
+                info = cloud.api(config, "GET", "/object-url", params={"key": asset["key"]})
+                records.append({k: info[k] for k in ("key", "versionId", "kind", "metadata")})
+            cursor = page.get("cursor")
+            if not cursor:
+                break
+        for character in cloud.api(config, "GET", "/characters", params={"gameId": game_id})["characters"]:
+            history = cloud.api(config, "GET", "/character-versions", params={"gameId": game_id, "characterId": character["id"]})
+            for kind, field in (("model", "models"), ("portrait", "portraits")):
+                keys = [item["key"] for item in reversed(history[field])]
+                if keys:
+                    appearances[(game_id, character["id"], kind)] = keys
+    try:
+        plan = version_plan(records, appearances)
+        with output.open("x") as stream:
+            output.chmod(0o600)
+            json.dump(plan, stream, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except (OSError, ValueError):
+        raise click.ClickException("Could not create a new private plan; never overwrite a prior plan") from None
+    click.echo(f"Inventoried {len(records)} assets in all games; planned {len(plan['migrations'])} version records. Dry-run with assets migrate.")
 
 
 @assets.command("generation-plan")

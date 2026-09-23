@@ -85,6 +85,15 @@
 
           <p id="character-no-model" hidden>No portrait or 3D model has been added yet.</p>
           <img id="character-portrait-only" class="character-portrait-only" alt="" hidden>
+          <section class="appearance-history" id="appearance-history" aria-label="Appearance versions">
+            <div><h2>Appearance history</h2><p>Published versions remain available when a character changes.</p></div>
+            <div class="appearance-pickers">
+              <label for="model-version">3D model <select id="model-version" aria-label="3D model version"></select></label>
+              <label for="portrait-version">Official portrait <select id="portrait-version" aria-label="Official portrait version"></select></label>
+            </div>
+            <p id="appearance-status" role="status"></p>
+            <img id="portrait-version-preview" class="portrait-version-preview" alt="" hidden>
+          </section>
           <div class="model-layout" id="character-model-area">
             <div class="model-stage">
               <model-viewer
@@ -117,9 +126,19 @@
             <aside class="model-panel" aria-label="3D model controls">
               <p class="eyebrow">Interactive model</p>
               <p id="model-status" role="status">Portrait ready. Load the model when you want it.</p>
+              <div class="model-control-grid" role="group" aria-label="3D model movement">
+                <button class="quiet-button" id="model-pan-up" type="button" aria-label="Pan up" disabled>↑</button>
+                <button class="quiet-button" id="model-pan-left" type="button" aria-label="Pan left" disabled>←</button>
+                <button class="quiet-button" id="model-pan-down" type="button" aria-label="Pan down" disabled>↓</button>
+                <button class="quiet-button" id="model-pan-right" type="button" aria-label="Pan right" disabled>→</button>
+              </div>
+              <div class="model-control-row" role="group" aria-label="3D model zoom">
+                <button class="quiet-button" id="model-zoom-in" type="button" disabled>Zoom in</button>
+                <button class="quiet-button" id="model-zoom-out" type="button" disabled>Zoom out</button>
+              </div>
               <button class="quiet-button" id="model-reset" type="button" disabled>Reset view</button>
               <p class="model-help">
-                Drag or use arrow keys to rotate. Pinch, scroll, or use plus and minus to zoom.
+                Drag to rotate; scroll or pinch to zoom. Use the buttons to pan or zoom precisely. Reset returns to the published view.
               </p>
               <dl class="model-facts">
                 <div><dt>Web model</dt><dd id="model-size">—</dd></div>
@@ -204,6 +223,7 @@
       </div>
       <div class="preview-body" id="preview-body"></div>
       <section id="asset-generation" class="generation-details" aria-label="Generation details"></section>
+      <section id="asset-versions" class="asset-links" aria-label="Asset versions"></section>
       <section id="asset-links" class="asset-links" aria-label="Asset connections"></section>
       <div class="preview-footer">
         <span id="preview-details"></span>

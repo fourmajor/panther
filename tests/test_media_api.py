@@ -238,8 +238,28 @@ def test_upload_signs_size_checksum_metadata_and_no_overwrite(monkeypatch):
     metadata = json.loads(base64.b64decode(params["Metadata"]["panther"]))
     assert metadata["category"] == "reference"
     assert metadata["extra"] == {"creator": "DM", "relationshipRole": "finished",
-                                 "generation": {"schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}}}
+                                 "generation": {"schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}},
+                                 "version": {"schemaVersion": 1, "seriesId": hashlib.sha256(result["key"].encode()).hexdigest()[:24], "number": 1}}
     assert expiry == 300
+
+
+def test_upload_new_version_inherits_series_and_rejects_wrong_kind(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    previous_key = "games/example-game/assets/old-map/original/map.png"
+    old = {"schemaVersion": 1, "title": "Earlier fictional map", "category": "reference",
+           "characterIds": [], "tags": [], "sourceKeys": [],
+           "extra": {"version": {"schemaVersion": 1, "seriesId": "fictional-map", "number": 1}}}
+    client.objects[previous_key] = {"Body": b"old", "ContentType": "image/png",
+                                    "Metadata": {"kind": "map", "panther": base64.b64encode(json.dumps(old).encode()).decode()}}
+    body = json.loads(upload_event()["body"])
+    body["metadata"]["extra"]["version"] = {"previousKey": previous_key}
+    result = module.handler(upload_event(**body), None)
+    assert result["statusCode"] == 200
+    encoded = client.signed_requests[-1][1]["Metadata"]["panther"]
+    newer = json.loads(base64.b64decode(encoded))["extra"]["version"]
+    assert newer == {"schemaVersion": 1, "seriesId": "fictional-map", "number": 2, "previousKey": previous_key}
+    assert module.handler(upload_event(**{**body, "kind": "portrait"}), None)["statusCode"] == 400
+    assert module.handler(upload_event(**{**body, "metadata": {**body["metadata"], "extra": {"version": {"seriesId": "forged"}}}}), None)["statusCode"] == 400
 
 
 @pytest.mark.parametrize(
@@ -421,6 +441,29 @@ def test_publish_preserves_exact_profile_portrait_assets_and_audit(monkeypatch):
         event("/character", gameId="example-game", characterId="example-character"), None
     )
     assert NEW_WEB in response_body(web_response)["model"]["url"]
+
+
+def test_character_versions_preserve_previous_model_and_portrait_selections(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    original = response_body(module.handler(event("/character", gameId="example-game", characterId="example-character"), None))
+    model_request = publication(module, client)
+    assert module.handler(model_request, None)["statusCode"] == 200
+    portrait = "games/example-game/assets/new-portrait/original/new.png"
+    client.objects[portrait] = {"Body": b"new image", "ContentType": "image/png"}
+    model_request["routeKey"] = "PUT /character-portrait"
+    model_request["body"] = json.dumps({"gameId": "example-game", "characterId": "example-character",
+        "portraitKey": portrait, "reason": "A change in appearance",
+        "expectedRevision": client.get_object(Key=PROFILE_KEY)["ETag"]})
+    assert module.handler(model_request, None)["statusCode"] == 200
+    response = module.handler(event("/character-versions", gameId="example-game", characterId="example-character"), None)
+    assert response["statusCode"] == 200
+    versions = response_body(response)
+    assert [entry["key"] for entry in versions["models"]] == [NEW_WEB, original["model"]["key"]]
+    assert [entry["key"] for entry in versions["portraits"]] == [portrait, original["poster"]["key"]]
+    assert versions["models"][0]["current"] and versions["portraits"][0]["current"]
+    assert not versions["models"][1]["current"] and not versions["portraits"][1]["current"]
+    assert all("url" in item for kind in ("models", "portraits") for item in versions[kind])
+    assert module.handler(event("/character-versions", gameId="other-game", characterId="example-character"), None)["statusCode"] == 404
 
 
 @pytest.mark.parametrize(
