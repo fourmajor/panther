@@ -1,8 +1,44 @@
 # Panther self-hosted runner
 
-Panther's manually dispatched CI runs in a Linux Docker container on the owner's MacBook.
-GitHub coordinates the job; the Mac provides the compute. No AWS resource or hosted runner is
-required. The laptop must be awake and Docker Desktop must be running; otherwise jobs queue.
+## Kiwi production runner
+
+Kiwi runs a persistent, repository-scoped runner in a restricted Docker
+container. It provides CI compute after host restarts without Dandelion. The
+Panther workflow still accepts only owner-dispatched jobs on reviewed `main`
+or `codex/` branches. The container has two CPUs, 4 GiB RAM, no host mounts,
+no Docker socket, no AWS credentials, and no private game files. Its registration
+credential remains inside the container; a new registration is required if
+that container is removed.
+
+Install from reviewed Panther source on Kiwi. Obtain a short-lived runner
+registration token using the owner's GitHub CLI on a trusted computer and pipe
+it directly over SSH to the Kiwi installer. The installer builds the pinned
+runner image before registration, and the token is not written to the host:
+
+```sh
+gh api --method POST repos/fourmajor/panther/actions/runners/registration-token --jq .token \
+  | ssh stu@kiwi 'cd /srv/panther/ci-runner/repo && bash ops/runner/start-kiwi.sh'
+```
+
+The Kiwi checkout must be updated to the reviewed commit before running this
+command. Once registered, jobs can be dispatched through GitHub without
+Dandelion running. Verify `panther-kiwi-ci` is online in GitHub and dispatch a
+representative `ci.yml` run. Container logs and status are available with
+`docker logs panther-kiwi-ci` and `docker inspect panther-kiwi-ci`. Docker's
+`unless-stopped` policy starts the container after a normal Docker restart;
+an actual host reboot still requires Stu's separate authorization.
+
+To update the runner image, first confirm no job is active, then stop and
+remove only `panther-kiwi-ci`, delete its exact GitHub runner registration,
+update the reviewed checkout, and register a new container. Do not prune other
+Docker resources. If Kiwi is unavailable, the old Dandelion script below is a
+manual recovery path, not an automatic second worker.
+
+## Former Dandelion one-job runner
+
+Before the Kiwi move, Panther's manually dispatched CI ran in a Linux Docker
+container on the owner's MacBook. This path remains available for manual
+recovery. It requires the laptop to be awake with Docker Desktop running.
 
 ## Start and run
 
