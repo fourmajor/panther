@@ -4,6 +4,7 @@ set -Eeuo pipefail
 # Run from a reviewed Panther checkout on Kiwi. A short-lived registration
 # token arrives on stdin; no GitHub credential is persisted on the host.
 [[ "$(hostname -s)" == kiwi ]] || { echo 'This runner is only for Kiwi.' >&2; exit 1; }
+[[ "$(uname -m)" == x86_64 ]] || { echo 'Kiwi runner expects x86-64.' >&2; exit 1; }
 [[ -t 0 ]] && { echo 'Pass a short-lived runner registration token on stdin.' >&2; exit 1; }
 runner_name=panther-kiwi-ci
 runner_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +14,7 @@ if docker container inspect "$runner_name" >/dev/null 2>&1; then
   exit 1
 fi
 
-nice -n 10 docker build --tag panther-runner:kiwi "$runner_dir"
+nice -n 10 docker build --build-arg TARGETARCH=amd64 --tag panther-runner:kiwi "$runner_dir"
 docker run --detach --init --name "$runner_name" --restart unless-stopped \
   --label app=panther-runner --label host=kiwi \
   --cpus 2 --memory 4g --pids-limit 512 \
