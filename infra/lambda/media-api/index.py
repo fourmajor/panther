@@ -281,7 +281,11 @@ def _character_versions(event):
             ("portrait", "posterKey", MAX_POSTER_BYTES, {"image/avif", "image/jpeg", "image/png", "image/webp"}, "portraitPublication"),
         ):
             key = model.get(key_name)
-            if not isinstance(key, str) or not key.startswith(f"games/{game_id}/assets/") or key in seen[kind]:
+            if not isinstance(key, str) or not key.startswith(f"games/{game_id}/assets/"):
+                continue
+            if key in seen[kind]:
+                if kind == "model":
+                    next(item for item in output[kind] if item["key"] == key)["posterKey"] = model.get("posterKey")
                 continue
             seen[kind].add(key)
             metadata = _asset_metadata(key, maximum=limit, expected_types=types)

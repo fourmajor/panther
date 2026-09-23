@@ -461,6 +461,7 @@ def test_character_versions_preserve_previous_model_and_portrait_selections(monk
     assert [entry["key"] for entry in versions["models"]] == [NEW_WEB, original["model"]["key"]]
     assert [entry["key"] for entry in versions["portraits"]] == [portrait, original["poster"]["key"]]
     assert versions["models"][0]["current"] and versions["portraits"][0]["current"]
+    assert versions["models"][0]["posterKey"] == portrait
     assert not versions["models"][1]["current"] and not versions["portraits"][1]["current"]
     assert all("url" in item for kind in ("models", "portraits") for item in versions[kind])
     assert module.handler(event("/character-versions", gameId="other-game", characterId="example-character"), None)["statusCode"] == 404

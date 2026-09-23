@@ -806,9 +806,15 @@ function panCharacterModel(horizontal, vertical) {
   const viewer = elements.characterModel;
   if (!viewer.loaded) return;
   const target = viewer.getCameraTarget();
-  const radius = viewer.getCameraOrbit().radius;
-  const step = radius * 0.12;
-  viewer.cameraTarget = `${target.x + horizontal * step}m ${target.y + vertical * step}m ${target.z}m`;
+  const orbit = viewer.getCameraOrbit();
+  const step = orbit.radius * 0.12;
+  // Move in the camera's screen plane, not fixed world X/Y after the model rotates.
+  const right = [Math.cos(orbit.theta), 0, -Math.sin(orbit.theta)];
+  const up = [-Math.cos(orbit.phi) * Math.sin(orbit.theta), Math.sin(orbit.phi),
+    -Math.cos(orbit.phi) * Math.cos(orbit.theta)];
+  viewer.cameraTarget = `${target.x + step * (horizontal * right[0] + vertical * up[0])}m `
+    + `${target.y + step * vertical * up[1]}m `
+    + `${target.z + step * (horizontal * right[2] + vertical * up[2])}m`;
   viewer.jumpCameraToGoal();
 }
 
