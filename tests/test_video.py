@@ -47,11 +47,16 @@ class FakeFal:
         return {"video": {"url": "https://v3.fal.media/files/synthetic.mp4"}}
 
 
-@pytest.mark.parametrize("model,base,reserve", [
-    ("veo-3.1-fast-image-silent", "0.15", 100),
-    ("kling-3-pro-image-silent", "0.14", 112),
-])
-def test_silent_profiles_pin_settings_and_fail_on_price_change(setup, tmp_path, monkeypatch, model, base, reserve):
+@pytest.mark.parametrize(
+    "model,base,reserve",
+    [
+        ("veo-3.1-fast-image-silent", "0.15", 100),
+        ("kling-3-pro-image-silent", "0.14", 112),
+    ],
+)
+def test_silent_profiles_pin_settings_and_fail_on_price_change(
+    setup, tmp_path, monkeypatch, model, base, reserve
+):
     m, _ = image_manifest(tmp_path, monkeypatch)
     m["shots"][0]["model"] = model
     setup.rate = Decimal(base)
@@ -66,12 +71,15 @@ def test_silent_profiles_pin_settings_and_fail_on_price_change(setup, tmp_path, 
 
 def test_project_spends_existing_hold_without_changing_comparison_or_narration(setup):
     from panther_journal import narration as n
+
     n.create_budget("test-film", "synthetic-game", "15", "1.50", "Synthetic approval", setup)
     m = manifest()
     m.update(projectId="test-film")
     m["shots"][0]["maxAttempts"] = 1
     pid = v.prepare(m, setup)["planId"]
-    result = CliRunner().invoke(main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"])
+    result = CliRunner().invoke(
+        main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     assert result.exit_code == 0, result.output
     first = v.submit(pid, "scene-veo", 1, "", setup)
     assert v.submit(pid, "scene-veo", 1, "", setup) == first
@@ -89,6 +97,7 @@ def test_project_spends_existing_hold_without_changing_comparison_or_narration(s
 
 def test_project_requires_existing_matching_allocation(setup):
     from panther_journal import narration as n
+
     m = manifest()
     m.update(projectId="test-film")
     with pytest.raises(click.ClickException, match="No approved project"):
@@ -98,54 +107,87 @@ def test_project_requires_existing_matching_allocation(setup):
         v.prepare(m, setup)
 
 
-@pytest.mark.parametrize('failure',['content_policy_violation','no_media_generated'])
-def test_zero_charge_production_rejection_credit_is_audited_and_idempotent(setup, monkeypatch, failure):
+@pytest.mark.parametrize("failure", ["content_policy_violation", "no_media_generated"])
+def test_zero_charge_production_rejection_credit_is_audited_and_idempotent(
+    setup, monkeypatch, failure
+):
     from panther_journal import narration as n
+
     n.create_budget("test-film", "synthetic-game", "15", "1.50", "Synthetic approval", setup)
-    m=manifest();m.update(projectId="test-film");m['shots'][0]['maxAttempts']=1
-    pid=v.prepare(m,setup)['planId']
-    CliRunner().invoke(main,['video','approve',pid,'--models-and-rights-approved','--auto-topup-disabled'])
-    a=v.submit(pid,'scene-veo',1,'',setup)
-    monkeypatch.setattr(setup,'billing_events',lambda ids:{'synthetic-request':{'endpoint':v.PROFILES['veo-3.1-fast']['endpoint'],'amount':'0'}},raising=False)
-    with pytest.raises(click.ClickException,match='terminal'):
-        v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
-    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':[failure]})
+    m = manifest()
+    m.update(projectId="test-film")
+    m["shots"][0]["maxAttempts"] = 1
+    pid = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(
+        main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
+    a = v.submit(pid, "scene-veo", 1, "", setup)
+    monkeypatch.setattr(
+        setup,
+        "billing_events",
+        lambda ids: {
+            "synthetic-request": {"endpoint": v.PROFILES["veo-3.1-fast"]["endpoint"], "amount": "0"}
+        },
+        raising=False,
+    )
+    with pytest.raises(click.ClickException, match="terminal"):
+        v.reconcile_rejection(a["attemptId"], setup, "Owner requested replacement model")
+    v.update_attempt(a["attemptId"], "FAILED", {"providerErrorTypes": [failure]})
     with v.database() as db:
-        before=dict(db.execute('SELECT * FROM attempts').fetchone())
-    first=v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
-    assert v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')==first
+        before = dict(db.execute("SELECT * FROM attempts").fetchone())
+    first = v.reconcile_rejection(a["attemptId"], setup, "Owner requested replacement model")
+    assert (
+        v.reconcile_rejection(a["attemptId"], setup, "Owner requested replacement model") == first
+    )
     with v.database() as db:
-        assert dict(db.execute('SELECT * FROM attempts').fetchone())==before
-        assert v.reserved_for(db,'test-film')==0
-        assert v.totals(db)['reservationCents']==0
-        assert db.execute('SELECT COUNT(*) FROM video_rejection_credits').fetchone()[0]==1
-    m['shots'][0]['prompt']+=' Different approved model treatment.'
-    assert v.prepare(m,setup)['planId']!=pid
+        assert dict(db.execute("SELECT * FROM attempts").fetchone()) == before
+        assert v.reserved_for(db, "test-film") == 0
+        assert v.totals(db)["reservationCents"] == 0
+        assert db.execute("SELECT COUNT(*) FROM video_rejection_credits").fetchone()[0] == 1
+    m["shots"][0]["prompt"] += " Different approved model treatment."
+    assert v.prepare(m, setup)["planId"] != pid
 
 
-@pytest.mark.parametrize('event',[{}, {'endpoint':'wrong','amount':'0'}, {'endpoint':'fal-ai/veo3.1/fast','amount':'0.01'}])
-def test_rejection_credit_requires_exact_zero_billing(setup,monkeypatch,event):
+@pytest.mark.parametrize(
+    "event",
+    [
+        {},
+        {"endpoint": "wrong", "amount": "0"},
+        {"endpoint": "fal-ai/veo3.1/fast", "amount": "0.01"},
+    ],
+)
+def test_rejection_credit_requires_exact_zero_billing(setup, monkeypatch, event):
     from panther_journal import narration as n
-    n.create_budget('test-film','synthetic-game','15','13','Synthetic approval',setup)
-    m=manifest();m.update(projectId='test-film')
-    pid=v.prepare(m,setup)['planId']
-    CliRunner().invoke(main,['video','approve',pid,'--models-and-rights-approved','--auto-topup-disabled'])
-    a=v.submit(pid,'scene-veo',1,'',setup)
-    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':['content_policy_violation']})
-    monkeypatch.setattr(setup,'billing_events',lambda ids:{'synthetic-request':event},raising=False)
-    with pytest.raises(click.ClickException,match='zero-charge'):
-        v.reconcile_rejection(a['attemptId'],setup,'Owner requested replacement model')
-    with v.database() as db:assert v.reserved_for(db,'test-film')==150
+
+    n.create_budget("test-film", "synthetic-game", "15", "13", "Synthetic approval", setup)
+    m = manifest()
+    m.update(projectId="test-film")
+    pid = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(
+        main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
+    a = v.submit(pid, "scene-veo", 1, "", setup)
+    v.update_attempt(a["attemptId"], "FAILED", {"providerErrorTypes": ["content_policy_violation"]})
+    monkeypatch.setattr(
+        setup, "billing_events", lambda ids: {"synthetic-request": event}, raising=False
+    )
+    with pytest.raises(click.ClickException, match="zero-charge"):
+        v.reconcile_rejection(a["attemptId"], setup, "Owner requested replacement model")
+    with v.database() as db:
+        assert v.reserved_for(db, "test-film") == 150
 
 
 def test_comparison_rejection_cannot_release_historical_budget(setup):
-    pid=approved(setup);a=v.submit(pid,'scene-veo',1,'',setup)
-    v.update_attempt(a['attemptId'],'FAILED',{'providerErrorTypes':['content_policy_violation']})
-    with pytest.raises(click.ClickException,match='terminal production'):
-        v.reconcile_rejection(a['attemptId'],setup,'Synthetic owner approval')
+    pid = approved(setup)
+    a = v.submit(pid, "scene-veo", 1, "", setup)
+    v.update_attempt(a["attemptId"], "FAILED", {"providerErrorTypes": ["content_policy_violation"]})
+    with pytest.raises(click.ClickException, match="terminal production"):
+        v.reconcile_rejection(a["attemptId"], setup, "Synthetic owner approval")
 
 
-def test_h3_image_profile_is_bounded_and_reserves_regular_not_promo_price(setup, tmp_path, monkeypatch):
+def test_h3_image_profile_is_bounded_and_reserves_regular_not_promo_price(
+    setup, tmp_path, monkeypatch
+):
     m, _ = image_manifest(tmp_path, monkeypatch)
     m["shots"][0]["model"] = "h3-max-image"
     setup.rate = Decimal("0.0125")
@@ -157,30 +199,50 @@ def test_h3_image_profile_is_bounded_and_reserves_regular_not_promo_price(setup,
     setup.rate = Decimal("0.0125")
     plan = v.prepare(m, setup)["planId"]
     assert not setup.posts
-    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     attempt = v.submit(plan, "scene-veo", 1, "", setup)
     assert attempt["reservedUsd"] == "0.80"
     endpoint, request = setup.posts[0]
     assert endpoint == v.QUEUE + "/minimax/h3-max/image-to-video"
     body = request["json"]
     assert body.pop("image_url").startswith("data:image/png;base64,")
-    assert body == {"prompt": m["shots"][0]["prompt"], "duration": 8, "resolution": "768P",
-                    "prompt_expansion_mode": "disabled", "enable_safety_checker": True, "sync_mode": False}
-    assert v.generation.fal("minimax/h3-max/image-to-video", "r")["model"] == "MiniMax H3 Max (post-trained by fal)"
+    assert body == {
+        "prompt": m["shots"][0]["prompt"],
+        "duration": 8,
+        "resolution": "768P",
+        "prompt_expansion_mode": "disabled",
+        "enable_safety_checker": True,
+        "sync_mode": False,
+    }
+    assert (
+        v.generation.fal("minimax/h3-max/image-to-video", "r")["model"]
+        == "MiniMax H3 Max (post-trained by fal)"
+    )
 
 
 def missing_result_attempt(setup, monkeypatch):
     p = v.prepare(manifest(), setup)["planId"]
-    CliRunner().invoke(main, ["video", "approve", p, "--models-and-rights-approved", "--auto-topup-disabled"])
+    CliRunner().invoke(
+        main, ["video", "approve", p, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     attempt = v.submit(p, "scene-veo", 1, "", setup)
+
     def request(method, url, **kwargs):
         assert method == "GET"
         if url.endswith("/status"):
             return {"status": setup.status, "request_id": "synthetic-request"}
         assert kwargs["completed_result"] is True
         raise v.UnavailableResult()
+
     monkeypatch.setattr(setup, "request", request)
-    monkeypatch.setattr(setup, "billing_events", lambda ids: {"synthetic-request": {"endpoint": "fal-ai/veo3.1/fast", "amount": "0"}}, raising=False)
+    monkeypatch.setattr(
+        setup,
+        "billing_events",
+        lambda ids: {"synthetic-request": {"endpoint": "fal-ai/veo3.1/fast", "amount": "0"}},
+        raising=False,
+    )
     return attempt
 
 
@@ -189,15 +251,26 @@ def test_h3_text_profile_uses_same_budget_without_image(setup):
     m["shots"][0].update(model="h3-max", maxAttempts=1)
     setup.rate = Decimal("0.0125")
     plan = v.prepare(m, setup)["planId"]
-    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     a = v.submit(plan, "scene-veo", 1, "", setup)
     assert a["reservedUsd"] == "0.80"
     endpoint, req = setup.posts[0]
     assert endpoint == v.QUEUE + "/minimax/h3-max/text-to-video"
-    assert req["json"] == {"prompt": m["shots"][0]["prompt"], "duration": 8, "resolution": "768P",
-                           "aspect_ratio": "16:9", "prompt_expansion_mode": "disabled",
-                           "enable_safety_checker": True, "sync_mode": False}
-    assert v.generation.fal("minimax/h3-max/text-to-video", "r")["model"] == "MiniMax H3 Max (post-trained by fal)"
+    assert req["json"] == {
+        "prompt": m["shots"][0]["prompt"],
+        "duration": 8,
+        "resolution": "768P",
+        "aspect_ratio": "16:9",
+        "prompt_expansion_mode": "disabled",
+        "enable_safety_checker": True,
+        "sync_mode": False,
+    }
+    assert (
+        v.generation.fal("minimax/h3-max/text-to-video", "r")["model"]
+        == "MiniMax H3 Max (post-trained by fal)"
+    )
 
 
 def test_reconcile_missing_result_keeps_full_reservation_and_audit(setup, monkeypatch):
@@ -214,7 +287,9 @@ def test_reconcile_missing_result_keeps_full_reservation_and_audit(setup, monkey
         content = json.loads(after["content"])
         audit = content.pop("reconciliation")
         assert content == json.loads(before["content"])
-        assert audit["previousContentSha256"] == hashlib.sha256(before["content"].encode()).hexdigest()
+        assert (
+            audit["previousContentSha256"] == hashlib.sha256(before["content"].encode()).hexdigest()
+        )
         assert audit["billingEvent"]["amount"] == "0"
         assert v.totals(db)["reservationCents"] == before["reserved_cents"]
     assert v.reconcile_unavailable(a["attemptId"], setup) == result
@@ -224,14 +299,29 @@ def test_reconcile_missing_result_keeps_full_reservation_and_audit(setup, monkey
     new = manifest()
     new["shots"][0]["id"] = "independent-shot"
     plan = v.prepare(new, setup)["planId"]
-    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     monkeypatch.setattr(setup, "request", FakeFal.request.__get__(setup))
     assert v.submit(plan, "independent-shot", 1, "", setup)["state"] == "SUBMITTED"
     with v.database() as db:
         assert v.totals(db)["reservationCents"] == 300
 
 
-@pytest.mark.parametrize("problem", ["pending", "unknown", "account", "request", "billing-missing", "billing-endpoint", "billing-nonzero", "available", "changed"])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "pending",
+        "unknown",
+        "account",
+        "request",
+        "billing-missing",
+        "billing-endpoint",
+        "billing-nonzero",
+        "available",
+        "changed",
+    ],
+)
 def test_reconcile_unavailable_fails_closed(setup, monkeypatch, problem):
     a = missing_result_attempt(setup, monkeypatch)
     if problem == "pending":
@@ -241,16 +331,31 @@ def test_reconcile_unavailable_fails_closed(setup, monkeypatch, problem):
     elif problem == "account":
         setup.account = "different-account"
     elif problem == "request":
-        monkeypatch.setattr(setup, "request", lambda *a, **k: {"status": "COMPLETED", "request_id": "wrong"})
+        monkeypatch.setattr(
+            setup, "request", lambda *a, **k: {"status": "COMPLETED", "request_id": "wrong"}
+        )
     elif problem.startswith("billing"):
-        event = {"endpoint": "wrong" if problem == "billing-endpoint" else "fal-ai/veo3.1/fast", "amount": "1" if problem == "billing-nonzero" else "0"}
-        monkeypatch.setattr(setup, "billing_events", lambda ids: {} if problem == "billing-missing" else {"synthetic-request": event})
+        event = {
+            "endpoint": "wrong" if problem == "billing-endpoint" else "fal-ai/veo3.1/fast",
+            "amount": "1" if problem == "billing-nonzero" else "0",
+        }
+        monkeypatch.setattr(
+            setup,
+            "billing_events",
+            lambda ids: {} if problem == "billing-missing" else {"synthetic-request": event},
+        )
     elif problem == "available":
-        monkeypatch.setattr(setup, "request", lambda *a, **k: {"status": "COMPLETED", "request_id": "synthetic-request"})
+        monkeypatch.setattr(
+            setup,
+            "request",
+            lambda *a, **k: {"status": "COMPLETED", "request_id": "synthetic-request"},
+        )
     elif problem == "changed":
+
         def billing(ids):
             v.update_attempt(a["attemptId"], "FAILED", {"concurrent": True})
             return {"synthetic-request": {"endpoint": "fal-ai/veo3.1/fast", "amount": "0"}}
+
         monkeypatch.setattr(setup, "billing_events", billing)
     with pytest.raises(click.ClickException):
         v.reconcile_unavailable(a["attemptId"], setup)
@@ -317,7 +422,9 @@ def test_kling_end_frame_is_pinned_sent_and_budgeted(setup, tmp_path, monkeypatc
     shot.update(model="kling-3-pro-image", endImage=dict(shot["image"]))
     plan = v.prepare(m, setup)["planId"]
     assert not setup.posts
-    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     a = v.submit(plan, shot["id"], 1, "", setup)
     assert a["reservedUsd"] == "2.25"  # Fake live base $0.15 × 1.5 × 8 × 1.25.
     body = setup.posts[0][1]["json"]
@@ -336,7 +443,9 @@ def test_unsupported_or_changed_end_frame_fails_without_spend(setup, tmp_path, m
         v.prepare(m, setup)
     shot["model"] = "kling-3-pro-image"
     plan = v.prepare(m, setup)["planId"]
-    CliRunner().invoke(main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"])
+    CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     path.write_bytes(b"changed")
     with pytest.raises(click.ClickException, match="changed"):
         v.submit(plan, shot["id"], 1, "", setup)
@@ -460,8 +569,18 @@ def test_explicit_extension_preserves_history_and_is_idempotent(setup):
     with v.database() as db:
         history = [tuple(r) for r in db.execute("SELECT * FROM attempts")]
         plans = [tuple(r) for r in db.execute("SELECT * FROM plans")]
-    args = ["video", "budget", "extend", "--expected-limit", "50", "--limit", "51",
-            "--reason", "Explicit synthetic approval", "--owner-approved"]
+    args = [
+        "video",
+        "budget",
+        "extend",
+        "--expected-limit",
+        "50",
+        "--limit",
+        "51",
+        "--reason",
+        "Explicit synthetic approval",
+        "--owner-approved",
+    ]
     runner = CliRunner()
     first = runner.invoke(main, args)
     assert first.exit_code == 0, first.output
@@ -469,7 +588,12 @@ def test_explicit_extension_preserves_history_and_is_idempotent(setup):
     assert runner.invoke(main, args).output == first.output
     assert runner.invoke(main, args[:-1]).exit_code != 0
     assert runner.invoke(main, [a if a != "51" else "52" for a in args]).exit_code != 0
-    assert runner.invoke(main, [a if a != "Explicit synthetic approval" else "different" for a in args]).exit_code != 0
+    assert (
+        runner.invoke(
+            main, [a if a != "Explicit synthetic approval" else "different" for a in args]
+        ).exit_code
+        != 0
+    )
     with v.database(initialize=True) as db:
         assert v.totals(db)["limitUsd"] == "51.00"
         assert [tuple(r) for r in db.execute("SELECT * FROM attempts")] == history
@@ -486,12 +610,23 @@ def test_extension_ceiling_is_used_by_prepare_approve_and_submit(setup):
     value["shots"][0]["maxAttempts"] = 1
     with pytest.raises(click.ClickException, match="budget"):
         v.prepare(value, setup)
-    args = ["video", "budget", "extend", "--expected-limit", "50", "--limit", "51",
-            "--reason", "Synthetic boundary approval", "--owner-approved"]
+    args = [
+        "video",
+        "budget",
+        "extend",
+        "--expected-limit",
+        "50",
+        "--limit",
+        "51",
+        "--reason",
+        "Synthetic boundary approval",
+        "--owner-approved",
+    ]
     assert CliRunner().invoke(main, args).exit_code == 0
     plan = v.prepare(value, setup)["planId"]
-    result = CliRunner().invoke(main, ["video", "approve", plan,
-        "--models-and-rights-approved", "--auto-topup-disabled"])
+    result = CliRunner().invoke(
+        main, ["video", "approve", plan, "--models-and-rights-approved", "--auto-topup-disabled"]
+    )
     assert result.exit_code == 0, result.output
     v.submit(plan, "scene-veo", 1, "", setup)
     with v.database() as db:
@@ -502,8 +637,18 @@ def test_extension_ceiling_is_used_by_prepare_approve_and_submit(setup):
 
 def test_extension_fails_closed_on_outstanding_and_invalid_audit(setup):
     attempt = v.submit(approved(setup), "scene-veo", 1, "", setup)
-    args = ["video", "budget", "extend", "--expected-limit", "50", "--limit", "51",
-            "--reason", "Synthetic approval", "--owner-approved"]
+    args = [
+        "video",
+        "budget",
+        "extend",
+        "--expected-limit",
+        "50",
+        "--limit",
+        "51",
+        "--reason",
+        "Synthetic approval",
+        "--owner-approved",
+    ]
     assert CliRunner().invoke(main, args).exit_code != 0
     v.poll(attempt["attemptId"], setup)
     assert CliRunner().invoke(main, args).exit_code == 0
@@ -583,7 +728,9 @@ def test_all_plans_share_one_cap_and_all_planned_retries_must_fit(setup):
     plan = approved(fal)
     # Synthetic historical reservations, not real game or billing data.
     with v.database() as db:
-        db.execute("INSERT INTO attempts VALUES ('history',?,'old',1,4999,'COMPLETED','{}')", (plan,))
+        db.execute(
+            "INSERT INTO attempts VALUES ('history',?,'old',1,4999,'COMPLETED','{}')", (plan,)
+        )
     with pytest.raises(click.ClickException, match="cannot cover"):
         v.submit(plan, "scene-veo", 1, "", fal)
     assert not fal.posts
@@ -692,29 +839,49 @@ def test_regular_and_admin_keys_are_separate_and_errors_do_not_expose_them(monke
     assert calls[1][1]["allow_redirects"] is False
 
 
-@pytest.mark.parametrize("events,more,valid", [
-    ([{"request_id":"a", "endpoint_id":"model", "cost_total":1.344}], False, True),
-    ([{"request_id":"a", "endpoint_id":"model", "cost_total":0}], False, True),
-    ([], False, True),
-    ([], True, False),
-    ([{"request_id":"a", "endpoint_id":"model", "cost_total":-1}], False, False),
-    ([{"request_id":"foreign", "endpoint_id":"model", "cost_total":1}], False, False),
-    ([{"request_id":"a", "endpoint_id":"model", "cost_total":"NaN"}], False, False),
-])
-def test_billing_events_are_read_only_request_matched_and_fail_closed(monkeypatch, events, more, valid):
+@pytest.mark.parametrize(
+    "events,more,valid",
+    [
+        ([{"request_id": "a", "endpoint_id": "model", "cost_total": 1.344}], False, True),
+        ([{"request_id": "a", "endpoint_id": "model", "cost_total": 0}], False, True),
+        ([], False, True),
+        ([], True, False),
+        ([{"request_id": "a", "endpoint_id": "model", "cost_total": -1}], False, False),
+        ([{"request_id": "foreign", "endpoint_id": "model", "cost_total": 1}], False, False),
+        ([{"request_id": "a", "endpoint_id": "model", "cost_total": "NaN"}], False, False),
+    ],
+)
+def test_billing_events_are_read_only_request_matched_and_fail_closed(
+    monkeypatch, events, more, valid
+):
     from types import SimpleNamespace
+
     calls = []
+
     class Session:
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
         def get(self, url, **kwargs):
             calls.append((url, kwargs))
-            return SimpleNamespace(status_code=200, json=lambda: {"billing_events":events, "has_more":more})
+            return SimpleNamespace(
+                status_code=200, json=lambda: {"billing_events": events, "has_more": more}
+            )
+
     monkeypatch.setattr(v.requests, "Session", Session)
-    monkeypatch.setattr(v.cloud, "credential_store", lambda: SimpleNamespace(get_password=lambda *_: "SYNTHETIC-BILLING"))
+    monkeypatch.setattr(
+        v.cloud,
+        "credential_store",
+        lambda: SimpleNamespace(get_password=lambda *_: "SYNTHETIC-BILLING"),
+    )
     if valid:
         result = v.Fal.billing_events(["a"])
-        assert (result.get("a") or {}).get("amount") == (str(events[0]["cost_total"]) if events else None)
+        assert (result.get("a") or {}).get("amount") == (
+            str(events[0]["cost_total"]) if events else None
+        )
     else:
         with pytest.raises(click.ClickException):
             v.Fal.billing_events(["a"])
@@ -814,12 +981,17 @@ def test_post_rejection_never_gets_terminal_result_treatment():
         )
 
 
-@pytest.mark.parametrize("method,completed,exception", [
-    ("POST", True, click.ClickException), ("GET", False, click.ClickException),
-    ("GET", True, v.UnavailableResult),
-])
+@pytest.mark.parametrize(
+    "method,completed,exception",
+    [
+        ("POST", True, click.ClickException),
+        ("GET", False, click.ClickException),
+        ("GET", True, v.UnavailableResult),
+    ],
+)
 def test_404_only_recognized_for_completed_result_get(method, completed, exception):
     from types import SimpleNamespace
+
     fal = object.__new__(v.Fal)
     fal.session = SimpleNamespace(request=lambda *a, **kw: SimpleNamespace(status_code=404))
     with pytest.raises(exception):
@@ -1016,36 +1188,50 @@ def test_download_preserves_original_and_writes_upload_metadata_without_credenti
         v.download(attempt["attemptId"])
 
 
-@pytest.mark.parametrize('changed',[False,True])
-def test_recover_incomplete_download_verifies_provider_bytes_without_overwrite(setup,monkeypatch,changed):
-    monkeypatch.setattr(v.Fal,'billing_events',lambda ids:{})
-    pid=approved(setup);a=v.submit(pid,'scene-veo',1,'',setup);v.poll(a['attemptId'],setup)
-    original=b'\x00\x00\x00\x18ftypisomSynthetic'
+@pytest.mark.parametrize("changed", [False, True])
+def test_recover_incomplete_download_verifies_provider_bytes_without_overwrite(
+    setup, monkeypatch, changed
+):
+    monkeypatch.setattr(v.Fal, "billing_events", lambda ids: {})
+    pid = approved(setup)
+    a = v.submit(pid, "scene-veo", 1, "", setup)
+    v.poll(a["attemptId"], setup)
+    original = b"\x00\x00\x00\x18ftypisomSynthetic"
+
     class Response:
-        status_code=200
-        def __enter__(self):return self
-        def __exit__(self,*args):pass
-        def iter_content(self,size):yield original
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def iter_content(self, size):
+            yield original
+
     class Session(Response):
-        def get(self,url,**kwargs):
-            assert 'headers' not in kwargs
+        def get(self, url, **kwargs):
+            assert "headers" not in kwargs
             return Response()
-    monkeypatch.setattr(v.requests,'Session',Session)
-    build=v.upload_metadata
-    monkeypatch.setattr(v,'upload_metadata',lambda *a,**k:v.fail('Synthetic metadata failure'))
-    with pytest.raises(click.ClickException,match='metadata failure'):v.download(a['attemptId'])
-    path=v.ROOT/'outputs'/(a['attemptId']+'.mp4')
-    assert path.read_bytes()==original
-    monkeypatch.setattr(v,'upload_metadata',build)
+
+    monkeypatch.setattr(v.requests, "Session", Session)
+    build = v.upload_metadata
+    monkeypatch.setattr(v, "upload_metadata", lambda *a, **k: v.fail("Synthetic metadata failure"))
+    with pytest.raises(click.ClickException, match="metadata failure"):
+        v.download(a["attemptId"])
+    path = v.ROOT / "outputs" / (a["attemptId"] + ".mp4")
+    assert path.read_bytes() == original
+    monkeypatch.setattr(v, "upload_metadata", build)
     if changed:
-        path.write_bytes(original+b'Changed')
-        with pytest.raises(click.ClickException,match='differs from provider'):
-            v.download(a['attemptId'],recover_existing=True)
-        assert path.read_bytes()==original+b'Changed'
+        path.write_bytes(original + b"Changed")
+        with pytest.raises(click.ClickException, match="differs from provider"):
+            v.download(a["attemptId"], recover_existing=True)
+        assert path.read_bytes() == original + b"Changed"
     else:
-        recovered=v.download(a['attemptId'],recover_existing=True)
-        assert recovered['downloadPath']==str(path)
-        assert path.read_bytes()==original
-        with pytest.raises(click.ClickException,match='already finished'):
-            v.download(a['attemptId'],recover_existing=True)
-    assert len(setup.posts)==1
+        recovered = v.download(a["attemptId"], recover_existing=True)
+        assert recovered["downloadPath"] == str(path)
+        assert path.read_bytes() == original
+        with pytest.raises(click.ClickException, match="already finished"):
+            v.download(a["attemptId"], recover_existing=True)
+    assert len(setup.posts) == 1
