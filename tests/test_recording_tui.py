@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 from click.testing import CliRunner
 import pytest
-from textual.widgets import RichLog, Static
+from textual.widgets import Button, RichLog, Static
 
 from panther_journal.cli import main
 from panther_journal.recording_tui import RecorderBackend, RecordingApp
@@ -56,6 +56,8 @@ def test_tui_stop_resize_errors_history_and_finalization(size, tmp_path):
             await app.refresh_status()
             await pilot.pause()
             assert backend.started
+            stop = app.query_one("#stop", Button)
+            assert stop.region.y >= 0 and stop.region.bottom <= app.screen.size.height - 1
             assert "RECORDING" in str(app.query_one("#health", Static).content)
             assert len(app.seen_events) == 1
             app.save_screenshot(f"recording-tui-active-{size[0]}.svg", path=str(tmp_path))

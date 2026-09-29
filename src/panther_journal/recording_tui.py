@@ -292,8 +292,9 @@ class RecordingApp(App):
             yield Static("Starting independent recorder…", id="health", markup=False)
             yield RichLog(id="transcript", wrap=True, markup=False, auto_scroll=True)
             yield RichLog(id="events", wrap=True, markup=False, auto_scroll=True)
-            yield Button("Stop & save", id="stop", variant="warning")
             yield Static(id="summary", markup=False)
+        # The safety control stays outside the scrollable body at every size.
+        yield Button("Stop & save", id="stop", variant="warning")
         yield Footer()
 
     def on_mount(self):
