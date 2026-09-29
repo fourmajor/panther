@@ -438,7 +438,7 @@ def character_create_profile(manifest):
 @click.option(
     "--expected-revision",
     required=True,
-    help="Exact revision from character show, including quotes.",
+    help="Exact 32-hex current activation revision from character show.",
 )
 @click.option("--reason", required=True, help="Why this model is becoming the current model.")
 def character_set_model(
@@ -450,11 +450,10 @@ def character_set_model(
         "characterId": slug(character_id),
         "webKey": web_key,
         "sourceKey": source_key,
+        "provenanceKey": provenance_key,
         "expectedRevision": expected_revision,
         "reason": reason,
     }
-    if provenance_key:
-        body["provenanceKey"] = provenance_key
     click.echo(json.dumps(api(configuration(), "PUT", "/character-model", json=body), indent=2))
 
 
@@ -478,6 +477,7 @@ def character_set_portrait(game, character_id, portrait_key, expected_revision, 
 
 def register(group):
     from panther_journal.novel_library import novels
+
     group.add_command(novels)
     from panther_journal.character_details import register as register_details
 

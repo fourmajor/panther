@@ -16,6 +16,8 @@ def broker(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
     monkeypatch.setenv("ASSET_BUCKET_NAME", "test-panther-assets")
     monkeypatch.setenv("JOB_TABLE", "test-jobs")
+    monkeypatch.setenv("ASSET_BROWSE_TABLE", "test-job-browse")
+    monkeypatch.setenv("CATALOG_TABLE", "test-job-catalog")
     monkeypatch.setenv("MODEL_PUBLISHERS", "example-operator,example-editor")
     monkeypatch.setenv("MODEL_WORKERS", "example-operator")
     monkeypatch.setenv(
@@ -36,6 +38,19 @@ def broker(monkeypatch):
             ],
         )
         s3 = boto3.client("s3")
+        for name in ("test-job-browse", "test-job-catalog"):
+            boto3.client("dynamodb").create_table(
+                TableName=name,
+                BillingMode="PAY_PER_REQUEST",
+                KeySchema=[
+                    {"AttributeName": "pk", "KeyType": "HASH"},
+                    {"AttributeName": "sk", "KeyType": "RANGE"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "pk", "AttributeType": "S"},
+                    {"AttributeName": "sk", "AttributeType": "S"},
+                ],
+            )
         s3.create_bucket(
             Bucket="test-panther-assets",
             CreateBucketConfiguration={"LocationConstraint": "us-west-2"},
@@ -50,6 +65,8 @@ def broker(monkeypatch):
 
 
 def request(m, route, body=None, username="example-operator", query=None, actor="test-owner"):
+    if body is None and route == "POST /model-jobs/claim":
+        body = {"workerVersion": 2}
     return m.handler(
         {
             "routeKey": route,
@@ -69,31 +86,76 @@ def unpack(result):
 
 
 def put(m, key, data=b"image", content_type="image/png"):
-    return m.media.s3.put_object(
+    metadata = {
+        "characterIds": ["test-person"],
+        "extra": {"appearanceId": "original", "relationshipRole": "finished"},
+    }
+    result = m.media.s3.put_object(
         Bucket=m.media.BUCKET_NAME,
         Key=key,
         Body=data,
         ContentType=content_type,
         ChecksumAlgorithm="SHA256",
         ChecksumSHA256=base64.b64encode(hashlib.sha256(data).digest()).decode(),
+        Metadata={"panther": base64.b64encode(json.dumps(metadata).encode()).decode()},
     )
+    if "/assets/" in key:
+        import browse_index
+
+        browse_index.table().put_item(
+            Item={
+                "pk": browse_index.partition("test-game", "all"),
+                "sk": key,
+                "observed": 1,
+                "payload": json.dumps(
+                    {
+                        "key": key,
+                        "size": len(data),
+                        "contentType": content_type,
+                        "metadata": metadata,
+                    }
+                ),
+            }
+        )
+    return result
 
 
 def manifest(m, revision="first"):
     poster = "games/test-game/assets/poster/original/image.png"
     put(m, poster)
-    profile = {
-        "schemaVersion": 1,
-        "gameId": "test-game",
-        "id": "test-person",
-        "name": "Test Person",
-        "model": {"posterKey": poster, "webKey": "old", "sourceKey": "old-source"},
-    }
-    result = put(
-        m,
-        "games/test-game/characters/test-person/profile.json",
-        json.dumps(profile).encode(),
-        "application/json",
+    import character_appearances as looks
+    import character_details
+    import os
+    import uuid
+
+    catalog = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
+    if not catalog.get_item(Key={"pk": "GAME#test-game", "sk": "CHARACTER#test-person"}).get(
+        "Item"
+    ):
+        catalog.put_item(
+            Item={
+                "pk": "GAME#test-game",
+                "sk": "CHARACTER#test-person",
+                "schemaVersion": 2,
+                "entityType": "Character",
+                "id": "test-person",
+                "gameId": "test-game",
+                "name": "Test Person",
+                "detailsRevision": uuid.uuid4().hex,
+                "detailsJson": json.dumps(character_details.empty_details()),
+            }
+        )
+    looks.browse_index.table().put_item(
+        Item={
+            "pk": "character-looks-migration#test-game#test-person",
+            "sk": "complete",
+            "inventoryHash": "0" * 64,
+        }
+    )
+    result = looks.initialize(
+        m.media,
+        {"gameId": "test-game", "characterId": "test-person", "portraitKey": poster},
+        "test-owner",
     )
     views = {}
     for view in m.VIEWS:
@@ -107,7 +169,7 @@ def manifest(m, revision="first"):
         "appearanceId": "original",
         "revisionId": revision,
         "views": views,
-        "expectedRevision": result["ETag"],
+        "expectedRevision": result["profile"][3],
     }
 
 
@@ -154,6 +216,10 @@ def test_complete_set_is_atomic_idempotent_and_private(broker):
     assert unpack(request(broker, "POST /model-reference-sets", body))["jobId"] == first["jobId"]
     assert broker.table.scan()["Count"] == 2
     assert "taskToken" not in first
+    assert (
+        first["workflowVersion"] == 2 and first["appearanceSelection"]["appearanceId"] == "original"
+    )
+    assert request(broker, "POST /model-jobs/claim", {})["statusCode"] == 409
     assert (
         request(broker, "POST /model-reference-sets", body, username="visitor")["statusCode"] == 403
     )
@@ -205,9 +271,11 @@ def test_publish_preserves_portrait_and_history_and_retries(broker):
     profile = broker.media._profile_record("test-game", "test-person")[2]
     assert profile["model"]["posterKey"].endswith("poster/original/image.png")
     assert profile["model"]["webKey"] == result["webKey"]
-    assert broker.media.s3.head_object(
-        Bucket=broker.media.BUCKET_NAME, Key=profile["modelPublication"]["previousProfileKey"]
-    )
+    import character_appearances as looks
+
+    history = looks.history(broker.media, "test-game", "test-person")
+    assert len(history["selections"]) == 2 and len(history["activations"]) == 2
+    assert any(s["modelKey"] is None for s in history["selections"])
     assert unpack(request(broker, "POST /model-jobs/complete", body))["status"] == "PUBLISHED"
     assert (
         "publishing"
@@ -228,7 +296,7 @@ def test_superseded_job_cannot_publish(broker):
         )
     )
     assert outcome["status"] == "SUPERSEDED"
-    assert broker.media._profile_record("test-game", "test-person")[2]["model"]["webKey"] == "old"
+    assert "webKey" not in broker.media._profile_record("test-game", "test-person")[2]["model"]
 
 
 def test_false_or_missing_quality_never_publishes(broker):
@@ -239,7 +307,7 @@ def test_false_or_missing_quality_never_publishes(broker):
     assert request(broker, "POST /model-jobs/complete", body)["statusCode"] == 400
     result["passed"] = False
     assert unpack(request(broker, "POST /model-jobs/complete", body))["status"] == "FAILED"
-    assert broker.media._profile_record("test-game", "test-person")[2]["model"]["webKey"] == "old"
+    assert "webKey" not in broker.media._profile_record("test-game", "test-person")[2]["model"]
 
 
 def test_outbox_starts_once_and_callback_tokens_stay_server_side(broker):
@@ -271,18 +339,34 @@ def test_stale_worker_and_changed_profile_cannot_overwrite(broker):
     new = unpack(request(broker, "POST /model-jobs/claim"))
     assert new["lease"] != claimed["lease"]
     assert request(broker, "POST /model-jobs/complete", body)["statusCode"] == 400
-    profile = broker.media._profile_record("test-game", "test-person")[2]
-    profile["title"] = "Concurrent change"
-    put(
-        broker,
-        "games/test-game/characters/test-person/profile.json",
-        json.dumps(profile).encode(),
-        "application/json",
+    import character_appearances as looks
+
+    profile = broker.media._profile_record("test-game", "test-person")
+    current = looks.get(
+        looks.browse_index.table(), "test-game", "test-person", "activation", "current"
+    )[2]
+    restored = looks.save(
+        broker.media,
+        {
+            "gameId": "test-game",
+            "characterId": "test-person",
+            "id": "current",
+            "appearanceId": current["appearanceId"],
+            "selectionId": current["selectionId"],
+            "expectedRevision": profile[3],
+            "operationId": "a" * 32,
+            "reason": "Concurrent official selection",
+            "story": {"sessionId": None, "eventId": None, "date": None},
+        },
+        {"sub": "test-owner"},
+        "activation",
     )
+    assert restored["statusCode"] == 200
     body["lease"] = new["lease"]
     assert unpack(request(broker, "POST /model-jobs/complete", body))["status"] == "CONFLICT"
     assert (
-        broker.media._profile_record("test-game", "test-person")[2]["title"] == "Concurrent change"
+        broker.media._profile_record("test-game", "test-person")[3]
+        == json.loads(restored["body"])["record"]["revision"]
     )
 
 
@@ -294,12 +378,14 @@ def test_reference_advancement_blocks_during_publication_and_recovery_works(brok
     monkeypatch.setattr(
         broker.media, "_publish_model", Mock(side_effect=RuntimeError("process stopped"))
     )
-    with pytest.raises(RuntimeError):
+    assert (
         request(
             broker,
             "POST /model-jobs/complete",
             {"jobId": job["jobId"], "lease": claimed["lease"], "result": result},
-        )
+        )["statusCode"]
+        == 503
+    )
     assert broker.get_job(job["jobId"])["status"] == "PUBLISHING"
     body["revisionId"] = "next"
     assert request(broker, "POST /model-reference-sets", body)["statusCode"] == 409

@@ -11,6 +11,17 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 
 /** Versioned private appearance metadata, never an inference service or idle worker. */
 export class CharacterAppearances extends Construct {
+  static grantProducer(fn: lambda.Function, browse: dynamodb.ITable, catalog: dynamodb.ITable) {
+    fn.addEnvironment("ASSET_BROWSE_TABLE",browse.tableName);
+    fn.addEnvironment("CATALOG_TABLE",catalog.tableName);
+    browse.grant(fn,"dynamodb:GetItem","dynamodb:Query","dynamodb:BatchGetItem");
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[browse.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-history#*","character-looks-ops#*","character-looks-migration#*"]}}}));
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[browse.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-migration#*","v3#*#all"]}}}));
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem","dynamodb:ConditionCheckItem"],resources:[catalog.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["GAME#*"]}}}));
+  }
   constructor(scope: Construct, id: string, props: {
     api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; bucket: s3.IBucket;
     browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
@@ -23,7 +34,6 @@ export class CharacterAppearances extends Construct {
       code:lambda.Code.fromAsset(path.join(__dirname,"../../lambda/media-api"),{exclude:["**/__pycache__/**","**/*.pyc"]}),
       logGroup:new logs.LogGroup(this,"Logs",{retention:logs.RetentionDays.ONE_MONTH}),
       environment:{ASSET_BUCKET_NAME:props.bucket.bucketName, ASSET_BROWSE_TABLE:props.browseTable.tableName,
-        APPEARANCE_WRITES_ENABLED:"false",
         CATALOG_TABLE:props.catalogTable.tableName, MODEL_PUBLISHERS:props.accessEnvironment.MODEL_PUBLISHERS,
         ASSET_MIGRATORS:props.accessEnvironment.ASSET_MIGRATORS},
     });

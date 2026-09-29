@@ -95,8 +95,55 @@ def submit(body, claims):
     if not isinstance(views, dict) or set(views) != VIEWS or len(set(views.values())) != 8:
         raise ValueError("Eight distinct labeled views are required")
     game, character = body["gameId"], body["characterId"]
+    import character_appearances as looks
+
+    looks.records.revision(body["expectedRevision"])
+    # Resolve the caller's exact recorded activation before deriving the job identity.
+    # Lost-response retries remain identifiable even after a later publication.
+    db = looks.browse_index.table()
+    pinned_activation = looks.records.decode(
+        db.get_item(
+            Key={
+                "pk": f"{looks.PREFIX}-history#{looks.kind('activation', character)}#{game}#current",
+                "sk": body["expectedRevision"],
+            },
+            ConsistentRead=True,
+        ).get("Item")
+    )
+    if not pinned_activation or pinned_activation["appearanceId"] != body["appearanceId"]:
+        raise ValueError("Reference set must pin a recorded appearance selection")
+    registered, appearance, selected, _ = looks.resolve(
+        game, character, body["appearanceId"], pinned_activation["selectionId"]
+    )
     refs = {view: asset(key, game, image=True) for view, key in sorted(views.items())}
-    identity = {**body, "views": refs, "workflowVersion": 1}
+    reference_items = looks.indexed(game, list(views.values()))
+    source_guards = []
+    for key in views.values():
+        item = reference_items.get(key)
+        metadata = (looks.records.decode(item) or {}).get("metadata", {})
+        if (
+            character not in metadata.get("characterIds", [])
+            or metadata.get("extra", {}).get("appearanceId") != body["appearanceId"]
+        ):
+            raise ValueError(
+                "Each turnaround must explicitly identify this character and physical appearance"
+            )
+        source_guards.append(
+            looks.guard(
+                db, {"pk": looks.browse_index.partition(game, "all"), "sk": key}, item, "observed"
+            )
+        )
+    pin = {
+        "appearanceId": appearance["id"],
+        "appearanceRevision": appearance["revision"],
+        "selectionId": selected["id"],
+        "selectionRevision": selected["revision"],
+        "portraitKey": selected["portraitKey"],
+        "modelKey": selected["modelKey"],
+        "sourceKey": selected["sourceKey"],
+        "provenanceKey": selected["provenanceKey"],
+    }
+    identity = {**body, "views": refs, "workflowVersion": 2, "appearanceSelection": pin}
     job_id = hashlib.sha256(
         json.dumps(
             {k: v for k, v in identity.items() if k != "expectedRevision"}, sort_keys=True
@@ -110,8 +157,7 @@ def submit(body, claims):
         return response(
             409, {"error": "Inspect the current character before registering references"}
         )
-    # Until appearance timelines ship, only the profile's current look can be auto-published.
-    if body["appearanceId"] != record[2].get("appearanceId", "original"):
+    if body["appearanceId"] != record[2]["appearanceId"]:
         raise ValueError("Only the current appearance is supported; do not mix alternate looks")
     job = {
         **job_key(job_id),
@@ -148,6 +194,14 @@ def submit(body, claims):
                 }
             },
             {"Update": update},
+            looks.guard(
+                db,
+                looks.records.pointer(
+                    looks.PREFIX, game, looks.kind("activation", character), "current"
+                ),
+                {"revision": body["expectedRevision"]},
+            ),
+            *source_guards,
         ]
     )
     return response(200, public(job))
@@ -173,6 +227,10 @@ def claim(claims):
                 or job.get("notBefore", 0) > now
             ):
                 continue
+            if job.get("workflowVersion") != 2 or not job.get("appearanceSelection"):
+                raise RuntimeError(
+                    "Pending model jobs require explicit appearance-pin migration before execution"
+                )
             head = table.get_item(
                 Key=head_key(job["gameId"], job["characterId"]), ConsistentRead=True
             ).get("Item", {})
@@ -260,6 +318,8 @@ def update_lease(job, body, *, defer=False):
 def finish(job, body, claims):
     if job["status"] in TERMINAL:
         return response(200, public(job))
+    if job.get("workflowVersion") != 2 or not job.get("appearanceSelection"):
+        raise RuntimeError("Pending model job appearance pins are not migrated")
     if job["status"] not in {"RUNNING", "PUBLISHING"} or job["leaseUntil"] <= int(time.time()):
         return response(409, {"error": "Lease expired; this worker must stop"})
     result = body.get("result")
@@ -356,7 +416,11 @@ def finish(job, body, claims):
     )
     record = media._profile_record(job["gameId"], job["characterId"])
     old_model = record[2].get("model", {}) if record else {}
-    if all(old_model.get(k) == result[k] for k in ("webKey", "sourceKey", "provenanceKey")):
+    if (
+        record
+        and record[2]["appearanceId"] == job["appearanceSelection"]["appearanceId"]
+        and all(old_model.get(k) == result[k] for k in ("webKey", "sourceKey", "provenanceKey"))
+    ):
         status = "PUBLISHED"
     else:
         published = media._publish_model(
@@ -482,6 +546,17 @@ def handler(event, _context):
         if claims.get("cognito:username") not in WORKERS:
             return response(403, {"error": "This account cannot claim laptop jobs"})
         if route == "POST /model-jobs/claim":
+            if (
+                set(body) != {"workerVersion"}
+                or type(body["workerVersion"]) is not int
+                or body["workerVersion"] != 2
+            ):
+                return response(
+                    409,
+                    {
+                        "error": "Upgrade the local worker for appearance-pinned model jobs before claiming"
+                    },
+                )
             return claim(claims)
         job = owned_job(body, claims)
         if route == "POST /model-jobs/heartbeat":
@@ -493,6 +568,13 @@ def handler(event, _context):
         return response(404, {"error": "Unknown job operation"})
     except (ValueError, TypeError, KeyError):
         return response(400, {"error": "Invalid reference set, missing asset, or job lease"})
+    except RuntimeError:
+        return response(
+            503,
+            {
+                "error": "Model job or appearance storage unavailable; retain the exact operation and inspect pending migrations"
+            },
+        )
     except ClientError as exc:
         code = exc.response["Error"]["Code"]
         return response(

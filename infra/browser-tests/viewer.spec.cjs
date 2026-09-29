@@ -21,6 +21,19 @@ const stack = new PantherMediaExplorerStack(new App(), 'BrowserTest', {
 const policy = Object.values(Template.fromStack(stack).findResources('AWS::CloudFront::ResponseHeadersPolicy'))[0]
   .Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
 
+const portraitKey='games/test-game/assets/portrait/original/portrait.svg';
+function appearanceHistory(version,withModel) {
+  const pair=(id,modelKey)=>({id,appearanceId:'ordinary',appearanceRevision:'b'.repeat(32),revision:'c'.repeat(32),portraitKey,modelKey,sourceKey:null,provenanceKey:null});
+  return {schemaVersion:2,gameId:'test-game',characterId:'test-character',current:`edition-${version}`,activationRevision:'a'.repeat(32),
+    appearances:[{id:'ordinary',name:'Ordinary appearance',story:{sessionId:null,eventId:null,date:null}}],
+    selections:[pair(`edition-${version}`,withModel?`games/test-game/assets/model-${version}/original/model.glb`:null),...(withModel?[pair('older','games/test-game/assets/model-older/original/model.glb')]:[])],activations:[]};
+}
+function appearanceView(character,version,withModel,url,size=1024) {
+  const history=appearanceHistory(version,withModel), selection=history.selections.find(s=>s.id===url.searchParams.get('selectionId')) || history.selections[0];
+  return {character,selection,appearance:history.appearances[0],poster:{key:portraitKey,url:`https://test.s3.amazonaws.com/portrait.svg${withModel?'':`?v=${version}`}`},
+    model:withModel?{key:selection.modelKey,url:`https://test.s3.amazonaws.com/model-${selection.id==='older'?'older':version}.glb`,size,cameraOrbit:'0deg 75deg auto',fieldOfView:'30deg'}:null};
+}
+
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
   test(`portrait-only character remains usable at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
@@ -28,8 +41,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     let portraitVersion = 1;
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
       json: new URL(route.request().url()).pathname === '/character-versions'
-        ? { models: [], portraits: [{key:'games/test-game/assets/portrait/original/portrait.svg', current:true, available:true, url:`https://test.s3.amazonaws.com/portrait.svg?v=${portraitVersion}`}] }
-        : { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null, character, model:null, poster:{url:`https://test.s3.amazonaws.com/portrait.svg?v=${portraitVersion}`} },
+        ? appearanceHistory(portraitVersion,false)
+        : { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null,...appearanceView(character,portraitVersion,false,new URL(route.request().url())) },
       headers: {'access-control-allow-origin':'https://panther.place'},
     }));
     await page.route('https://test.s3.amazonaws.com/portrait.svg?*', route => route.fulfill({ contentType:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1536"><rect width="1024" height="1536" fill="tan"/></svg>' }));
@@ -85,11 +98,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     const character = { gameId: 'test-game', id: 'test-character', name: 'Test character', title: 'Test', summary: 'Synthetic browser fixture, not game data.' };
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => route.fulfill({
       json: new URL(route.request().url()).pathname === '/character-versions'
-        ? { models: [
-            {key:`games/test-game/assets/model-${version}/original/model.glb`, current:true, available:true, url:`https://test.s3.amazonaws.com/model-${version}.glb`, size:modelBytes.length, cameraOrbit:'0deg 75deg auto', fieldOfView:'30deg', posterKey:'games/test-game/assets/portrait/original/portrait.svg'},
-            {key:'games/test-game/assets/model-older/original/model.glb', current:false, available:true, url:'https://test.s3.amazonaws.com/model-older.glb', size:modelBytes.length, cameraOrbit:'0deg 75deg auto', fieldOfView:'30deg', posterKey:'games/test-game/assets/portrait/original/portrait.svg'}],
-            portraits: [{key:'games/test-game/assets/portrait/original/portrait.svg', current:true, available:true, url:'https://test.s3.amazonaws.com/portrait.svg'}] }
-        : { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null, character, model: { key:`games/test-game/assets/model-${version}/original/model.glb`, url: `https://test.s3.amazonaws.com/model-${version}.glb`, size: localModel ? localModel.length : 1024, cameraOrbit: '0deg 75deg auto', fieldOfView: '30deg' }, poster: { url: 'https://test.s3.amazonaws.com/portrait.svg' } },
+        ? appearanceHistory(version,true)
+        : { games:[{id:'test-game',name:'Test Game',purpose:'test'}], game:{id:'test-game',name:'Test Game',purpose:'test'}, players:[], memberships:[], characters:[], assets:[], cursor:null,...appearanceView(character,version,true,new URL(route.request().url()),modelBytes.length) },
       headers: { 'access-control-allow-origin': 'https://panther.place' },
     }));
     await page.route('https://test.s3.amazonaws.com/model-*.glb', route => route.fulfill({
@@ -180,8 +190,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await page.locator('#model-reset').click();
     await expect.poll(() => viewer.evaluate(el => el.getCameraOrbit().theta)).toBeCloseTo(initial, 2);
     expect(errors).toEqual([]);
-    await page.locator('#model-version').selectOption('games/test-game/assets/model-older/original/model.glb');
-    await expect(page).toHaveURL(/model=games%2Ftest-game%2Fassets%2Fmodel-older/);
+    await page.locator('#model-version').selectOption('older');
+    await expect(page).toHaveURL(/appearance=ordinary&selection=older/);
     await expect.poll(() => viewer.evaluate(el => el.src), { timeout: 30000 }).toMatch(/model-older\.glb$/);
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
     broken = true; version = 3;

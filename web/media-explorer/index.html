@@ -90,12 +90,15 @@
           <p id="character-no-model" hidden>No portrait or 3D model has been added yet.</p>
           <img id="character-portrait-only" class="character-portrait-only" alt="" hidden>
           <section class="appearance-history" id="appearance-history" aria-label="Appearance versions">
-            <div><h2>Appearance history</h2><p>Published versions remain available when a character changes.</p></div>
+            <div><h2>Appearance history</h2><p>Physical states and artwork editions are separate. Earlier portrait/model pairs remain intact.</p></div>
             <div class="appearance-pickers">
-              <label for="model-version">3D model <select id="model-version" aria-label="3D model version"></select></label>
-              <label for="portrait-version">Official portrait <select id="portrait-version" aria-label="Official portrait version"></select></label>
+              <label for="appearance-state">Physical appearance <select id="appearance-state" aria-label="Physical appearance"></select></label>
+              <label for="model-version">Artwork edition <select id="model-version" aria-label="Artwork edition"></select></label>
+              <button id="appearance-restore" class="quiet-button" type="button" disabled>Make this edition current</button>
             </div>
             <p id="appearance-status" role="status"></p>
+            <p id="appearance-story"></p>
+            <details><summary>Recorded selection changes</summary><ol id="appearance-events"></ol></details>
             <div id="appearance-downloads" class="appearance-pickers" aria-label="Download selected appearances"></div>
             <img id="portrait-version-preview" class="portrait-version-preview" alt="" hidden>
           </section>

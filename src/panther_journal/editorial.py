@@ -107,6 +107,8 @@ def agent(folder, stage, inputs, heartbeat):
         "Keep test-game fiction separate from campaign canon. Preserve uncertainty and capture-loss warnings. "
         "For visual planning, use catalog.game.visualStyle and matching catalog.visualStyles guidance. "
         "Reference portraits establish identity, not a competing rendering style. Preserve the chosen style in planning text. "
+        "catalog.officialArtwork pins complete portrait/model pairs and physical appearance revisions. Never mix members of different selections. "
+        "Current artwork is a visual reference, not proof of historical appearance or story timing. Missing artwork and timing stay unknown. "
         "Do not use held-out reading scripts. Do not invent missing dialogue. "
         "Evidence IDs are 'raw', 'catalog', selected asset keys or prior stage IDs. "
         "selectedKeys is ONLY for exact object keys from candidates, never catalog paths, raw paths, or evidence IDs. "
@@ -382,6 +384,24 @@ def process(config, root, claim):
     sources = [job["raw"]["key"]]
     if stage == "context":
         catalog = cloud.api(config, "GET", "/game", params={"gameId": job["gameId"]})
+        catalog["officialArtwork"] = {}
+        for character in catalog.get("characters", []):
+            history = cloud.api(
+                config,
+                "GET",
+                "/character-versions",
+                params={"gameId": job["gameId"], "characterId": character["id"]},
+            )
+            if history.get("schemaVersion") != 2 or not isinstance(history.get("selections"), list):
+                raise click.ClickException(
+                    "Complete typed appearance history is required for visual context"
+                )
+            selected = next(
+                (s for s in history["selections"] if s["id"] == history["current"]), None
+            )
+            if history["current"] is not None and selected is None:
+                raise click.ClickException("Pinned official artwork selection is missing")
+            catalog["officialArtwork"][character["id"]] = selected
         candidates, cursor = [], None
         while True:
             page = cloud.api(

@@ -5,7 +5,6 @@ import sys
 import types
 import base64
 import hashlib
-import struct
 
 import pytest
 from pathlib import Path
@@ -101,6 +100,7 @@ class FakeS3:
 
     def reserve(self, key, kind, metadata, *_args):
         from storage_layout import location
+
         return location(key, kind, metadata)
 
 
@@ -126,6 +126,7 @@ def load_media_api(monkeypatch, *, real_storage=False):
     module_path = Path(__file__).parents[1] / "infra" / "lambda" / "media-api" / "index.py"
     spec = importlib.util.spec_from_file_location("panther_media_api_test", module_path)
     module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
     if not real_storage:
         module.s3 = fake_s3
@@ -146,52 +147,6 @@ def test_old_character_storage_scan_route_is_retired(monkeypatch):
     response = module.handler(event("/characters"), None)
 
     assert response["statusCode"] == 404
-
-
-def test_portrait_only_character_can_be_viewed(monkeypatch):
-    module, fake = load_media_api(monkeypatch)
-    key = "games/example-game/characters/example-character/profile.json"
-    profile = json.loads(fake.objects[key]["Body"])
-    profile["model"] = {"posterKey": profile["model"]["posterKey"]}
-    fake.objects[key]["Body"] = json.dumps(profile).encode()
-    response = module.handler(event("/character", gameId="example-game", characterId="example-character"), None)
-    assert response["statusCode"] == 200
-    assert response_body(response)["model"] is None
-    assert response_body(response)["poster"]["url"]
-
-
-def test_character_model_uses_short_lived_urls_and_enforces_metadata(monkeypatch):
-    module, _fake_s3 = load_media_api(monkeypatch)
-
-    response = module.handler(
-        event("/character", gameId="example-game", characterId="example-character"),
-        None,
-    )
-    body = response_body(response)
-
-    assert response["statusCode"] == 200
-    assert body["character"]["name"] == "Example Character"
-    assert body["model"]["contentType"] == "model/gltf-binary"
-    assert body["model"]["expiresIn"] == 300
-    assert body["model"]["url"].startswith("https://private.example/games/")
-    assert body["model"]["sourceRetained"] is True
-    assert body["model"]["provenanceRetained"] is True
-    assert body["poster"]["contentType"] == "image/png"
-
-
-def test_character_model_rejects_assets_over_five_megabytes(monkeypatch):
-    module, fake_s3 = load_media_api(monkeypatch)
-    fake_s3.objects["games/example-game/assets/example-model/derived/web/model.glb"]["Body"] = (
-        b"x" * (5 * 1024 * 1024 + 1)
-    )
-
-    response = module.handler(
-        event("/character", gameId="example-game", characterId="example-character"),
-        None,
-    )
-
-    assert response["statusCode"] == 422
-    assert response_body(response)["error"] == "Character assets are unavailable or exceed limits"
 
 
 def upload_event(**updates):
@@ -227,29 +182,61 @@ def test_upload_signs_size_checksum_metadata_and_no_overwrite(monkeypatch):
     assert params["Metadata"]["uploaded-by"] == "example-user"
     metadata = json.loads(base64.b64decode(params["Metadata"]["panther"]))
     assert metadata["category"] == "reference"
-    assert metadata["extra"] == {"creator": "DM", "relationshipRole": "finished",
-                                 "generation": {"schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}},
-                                 "version": {"schemaVersion": 1, "seriesId": hashlib.sha256(result["key"].encode()).hexdigest()[:24], "number": 1}}
+    assert metadata["extra"] == {
+        "creator": "DM",
+        "relationshipRole": "finished",
+        "generation": {"schemaVersion": 1, "method": "unknown", "cost": {"status": "unknown"}},
+        "version": {
+            "schemaVersion": 1,
+            "seriesId": hashlib.sha256(result["key"].encode()).hexdigest()[:24],
+            "number": 1,
+        },
+    }
     assert expiry == 300
 
 
 def test_upload_new_version_inherits_series_and_rejects_wrong_kind(monkeypatch):
     module, client = load_media_api(monkeypatch)
     previous_key = "games/example-game/assets/old-map/original/map.png"
-    old = {"schemaVersion": 1, "title": "Earlier fictional map", "category": "reference",
-           "characterIds": [], "tags": [], "sourceKeys": [],
-           "extra": {"version": {"schemaVersion": 1, "seriesId": "fictional-map", "number": 1}}}
-    client.objects[previous_key] = {"Body": b"old", "ContentType": "image/png",
-                                    "Metadata": {"kind": "map", "panther": base64.b64encode(json.dumps(old).encode()).decode()}}
+    old = {
+        "schemaVersion": 1,
+        "title": "Earlier fictional map",
+        "category": "reference",
+        "characterIds": [],
+        "tags": [],
+        "sourceKeys": [],
+        "extra": {"version": {"schemaVersion": 1, "seriesId": "fictional-map", "number": 1}},
+    }
+    client.objects[previous_key] = {
+        "Body": b"old",
+        "ContentType": "image/png",
+        "Metadata": {"kind": "map", "panther": base64.b64encode(json.dumps(old).encode()).decode()},
+    }
     body = json.loads(upload_event()["body"])
     body["metadata"]["extra"]["version"] = {"previousKey": previous_key}
     result = module.handler(upload_event(**body), None)
     assert result["statusCode"] == 200
     encoded = client.signed_requests[-1][1]["Metadata"]["panther"]
     newer = json.loads(base64.b64decode(encoded))["extra"]["version"]
-    assert newer == {"schemaVersion": 1, "seriesId": "fictional-map", "number": 2, "previousKey": previous_key}
+    assert newer == {
+        "schemaVersion": 1,
+        "seriesId": "fictional-map",
+        "number": 2,
+        "previousKey": previous_key,
+    }
     assert module.handler(upload_event(**{**body, "kind": "portrait"}), None)["statusCode"] == 400
-    assert module.handler(upload_event(**{**body, "metadata": {**body["metadata"], "extra": {"version": {"seriesId": "forged"}}}}), None)["statusCode"] == 400
+    assert (
+        module.handler(
+            upload_event(
+                **{
+                    **body,
+                    "metadata": {**body["metadata"], "extra": {"version": {"seriesId": "forged"}}},
+                }
+            ),
+            None,
+        )["statusCode"]
+        == 400
+    )
 
 
 @pytest.mark.parametrize(
@@ -309,7 +296,9 @@ def test_info_returns_metadata_for_uploaded_and_legacy_assets(monkeypatch):
     assert result["metadata"]["title"] == "Example"
 
 
-@pytest.mark.parametrize("filename", ["poster.png", "movie.mp4", "model.blend", 'Café \"portrait\".png'])
+@pytest.mark.parametrize(
+    "filename", ["poster.png", "movie.mp4", "model.blend", 'Café "portrait".png']
+)
 def test_download_signs_exact_revision_as_safe_attachment(monkeypatch, filename):
     module, client = load_media_api(monkeypatch)
     key = f"games/example-game/assets/revision-two/original/{filename}"
@@ -321,15 +310,25 @@ def test_download_signs_exact_revision_as_safe_attachment(monkeypatch, filename)
     disposition = params["ResponseContentDisposition"]
     assert disposition.startswith('attachment; filename="')
     assert "filename*=UTF-8''" in disposition
-    assert '\r' not in disposition and '\n' not in disposition
+    assert "\r" not in disposition and "\n" not in disposition
     module.handler(event("/object-url", key=key), None)
     assert client.signed_requests[-1][1]["ResponseContentDisposition"] == "inline"
 
 
 def test_download_missing_or_invalid_never_signs(monkeypatch):
     module, client = load_media_api(monkeypatch)
-    assert module.handler(event("/object-url", key="games/example-game/missing", download="true"), None)["statusCode"] == 404
-    assert module.handler(event("/object-url", key="games/example-game/missing", download="false"), None)["statusCode"] == 400
+    assert (
+        module.handler(
+            event("/object-url", key="games/example-game/missing", download="true"), None
+        )["statusCode"]
+        == 404
+    )
+    assert (
+        module.handler(
+            event("/object-url", key="games/example-game/missing", download="false"), None
+        )["statusCode"]
+        == 400
+    )
     assert not client.signed_requests
 
 
@@ -361,202 +360,82 @@ def test_real_signer_binds_length_checksum_and_conditional_write(monkeypatch):
     } <= signed
 
 
-PROFILE_KEY = "games/example-game/characters/example-character/profile.json"
-NEW_WEB = "games/example-game/assets/new-model/original/model.glb"
-NEW_SOURCE = "games/example-game/assets/new-model/original/model.blend"
+def test_character_routes_delegate_to_typed_appearance_service(monkeypatch):
+    from unittest.mock import Mock
 
-
-def test_portrait_replacement_preserves_history_and_model(monkeypatch):
-    module, client = load_media_api(monkeypatch)
-    request = publication(module, client)
-    before = client.objects[PROFILE_KEY]["Body"]
-    old = json.loads(before)
-    portrait = "games/example-game/assets/new-portrait/original/portrait.png"
-    client.objects[portrait] = {"Body": b"image", "ContentType": "image/png"}
-    request["routeKey"] = "PUT /character-portrait"
-    request["body"] = json.dumps({"gameId":"example-game", "characterId":"example-character", "portraitKey":portrait, "reason":"Owner supplied replacement", "expectedRevision":client.get_object(Key=PROFILE_KEY)["ETag"]})
-    response = module.handler(request, None)
-    assert response["statusCode"] == 200
-    result = response_body(response)
-    assert client.objects[result["previousProfileKey"]]["Body"] == before
-    expected = dict(old["model"], posterKey=portrait)
-    assert result["profile"]["model"] == expected
-    assert result["profile"]["portraitPublication"]["actor"] == "user-id"
-    assert module.handler(request, None)["statusCode"] == 409
-
-
-@pytest.mark.parametrize("portrait,status", [("games/other/assets/x/original/p.png",400), (PROFILE_KEY,400), ("games/example-game/assets/missing/original/p.png",422), (None,400)])
-def test_portrait_replacement_rejects_invalid_sources(monkeypatch, portrait, status):
-    module, client = load_media_api(monkeypatch)
-    request = publication(module, client)
-    request["routeKey"] = "PUT /character-portrait"
-    request["body"] = json.dumps({"gameId":"example-game", "characterId":"example-character", "portraitKey":portrait, "reason":"Replacement", "expectedRevision":client.get_object(Key=PROFILE_KEY)["ETag"]})
-    assert module.handler(request, None)["statusCode"] == status
-    request["requestContext"]["authorizer"]["jwt"]["claims"]["cognito:username"] = "unprivileged"
-    assert module.handler(request, None)["statusCode"] == 403
-
-
-def publication(module, client, **updates):
-    module.MODEL_PUBLISHERS = {"owner", "dm"}
-    client.objects[NEW_WEB] = {
-        "Body": struct.pack("<4sII", b"glTF", 2, 12),
-        "ContentType": "model/gltf-binary",
-    }
-    client.objects[NEW_SOURCE] = {"Body": b"blend", "ContentType": "application/octet-stream"}
-    body = {
-        "gameId": "example-game",
-        "characterId": "example-character",
-        "webKey": NEW_WEB,
-        "sourceKey": NEW_SOURCE,
-        "expectedRevision": client.get_object(Key=PROFILE_KEY)["ETag"],
-        "reason": "Replace prototype with tested model",
-    }
-    body.update(updates)
-    return {
-        "routeKey": "PUT /character-model",
-        "body": json.dumps(body),
-        "requestContext": {
-            "authorizer": {"jwt": {"claims": {"sub": "user-id", "cognito:username": "owner"}}}
-        },
-    }
-
-
-def test_profile_read_has_revision_and_no_signed_urls(monkeypatch):
-    module, client = load_media_api(monkeypatch)
-    response = module.handler(
-        event("/character-profile", gameId="example-game", characterId="example-character"), None
+    module, fake = load_media_api(monkeypatch)
+    service = types.SimpleNamespace(
+        view=Mock(
+            return_value={"selection": {"id": "retained-pair"}, "poster": None, "model": None}
+        ),
+        history=Mock(
+            return_value={
+                "schemaVersion": 2,
+                "selections": [],
+                "activations": [],
+                "appearances": [],
+            }
+        ),
+        profile=Mock(return_value=(None, b"{}", {"schemaVersion": 2}, "a" * 32)),
+        publish=Mock(return_value={"statusCode": 200, "body": "{}"}),
     )
-    assert response["statusCode"] == 200
-    result = response_body(response)
-    assert result["revision"] == client.get_object(Key=PROFILE_KEY)["ETag"]
-    assert result["profile"]["name"] == "Example Character"
-    assert not client.signed_requests
-
-
-def test_publish_preserves_exact_profile_portrait_assets_and_audit(monkeypatch):
-    module, client = load_media_api(monkeypatch)
-    before = client.objects[PROFILE_KEY]["Body"]
-    old_assets = dict(client.objects)
-    request = publication(module, client)
-    response = module.handler(request, None)
-    assert response["statusCode"] == 200
-    result = response_body(response)
-    assert client.objects[result["previousProfileKey"]]["Body"] == before
-    profile = result["profile"]
-    assert profile["model"]["posterKey"] == json.loads(before)["model"]["posterKey"]
-    assert profile["model"]["webKey"] == NEW_WEB
-    assert profile["modelPublication"]["actor"] == "user-id"
-    for key, value in old_assets.items():
-        if key != PROFILE_KEY:
-            assert client.objects[key] == value
-    # A stale request can never roll the character back; re-inspection is required.
-    assert module.handler(request, None)["statusCode"] == 409
-    web_response = module.handler(
-        event("/character", gameId="example-game", characterId="example-character"), None
+    monkeypatch.setitem(sys.modules, "character_appearances", service)
+    result = module.handler(
+        event(
+            "/character",
+            gameId="example-game",
+            characterId="example-character",
+            appearanceId="ordinary",
+            selectionId="retained-pair",
+        ),
+        None,
     )
-    assert NEW_WEB in response_body(web_response)["model"]["url"]
+    assert result["statusCode"] == 200
+    service.view.assert_called_once_with(
+        module, "example-game", "example-character", "ordinary", "retained-pair"
+    )
+    assert (
+        module.handler(
+            event("/character-versions", gameId="example-game", characterId="example-character"),
+            None,
+        )["statusCode"]
+        == 200
+    )
+    service.history.assert_called_once_with(module, "example-game", "example-character")
+    profile = response_body(
+        module.handler(
+            event("/character-profile", gameId="example-game", characterId="example-character"),
+            None,
+        )
+    )
+    assert profile["revision"] == "a" * 32 and profile["profile"]["schemaVersion"] == 2
+    for route, kind in [("PUT /character-model", "model"), ("PUT /character-portrait", "portrait")]:
+        request = {"routeKey": route, "body": "{}"}
+        assert module.handler(request, None)["statusCode"] == 200
+        service.publish.assert_called_with(module, request, kind)
+    assert not fake.signed_requests
 
 
-def test_character_versions_preserve_previous_model_and_portrait_selections(monkeypatch):
-    module, client = load_media_api(monkeypatch)
-    original = response_body(module.handler(event("/character", gameId="example-game", characterId="example-character"), None))
-    model_request = publication(module, client)
-    assert module.handler(model_request, None)["statusCode"] == 200
-    portrait = "games/example-game/assets/new-portrait/original/new.png"
-    client.objects[portrait] = {"Body": b"new image", "ContentType": "image/png"}
-    model_request["routeKey"] = "PUT /character-portrait"
-    model_request["body"] = json.dumps({"gameId": "example-game", "characterId": "example-character",
-        "portraitKey": portrait, "reason": "A change in appearance",
-        "expectedRevision": client.get_object(Key=PROFILE_KEY)["ETag"]})
-    assert module.handler(model_request, None)["statusCode"] == 200
-    response = module.handler(event("/character-versions", gameId="example-game", characterId="example-character"), None)
-    assert response["statusCode"] == 200
-    versions = response_body(response)
-    assert [entry["key"] for entry in versions["models"]] == [NEW_WEB, original["model"]["key"]]
-    assert [entry["key"] for entry in versions["portraits"]] == [portrait, original["poster"]["key"]]
-    assert versions["models"][0]["current"] and versions["portraits"][0]["current"]
-    assert versions["models"][0]["posterKey"] == portrait
-    assert not versions["models"][1]["current"] and not versions["portraits"][1]["current"]
-    assert all("url" in item for kind in ("models", "portraits") for item in versions[kind])
-    assert module.handler(event("/character-versions", gameId="other-game", characterId="example-character"), None)["statusCode"] == 404
-
-
+@pytest.mark.parametrize("route", ["/character", "/character-versions", "/character-profile"])
 @pytest.mark.parametrize(
-    "updates,status",
-    [
-        ({"gameId": "../other"}, 400),
-        ({"characterId": []}, 400),
-        ({"webKey": "games/other/assets/a/original/model.glb"}, 400),
-        ({"sourceKey": PROFILE_KEY}, 400),
-        ({"sourceKey": "games/example-game/assets/x/original/.."}, 400),
-        ({"provenanceKey": "games/example-game/assets/x/original/missing.json"}, 422),
-        ({"reason": ""}, 400),
-        ({"expectedRevision": "stale"}, 409),
-        ({"posterKey": "change-not-authorized"}, 400),
-        ({"sourceKey": None}, 400),
-    ],
+    "failure,status",
+    [(ValueError("missing exact selection"), 404), (RuntimeError("unverified migration"), 503)],
 )
-def test_publish_rejects_bad_requests_without_profile_changes(monkeypatch, updates, status):
-    module, client = load_media_api(monkeypatch)
-    before = client.objects[PROFILE_KEY]["Body"]
-    assert module.handler(publication(module, client, **updates), None)["statusCode"] == status
-    assert client.objects[PROFILE_KEY]["Body"] == before
-    assert not any("/history/" in k for k in client.objects)
+def test_character_routes_fail_closed_without_legacy_storage_fallback(
+    monkeypatch, route, failure, status
+):
+    from unittest.mock import Mock
 
-
-@pytest.mark.parametrize("username", [None, "reader"])
-def test_publish_requires_authorized_username(monkeypatch, username):
-    module, client = load_media_api(monkeypatch)
-    request = publication(module, client)
-    request["requestContext"]["authorizer"]["jwt"]["claims"]["cognito:username"] = username
-    assert module.handler(request, None)["statusCode"] == 403
-    assert not any("/history/" in k for k in client.objects)
-
-
-@pytest.mark.parametrize(
-    "data", [b"not a model!", struct.pack("<4sII", b"glTF", 1, 12), b"x" * (5 * 1024 * 1024 + 1)]
-)
-def test_publish_rejects_invalid_or_oversized_glb(monkeypatch, data):
-    module, client = load_media_api(monkeypatch)
-    request = publication(module, client)
-    client.objects[NEW_WEB]["Body"] = data
-    assert module.handler(request, None)["statusCode"] == 422
-    assert not any("/history/" in k for k in client.objects)
-
-
-def test_publish_concurrent_change_retains_winner_and_snapshot(monkeypatch):
-    module, client = load_media_api(monkeypatch)
-    request = publication(module, client)
-    put = client.put_object
-    before = client.objects[PROFILE_KEY]["Body"]
-
-    def racing_put(**kwargs):
-        if kwargs["Key"] == PROFILE_KEY:
-            client.objects[PROFILE_KEY]["Body"] = b'{"winner":true}'
-        return put(**kwargs)
-
-    client.put_object = racing_put
-    assert module.handler(request, None)["statusCode"] == 409
-    assert client.objects[PROFILE_KEY]["Body"] == b'{"winner":true}'
-    assert any(v["Body"] == before for k, v in client.objects.items() if "/history/" in k)
-
-
-def test_existing_history_is_safe_and_history_failure_prevents_switch(monkeypatch):
-    module, client = load_media_api(monkeypatch)
-    request = publication(module, client)
-    before = client.objects[PROFILE_KEY]["Body"]
-    history = PROFILE_KEY.replace(
-        "profile.json", f"history/{hashlib.sha256(before).hexdigest()}.json"
+    module, fake = load_media_api(monkeypatch)
+    service = types.SimpleNamespace(
+        view=Mock(side_effect=failure),
+        history=Mock(side_effect=failure),
+        profile=Mock(side_effect=failure),
     )
-    client.objects[history] = {"Body": before, "ContentType": "application/json"}
-    assert module.handler(request, None)["statusCode"] == 200
-    assert client.objects[history]["Body"] == before
-    request = publication(module, client)
-    before = client.objects[PROFILE_KEY]["Body"]
-
-    def fail(**_kwargs):
-        raise FakeClientError("AccessDenied")
-
-    client.put_object = fail
-    assert module.handler(request, None)["statusCode"] == 502
-    assert client.objects[PROFILE_KEY]["Body"] == before
+    monkeypatch.setitem(sys.modules, "character_appearances", service)
+    before = dict(fake.objects)
+    result = module.handler(
+        event(route, gameId="example-game", characterId="example-character"), None
+    )
+    assert result["statusCode"] == status
+    assert fake.objects == before and not fake.signed_requests

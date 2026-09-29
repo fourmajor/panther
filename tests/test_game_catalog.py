@@ -21,6 +21,7 @@ def catalog(monkeypatch):
     monkeypatch.setenv("CATALOG_TABLE", "test-catalog")
     monkeypatch.setenv("CATALOG_EDITORS", "example-operator,example-editor")
     monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
+    monkeypatch.setenv("ASSET_BROWSE_TABLE", "test-catalog-assets")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     with mock_aws():
         boto3.client("dynamodb").create_table(
@@ -37,6 +38,18 @@ def catalog(monkeypatch):
         )
         boto3.client("s3").create_bucket(
             Bucket="test-assets", CreateBucketConfiguration={"LocationConstraint": "us-west-2"}
+        )
+        boto3.client("dynamodb").create_table(
+            TableName="test-catalog-assets",
+            BillingMode="PAY_PER_REQUEST",
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "pk", "AttributeType": "S"},
+                {"AttributeName": "sk", "AttributeType": "S"},
+            ],
         )
         for module in ("index", "catalog"):
             monkeypatch.delitem(sys.modules, module, raising=False)
@@ -114,16 +127,54 @@ def test_visual_style_backfill_is_guarded(catalog):
 def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, monkeypatch):
     assert request(catalog, "POST /games", setup())["statusCode"] == 200
     portrait = "games/test-game/assets/portrait/original/portrait.png"
-    fake = Mock()
-    fake.head_object.return_value = {
-        "ContentLength": 10,
-        "ContentType": "image/png",
-        "Metadata": {
-            "panther": base64.b64encode(json.dumps({"characterIds": ["hero"]}).encode()).decode()
+    storage = catalog.media.s3
+    target = storage.reserve(
+        portrait,
+        "portrait",
+        {"characterIds": ["hero"], "extra": {"relationshipRole": "finished"}},
+        None,
+        8,
+        "2020-01-01T00:00:00+00:00",
+    )
+    storage.raw.put_object(
+        Bucket="test-assets",
+        Key=target,
+        Body=b"portrait",
+        ContentType="image/png",
+        Metadata={
+            "panther": base64.b64encode(
+                json.dumps(
+                    {"characterIds": ["hero"], "extra": {"relationshipRole": "finished"}}
+                ).encode()
+            ).decode()
         },
-    }
-    fake.put_object.return_value = {"ETag": '"initial"'}
-    monkeypatch.setattr(catalog.media, "s3", fake)
+    )
+    browse = boto3.resource("dynamodb").Table("test-catalog-assets")
+    browse.put_item(
+        Item={
+            "pk": "v3#test-game#all",
+            "sk": portrait,
+            "observed": 1,
+            "payload": json.dumps(
+                {
+                    "key": portrait,
+                    "size": 8,
+                    "contentType": "image/png",
+                    "metadata": {"characterIds": ["hero"], "extra": {}},
+                }
+            ),
+        }
+    )
+    # Explicitly verified empty history; the normal publisher does not write S3 profiles.
+    browse.put_item(
+        Item={
+            "pk": "character-looks-migration#test-game#hero",
+            "sk": "complete",
+            "inventoryHash": "0" * 64,
+        }
+    )
+    writes = Mock(wraps=catalog.media.s3.put_object)
+    monkeypatch.setattr(catalog.media.s3, "put_object", writes)
     body = {
         "gameId": "test-game",
         "characterId": "hero",
@@ -135,7 +186,12 @@ def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, m
     assert result["statusCode"] == 201
     profile = json.loads(result["body"])["profile"]
     assert profile["name"] == "Hero" and profile["model"] == {"posterKey": portrait}
-    assert fake.put_object.call_args.kwargs["IfNoneMatch"] == "*"
+    assert profile["schemaVersion"] == 2 and profile["appearanceId"] == "initial"
+    assert len(json.loads(result["body"])["revision"]) == 32
+    writes.assert_not_called()
+    repeated = request(catalog, "POST /character-profile", body)
+    assert repeated["statusCode"] == 200 and json.loads(repeated["body"])["replayed"]
+    assert json.loads(repeated["body"])["detailsSynchronization"]["replayed"]
     assert (
         request(catalog, "POST /character-profile", body, username="outsider")["statusCode"] == 403
     )
@@ -153,8 +209,12 @@ def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, m
         )["statusCode"]
         == 400
     )
-    fake.head_object.return_value["Metadata"] = {}
-    assert request(catalog, "POST /character-profile", body)["statusCode"] == 422
+    assert (
+        request(
+            catalog, "POST /character-profile", {**body, "summary": "A changed initialization"}
+        )["statusCode"]
+        == 400
+    )
 
 
 def request(m, route, body=None, username="example-operator", game="test-game"):
@@ -229,7 +289,6 @@ def test_catalog_rejects_unapproved_account(catalog):
 
 
 def put_indexed_fixture(catalog, key, body):
-    import base64
     import hashlib
 
     storage = catalog.media.s3

@@ -314,13 +314,6 @@ def handle(event, media):
         return media._response(
             403, {"error": "Character appearance sign-in or publication capability required"}
         )
-    if (
-        event["routeKey"].startswith("POST ")
-        and os.environ.get("APPEARANCE_WRITES_ENABLED") != "true"
-    ):
-        return media._response(
-            503, {"error": "Appearance cutover is not enabled; existing artwork remains unchanged"}
-        )
     routes = {
         "/character-appearances": "appearance",
         "/character-appearance-assets": "association",
@@ -363,13 +356,6 @@ def migration_handle(event, media, claims):
 
     if not authorized(claims, "ASSET_MIGRATORS"):
         return media._response(403, {"error": "Appearance migration capability required"})
-    if (
-        event["routeKey"].rsplit("/", 1)[-1] in {"apply", "finalize"}
-        and os.environ.get("APPEARANCE_WRITES_ENABLED") != "true"
-    ):
-        return media._response(
-            503, {"error": "Migration writes require the CDK-owned appearance cutover"}
-        )
     try:
         operation = event["routeKey"].rsplit("/", 1)[-1]
         body = (
@@ -673,19 +659,61 @@ def versions(media, game, cid):
     return {"schemaVersion": 2, "gameId": game, "characterId": cid, **output}
 
 
+def history(media, game, cid):
+    """Bounded official metadata only; signed links belong to an exact selected view."""
+    from boto3.dynamodb.conditions import Key
+
+    current = profile(media, game, cid)
+    db = browse_index.table()
+    args = {
+        "KeyConditionExpression": Key("pk").eq(
+            f"{PREFIX}-history#{kind('activation', cid)}#{game}#current"
+        ),
+        "ConsistentRead": True,
+        "Limit": 100,
+    }
+    activations = []
+    while True:
+        page = db.query(**args)
+        activations.extend(records.decode(item) for item in page.get("Items", []))
+        if len(activations) > 500:
+            raise RuntimeError("Official appearance history exceeds the complete reader limit")
+        if not page.get("LastEvaluatedKey"):
+            break
+        args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    activations.sort(key=lambda record: (record["updatedAt"], record["revision"]), reverse=True)
+    selected_ids = {a["selectionId"] for a in activations}
+    selections = [
+        s
+        for s in all_records(game, cid, "selection")
+        if s["id"] in selected_ids or s.get("migrationSource")
+    ]
+    appearances = [
+        a
+        for a in all_records(game, cid, "appearance")
+        if a["id"] in {s["appearanceId"] for s in selections}
+    ]
+    return {
+        "schemaVersion": 2,
+        "gameId": game,
+        "characterId": cid,
+        "current": current[2]["selectionId"] if current else None,
+        "activationRevision": current[3] if current else None,
+        "appearances": appearances,
+        "selections": selections,
+        "activations": activations,
+    }
+
+
 def publish(media, event, asset_kind):
     """Existing publication commands now create a candidate pair and CAS its activation."""
-    import base64
     import binascii
 
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     if not authorized(claims, "MODEL_PUBLISHERS"):
         return media._response(403, {"error": "Character artwork publication capability required"})
     try:
-        raw = event.get("body") or "{}"
-        if event.get("isBase64Encoded"):
-            raw = base64.b64decode(raw, validate=True).decode()
-        body = json.loads(raw)
+        body = parse_body(event)
         required = {"gameId", "characterId", "expectedRevision", "reason"} | (
             {"portraitKey"}
             if asset_kind == "portrait"

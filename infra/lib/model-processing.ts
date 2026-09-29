@@ -11,11 +11,12 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sfn from "aws-cdk-lib/aws-stepfunctions";
 import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
+import { CharacterAppearances } from "./character-appearances";
 
 /** Private application jobs, not CI. No AI service, inbound laptop connection, or idle compute. */
 export class ModelProcessing extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
   }) {
     super(scope, id);
     const table = new dynamodb.Table(this, "Jobs", {
@@ -42,12 +43,7 @@ export class ModelProcessing extends Construct {
     });
     table.grantReadWriteData(fn);
     props.bucket.grantRead(fn, "games/*");
-    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:PutObject"],
-      resources: [props.bucket.arnForObjects("games/*/characters/*/history/*.json")],
-      conditions: { StringEquals: { "s3:if-none-match": "*" } } }));
-    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:PutObject"],
-      resources: [props.bucket.arnForObjects("games/*/characters/*/profile.json")],
-      conditions: { Null: { "s3:if-match": "false" } } }));
+    CharacterAppearances.grantProducer(fn,props.browseTable,props.catalogTable);
     const wait = new tasks.LambdaInvoke(this, "WaitForLaptop", {
       lambdaFunction: fn, integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
       payload: sfn.TaskInput.fromObject({ operation: "dispatch", "jobId.$": "$.jobId",

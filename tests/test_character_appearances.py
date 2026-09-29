@@ -14,7 +14,6 @@ from test_model_jobs import broker, unpack  # noqa: F401
 
 @pytest.fixture
 def looks(library, monkeypatch):  # noqa: F811
-    monkeypatch.setenv("APPEARANCE_WRITES_ENABLED", "true")
     module = importlib.import_module("character_appearances")
     module.browse_index.table().put_item(
         Item={
@@ -186,6 +185,16 @@ def test_named_state_selection_activation_restore_and_history(looks):
         == "stone"
     )
     assert unpack(call(looks, "selection", id=stone["id"]))["record"]["modelKey"] is None
+    history = looks[0].history(looks[1], "test-game", "example-character")
+    assert history["current"] == chosen["id"]
+    assert history["activationRevision"] == restored["revision"]
+    assert {a["id"] for a in history["appearances"]} == {"ordinary", "stone"}
+    assert len(history["activations"]) == 3
+    assert {s["id"]: s["modelKey"] for s in history["selections"]} == {
+        chosen["id"]: looks[2][1],
+        stone["id"]: None,
+    }
+    assert "url" not in json.dumps(history)
     assert call(looks, "activation", activation)["statusCode"] == 200
     assert (
         call(looks, "activation", {**activation, "reason": "Different arguments"})["statusCode"]
@@ -332,11 +341,13 @@ def test_modern_publication_is_pairwise_idempotent_and_keeps_activation_kind_dis
     )
 
 
-def test_staging_flag_fails_closed_without_mutation(looks, monkeypatch):
-    monkeypatch.delenv("APPEARANCE_WRITES_ENABLED")
+def test_unverified_character_fails_closed_without_mutation(looks, monkeypatch):
+    looks[0].browse_index.table().delete_item(
+        Key={"pk": "character-looks-migration#test-game#example-character", "sk": "complete"}
+    )
     monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
     before = looks[0].browse_index.table().scan()["Items"]
-    assert call(looks, "appearance", appearance())["statusCode"] == 503
+    assert call(looks, "appearance", appearance())["statusCode"] == 400
     for operation in ("apply", "finalize"):
         result = looks[0].handle(
             {
@@ -355,7 +366,7 @@ def test_staging_flag_fails_closed_without_mutation(looks, monkeypatch):
             },
             looks[1],
         )
-        assert result["statusCode"] == 503
+        assert result["statusCode"] == 409
     assert looks[0].browse_index.table().scan()["Items"] == before
     assert call(looks, "appearance")["statusCode"] == 200
 
@@ -446,3 +457,100 @@ def test_bounded_body_parser_accepts_api_gateway_base64_but_not_large_envelopes(
     assert looks[0].parse_body({"body": encoded, "isBase64Encoded": True}) == {"id": "ordinary"}
     with pytest.raises(ValueError, match="bounded size"):
         looks[0].parse_body({"body": " " * (96 * 1024 + 1)})
+
+
+def official_selection(looks):
+    call(looks, "appearance", appearance())
+    associate(looks)
+    call(looks, "selection", selection(looks))
+    return unpack(
+        call(
+            looks,
+            "activation",
+            envelope(
+                id="current", appearanceId="ordinary", selectionId="selection-one", story=timing()
+            ),
+        )
+    )["record"]
+
+
+@pytest.mark.parametrize(
+    "updates,status",
+    [
+        ({"gameId": "../other"}, 422),
+        ({"characterId": []}, 422),
+        ({"webKey": "games/other-game/assets/model/original/model.glb"}, 422),
+        ({"sourceKey": "games/test-game/characters/example-character/profile.json"}, 422),
+        ({"provenanceKey": "games/test-game/assets/missing/original/missing.json"}, 422),
+        ({"reason": ""}, 422),
+        ({"expectedRevision": "invalid"}, 422),
+        ({"expectedRevision": "f" * 32}, 409),
+        ({"posterKey": "not-authorized"}, 422),
+    ],
+)
+def test_publication_rejects_bad_requests_without_changing_official_pair(looks, updates, status):
+    active = official_selection(looks)
+    body = {
+        "gameId": "test-game",
+        "characterId": "example-character",
+        "webKey": looks[2][1],
+        "sourceKey": None,
+        "provenanceKey": None,
+        "expectedRevision": active["revision"],
+        "reason": "Synthetic model edition",
+        **updates,
+    }
+    result = looks[0].publish(
+        looks[1],
+        {
+            "body": json.dumps(body),
+            "requestContext": {
+                "authorizer": {
+                    "jwt": {
+                        "claims": {"sub": "fictional-owner", "cognito:username": "example-operator"}
+                    }
+                }
+            },
+        },
+        "model",
+    )
+    assert result["statusCode"] == status
+    assert looks[0].profile(looks[1], "test-game", "example-character")[3] == active["revision"]
+
+
+@pytest.mark.parametrize("username", [None, "reader"])
+def test_model_publication_requires_publisher_capability(looks, username):
+    active = official_selection(looks)
+    result = looks[0].publish(
+        looks[1],
+        {
+            "body": "{}",
+            "requestContext": {
+                "authorizer": {
+                    "jwt": {"claims": {"sub": "fictional-reader", "cognito:username": username}}
+                }
+            },
+        },
+        "model",
+    )
+    assert result["statusCode"] == 403
+    assert looks[0].profile(looks[1], "test-game", "example-character")[3] == active["revision"]
+
+
+def test_oversized_selected_model_is_not_signed_and_does_not_borrow_another_model(
+    looks, monkeypatch
+):
+    from unittest.mock import Mock
+
+    official_selection(looks)
+    db = looks[0].browse_index.table()
+    key = {"pk": looks[0].browse_index.partition("test-game", "all"), "sk": looks[2][1]}
+    item = db.get_item(Key=key)["Item"]
+    payload = json.loads(item["payload"])
+    payload["size"] = looks[1].MAX_MODEL_BYTES + 1
+    db.put_item(Item={**item, "payload": json.dumps(payload), "observed": 2})
+    signer = Mock(return_value="https://example.invalid/portrait")
+    monkeypatch.setattr(looks[1], "_signed_asset", signer)
+    view = looks[0].view(looks[1], "test-game", "example-character")
+    assert view["poster"] and view["model"] is None and view["warnings"]
+    signer.assert_called_once_with(looks[2][0])

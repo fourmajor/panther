@@ -319,16 +319,6 @@ export class PantherMediaExplorerStack extends Stack {
         conditions: { StringEquals: { "s3:if-none-match": "*" } },
       }),
     );
-    mediaApiFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ["s3:PutObject"],
-      resources: [privateAssets.arnForObjects("games/*/characters/*/history/*.json")],
-      conditions: { StringEquals: { "s3:if-none-match": "*" } },
-    }));
-    mediaApiFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ["s3:PutObject"],
-      resources: [privateAssets.arnForObjects("games/*/characters/*/profile.json")],
-      conditions: { Null: { "s3:if-match": "false" } },
-    }));
     const authorizer = new apigwv2Authorizers.HttpJwtAuthorizer(
       "CognitoAuthorizer",
       `https://cognito-idp.${this.region}.${this.urlSuffix}/${userPool.userPoolId}`,
@@ -435,8 +425,9 @@ export class PantherMediaExplorerStack extends Stack {
       // 404 instead of 403. A prefix condition cannot match a HEAD request.
       actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn],
     }));
-    new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
-    const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table });
+    CharacterAppearances.grantProducer(mediaApiFunction,assetBrowse.table,gameCatalog.table);
+    new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table,catalogTable:gameCatalog.table });
     new CharacterAppearances(this,"CharacterAppearances",{bucket:privateAssets,api:mediaApi,authorizer,
       browseTable:assetBrowse.table,catalogTable:gameCatalog.table,accessEnvironment});
     new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,

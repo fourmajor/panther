@@ -12,6 +12,29 @@ from panther_journal import model_workflow as worker
 from panther_journal.cli import main
 
 
+def test_upload_new_model_edition_uses_exact_pinned_semantic_predecessor(tmp_path, monkeypatch):
+    file = tmp_path / "model.glb"
+    file.write_bytes(b"synthetic model")
+    prior = "games/example-game/assets/prior/original/model.glb"
+    job = {
+        "jobId": "0" * 64,
+        "gameId": "example-game",
+        "characterId": "hero",
+        "appearanceId": "ordinary",
+        "appearanceSelection": {"modelKey": prior, "sourceKey": None, "provenanceKey": None},
+    }
+    monkeypatch.setattr(
+        worker.cloud, "api", Mock(side_effect=click.ClickException("Object not found"))
+    )
+    upload = Mock()
+    monkeypatch.setattr(worker.cloud.upload, "callback", upload)
+    worker.upload_file({}, file, job, 1)
+    assert upload.call_args.kwargs["new_version_of"] == prior
+    assert upload.call_args.kwargs["kind"] == "model-3d"
+    metadata = json.loads((tmp_path / "model.glb.metadata.json").read_text())
+    assert metadata["characterIds"] == ["hero"] and metadata["extra"]["appearanceId"] == "ordinary"
+
+
 def test_qa_image_includes_runtime_plan_and_discovers_tests_before_jobs():
     repo = Path(__file__).resolve().parents[1]
     dockerfile = (repo / "ops/model-worker/Dockerfile").read_text()
@@ -24,7 +47,9 @@ def test_qa_image_includes_runtime_plan_and_discovers_tests_before_jobs():
 
 
 def test_browser_qa_runs_as_the_private_job_owner():
-    source = (Path(__file__).resolve().parents[1] / "src/panther_journal/model_workflow.py").read_text()
+    source = (
+        Path(__file__).resolve().parents[1] / "src/panther_journal/model_workflow.py"
+    ).read_text()
     assert '"--user",\n                    f"{os.getuid()}:{os.getgid()}",' in source
 
 

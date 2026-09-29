@@ -73,7 +73,9 @@ def native_blender():
         executable = shutil.which("blender")
         if executable:
             return Path(executable)
-    raise click.ClickException("Install native Blender and make its executable available to Panther.")
+    raise click.ClickException(
+        "Install native Blender and make its executable available to Panther."
+    )
 
 
 def preflight(repo, qa_image="panther-model-qa:local"):
@@ -225,8 +227,12 @@ def upload_file(config, file, job, attempt):
         "title": file.name,
         "category": "reference",
         "characterIds": [job["characterId"]],
-        "extra": {"jobId": job["jobId"], "sha256": checksum, "appearanceId": job["appearanceId"],
-                  "generation": generation.subscription("Codex CLI + Blender")},
+        "extra": {
+            "jobId": job["jobId"],
+            "sha256": checksum,
+            "appearanceId": job["appearanceId"],
+            "generation": generation.subscription("Codex CLI + Blender"),
+        },
     }
     # Remote existence is checked without treating permission/network errors as absence.
     try:
@@ -243,6 +249,12 @@ def upload_file(config, file, job, attempt):
         return key
     meta_path = file.parent / f"{file.name}.metadata.json"
     save_json(meta_path, metadata)
+    predecessor_field = {
+        "model.glb": "modelKey",
+        "model.blend": "sourceKey",
+        "provenance.json": "provenanceKey",
+    }.get(file.name)
+    predecessor = job["appearanceSelection"].get(predecessor_field) if predecessor_field else None
     # Invoke the supported CLI implementation, without spawning a credential-bearing agent.
     cloud.upload.callback(
         file=file,
@@ -255,6 +267,7 @@ def upload_file(config, file, job, attempt):
         else "image",
         metadata=meta_path,
         as_json=True,
+        new_version_of=predecessor,
     )
     return key
 
@@ -481,7 +494,8 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
                 "jobId": job["jobId"],
                 "inputs": job["views"],
                 "appearanceId": job["appearanceId"],
-                "workflowVersion": 1,
+                "workflowVersion": job["workflowVersion"],
+                "appearanceSelection": job["appearanceSelection"],
                 "inference": "Codex CLI / ChatGPT subscription",
                 "generator": "native Blender directed by Codex",
                 "quality": review,
@@ -596,7 +610,7 @@ def worker(repo, work_dir, once, qa_image, allow_unsandboxed_blender):
         blender = preflight(repo, qa_image)
         while True:
             config = cloud.configuration()
-            claimed = cloud.api(config, "POST", "/model-jobs/claim", json={})
+            claimed = cloud.api(config, "POST", "/model-jobs/claim", json={"workerVersion": 2})
             if claimed.get("job"):
                 click.echo(f"Working on {claimed['job']['jobId']}")
                 try:

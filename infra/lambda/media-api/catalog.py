@@ -419,7 +419,7 @@ def create_character_profile(body, actor):
     if not roster:
         return media._response(404, {"error": "Character is not in this game's roster"})
     character_details.decode(roster)
-    title = name(body["title"])
+    name(body["title"])
     summary = media._text(body["summary"], maximum=1000)
     portrait = body["portraitKey"]
     if (
@@ -428,51 +428,49 @@ def create_character_profile(body, actor):
         or not portrait.startswith(f"games/{game}/assets/")
     ):
         raise ValueError("Invalid portrait or summary")
-    if not media._asset_metadata(
-        portrait,
-        maximum=media.MAX_POSTER_BYTES,
-        expected_types={"image/png", "image/jpeg", "image/webp", "image/avif"},
-    ):
-        return media._response(422, {"error": "Portrait unavailable or exceeds limits"})
-    head = media.s3.head_object(Bucket=media.BUCKET_NAME, Key=portrait)
-    metadata = json.loads(
-        base64.b64decode(head.get("Metadata", {}).get("panther", "e30="), validate=True)
-    )
-    if not isinstance(metadata, dict):
-        raise ValueError("Invalid portrait metadata")
-    if character not in metadata.get("characterIds", []):
-        return media._response(422, {"error": "Portrait must explicitly name this character"})
-    profile = {
-        "schemaVersion": 1,
-        "gameId": game,
-        "id": character,
-        "name": roster["name"],
-        "title": title,
-        "summary": summary,
-        "model": {"posterKey": portrait},
-        "profilePublication": {
-            "actor": actor,
-            "publishedAt": datetime.now(timezone.utc).isoformat(),
+    import character_appearances as looks
+
+    initialized = looks.initialize(media, body, actor)
+    profile = initialized["profile"][2]
+    operation = hashlib.sha256(
+        ("initial-details:" + json.dumps(body, sort_keys=True, allow_nan=False)).encode()
+    ).hexdigest()[:32]
+    previous = read(f"CHARACTER_DETAILS_OP#{game}#{character}", operation)
+    if previous:
+        synchronization = media._response(
+            200, {"replayed": True, "operationRevision": previous["revision"]}
+        )
+    elif profile["selectionId"] != initialized["operationSelectionId"]:
+        synchronization = media._response(200, {"status": "later-selection-preserved"})
+    else:
+        synchronization = initialize_character_details(roster, body, actor, operation, profile)
+    current = looks.profile(media, game, character)
+    return media._response(
+        200 if initialized["replayed"] else 201,
+        {
+            "profile": current[2],
+            "revision": current[3],
+            "replayed": initialized["replayed"],
+            "detailsSynchronization": {
+                "statusCode": synchronization["statusCode"],
+                **json.loads(synchronization["body"]),
+            },
         },
-    }
-    key = f"games/{game}/characters/{character}/profile.json"
-    raw = json.dumps(profile).encode()
-    result = media.s3.put_object(
-        Bucket=media.BUCKET_NAME,
-        Key=key,
-        Body=raw,
-        ContentType="application/json",
-        IfNoneMatch="*",
     )
+
+
+def initialize_character_details(roster, body, actor, operation, profile):
+    """Fill unknown facts only; appearance selection is a separate immutable record."""
+    game, character = body["gameId"], body["characterId"]
     details = json.loads(roster["detailsJson"])
     for field, value in [
-        ("overview", summary),
-        ("subtitle", title),
-        ("thumbnailAssetKey", portrait),
+        ("overview", body["summary"]),
+        ("subtitle", body["title"]),
+        ("thumbnailAssetKey", body["portraitKey"]),
     ]:
         if details[field] is None:
             details[field] = value
-    synchronization = character_details.save(
+    return character_details.save(
         sys.modules[__name__],
         {
             "gameId": game,
@@ -481,28 +479,19 @@ def create_character_profile(body, actor):
             "details": details,
             "expectedRevision": roster["detailsRevision"],
             "expectedSourceHash": None,
-            "operationId": hashlib.sha256(f"{key}:{result['ETag']}".encode()).hexdigest()[:32],
+            "operationId": operation,
             "reason": "Initialize known overview and thumbnail from the published artwork profile",
             "dryRun": False,
         },
         actor,
         False,
         source_evidence={
-            "key": key,
-            "etag": result["ETag"],
-            "versionId": result.get("VersionId"),
-            "sha256": hashlib.sha256(raw).hexdigest(),
-        },
-    )
-    return media._response(
-        201,
-        {
-            "profile": profile,
-            "revision": result["ETag"],
-            "detailsSynchronization": {
-                "statusCode": synchronization["statusCode"],
-                **json.loads(synchronization["body"]),
-            },
+            "entityType": "CharacterAppearanceSelection",
+            "appearanceId": profile["appearanceId"],
+            "appearanceRevision": profile["appearanceRevision"],
+            "selectionId": profile["selectionId"],
+            "selectionRevision": profile["selectionRevision"],
+            "portraitKey": body["portraitKey"],
         },
     )
 
@@ -624,4 +613,8 @@ def handler(event, _context):
     except ClientError:
         return media._response(
             409, {"error": "Catalog changed or storage unavailable; inspect before retrying"}
+        )
+    except RuntimeError:
+        return media._response(
+            503, {"error": "Appearance migration or storage is not ready; retry the exact request"}
         )

@@ -125,10 +125,9 @@ def test_roster_only_character_migration_does_not_invent_artwork(looks):  # noqa
     assert json.loads(result["body"])["status"] == "complete-without-artwork"
 
 
-def test_planning_handler_is_available_while_writes_are_staged_closed(looks, monkeypatch):  # noqa: F811
+def test_planning_handler_checks_maintenance_capability_and_exact_scope(looks, monkeypatch):  # noqa: F811
     key, _ = source(looks)
     monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
-    monkeypatch.setenv("APPEARANCE_WRITES_ENABLED", "false")
     event = {
         "routeKey": "POST /character-appearance-migration/prepare",
         "body": json.dumps(

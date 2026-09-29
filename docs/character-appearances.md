@@ -1,12 +1,11 @@
 # Named character appearances
 
-Stage one for issue 37: structured metadata and guarded migration tools. This is not a
-claim that production has migrated or that the viewer has switched contracts. CDK sets
-`APPEARANCE_WRITES_ENABLED=false`: reads and migration planning are available, but publication,
-import and activation endpoints fail closed. Existing producers/readers remain unchanged.
-The follow-up cutover must remove their mutable-profile write permissions, wire the new
-contracts into those consumers, run the all-game migration, and then remove this temporary
-staging flag. Never enable it through a manual Lambda configuration change.
+The consumer cutover removes mutable-profile writes from normal publishers and initializes,
+selects and views artwork through the structured contract below. The temporary global staging
+flag is removed; per-character verified migration seals gate normal reads and edits instead.
+This document describes the implementation, not a claim that production has migrated.
+Do not deploy before preparing the private operational rollout; expect artwork reads to fail
+closed between deployment and all-game verification, rather than showing mixed old/new data.
 
 Character is a stable identity. A named Appearance is a physical state, distinct from an
 artwork revision. It may be permanent, temporary, alternate or unknown. Its development
@@ -48,6 +47,21 @@ Additional fields:
   guards the current activation, not the asset or descriptor revision.
 
 story is an object with sessionId, eventId and date, each nullable. Unknown stays null.
+
+The web viewer queries bounded metadata history, then signs only the selected pair. Links
+pin `appearance` and `selection`; a portrait-only edition clears the previously loaded model.
+Restoration adds a guarded activation event and retains identical retry arguments. Selection
+record timestamps are labeled as technical recording times, never fictional dates.
+
+Existing `character set-model` and `set-portrait` commands use the exact 32-hex activation
+revision returned by `character show`. They create a new immutable pair; no S3 profile is
+overwritten. Explicit semantic asset versions are preserved separately: appearance ordering
+does not justify regrouping or renumbering existing asset families.
+
+New model-reference jobs pin appearance/selection revisions and exact portrait/model/source
+keys, with explicit character/appearance metadata on each checksum-pinned reference. New
+editorial context snapshots retain the selected pair rather than independent current images.
+Historical workflow inputs and raw evidence must remain unchanged.
 
 ## Required cutover gates
 

@@ -173,7 +173,7 @@ def legacy_projection(catalog, old):
     for field in set(details) - {"schemaVersion"}:
         if field in old:
             details[field] = old[field]
-    profile = catalog.media._profile_record(old["gameId"], old["id"])
+    profile = catalog.media._legacy_profile_record(old["gameId"], old["id"])
     if profile is None:
         # The artwork reader deliberately returns None for malformed/oversized
         # files as well as missing files. Migration must not silently drop those.

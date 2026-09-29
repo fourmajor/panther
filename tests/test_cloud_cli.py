@@ -48,8 +48,10 @@ def test_instructions_ship_with_cli():
     assert "character set-portrait" in result.output
     assert "Inputs and outputs for every asset" in result.output
     assert "inputArtifacts" in result.output
-    assert "Session transcript reading selections are explicit pointers, not approvals" in result.output
-
+    assert (
+        "Session transcript reading selections are explicit pointers, not approvals"
+        in result.output
+    )
 
     assert "extra.relationshipRole" in result.output
     assert "do not delete intermediate provenance" in result.output
@@ -79,7 +81,10 @@ def test_instructions_ship_with_cli():
     assert "original/<filename>" in result.output
     assert "also offer to extend the" in result.output
     assert "without direct AWS access" in result.output
-    assert "Infrastructure deployment remains a separate CDK/AWS administrative operation" in result.output
+    assert (
+        "Infrastructure deployment remains a separate CDK/AWS administrative operation"
+        in result.output
+    )
     assert "panther video --help" in result.output
     assert "H3 Max image shots use `h3-max-image`" in result.output
     assert "panther video reconcile-unavailable ATTEMPT_ID" in result.output
@@ -98,64 +103,131 @@ def test_instructions_ship_with_cli():
 
 
 def test_novel_cli_lists_all_pages_and_preserves_exact_edit_envelope(setup, monkeypatch, tmp_path):
-    calls=[]
-    def api(_config,method,path,**kwargs):
-        calls.append((method,path,kwargs))
-        if method=="POST":
-            return {"record":kwargs["json"]}
-        return {"records":[{"id":"second" if kwargs["params"].get("cursor") else "first"}],
-                "cursor":None if kwargs["params"].get("cursor") else "next"}
-    monkeypatch.setattr(cloud,"api",api)
-    result=CliRunner().invoke(main,["novels","books","--game","test-game"])
-    assert result.exit_code==0 and '"second"' in result.output
-    manifest=tmp_path/"book.json"
-    body={"gameId":"test-game","id":"book-one","operationId":"a"*32,"expectedRevision":None}
+    calls = []
+
+    def api(_config, method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "POST":
+            return {"record": kwargs["json"]}
+        return {
+            "records": [{"id": "second" if kwargs["params"].get("cursor") else "first"}],
+            "cursor": None if kwargs["params"].get("cursor") else "next",
+        }
+
+    monkeypatch.setattr(cloud, "api", api)
+    result = CliRunner().invoke(main, ["novels", "books", "--game", "test-game"])
+    assert result.exit_code == 0 and '"second"' in result.output
+    manifest = tmp_path / "book.json"
+    body = {
+        "gameId": "test-game",
+        "id": "book-one",
+        "operationId": "a" * 32,
+        "expectedRevision": None,
+    }
     manifest.write_text(json.dumps(body))
-    result=CliRunner().invoke(main,["novels","save-book",str(manifest)])
-    assert result.exit_code==0 and calls[-1]==("POST","/novel-books",{"json":body})
-    assert CliRunner().invoke(main,["novels","books","--game","test-game","--revision","b"*32]).exit_code!=0
+    result = CliRunner().invoke(main, ["novels", "save-book", str(manifest)])
+    assert result.exit_code == 0 and calls[-1] == ("POST", "/novel-books", {"json": body})
+    assert (
+        CliRunner()
+        .invoke(main, ["novels", "books", "--game", "test-game", "--revision", "b" * 32])
+        .exit_code
+        != 0
+    )
 
 
 def test_tv_cli_keeps_guarded_private_metadata_operations_exact(setup, monkeypatch, tmp_path):
-    calls=[]
-    monkeypatch.setattr(cloud,"api",lambda config,method,path,**kwargs:calls.append((method,path,kwargs)) or {"records":[],"cursor":None})
-    assert CliRunner().invoke(main,["videos","series","--game","test-game"]).exit_code==0
-    assert calls[-1]==("GET","/tv-series",{"params":{"gameId":"test-game"}})
-    file=tmp_path/"episode.json"
-    body={"gameId":"test-game","id":"episode-one","operationId":"a"*32,"expectedRevision":"b"*32}
+    calls = []
+    monkeypatch.setattr(
+        cloud,
+        "api",
+        lambda config, method, path, **kwargs: (
+            calls.append((method, path, kwargs)) or {"records": [], "cursor": None}
+        ),
+    )
+    assert CliRunner().invoke(main, ["videos", "series", "--game", "test-game"]).exit_code == 0
+    assert calls[-1] == ("GET", "/tv-series", {"params": {"gameId": "test-game"}})
+    file = tmp_path / "episode.json"
+    body = {
+        "gameId": "test-game",
+        "id": "episode-one",
+        "operationId": "a" * 32,
+        "expectedRevision": "b" * 32,
+    }
     file.write_text(json.dumps(body))
-    result=CliRunner().invoke(main,["videos","save-episode",str(file)])
-    assert result.exit_code==0 and calls[-1]==("POST","/tv-episodes",{"json":body})
-    assert "a"*32 in result.output
+    result = CliRunner().invoke(main, ["videos", "save-episode", str(file)])
+    assert result.exit_code == 0 and calls[-1] == ("POST", "/tv-episodes", {"json": body})
+    assert "a" * 32 in result.output
 
 
 def test_transcript_selection_cli_preserves_guard_and_retry_identity(setup, monkeypatch):
     calls = []
-    monkeypatch.setattr(cloud, "api", lambda *args, **kwargs: calls.append((args, kwargs)) or {"selection": None})
+    monkeypatch.setattr(
+        cloud, "api", lambda *args, **kwargs: calls.append((args, kwargs)) or {"selection": None}
+    )
     runner = CliRunner()
-    assert runner.invoke(main, ["transcripts", "selection", "--game", "example", "--session", "session-a"]).exit_code == 0
+    assert (
+        runner.invoke(
+            main, ["transcripts", "selection", "--game", "example", "--session", "session-a"]
+        ).exit_code
+        == 0
+    )
     assert calls[-1][1]["params"] == {"gameId": "example", "sessionId": "session-a"}
     key = "games/example/assets/raw-a/original/raw.json"
-    result = runner.invoke(main, ["transcripts", "select", "--game", "example", "--session", "session-a",
-        "--key", key, "--reason", "Prefer raw evidence", "--operation-id", "a" * 32,
-        "--expected-revision", "b" * 32])
+    result = runner.invoke(
+        main,
+        [
+            "transcripts",
+            "select",
+            "--game",
+            "example",
+            "--session",
+            "session-a",
+            "--key",
+            key,
+            "--reason",
+            "Prefer raw evidence",
+            "--operation-id",
+            "a" * 32,
+            "--expected-revision",
+            "b" * 32,
+        ],
+    )
     assert result.exit_code == 0 and "Selection operation ID: " + "a" * 32 in result.output
     assert calls[-1][0][1:3] == ("POST", "/transcript-selection")
-    assert calls[-1][1]["json"] == {"gameId": "example", "sessionId": "session-a", "key": key,
-        "reason": "Prefer raw evidence", "expectedRevision": "b" * 32, "operationId": "a" * 32}
+    assert calls[-1][1]["json"] == {
+        "gameId": "example",
+        "sessionId": "session-a",
+        "key": key,
+        "reason": "Prefer raw evidence",
+        "expectedRevision": "b" * 32,
+        "operationId": "a" * 32,
+    }
 
 
 def test_video_collection_cli_preserves_order_and_guard(setup, monkeypatch, tmp_path):
-    calls=[]
-    monkeypatch.setattr(cloud,"api",lambda *args,**kwargs:calls.append((args,kwargs)) or {"collection":None})
-    body={"gameId":"example","id":"favorites","name":"Favorites","description":"Synthetic",
-        "assetKeys":["games/example/assets/video-two/original/a.mp4","games/example/assets/video-one/original/a.mp4"],"expectedRevision":"b"*32}
-    file=tmp_path/"collection.json"
+    calls = []
+    monkeypatch.setattr(
+        cloud, "api", lambda *args, **kwargs: calls.append((args, kwargs)) or {"collection": None}
+    )
+    body = {
+        "gameId": "example",
+        "id": "favorites",
+        "name": "Favorites",
+        "description": "Synthetic",
+        "assetKeys": [
+            "games/example/assets/video-two/original/a.mp4",
+            "games/example/assets/video-one/original/a.mp4",
+        ],
+        "expectedRevision": "b" * 32,
+    }
+    file = tmp_path / "collection.json"
     file.write_text(json.dumps(body))
-    result=CliRunner().invoke(main,["videos","save-collection",str(file),"--operation-id","a"*32])
-    assert result.exit_code==0 and "Collection operation ID: " + "a"*32 in result.output
-    assert calls[-1][0][1:3]==("POST","/video-collections")
-    assert calls[-1][1]["json"]=={**body,"operationId":"a"*32}
+    result = CliRunner().invoke(
+        main, ["videos", "save-collection", str(file), "--operation-id", "a" * 32]
+    )
+    assert result.exit_code == 0 and "Collection operation ID: " + "a" * 32 in result.output
+    assert calls[-1][0][1:3] == ("POST", "/video-collections")
+    assert calls[-1][1]["json"] == {**body, "operationId": "a" * 32}
 
 
 def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypatch):
@@ -346,7 +418,7 @@ def test_encrypted_session_rotates_without_plaintext_on_disk(monkeypatch, tmp_pa
         assert args[1] == "decrypt"
         with open(args[-2], "rb") as encrypted:
             value = encrypted.read()
-        return subprocess.CompletedProcess(args, 0, stdout=value[len(b"encrypted:"):][::-1])
+        return subprocess.CompletedProcess(args, 0, stdout=value[len(b"encrypted:") :][::-1])
 
     monkeypatch.setattr("panther_journal.encrypted_session.subprocess.run", fake_creds)
     assert store.get_password("panther.place/cli", "session") is None
@@ -373,20 +445,39 @@ def test_api_accepts_created_but_not_pending_or_redirect(setup, monkeypatch):
     monkeypatch.setattr(cloud, "token", lambda config: "synthetic")
     result = {"profile": {"id": "hero"}, "revision": '"new"'}
     for status in (200, 201):
-        monkeypatch.setattr(cloud.requests, "request", lambda *a, **kw: SimpleNamespace(status_code=status, json=lambda: result))
-        assert cloud.api({"apiUrl":"https://api.example"}, "POST", "/character-profile") == result
+        monkeypatch.setattr(
+            cloud.requests,
+            "request",
+            lambda *a, **kw: SimpleNamespace(status_code=status, json=lambda: result),
+        )
+        assert cloud.api({"apiUrl": "https://api.example"}, "POST", "/character-profile") == result
     for status in (202, 204, 302):
-        monkeypatch.setattr(cloud.requests, "request", lambda *a, **kw: SimpleNamespace(status_code=status, json=lambda: result))
+        monkeypatch.setattr(
+            cloud.requests,
+            "request",
+            lambda *a, **kw: SimpleNamespace(status_code=status, json=lambda: result),
+        )
         with pytest.raises(click.ClickException, match="Unexpected Panther"):
-            cloud.api({"apiUrl":"https://api.example"}, "POST", "/character-profile")
+            cloud.api({"apiUrl": "https://api.example"}, "POST", "/character-profile")
 
 
 def test_character_profile_creation_uses_authenticated_api(setup, monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(cloud, "api", lambda config, method, route, **kw: calls.append((method, route, kw)) or {"revision": '"new"'})
+    monkeypatch.setattr(
+        cloud,
+        "api",
+        lambda config, method, route, **kw: (
+            calls.append((method, route, kw)) or {"revision": '"new"'}
+        ),
+    )
     manifest = tmp_path / "profile.json"
-    body = {"gameId": "test", "characterId": "captain", "title": "Navigator", "summary": "A navigator.",
-            "portraitKey": "games/test/assets/portrait/original/portrait.png"}
+    body = {
+        "gameId": "test",
+        "characterId": "captain",
+        "title": "Navigator",
+        "summary": "A navigator.",
+        "portraitKey": "games/test/assets/portrait/original/portrait.png",
+    }
     manifest.write_text(json.dumps(body))
     result = CliRunner().invoke(main, ["character", "create-profile", str(manifest)])
     assert result.exit_code == 0, result.output
@@ -433,6 +524,7 @@ def test_character_commands_preserve_revision_and_only_publish_requested_fields(
                 "characterId": "captain",
                 "webKey": "web",
                 "sourceKey": "source",
+                "provenanceKey": None,
                 "expectedRevision": '"abc"',
                 "reason": "Tested replacement",
             }
