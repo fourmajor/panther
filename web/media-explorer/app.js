@@ -823,6 +823,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         const row = document.createElement("div"); row.className = "character-stat-editor";
         const controls = {};
         for (const label of ["Group","Name","Type","Value"]) { const wrap = document.createElement("label"); wrap.textContent = label; const input = document.createElement(label === "Type" ? "select" : "input");
+          input.setAttribute("aria-label",label);
           if (label === "Type") for (const kind of ["Unknown","Text","Number","Boolean"]) { const option = document.createElement("option"); option.textContent = kind; input.append(option); }
           else input.maxLength = label === "Group" ? 80 : label === "Name" ? 120 : 500;
           wrap.append(input); row.append(wrap); controls[label] = input;

@@ -73,3 +73,22 @@ for(const width of [1280,390]) test(`structured character editing and catalog pa
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   expect(errors).toEqual([]);
 });
+
+test('an uncertain character save retries the identical operation without accepting changed fields',async({page})=>{
+  await fixture(page); const requests=[];
+  await page.route('**/character-details',async route=>{
+    if(route.request().method()!=='POST') return route.fallback();
+    requests.push(route.request().postDataJSON());
+    if(requests.length===1) return route.fulfill({status:503,json:{error:'Response unavailable'},headers:{'access-control-allow-origin':'https://panther.place'}});
+    return route.fallback();
+  });
+  await page.goto(`https://panther.place/games/${gameId}/characters/${characterId}`);
+  await page.getByRole('button',{name:'Edit character information'}).click();
+  await page.getByLabel('Reason for change').fill('Exact retry verification');
+  await page.getByLabel('Status',{exact:true}).fill('Resting');
+  await page.getByRole('button',{name:'Save character information'}).click();
+  await expect(page.getByLabel('Status',{exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Retry exact save'}).click();
+  await expect(page.locator('#character-facts')).toContainText('Character information saved');
+  expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
+});
