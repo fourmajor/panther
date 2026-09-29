@@ -1149,9 +1149,17 @@ function proseMarkdown(parent, markdown, references) {
 }
 
 // Typed destinations, not artifact-supplied URLs. Add a resolver when a new data type has a page.
-function narrativeReferences(chapter, assets, chapters) {
+function narrativeReferences(chapter, assets, chapters, collections = []) {
   const characters = state.gameDetail.characters || [];
   const resolvers = {
+    collection: target => {
+      const collection=collections.find(c=>c.id===target.id && c.gameId===state.gameId && c.entityType==="VideoCollection");
+      if(!collection || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(target.id))return null;
+      return {identity:`collection:${collection.id}`,target,make:text=>{
+        const link=document.createElement("a");link.href=gamePath("videos")+`?collection=${encodeURIComponent(collection.id)}`;link.textContent=text;link.title=`Video collection: ${collection.name}`;
+        link.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();navigate(link.getAttribute("href"));};return link;
+      }};
+    },
     character: target => {
       const c = characters.find(c => c.id === target.id);
       if (!c || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(c.id)) return null;
@@ -1338,6 +1346,11 @@ async function narrativePreviewData(target, gameId) {
     const supplied = metadataPreview(asset?.metadata);
     if (previewText(supplied.summary)) { summary = previewText(supplied.summary); source = "description"; }
     imageKey = supplied.imageKey;
+  } else if (target.type === "collection") {
+    const result=await api("/video-collections",{gameId,id:target.id,metadataOnly:"true"});
+    if(result.collection?.gameId!==gameId || result.collection?.entityType!=="VideoCollection")throw new Error("Collection unavailable");
+    title=result.collection.name;summary=previewText(result.collection.description);
+    if(!summary){summary=`${result.collection.assetKeys.length} saved video references. No description recorded.`;source="metadata";}
   } else throw new Error("Unsupported preview target");
   let imageUrl;
   if (typeof imageKey === "string" && imageKey.startsWith(`games/${gameId}/assets/`) && !imageKey.split("/").includes("..")) {
@@ -1537,8 +1550,11 @@ async function loadNovel(chapterId, epoch) {
     novel.status.hidden = true;
     // Link enrichment is optional: a catalog outage must not prevent reading the manuscript.
     proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, [], chapters));
-    void allAssets(gameId).then(assets => {
-      if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters));
+    const collectionIds=[...new Set((chapter.readerReferences?.schemaVersion===1 && Array.isArray(chapter.readerReferences.mentions) && chapter.readerReferences.mentions.length<=200 ? chapter.readerReferences.mentions : [])
+      .filter(m=>m?.target?.type==="collection" && (!m.target.gameId || m.target.gameId===gameId) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(m.target.id)).map(m=>m.target.id))];
+    const collectionReferences=(async()=>{const records=[];for(let offset=0;offset<collectionIds.length;offset+=8){if(!current())return records;const batch=await Promise.all(collectionIds.slice(offset,offset+8).map(id=>api("/video-collections",{gameId,id,metadataOnly:"true"}).then(r=>r.collection).catch(()=>null)));records.push(...batch.filter(Boolean));}return records;})();
+    void Promise.all([allAssets(gameId),collectionReferences]).then(([assets,collections]) => {
+      if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters,collections));
     }).catch(() => {
       if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Refresh chapters to retry."; }
     });

@@ -221,6 +221,11 @@ def handle(event, media):
             )
             if not record:
                 return media._response(404, {"error": "Collection not found"})
+            metadata_only = media._query(event, "metadataOnly")
+            if metadata_only not in (None, "true"):
+                raise ValueError("Invalid metadata projection option")
+            if metadata_only == "true":
+                return media._response(200, {"collection": record})
             assets, warnings = members(media, game, record["assetKeys"])
             return media._response(
                 200, {"collection": record, "assets": [a for a, _ in assets], "warnings": warnings}

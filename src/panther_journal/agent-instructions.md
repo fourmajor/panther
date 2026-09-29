@@ -499,6 +499,8 @@ save-collection PRIVATE_JSON --operation-id 32_HEX`; see `docs/video-library.md`
 same-game immutable video keys in their deliberate order, with current `expectedRevision` (null
 only for a new collection). Retain the operation identity and arguments for exact retries. A
 collection never reclassifies its members, establishes canon or changes source provenance.
+Novel annotations can reference an existing same-game collection with a typed
+`{"type":"collection","id":"favorites"}` target; never insert an arbitrary URL into prose.
 Video cards use existing descriptions/tags/category/character IDs and optional selected
 `extra.preview.imageKey`. Never choose a poster from filename similarity or invent creator identity.
 Publish separate captions as `video-captions` WebVTT exports under the same asset identity as the

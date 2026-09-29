@@ -52,6 +52,13 @@ invalid captions leave video playback usable; burned-in subtitles remain part of
 Local caption object URLs are revoked on preview close/replacement. CDK permits media blob URLs
 for that bounded caption delivery; credentials and arbitrary artifact URLs never enter tracks.
 
+Novels can explicitly reference a collection using a typed same-game reader target
+`{"type":"collection","id":"favorites"}`. Only an existing same-game collection resolves; unknown,
+cross-game or conflicting references stay plain text. Summaries use the saved description or a
+labeled count, not invented facts or a guessed first-member image. Metadata-only lookups do not
+fetch member assets. Enrichment leaves the manuscript/clean export untouched; preview failures
+leave the link usable. No inference runs when following or hovering over the reference.
+
 ## Deployment and existing data
 
 CDK owns JWT routes, narrow DynamoDB write/condition-check grants and the caption CSP. Existing

@@ -107,7 +107,15 @@ for(const width of [1280,390]) test(`playful video filters, ordered collections 
   await expect(body).toContainText('Selected captions loaded');
   await expect.poll(()=>body.locator('video track').evaluate(t=>t.readyState)).toBe(2);
   expect(await body.locator('video track').evaluate(t=>t.track.mode)).toBe('showing');
-  await expect(body.getByRole('link',{name:'Open caption export · Synthetic captions'})).toBeVisible();
+  const original=body.getByRole('link',{name:'Open caption export · Synthetic captions'});
+  await expect(original).toBeVisible();
+  const viewport=await body.boundingBox();await page.mouse.move(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
+  for(let scrolls=0;scrolls<5;scrolls++) {
+    const box=await original.boundingBox();if(box.y+box.height<viewport.y+viewport.height)break;
+    await page.mouse.wheel(0,200);await expect.poll(async()=>(await original.boundingBox()).y).toBeLessThan(box.y);
+  }
+  await expect(original).toBeInViewport();
+  expect(await original.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await page.screenshot({path:test.info().outputPath(`video-captions-${width}.png`)});
   await page.keyboard.press('Escape');await expect(page.locator('#preview-body')).toBeEmpty();
 });

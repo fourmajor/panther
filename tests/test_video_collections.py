@@ -71,6 +71,8 @@ def test_ordered_collection_guard_history_and_idempotency(library):
     detail = call(library, id="highlights")["body"]
     assert [a["key"] for a in detail["assets"]] == body["assetKeys"]
     assert detail["warnings"] == []
+    metadata = call(library, id="highlights", metadataOnly="true")["body"]
+    assert metadata["collection"] == record and "assets" not in metadata
     assert call(library, body)["body"]["replayed"] is True
     assert call(library, {**body, "name": "New name"})["statusCode"] == 409
     assert call(library, request(library))["statusCode"] == 409

@@ -29,7 +29,8 @@ associate an alias with a typed destination, separate from prose and editorial n
 
 At most 200 mentions are accepted; each label is 2–160 characters. A mention applies to each exact
 occurrence in a plain-text span, including emphasis, but not arbitrary Markdown links/code/HTML.
-Only existing, same-game `character`, `asset`, and `chapter` targets resolve (chapter uses its job ID).
+Only existing, same-game `character`, `asset`, `chapter` and `collection` targets resolve
+(chapter uses its job ID; collection uses its video-collection ID).
 Optional target `gameId` must equal the selected game. Explicit references override automatic names;
 conflicting explicit references stay unlinked. Unknown types and unavailable targets stay plain text.
 Future entities extend the typed resolver registry when their data model and pages exist, not by
