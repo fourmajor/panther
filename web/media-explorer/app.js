@@ -1756,7 +1756,7 @@ document.addEventListener("pointerdown", event => {
 window.addEventListener("resize", positionNarrativePreview);
 document.addEventListener("scroll", positionNarrativePreview, true);
 
-function novelLink(title, id, bookId = currentNovelBook?.id) {
+function novelLink(title, id, bookId = null) {
   const link = document.createElement("a");
   link.href = gamePath(`novel/${id}`) + (bookId ? `?book=${encodeURIComponent(bookId)}` + (currentNovelBook?.id===bookId ? `&bookRevision=${encodeURIComponent(currentNovelBook.revision)}` : "") : "");
   link.textContent = title;
@@ -1919,8 +1919,8 @@ async function loadNovel(chapterId, epoch) {
       if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Refresh chapters to retry."; }
     });
     const index = ordered.findIndex(c => selectedBook ? c.id === chapter.id : c.sessionId === chapter.sessionId);
-    if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id));
-    if (index >= 0 && index < ordered.length - 1) novel.pagination.append(novelLink(`${ordered[index + 1].title} →`, ordered[index + 1].id));
+    if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id,selectedBook?.id));
+    if (index >= 0 && index < ordered.length - 1) novel.pagination.append(novelLink(`${ordered[index + 1].title} →`, ordered[index + 1].id,selectedBook?.id));
   } catch (error) {
     if (!current()) return;
     novel.status.hidden = false;

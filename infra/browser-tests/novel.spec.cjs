@@ -90,6 +90,13 @@ for(const width of [1280,390]) test(`organized book and pinned editions are usab
   await page.getByRole('button',{name:'← All chapters'}).click();
   await page.getByRole('link',{name:'Previous book revision'}).click();
   await expect(page.locator('#novel-list')).toContainText('Private draft');
+  await page.getByRole('link',{name:'The Earlier Lantern',exact:true}).click();
+  await page.getByRole('button',{name:'Details',exact:true}).click();
+  const latest=page.locator(`#novel-details a[href$="/${first}"]`);
+  await expect(latest).toHaveCount(1);
+  await latest.click();
+  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
+  expect(new URL(page.url()).searchParams.has('book')).toBe(false);
 });
 
 test('reading position is stored per account and game and resumes explicitly',async({page})=>{
