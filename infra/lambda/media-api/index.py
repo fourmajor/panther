@@ -4,8 +4,6 @@ import json
 import logging
 import os
 import re
-import hashlib
-import struct
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -126,9 +124,12 @@ def _asset_metadata(key, *, maximum, expected_types):
 def _signed_asset(key, *, download=False):
     filename = PurePosixPath(key).name
     # ASCII fallback plus RFC 5987 UTF-8 filename; never interpolate raw header text.
-    fallback = re.sub(r'[^a-zA-Z0-9._ -]', '_', filename) or 'asset'
-    disposition = (f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
-                   if download else 'inline')
+    fallback = re.sub(r"[^a-zA-Z0-9._ -]", "_", filename) or "asset"
+    disposition = (
+        f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+        if download
+        else "inline"
+    )
     return s3.generate_presigned_url(
         "get_object",
         Params={
@@ -141,149 +142,38 @@ def _signed_asset(key, *, download=False):
 
 
 def _character(event):
-    game_id = _query(event, "gameId")
-    character_id = _query(event, "characterId")
-    if not _valid_slug(game_id) or not _valid_slug(character_id):
+    import sys
+    import character_appearances
+
+    game, character = _query(event, "gameId"), _query(event, "characterId")
+    if not all(_valid_slug(value) and len(value) <= 96 for value in (game, character)):
         return _response(400, {"error": "Invalid character identifier"})
-
-    profile_key = f"games/{game_id}/characters/{character_id}/profile.json"
-    profile = _get_json(profile_key)
-    summary = _character_summary(profile, game_id=game_id, character_id=character_id)
-    if not summary:
-        return _response(404, {"error": "Character not found"})
-
-    description = _text(profile.get("summary"), maximum=1000) or ""
-    model = profile.get("model")
-    if not isinstance(model, dict):
-        return _response(422, {"error": "Character model is not configured"})
-
-    web_key = model.get("webKey")
-    poster_key = model.get("posterKey")
-    game_prefix = f"games/{game_id}/"
-    # A portrait-only profile is a complete usable page while a model is being built.
-    if web_key is None:
-        if not isinstance(poster_key, str) or not poster_key.startswith(game_prefix):
-            return _response(422, {"error": "Character portrait is invalid"})
-        poster_metadata = _asset_metadata(poster_key, maximum=MAX_POSTER_BYTES,
-            expected_types={"image/avif", "image/jpeg", "image/png", "image/webp"})
-        if not poster_metadata:
-            return _response(422, {"error": "Character portrait is unavailable"})
-        return _response(200, {"character": {**summary, "summary": description}, "model": None,
-                               "poster": {**poster_metadata, "key": poster_key, "url": _signed_asset(poster_key)}})
-    if not all(
-        isinstance(key, str) and key.startswith(game_prefix) for key in (web_key, poster_key)
-    ):
-        return _response(422, {"error": "Character assets are invalid"})
     try:
-        configured_maximum = int(model.get("maxBytes", MAX_MODEL_BYTES))
-    except (TypeError, ValueError):
-        configured_maximum = MAX_MODEL_BYTES
-    model_metadata = _asset_metadata(
-        web_key,
-        maximum=max(1, min(configured_maximum, MAX_MODEL_BYTES)),
-        expected_types={"model/gltf-binary", "application/octet-stream"},
-    )
-    poster_metadata = _asset_metadata(
-        poster_key,
-        maximum=MAX_POSTER_BYTES,
-        expected_types={"image/avif", "image/jpeg", "image/png", "image/webp"},
-    )
-    if not model_metadata or not poster_metadata:
-        return _response(422, {"error": "Character assets are unavailable or exceed limits"})
-
-    default_view = model.get("defaultView") if isinstance(model.get("defaultView"), dict) else {}
-    camera_orbit = _text(default_view.get("cameraOrbit"), maximum=80) or "0deg 75deg 105%"
-    field_of_view = _text(default_view.get("fieldOfView"), maximum=40) or "30deg"
-    return _response(
-        200,
-        {
-            "character": {**summary, "summary": description},
-            "model": {
-                **model_metadata,
-                "key": web_key,
-                "url": _signed_asset(web_key),
-                "expiresIn": SIGNED_URL_TTL_SECONDS,
-                "cameraOrbit": camera_orbit,
-                "fieldOfView": field_of_view,
-                "sourceRetained": bool(model.get("sourceKey")),
-                "provenanceRetained": bool(model.get("provenanceKey")),
-            },
-            "poster": {**poster_metadata, "key": poster_key, "url": _signed_asset(poster_key)},
-        },
-    )
+        aid, sid = _query(event, "appearanceId"), _query(event, "selectionId")
+        if any(v is not None and (not _valid_slug(v) or len(v) > 96) for v in (aid, sid)):
+            raise ValueError("Invalid selection identity")
+        return _response(
+            200, character_appearances.view(sys.modules[__name__], game, character, aid, sid)
+        )
+    except ValueError:
+        return _response(404, {"error": "Exact selected character appearance unavailable"})
+    except RuntimeError:
+        return _response(503, {"error": "Character appearance migration is not complete"})
 
 
 def _character_versions(event):
-    """Published appearance selections, including superseded profile snapshots.
+    import sys
+    import character_appearances
 
-    These are semantic selections of immutable assets, not S3 metadata revisions.
-    A character's small history prefix is the authoritative audit trail.
-    """
-    game_id, character_id = _query(event, "gameId"), _query(event, "characterId")
-    if not _valid_slug(game_id) or not _valid_slug(character_id):
+    game, character = _query(event, "gameId"), _query(event, "characterId")
+    if not all(_valid_slug(value) and len(value) <= 96 for value in (game, character)):
         return _response(400, {"error": "Invalid character identifier"})
-    base = f"games/{game_id}/characters/{character_id}/"
-    current = _get_json(base + "profile.json")
-    if not _character_summary(current, game_id=game_id, character_id=character_id):
-        return _response(404, {"error": "Character not found"})
-    snapshots = []
-    paginator = raw_s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=BUCKET_NAME, Prefix=base + "history/"):
-        for item in page.get("Contents", []):
-            if not re.fullmatch(re.escape(base) + r"history/[a-f0-9]{64}\.json", item["Key"]):
-                continue
-            profile = _get_json(item["Key"])
-            if _character_summary(profile, game_id=game_id, character_id=character_id):
-                snapshots.append((item.get("LastModified"), profile))
-            if len(snapshots) > 500:
-                return _response(422, {"error": "Character appearance history exceeds the supported limit"})
-    def selection_time(entry):
-        times = []
-        for field in ("modelPublication", "portraitPublication"):
-            value = (entry[1].get(field) or {}).get("publishedAt")
-            if isinstance(value, str):
-                try:
-                    times.append(datetime.fromisoformat(value))
-                except ValueError:
-                    pass
-        return max(times) if times else entry[0] or datetime.min.replace(tzinfo=timezone.utc)
-    snapshots.sort(key=selection_time)
-    snapshots.append((None, current))
-    output = {"model": [], "portrait": []}
-    seen = {"model": set(), "portrait": set()}
-    for _, profile in snapshots:
-        model = profile.get("model") if isinstance(profile.get("model"), dict) else {}
-        for kind, key_name, limit, types, publication in (
-            ("model", "webKey", MAX_MODEL_BYTES, {"model/gltf-binary", "application/octet-stream"}, "modelPublication"),
-            ("portrait", "posterKey", MAX_POSTER_BYTES, {"image/avif", "image/jpeg", "image/png", "image/webp"}, "portraitPublication"),
-        ):
-            key = model.get(key_name)
-            if not isinstance(key, str) or not key.startswith(f"games/{game_id}/assets/"):
-                continue
-            if key in seen[kind]:
-                if kind == "model":
-                    next(item for item in output[kind] if item["key"] == key)["posterKey"] = model.get("posterKey")
-                continue
-            seen[kind].add(key)
-            metadata = _asset_metadata(key, maximum=limit, expected_types=types)
-            publication_info = profile.get(publication) if isinstance(profile.get(publication), dict) else {}
-            current_model = current.get("model") if isinstance(current.get("model"), dict) else {}
-            entry = {"key": key, "available": bool(metadata),
-                     "selectedAt": publication_info.get("publishedAt"),
-                     "reason": _text(publication_info.get("reason"), maximum=500),
-                     "current": key == current_model.get(key_name)}
-            if metadata:
-                entry.update(metadata)
-                entry["url"] = _signed_asset(key)
-            if kind == "model":
-                default_view = model.get("defaultView") if isinstance(model.get("defaultView"), dict) else {}
-                entry["cameraOrbit"] = _text(default_view.get("cameraOrbit"), maximum=80) or "0deg 75deg auto"
-                entry["fieldOfView"] = _text(default_view.get("fieldOfView"), maximum=40) or "30deg"
-                entry["posterKey"] = model.get("posterKey")
-            output[kind].append(entry)
-    return _response(200, {"gameId": game_id, "characterId": character_id,
-                           "models": list(reversed(output["model"])),
-                           "portraits": list(reversed(output["portrait"]))})
+    try:
+        return _response(200, character_appearances.history(sys.modules[__name__], game, character))
+    except ValueError:
+        return _response(404, {"error": "Character appearance history unavailable"})
+    except RuntimeError:
+        return _response(503, {"error": "Character appearance migration is not complete"})
 
 
 def _list_objects(event):
@@ -333,7 +223,7 @@ def _list_objects(event):
     )
 
 
-def _profile_record(game, character):
+def _legacy_profile_record(game, character):
     key = f"games/{game}/characters/{character}/profile.json"
     try:
         record = s3.get_object(Bucket=BUCKET_NAME, Key=key)
@@ -353,195 +243,40 @@ def _profile_record(game, character):
     return key, raw, profile, record["ETag"]
 
 
+def _profile_record(game, character):
+    import sys
+    import character_appearances
+
+    return character_appearances.profile(sys.modules[__name__], game, character)
+
+
 def _character_profile(event):
     game, character = _query(event, "gameId"), _query(event, "characterId")
     if not all(_valid_slug(v) and len(v) <= 96 for v in (game, character)):
         return _response(400, {"error": "Invalid character identifier"})
-    record = _profile_record(game, character)
+    try:
+        record = _profile_record(game, character)
+    except ValueError:
+        return _response(404, {"error": "Character not found"})
+    except RuntimeError:
+        return _response(503, {"error": "Character appearance migration is not complete"})
     if not record:
         return _response(404, {"error": "Character not found"})
     return _response(200, {"profile": record[2], "revision": record[3]})
 
 
 def _publish_model(event):
-    claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    actor = claims.get("sub")
-    if not actor or claims.get("cognito:username") not in MODEL_PUBLISHERS:
-        return _response(403, {"error": "This account cannot publish character models"})
-    try:
-        raw = event.get("body") or ""
-        if event.get("isBase64Encoded"):
-            raw = base64.b64decode(raw, validate=True).decode("utf-8")
-        body = json.loads(raw)
-    except (ValueError, UnicodeDecodeError, binascii.Error):
-        return _response(400, {"error": "Invalid model publication request"})
-    fields = {
-        "gameId",
-        "characterId",
-        "expectedRevision",
-        "webKey",
-        "sourceKey",
-        "provenanceKey",
-        "reason",
-    }
-    if not isinstance(body, dict) or set(body) - fields:
-        return _response(400, {"error": "Invalid model publication request"})
-    game, character = body.get("gameId"), body.get("characterId")
-    if not all(_valid_slug(v) and len(v) <= 96 for v in (game, character)):
-        return _response(400, {"error": "Invalid character identifier"})
-    reason = _text(body.get("reason"), maximum=500)
-    if not reason or not _text(body.get("expectedRevision"), maximum=128):
-        return _response(400, {"error": "A reason and expected revision are required"})
-    keys = [body.get("webKey"), body.get("sourceKey")]
-    if "provenanceKey" in body:
-        keys.append(body["provenanceKey"])
-    # Only immutable imported or legacy derived assets, never a mutable profile.
-    asset_pattern = re.compile(
-        rf"^games/{re.escape(game)}/assets/[a-z0-9-]+/(?:original|derived/web)/[^/\\]+$"
-    )
-    if not all(_valid_key(k) and asset_pattern.fullmatch(k) for k in keys):
-        return _response(400, {"error": "Model sources must be immutable assets in this game"})
-    if not body["webKey"].endswith(".glb"):
-        return _response(400, {"error": "The web model must be a GLB file"})
-    record = _profile_record(game, character)
-    if not record:
-        return _response(404, {"error": "Character not found"})
-    key, old_raw, profile, revision = record
-    if revision != body["expectedRevision"]:
-        return _response(409, {"error": "Character changed; inspect it again before publishing"})
-    old_model = profile.get("model")
-    poster = old_model.get("posterKey") if isinstance(old_model, dict) else None
-    if not _valid_key(poster) or not poster.startswith(f"games/{game}/"):
-        return _response(422, {"error": "The character needs a valid existing portrait"})
-    if not _asset_metadata(
-        poster,
-        maximum=MAX_POSTER_BYTES,
-        expected_types={"image/png", "image/jpeg", "image/webp", "image/avif"},
-    ):
-        return _response(422, {"error": "The existing portrait is unavailable"})
-    metadata = _asset_metadata(
-        body["webKey"],
-        maximum=MAX_MODEL_BYTES,
-        expected_types={"model/gltf-binary", "application/octet-stream"},
-    )
-    if not metadata:
-        return _response(422, {"error": "Web model unavailable, invalid type, or above 5 MiB"})
-    try:
-        for source in keys[1:]:
-            if s3.head_object(Bucket=BUCKET_NAME, Key=source)["ContentLength"] <= 0:
-                return _response(422, {"error": "A model source is empty"})
-        glb = s3.get_object(Bucket=BUCKET_NAME, Key=body["webKey"], Range="bytes=0-11")[
-            "Body"
-        ].read(12)
-    except ClientError as error:
-        if error.response.get("Error", {}).get("Code") in {
-            "404",
-            "NoSuchKey",
-            "NotFound",
-            "InvalidRange",
-        }:
-            return _response(422, {"error": "A model source is unavailable"})
-        raise
-    if len(glb) != 12 or struct.unpack("<4sII", glb) != (b"glTF", 2, metadata["size"]):
-        return _response(422, {"error": "The web model has an invalid GLB header"})
-    # Preserve the exact old profile before its conditional replacement. A conflict
-    # may leave an unused snapshot, but cannot lose history or overwrite a newer edit.
-    history_key = (
-        key.removesuffix("profile.json") + f"history/{hashlib.sha256(old_raw).hexdigest()}.json"
-    )
-    try:
-        s3.put_object(
-            Bucket=BUCKET_NAME,
-            Key=history_key,
-            Body=old_raw,
-            ContentType="application/json",
-            IfNoneMatch="*",
-        )
-    except ClientError as error:
-        if error.response.get("Error", {}).get("Code") != "PreconditionFailed":
-            raise
-    profile["model"] = {
-        "webKey": body["webKey"],
-        "sourceKey": body["sourceKey"],
-        "posterKey": poster,
-        "maxBytes": MAX_MODEL_BYTES,
-        "defaultView": {"cameraOrbit": "0deg 75deg auto", "fieldOfView": "30deg"},
-        **({"provenanceKey": body["provenanceKey"]} if "provenanceKey" in body else {}),
-    }
-    profile["modelPublication"] = {
-        "actor": actor,
-        "publishedAt": datetime.now(timezone.utc).isoformat(),
-        "reason": reason,
-        "previousProfileKey": history_key,
-    }
-    try:
-        result = s3.put_object(
-            Bucket=BUCKET_NAME,
-            Key=key,
-            Body=json.dumps(profile, ensure_ascii=False).encode("utf-8"),
-            ContentType="application/json",
-            IfMatch=revision,
-        )
-    except ClientError as error:
-        if error.response.get("Error", {}).get("Code") in {
-            "PreconditionFailed",
-            "ConditionalRequestConflict",
-        }:
-            return _response(
-                409, {"error": "Character changed; inspect it again before publishing"}
-            )
-        raise
-    return _response(
-        200, {"profile": profile, "revision": result["ETag"], "previousProfileKey": history_key}
-    )
+    import sys
+    import character_appearances
+
+    return character_appearances.publish(sys.modules[__name__], event, "model")
 
 
 def _publish_portrait(event):
-    claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    actor = claims.get("sub")
-    if not actor or claims.get("cognito:username") not in MODEL_PUBLISHERS:
-        return _response(403, {"error": "This account cannot publish character portraits"})
-    try:
-        raw = event.get("body") or ""
-        if event.get("isBase64Encoded"):
-            raw = base64.b64decode(raw, validate=True).decode("utf-8")
-        body = json.loads(raw)
-    except (ValueError, UnicodeDecodeError, binascii.Error):
-        return _response(400, {"error": "Invalid portrait publication request"})
-    fields = {"gameId", "characterId", "portraitKey", "expectedRevision", "reason"}
-    if not isinstance(body, dict) or set(body) != fields:
-        return _response(400, {"error": "Invalid portrait publication request"})
-    game, character = body["gameId"], body["characterId"]
-    if not all(_valid_slug(v) and len(v) <= 96 for v in (game, character)):
-        return _response(400, {"error": "Invalid character identifier"})
-    reason = _text(body["reason"], maximum=500)
-    portrait = body["portraitKey"]
-    pattern = re.compile(rf"^games/{re.escape(game)}/assets/[a-z0-9-]+/original/[^/\\]+$")
-    if not reason or not _text(body["expectedRevision"], maximum=128) or not _valid_key(portrait) or not pattern.fullmatch(portrait):
-        return _response(400, {"error": "An immutable same-game portrait, revision and reason are required"})
-    record = _profile_record(game, character)
-    if not record:
-        return _response(404, {"error": "Character not found"})
-    key, old_raw, profile, revision = record
-    if revision != body["expectedRevision"]:
-        return _response(409, {"error": "Character changed; inspect it again before publishing"})
-    if not _asset_metadata(portrait, maximum=MAX_POSTER_BYTES, expected_types={"image/png", "image/jpeg", "image/webp", "image/avif"}):
-        return _response(422, {"error": "Portrait unavailable or invalid image type/size"})
-    history_key = key.removesuffix("profile.json") + f"history/{hashlib.sha256(old_raw).hexdigest()}.json"
-    try:
-        s3.put_object(Bucket=BUCKET_NAME, Key=history_key, Body=old_raw, ContentType="application/json", IfNoneMatch="*")
-    except ClientError as error:
-        if error.response.get("Error", {}).get("Code") != "PreconditionFailed":
-            raise
-    profile.setdefault("model", {})["posterKey"] = portrait
-    profile["portraitPublication"] = {"actor": actor, "publishedAt": datetime.now(timezone.utc).isoformat(), "reason": reason, "previousProfileKey": history_key}
-    try:
-        result = s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=json.dumps(profile, ensure_ascii=False).encode("utf-8"), ContentType="application/json", IfMatch=revision)
-    except ClientError as error:
-        if error.response.get("Error", {}).get("Code") in {"PreconditionFailed", "ConditionalRequestConflict"}:
-            return _response(409, {"error": "Character changed; inspect it again before publishing"})
-        raise
-    return _response(200, {"profile": profile, "revision": result["ETag"], "previousProfileKey": history_key})
+    import sys
+    import character_appearances
+
+    return character_appearances.publish(sys.modules[__name__], event, "portrait")
 
 
 def _object_url(event):
@@ -575,7 +310,9 @@ def _object_url(event):
             "versionId": metadata.get("VersionId"),
             "etag": metadata.get("ETag"),
             "sha256": metadata.get("ChecksumSHA256"),
-            "createdAt": _asset_created_at(metadata).isoformat() if metadata.get("LastModified") else None,
+            "createdAt": _asset_created_at(metadata).isoformat()
+            if metadata.get("LastModified")
+            else None,
             "url": _signed_asset(key, download=download == "true"),
             "filename": PurePosixPath(key).name,
             "expiresIn": SIGNED_URL_TTL_SECONDS,
@@ -686,25 +423,41 @@ def _upload(event):
     if "extra" in metadata and not isinstance(metadata["extra"], dict):
         return _response(400, {"error": "Metadata extra must be an object"})
     import asset_metadata
+
     reference = f"games/{game}/assets/{asset}/original/{filename}"
     requested_version = (metadata.get("extra") or {}).get("version")
     if requested_version is not None:
         if not isinstance(requested_version, dict) or set(requested_version) != {"previousKey"}:
-            return _response(400, {"error": "For a new version, provide only extra.version.previousKey"})
+            return _response(
+                400, {"error": "For a new version, provide only extra.version.previousKey"}
+            )
         previous_key = requested_version["previousKey"]
-        if (not _valid_key(previous_key) or not previous_key.startswith(f"games/{game}/assets/")
-                or previous_key == reference):
+        if (
+            not _valid_key(previous_key)
+            or not previous_key.startswith(f"games/{game}/assets/")
+            or previous_key == reference
+        ):
             return _response(400, {"error": "Previous version must be another asset in this game"})
         try:
             previous = s3.head_object(Bucket=BUCKET_NAME, Key=previous_key)
-            old_metadata = json.loads(base64.b64decode(previous.get("Metadata", {}).get("panther", ""), validate=True))
-            old_version = asset_metadata.validate_version(old_metadata["extra"]["version"], previous_key)
+            old_metadata = json.loads(
+                base64.b64decode(previous.get("Metadata", {}).get("panther", ""), validate=True)
+            )
+            old_version = asset_metadata.validate_version(
+                old_metadata["extra"]["version"], previous_key
+            )
             if previous.get("Metadata", {}).get("kind") != kind:
                 return _response(400, {"error": "A version must keep the same asset kind"})
-            metadata["extra"]["version"] = {"schemaVersion": 1, "seriesId": old_version["seriesId"],
-                                               "number": old_version["number"] + 1, "previousKey": previous_key}
+            metadata["extra"]["version"] = {
+                "schemaVersion": 1,
+                "seriesId": old_version["seriesId"],
+                "number": old_version["number"] + 1,
+                "previousKey": previous_key,
+            }
         except (ClientError, ValueError, KeyError, TypeError, binascii.Error):
-            return _response(422, {"error": "Previous asset has no valid version record; migrate it first"})
+            return _response(
+                422, {"error": "Previous asset has no valid version record; migrate it first"}
+            )
     metadata = asset_metadata.defaults(kind, metadata, filename, content_type, reference)
     try:
         asset_metadata.validate_generation(metadata["extra"]["generation"])
@@ -713,8 +466,11 @@ def _upload(event):
         return _response(400, {"error": str(error)})
     if metadata["extra"]["relationshipRole"] not in {"finished", "intermediate"}:
         return _response(400, {"error": "Invalid relationshipRole"})
-    if (asset_metadata.internal(kind) and not (kind == "recording-manifest" and filename == "recording.json")
-            and metadata["extra"]["relationshipRole"] != "intermediate"):
+    if (
+        asset_metadata.internal(kind)
+        and not (kind == "recording-manifest" and filename == "recording.json")
+        and metadata["extra"]["relationshipRole"] != "intermediate"
+    ):
         return _response(400, {"error": "Internal workflow files must be intermediate"})
     try:
         encoded_metadata = base64.b64encode(
@@ -727,15 +483,21 @@ def _upload(event):
         ).decode("ascii")
     except (ValueError, TypeError):
         return _response(400, {"error": "Metadata must be valid JSON"})
-    object_metadata = {"kind": kind, "uploaded-by": uploader, "panther": encoded_metadata,
-                       "asset-created-at": datetime.now(timezone.utc).isoformat()}
+    object_metadata = {
+        "kind": kind,
+        "uploaded-by": uploader,
+        "panther": encoded_metadata,
+        "asset-created-at": datetime.now(timezone.utc).isoformat(),
+    }
     if sum(len(k) + len(v) for k, v in object_metadata.items()) > 1900:
         return _response(
             400, {"error": "Metadata is too large; upload long notes as another asset"}
         )
     key = f"games/{game}/assets/{asset}/original/{filename}"
     try:
-        storage_key = s3.reserve(key, kind, metadata, checksum, size, object_metadata["asset-created-at"])
+        storage_key = s3.reserve(
+            key, kind, metadata, checksum, size, object_metadata["asset-created-at"]
+        )
     except ValueError as error:
         return _response(409, {"error": str(error)})
     headers = {
@@ -776,18 +538,22 @@ def handler(event, _context):
         if route_key in {"GET /video-collections", "POST /video-collections"}:
             import video_collections
             import sys
+
             return video_collections.handle(event, sys.modules[__name__])
         if route_key in {"GET /transcript-selection", "POST /transcript-selection"}:
             import transcript_selection
             import sys
+
             return transcript_selection.handle(event, sys.modules[__name__])
         if route_key == "POST /image-links":
             import image_delivery
             import sys
+
             return image_delivery.handle(event, sys.modules[__name__])
         if route_key in {"GET /assets", "GET /asset-document"}:
             import asset_library
             import sys
+
             return asset_library.handle(event, sys.modules[__name__])
         if route_key == "GET /character-profile":
             return _character_profile(event)

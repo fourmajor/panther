@@ -80,10 +80,10 @@ def test_version_plan_follows_character_pages_without_inventing_roster_only_appe
                 "characters": [{"id": "published" if params.get("cursor") else "roster-only"}],
                 "cursor": None if params.get("cursor") else "second",
             }
-        if route == "/character-details/inventory":
-            return {"profiles": [{"characterId": "published", "registered": True}], "cursor": None}
+        if route == "/character-appearance-migration/game-inventory":
+            return {"characters": ["published"], "cursor": None}
         if route == "/character-versions":
-            return {"models": [], "portraits": []}
+            return {"schemaVersion": 2, "selections": []}
         raise AssertionError(route)
 
     monkeypatch.setattr(cloud, "api", api)
@@ -92,6 +92,6 @@ def test_version_plan_follows_character_pages_without_inventing_roster_only_appe
     assert result.exit_code == 0, result.output
     assert [
         (route, params["characterId"]) for route, params in calls if route == "/character-versions"
-    ] == [("/character-versions", "published")]
+    ] == [("/character-versions", "roster-only"), ("/character-versions", "published")]
     assert output.stat().st_mode & 0o777 == 0o600
     assert json.loads(output.read_text()) == {"schemaVersion": 1, "migrations": []}

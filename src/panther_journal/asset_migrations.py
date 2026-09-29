@@ -23,7 +23,9 @@ def catalog(game):
     config = cloud.configuration()
     records, cursor = [], None
     while True:
-        page = cloud.api(config, "GET", "/assets", params={"gameId": cloud.slug(game), "cursor": cursor})
+        page = cloud.api(
+            config, "GET", "/assets", params={"gameId": cloud.slug(game), "cursor": cursor}
+        )
         records.extend(page["assets"])
         cursor = page.get("cursor")
         if not cursor:
@@ -43,8 +45,12 @@ def rebuild_index(mode, report):
         for game in cloud.api(config, "GET", "/games")["games"]:
             cursor, seen, count = None, set(), 0
             while True:
-                page = cloud.api(config, "POST", "/asset-index/rebuild", json={
-                    "gameId": game["id"], "mode": mode, "cursor": cursor})
+                page = cloud.api(
+                    config,
+                    "POST",
+                    "/asset-index/rebuild",
+                    json={"gameId": game["id"], "mode": mode, "cursor": cursor},
+                )
                 stream.write(json.dumps(page) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -78,41 +84,78 @@ def generation_plan(records, facts):
         if extra.get("generation") == desired:
             continue
         extra["generation"] = desired
-        migrations.append({"schemaVersion": 1, "key": record["key"],
-                           "expectedVersionId": record["versionId"], "kind": record["kind"],
-                           "metadata": details, "reason": "Generation metadata v1: explicit evidence or unknown; original bytes and provenance retained"})
+        migrations.append(
+            {
+                "schemaVersion": 1,
+                "key": record["key"],
+                "expectedVersionId": record["versionId"],
+                "kind": record["kind"],
+                "metadata": details,
+                "reason": "Generation metadata v1: explicit evidence or unknown; original bytes and provenance retained",
+            }
+        )
     return {"schemaVersion": 1, "migrations": migrations}
 
 
 def version_plan(records, appearances):
-    """Backfill every asset; group only verified official selections from profile history."""
+    """Preserve explicit version families; appearance membership is not revision order."""
     known = {record["key"]: record for record in records}
-    assigned = {}
-    for (game, character, kind), keys in appearances.items():
-        series = "appearance-" + hashlib.sha256(f"{game}/{character}/{kind}".encode()).hexdigest()[:24]
-        previous = None
-        for number, key in enumerate(keys, 1):
+    if len(known) != len(records):
+        raise click.ClickException("Duplicate asset inventory")
+    for keys in appearances.values():
+        for key in keys:
             if key not in known:
                 raise click.ClickException(f"Official appearance is missing from inventory: {key}")
-            if key in assigned:
-                raise click.ClickException(f"Appearance belongs to multiple version series: {key}")
-            assigned[key] = {"schemaVersion": 1, "seriesId": series, "number": number,
-                             **({"previousKey": previous} if previous else {})}
-            previous = key
     migrations = []
+    versions = {}
     for record in records:
         details = copy.deepcopy(record["metadata"])
         extra = details.setdefault("extra", {})
-        default = {"schemaVersion": 1, "seriesId": hashlib.sha256(record["key"].encode()).hexdigest()[:24], "number": 1}
-        desired = assigned.get(record["key"], default)
-        if extra.get("version") == desired:
+        version = extra.get("version")
+        if version is not None:
+            if (
+                not isinstance(version, dict)
+                or set(version) - {"schemaVersion", "seriesId", "number", "previousKey"}
+                or version.get("schemaVersion") != 1
+                or type(version.get("number")) is not int
+                or version["number"] < 1
+                or not isinstance(version.get("seriesId"), str)
+                or not version["seriesId"]
+                or (version["number"] > 1) != ("previousKey" in version)
+            ):
+                raise click.ClickException(f"Invalid explicit asset version: {record['key']}")
+            versions[record["key"]] = version
             continue
-        if "version" in extra and extra["version"] != default:
-            raise click.ClickException(f"Existing version record differs; investigate before replanning: {record['key']}")
-        extra["version"] = desired
-        migrations.append({"schemaVersion": 1, "key": record["key"],
-                           "expectedVersionId": record["versionId"], "kind": record["kind"],
-                           "metadata": details, "reason": "Asset versions v1: profile-backed appearance series or explicit singleton; original bytes retained"})
+        version = {
+            "schemaVersion": 1,
+            "seriesId": hashlib.sha256(record["key"].encode()).hexdigest()[:24],
+            "number": 1,
+        }
+        versions[record["key"]] = extra["version"] = version
+        migrations.append(
+            {
+                "schemaVersion": 1,
+                "key": record["key"],
+                "expectedVersionId": record["versionId"],
+                "kind": record["kind"],
+                "metadata": details,
+                "reason": "Asset versions v1: explicit singleton where no revision evidence exists; existing families and original bytes retained",
+            }
+        )
+    for key, version in versions.items():
+        if "previousKey" not in version:
+            continue
+        predecessor = version["previousKey"]
+        prior = versions.get(predecessor)
+        if (
+            not prior
+            or predecessor == key
+            or prior["seriesId"] != version["seriesId"]
+            or prior["number"] != version["number"] - 1
+            or known[predecessor]["kind"] != known[key]["kind"]
+            or predecessor.split("/")[1] != key.split("/")[1]
+        ):
+            raise click.ClickException(f"Unresolvable explicit version predecessor: {key}")
     return {"schemaVersion": 1, "migrations": migrations}
 
 
@@ -121,6 +164,7 @@ def version_plan(records, appearances):
 def plan_versions(output):
     """Inventory ALL games and prepare a private, version-pinned appearance backfill."""
     from panther_journal.character_details import pages, private_file
+
     config = cloud.configuration()
     records, appearances = [], {}
     for game in cloud.api(config, "GET", "/games")["games"]:
@@ -135,29 +179,51 @@ def plan_versions(output):
             if not cursor:
                 break
         characters = pages(config, "/characters", {"gameId": game_id}, "characters")
-        profiles = pages(config, "/character-details/inventory", {"gameId": game_id}, "profiles")
-        if any(not p["registered"] for p in profiles):
-            raise click.ClickException("Unregistered artwork profile; reconcile the all-game character inventory first.")
-        profile_ids = {p["characterId"] for p in profiles}
+        profiles = pages(
+            config,
+            "/character-appearance-migration/game-inventory",
+            {"gameId": game_id},
+            "characters",
+        )
+        if set(profiles) - {c["id"] for c in characters}:
+            raise click.ClickException(
+                "Unregistered artwork profile; reconcile the all-game character inventory first."
+            )
         for character in characters:
-            if character["id"] not in profile_ids:
-                continue  # A roster-only character has no published appearance history.
-            history = cloud.api(config, "GET", "/character-versions", params={"gameId": game_id, "characterId": character["id"]})
-            for kind, field in (("model", "models"), ("portrait", "portraits")):
-                keys = [item["key"] for item in reversed(history[field])]
+            history = cloud.api(
+                config,
+                "GET",
+                "/character-versions",
+                params={"gameId": game_id, "characterId": character["id"]},
+            )
+            if history.get("schemaVersion") != 2 or not isinstance(history.get("selections"), list):
+                raise click.ClickException("Complete typed appearance history is required")
+            for kind, field in (("model", "modelKey"), ("portrait", "portraitKey")):
+                keys = list(
+                    dict.fromkeys(
+                        item[field] for item in history["selections"] if item[field] is not None
+                    )
+                )
                 if keys:
                     appearances[(game_id, character["id"], kind)] = keys
     try:
         plan = version_plan(records, appearances)
         private_file(output, plan)
     except (OSError, ValueError):
-        raise click.ClickException("Could not create a new private plan; never overwrite a prior plan") from None
-    click.echo(f"Inventoried {len(records)} assets in all games; planned {len(plan['migrations'])} version records. Dry-run with assets migrate.")
+        raise click.ClickException(
+            "Could not create a new private plan; never overwrite a prior plan"
+        ) from None
+    click.echo(
+        f"Inventoried {len(records)} assets in all games; planned {len(plan['migrations'])} version records. Dry-run with assets migrate."
+    )
 
 
 @assets.command("generation-plan")
-@click.option("--facts", type=click.Path(exists=True, dir_okay=False, path_type=Path),
-              help="Private JSON map of exact asset keys to evidence-backed generation records.")
+@click.option(
+    "--facts",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Private JSON map of exact asset keys to evidence-backed generation records.",
+)
 @click.option("--output", required=True, type=click.Path(path_type=Path))
 def plan_generation(facts, output):
     """Inventory ALL games and prepare a generation-v1 migration. No cloud writes."""
@@ -166,7 +232,9 @@ def plan_generation(facts, output):
     for game in cloud.api(config, "GET", "/games")["games"]:
         cursor = None
         while True:
-            page = cloud.api(config, "GET", "/assets", params={"gameId": game["id"], "cursor": cursor})
+            page = cloud.api(
+                config, "GET", "/assets", params={"gameId": game["id"], "cursor": cursor}
+            )
             for asset in page["assets"]:
                 info = cloud.api(config, "GET", "/object-url", params={"key": asset["key"]})
                 records.append({k: info[k] for k in ("key", "versionId", "kind", "metadata")})
@@ -182,14 +250,25 @@ def plan_generation(facts, output):
             stream.flush()
             os.fsync(stream.fileno())
     except (OSError, ValueError):
-        raise click.ClickException("Could not read facts or create a new private plan; never overwrite a prior plan") from None
-    click.echo(f"Inventoried {len(records)} assets across all games; planned {len(plan['migrations'])} metadata updates. Dry-run with assets migrate.")
+        raise click.ClickException(
+            "Could not read facts or create a new private plan; never overwrite a prior plan"
+        ) from None
+    click.echo(
+        f"Inventoried {len(records)} assets across all games; planned {len(plan['migrations'])} metadata updates. Dry-run with assets migrate."
+    )
 
 
 @assets.command("migrate")
 @click.argument("plan", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--apply", is_flag=True, help="Apply the inspected plan; otherwise validate without writing.")
-@click.option("--report", required=True, type=click.Path(path_type=Path), help="New private JSONL audit report; never overwrite an earlier report.")
+@click.option(
+    "--apply", is_flag=True, help="Apply the inspected plan; otherwise validate without writing."
+)
+@click.option(
+    "--report",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="New private JSONL audit report; never overwrite an earlier report.",
+)
 def migrate(plan, apply, report):
     """Dry-run/apply a schemaVersion-1 plan with migrations[] and pinned expectedVersionId.
 
@@ -217,14 +296,34 @@ def run_migrations(plan, apply, report, endpoint, extra=None):
             report.chmod(0o600)
             for entry in records:
                 try:
-                    result = cloud.api(config, "POST", endpoint, json={**entry, **(extra or {}), "dryRun": not apply})
+                    result = cloud.api(
+                        config,
+                        "POST",
+                        endpoint,
+                        json={**entry, **(extra or {}), "dryRun": not apply},
+                    )
                 except click.ClickException:
-                    output.write(json.dumps({"key": entry["key"], "status": "interrupted-inspect-before-retry"}) + "\n")
+                    output.write(
+                        json.dumps(
+                            {"key": entry["key"], "status": "interrupted-inspect-before-retry"}
+                        )
+                        + "\n"
+                    )
                     output.flush()
                     os.fsync(output.fileno())
                     raise
-                output.write(json.dumps({"request": entry, "endpoint": endpoint,
-                                         "operation": extra or {}, "dryRun": not apply, "result": result}) + "\n")
+                output.write(
+                    json.dumps(
+                        {
+                            "request": entry,
+                            "endpoint": endpoint,
+                            "operation": extra or {},
+                            "dryRun": not apply,
+                            "result": result,
+                        }
+                    )
+                    + "\n"
+                )
                 output.flush()
                 os.fsync(output.fileno())
                 click.echo(f"{result['status']}: {entry['key']}")

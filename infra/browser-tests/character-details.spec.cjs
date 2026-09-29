@@ -20,8 +20,8 @@ async function fixture(page) {
       }
       body={character:record};
     }
-    else if(url.pathname==='/character') return route.fulfill({status:404,json:{error:'Character not found'},headers:{'access-control-allow-origin':'https://panther.place'}});
-    else if(url.pathname==='/character-versions') body={portraits:[],models:[]};
+    else if(url.pathname==='/character') body={character:{gameId,id:characterId,name:record.name},appearance:null,selection:null,model:null,poster:null,warnings:[]};
+    else if(url.pathname==='/character-versions') body={schemaVersion:2,appearances:[],selections:[],activations:[],current:null,activationRevision:null};
     else if(url.pathname==='/assets') body={assets:[{key:portrait,name:'Portrait.png',kind:'portrait',contentType:'image/png',lastModified:'2026-01-01T00:00:00Z',metadata:{title:'Selected reference',characterIds:[characterId],category:'reference'}}],cursor:null};
     else if(url.pathname==='/image-links') body={images:{[portrait]:{url:'https://test.s3.amazonaws.com/portrait.svg'}},expiresIn:300};
     return route.fulfill({json:body,headers:{'access-control-allow-origin':'https://panther.place'}});

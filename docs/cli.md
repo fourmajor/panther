@@ -155,21 +155,20 @@ way live under `original/`, even though they were derived locally. Then publish 
 panther character set-model --game example-game --character captain \
   --web-key games/example-game/assets/captain-v2/original/model.glb \
   --source-key games/example-game/assets/captain-v2/original/model.blend \
-  --expected-revision '"REVISION_FROM_CHARACTER_SHOW"' \
+  --expected-revision EXACT_32_HEX_ACTIVATION_REVISION \
   --reason 'Replace the prototype with the tested model'
 ```
 
 The owner and DM can publish; other accounts cannot. The API validates same-game assets, file size,
 content type, and GLB header, but does not establish visual quality. The portrait stays unchanged.
-The previous profile is saved immutably under the character's `history/` prefix before a conditional
-profile update. Old model files are never overwritten/deleted. The response includes the new
-revision and `previousProfileKey`; actor, time, and reason are recorded on the profile. A concurrent
-edit returns a conflict: re-inspect it, do not blindly retry. An uncertain network response also
-requires inspection. A failed race may leave an unused history snapshot, which is safe to retain.
+Publication creates an immutable portrait/model pair and conditionally changes its activation.
+Old files, artwork editions and activation history remain intact. The revision is the current
+32-hex activation token, not an S3 ETag. A concurrent edit returns a conflict: inspect it before
+a new operation. Retry an uncertain response with identical arguments, never a newly fetched
+guard. A failed race may retain an unselected candidate pair without making it official.
 
-This is not yet general character editing, appearance timelines, or a history UI (issue #37).
-
-Implementation reference: [AWS conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
+The character viewer selects physical appearances and paired artwork editions, and can restore
+an earlier pair explicitly. See [appearance operations and all-game cutover](character-appearances.md).
 
 The public configuration contains only public client/endpoint identifiers, never secrets. Do not
 log signed URLs, passwords, or tokens. Credential operations and actual object uploads are runtime

@@ -115,7 +115,7 @@ def test_migration_is_admin_only_dry_run_guarded_and_preserves_original_record(
     old.pop("detailsRevision")
     old["schemaVersion"] = 1
     catalog.table.put_item(Item=old)
-    monkeypatch.setattr(catalog.media, "_profile_record", lambda *_args: None)
+    monkeypatch.setattr(catalog.media, "_legacy_profile_record", lambda *_args: None)
     body = {
         "gameId": "test-game",
         "characterId": "hero",
@@ -197,7 +197,7 @@ def test_migration_pins_known_artwork_profile_and_reports_unmapped_stats(catalog
     raw = json.dumps(profile).encode()
     monkeypatch.setattr(
         catalog.media,
-        "_profile_record",
+        "_legacy_profile_record",
         lambda *_args: (
             "games/test-game/characters/hero/profile.json",
             raw,

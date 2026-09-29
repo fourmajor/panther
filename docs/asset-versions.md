@@ -8,15 +8,16 @@ supplies only the predecessor key using `panther upload --new-version-of KEY`. T
 the series and next number, validating game and kind. Source lineage (`sourceKeys`) is separate:
 a revised asset need not be derived from the prior bytes.
 
-Character profile selection is independent. Publishing an official portrait or web model writes
-an immutable prior profile snapshot before changing the current pointer. The character page
-reads those snapshots and lets a viewer select previous appearances without changing the current
-selection. A candidate upload is not official until published.
+Character appearance selection is independent. Publishing an official portrait or web model creates
+an immutable paired selection before conditionally changing its activation. The character page
+reads structured history and lets a viewer inspect exact prior pairs without changing the current
+selection. A candidate upload is not official until published. See `character-appearances.md`.
 
 For pre-existing assets, `panther assets version-plan --output PRIVATE_PLAN.json` inventories
-all games and profile-backed appearance history. It groups exact selected keys into separate
-official model/portrait series; every other asset starts as a singleton because relationships
-cannot be inferred from filenames or visual similarity. Inspect the private plan, run
+all games and complete typed appearance history. It preserves existing explicit semantic families
+and verifies their predecessors. Missing version records become singletons: physical-state
+membership or selection-record order cannot establish content revision lineage. Previously
+established families are not renumbered or regrouped. Inspect the private plan, run
 `panther assets migrate PLAN --report PRIVATE_DRYRUN.jsonl`, then `--apply` with a new report.
 Run `panther assets rebuild-index --mode apply` and `--mode verify` with private reports; verify
 all catalog records have version metadata. Do not claim rollout complete until that all-game

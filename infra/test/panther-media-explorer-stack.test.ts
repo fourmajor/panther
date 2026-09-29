@@ -36,7 +36,7 @@ test("character facts are catalog-owned, authenticated, and migration capability
   assert.deepEqual(character.Properties.Target,details.Properties.Target);
 });
 
-test("appearance foundation is JWT protected, staged closed, and cannot overwrite game files", () => {
+test("appearance cutover is JWT protected and cannot overwrite game files", () => {
   const template = mediaExplorerTemplate();
   for(const route of ["character-appearances","character-appearance-assets","character-selections","character-appearance-current"]) {
     for(const method of ["GET","POST"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -44,7 +44,7 @@ test("appearance foundation is JWT protected, staged closed, and cannot overwrit
     });
   }
   template.hasResourceProperties("AWS::Lambda::Function", {Handler:"character_appearances.handler",
-    Environment:{Variables:Match.objectLike({APPEARANCE_WRITES_ENABLED:"false",ASSET_MIGRATORS:"example-operator"})},
+    Environment:{Variables:Match.objectLike({ASSET_MIGRATORS:"example-operator"})},
   });
   const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("CharacterAppearances"));
   const serialized=JSON.stringify(policies);
@@ -194,14 +194,19 @@ test("live recording preview has authenticated routes and only expiring on-deman
   });
 });
 
-test("roster character profile initialization is authenticated and create-only", () => {
+test("roster artwork initialization is authenticated and cannot write legacy S3 profiles", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", { RouteKey: "POST /character-profile", AuthorizationType: "JWT" });
   const policies = Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id]) => id.startsWith("GameCatalog"));
   const writes = policies.flatMap(([, p]) => p.Properties.PolicyDocument.Statement).filter((s: any) => s.Action === "s3:PutObject");
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].Condition.StringEquals["s3:if-none-match"], "*");
-  assert.match(JSON.stringify(writes[0].Resource), /characters/);
+  assert.equal(writes.length, 0);
+  const statements=policies.flatMap(([,p])=>p.Properties.PolicyDocument.Statement);
+  assert.ok(statements.some((s:any)=>s.Action==="dynamodb:PutItem" && JSON.stringify(s.Condition).includes("character-looks#*")));
+  for(const prefix of ["ModelProcessingBroker","MediaApiFunction"]) {
+    const writes=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith(prefix))
+      .flatMap(([,p])=>p.Properties.PolicyDocument.Statement).filter((s:any)=>s.Action==="s3:PutObject");
+    assert.doesNotMatch(JSON.stringify(writes),/characters\/\*\/(?:profile|history)/);
+  }
 });
 
 test("completed recording sets trigger a separate durable laptop playback workflow", () => {
@@ -590,16 +595,6 @@ test("media API is JWT protected with limited conditional upload permissions", (
           Resource: Match.anyValue(),
           Condition: { StringEquals: { "s3:if-none-match": "*" } },
           Effect: "Allow",
-        }),
-        Match.objectLike({
-          Action: "s3:PutObject",
-          Resource: { "Fn::Join": ["", Match.arrayWith(["/games/*/characters/*/history/*.json"])] },
-          Condition: { StringEquals: { "s3:if-none-match": "*" } },
-        }),
-        Match.objectLike({
-          Action: "s3:PutObject",
-          Resource: { "Fn::Join": ["", Match.arrayWith(["/games/*/characters/*/profile.json"])] },
-          Condition: { Null: { "s3:if-match": "false" } },
         }),
       ]),
     }),

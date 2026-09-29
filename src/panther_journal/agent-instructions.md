@@ -472,9 +472,10 @@ per view, uploaded with Panther's SHA-256 checksum. Upload reference images with
 Do not infer view labels from filenames without inspecting images. A contact sheet must be
 prepared as eight separately labeled images before registering it. Keep manifests outside Git.
 
-Register only a coherent set depicting the intended current appearance. Until appearance
-timelines are implemented, an existing profile without an appearance ID uses `original`;
-alternate or hypothetical appearances must not replace it. A revision commits exact inputs
+Register only a coherent set depicting the intended current appearance. Every view must
+explicitly name the character and `extra.appearanceId`; use the current appearance ID,
+never a guessed default. The job pins the exact portrait/model pair and appearance revision.
+A revision commits exact inputs
 and triggers once; new images use new immutable keys and a new revision ID. Repeating the same
 commit is idempotent. Preserve previous reference sets. Use `panther model jobs` to inspect work.
 
@@ -489,8 +490,8 @@ The full operational instructions are in `docs/local-model-workflow.md` in the t
 
 To replace only a portrait, first upload a new character-tagged image and inspect
 `character show`. Run `character set-portrait --game GAME_ID --character CHARACTER_ID
---portrait-key KEY --expected-revision 'EXACT QUOTED REVISION' --reason 'WHY'`.
-This preserves exact profile history, all old assets, and the selected model. Inspect the
+--portrait-key KEY --expected-revision EXACT_32_HEX_ACTIVATION_REVISION --reason 'WHY'`.
+This creates an immutable artwork pair, preserving all old assets and the selected model. Inspect the
 result; never automatically retry a revision conflict. Changing a portrait does not register
 new turnaround references or authorize model generation. Visually inspect the image before selection.
 
@@ -503,26 +504,24 @@ new turnaround references or authorize model generation. Visually inspect the im
    the API is not a rendering or quality check. Keep all game files out of Git and public CI artifacts.
 3. Only when authorized to replace the current model, run `panther character set-model --help`.
    Supply the uploaded `--web-key`, editable `--source-key`, optional `--provenance-key`, a concise
-   `--reason`, and the exact `--expected-revision` from step 1 (including its embedded quotes).
+   `--reason`, and the exact 32-hex activation `--expected-revision` from step 1.
    Do not automatically fetch a newer revision and retry a conflict; inspect the concurrent change.
 4. Inspect `panther character show` after success. Verify the old portrait is unchanged and the
-   new model/source keys match. The response records `previousProfileKey`; the exact old profile
-   and all old assets are retained. For uncertain responses, inspect before retrying.
+   new model/source keys match. Previous artwork pairs and activation records remain available.
+   An uncertain response can be retried with the identical arguments; never change its guard.
 
 Publishing is limited to privately configured publisher accounts. It changes only the model selection
-and publication audit fields, preserves the existing portrait and other character information,
+and activation audit records, preserves the existing portrait and other character information,
 and resets the viewer to its standard front view. A failed concurrent write may retain an unused
-history snapshot; it must never overwrite a newer profile. The character page now shows the
-profile-backed sequence of official portrait and model selections. Named appearance states,
-parallel magical variants, and automatic choice of the right appearance for a session remain
-separate future work; a model upload alone does not make it official.
+candidate pair; it must never overwrite a newer activation. The character page selects a
+physical appearance and then a complete artwork edition. Historical deep links pin both IDs,
+and viewing an old edition does not make it current. Restoration is a separate guarded operation.
 
-Named-appearance metadata is staged separately: `character appearances`, `appearance-assets`,
+Named-appearance metadata uses `character appearances`, `appearance-assets`,
 `selections`, and `appearance-current` inspect its records. Complete guarded JSON envelopes
 and all-game dry-run/import/verification commands are documented in
-`docs/character-appearances.md`. Production mutation endpoints currently fail closed until the
-CDK-owned consumer cutover freezes old publishers and enables the migration. Do not try to
-work around this guard or assume these records are already the viewer's source of truth.
+`docs/character-appearances.md`. Reads and edits fail closed until the character's complete
+migration is verified. Never bypass the seal with direct S3 profile writes.
 Physical states, immutable portrait/model pairs, and current-selection events are distinct;
 unknown fictional timing stays unknown. Uploading a candidate never makes it official.
 

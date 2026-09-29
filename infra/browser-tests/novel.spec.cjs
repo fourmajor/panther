@@ -28,7 +28,8 @@ async function fixture(page) {
     if(url.pathname==='/games') body={games};
     if(url.pathname==='/game') body={game:games.find(g=>g.id===gameId),players:[],memberships:[],characters:gameId==='campaign-a'?[{id:'mira',name:'Mira Vale'},{id:'ren-one',name:'Ren Vale'},{id:'ren-two',name:'Ren Vale'}]:[]};
     if(url.pathname==='/assets') body={assets:gameId==='campaign-a'?[{key:'games/campaign-a/assets/chart-a/original/map.png',name:'map.png',kind:'map',contentType:'image/png',metadata:{title:'Harbor chart',characterIds:['mira']},sourceKeys:[],lastModified:'2026-01-01T00:00:00Z'}]:[],cursor:null};
-    if(url.pathname==='/character') return route.fulfill({status:404,headers,json:{error:'Character not found'}});
+    if(url.pathname==='/character') body={character:{gameId,id:url.searchParams.get('characterId'),name:url.searchParams.get('characterId')==='mira'?'Mira Vale':'Ren Vale'},appearance:null,selection:null,poster:null,model:null,warnings:[]};
+    if(url.pathname==='/character-versions') body={schemaVersion:2,appearances:[],selections:[],activations:[],current:null,activationRevision:null};
     if(url.pathname==='/characters') body={characters:[]};
     if(['/novel-stories','/novel-books'].includes(url.pathname)) body={records:[],cursor:null};
     if(url.pathname==='/novel') body={chapters:gameId==='campaign-a'?(url.searchParams.get('cursor')?[chapters[2]]:chapters.slice(0,2)):[],cursor:gameId==='campaign-a'&&!url.searchParams.get('cursor')?'next':null};

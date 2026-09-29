@@ -8,11 +8,12 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import { CharacterAppearances } from "./character-appearances";
 
 export class GameCatalog extends Construct {
   readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable;
   }) {
     super(scope, id);
     const table = this.table = new dynamodb.Table(this, "Data", {
@@ -41,14 +42,12 @@ export class GameCatalog extends Construct {
       actions: ["dynamodb:UpdateItem"], resources: [table.tableArn],
       conditions: { "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["GAMES"] } },
     }));
-    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"],
+    CharacterAppearances.grantProducer(fn, props.browseTable, table);
+    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket", "s3:ListBucketVersions"],
       resources: [props.bucket.bucketArn] }));
     fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:GetObject"],
       resources: [props.bucket.arnForObjects("games/*/content/*"), props.bucket.arnForObjects("games/*/catalog/assets/*"),
         props.bucket.arnForObjects("games/*/characters/*/profile.json")] }));
-    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:PutObject"],
-      resources: [props.bucket.arnForObjects("games/*/characters/*/profile.json")],
-      conditions: { StringEquals: { "s3:if-none-match": "*" } } }));
     const integration = new integrations.HttpLambdaIntegration("CatalogIntegration", fn);
     for (const route of ["/games", "/game", "/players", "/characters", "/character-details", "/character-details/inventory", "/character-details/verify"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration, authorizer: props.authorizer });
