@@ -174,6 +174,19 @@ def legacy_projection(catalog, old):
         if field in old:
             details[field] = old[field]
     profile = catalog.media._profile_record(old["gameId"], old["id"])
+    if profile is None:
+        # The artwork reader deliberately returns None for malformed/oversized
+        # files as well as missing files. Migration must not silently drop those.
+        key = f"games/{old['gameId']}/characters/{old['id']}/profile.json"
+        try:
+            catalog.media.s3.head_object(Bucket=catalog.media.BUCKET_NAME, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") not in {"404", "NoSuchKey", "NotFound"}:
+                raise
+        else:
+            raise ValueError(
+                "Existing artwork profile is invalid or oversized; reconcile before migration"
+            )
     if profile:
         key, raw, value, revision = profile
         head = catalog.media.s3.head_object(

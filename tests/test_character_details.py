@@ -237,6 +237,24 @@ def test_inventory_is_migration_only_and_reports_orphans(catalog):
     ]
 
 
+def test_migration_never_treats_invalid_artwork_as_missing(catalog):
+    request(catalog, "POST /games", setup())
+    record = catalog.read("GAME#test-game", "CHARACTER#hero")
+    record["schemaVersion"] = 1
+    for field in ["detailsJson", "detailsRevision"]:
+        record.pop(field)
+    catalog.table.put_item(Item=record)
+    catalog.media.s3.put_object(
+        Bucket=catalog.media.BUCKET_NAME,
+        Key="games/test-game/characters/hero/profile.json",
+        Body=b"invalid JSON",
+    )
+    body = envelope({"detailsJson": "null", "detailsRevision": None}, mode="migrate", dryRun=True)
+    response = request(catalog, "POST /character-details/migrate", body)
+    assert response["statusCode"] == 400
+    assert catalog.read("GAME#test-game", "CHARACTER#hero")["schemaVersion"] == 1
+
+
 def test_verification_rejects_corrupt_migration_history(catalog):
     request(catalog, "POST /games", setup())
     record = catalog.read("GAME#test-game", "CHARACTER#hero")
