@@ -7,6 +7,15 @@ manifests outside Git and retain operation IDs for exact retries. Preserve prior
 revisions; do not replace selected editions automatically. Source AI acceptance is not private
 book approval or canon. Use grounded-adaptation, creative-reimagining, playful-derivative or
 unclassified honestly; never infer approval, facts or chronology from filenames/upload dates.
+The common save envelope contains `gameId`, `id`, `title`, `synopsis`, `reason`,
+`expectedRevision` (null for creation, exact current revision for edits), and `operationId`
+(32 hexadecimal characters; reuse only for an identical retry). Books additionally require
+`storyId`, `authorCredit` (string or null), `coverAssetKey` (indexed image key or null),
+`classification`, `status` (`draft` or `approved`), integer `order`, `relatedAssetKeys`
+(at most ten finished same-game assets), and `volumes`. Each volume has `id`, `title`,
+and ordered `chapterKeys`; at most ten volumes and forty distinct completed chapter keys per
+book. Read chapter `assetKey` values from the novel catalog, not filenames or inferred job keys.
+Book approval selects a private reading edition; it does not authorize public sharing or spend.
 
 Character facts use the versioned catalog contract in `docs/character-profiles.md`.
 Read them with `panther character details --game GAME --character CHARACTER`; use
