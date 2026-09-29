@@ -7,6 +7,7 @@ import click
 
 from panther_journal import cloud
 from panther_journal.character_details import pages, read_json
+from panther_journal.illustration_planning import command as plan_illustrations
 
 
 @click.group()
@@ -70,5 +71,6 @@ for command in [
     saving("story"),
     saving("book"),
     saving("illustrations"),
+    plan_illustrations,
 ]:
     novels.add_command(command)

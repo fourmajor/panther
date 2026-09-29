@@ -23,8 +23,42 @@ inventory scan. Artwork is labeled illustrative, responsive and optional. Draft 
 an approved private selection starts visible. Readers can switch to text-only and inspect the
 previous selection. Image errors offer fresh-access retries without hiding prose. Artwork stays
 outside prose blocks, preserving paragraph reading progress, chapter text and manuscript downloads.
-Inline placement, automatic illustration planning/generation, provider/model choice and spending
-are intentionally not implemented or authorized by this capability.
+Inline placement, automatic generation, provider/model choice and spending are intentionally
+not implemented or authorized by this capability. Source-pinned planning is a separate local
+operation described below; it does not populate the reader or modify a selection.
+
+### Planning chapter illustrations
+
+`panther novels plan-illustrations --game GAME --id CHAPTER_ID --work-dir /private/path/plans`
+plans optional art from an exact completed chapter. It works with existing and future chapter
+editions without changing their bytes, workflow versions or approval state. Planning is an explicit
+local command, not a new completion trigger or a changed in-flight editorial execution.
+
+Panther downloads and verifies the immutable chapter, snapshots the game's persisted visual style
+and pins current complete official artwork pairs by character. The planning specialist and a fresh
+review specialist use subscription-authenticated Codex with tools disabled; inference is hosted by
+OpenAI while coordination and evidence stay on the laptop. Player/account rosters and signed media
+URLs are excluded. No image bytes are sent by this text-and-metadata planning stage, and its review
+must not claim visual inspection.
+
+The schema-1 `ChapterIllustrationPlan` is saved locally with its exact input references, a sealed
+input snapshot, subscription generation metadata and retained revisions/reviews. Each proposal
+includes an exact manuscript excerpt, depicted character IDs, selected portrait references,
+composition/lighting/palette, before/after-chapter placement, alt text, caption, continuity notes,
+missing references and separately labeled creative staging. Up to six proposals are supported;
+zero is valid when pictures would add little. Current references do not prove historical appearance.
+
+Up to three planning/review rounds resolve routine choices without owner approval. Unresolved
+quality concerns produce `accepted-with-notes`, never a falsely passed review. Structurally invalid
+plans fail closed. Subscription failures retain private attempts without an API-key fallback.
+Rerunning the same directory reuses a completed plan and its pinned snapshot; it does not quietly
+adopt newer artwork/style or run more inference. For a deliberate new planning revision, use a new
+private work directory and retain the old one.
+
+Planning never uploads images, alters manuscript/illustration selections, chooses an image model,
+or authorizes spend. Generated plates, visual inspection, sharing permissions, generation budget
+and guarded reader selection remain later steps. A local plan is a new independent artifact; older
+chapters and curated artwork retain their existing valid contracts, not a compatibility exception.
 
 Deploy the CDK API/web changes after successful owned-runner browser verification. There are no
 earlier `ChapterIllustrations` records to migrate: older chapters have no selection until explicitly

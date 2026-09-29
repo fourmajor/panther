@@ -8,6 +8,15 @@ private selections remain optional for readers. Never infer associations from fi
 an image's source lineage to justify selecting it. This capability does not authorize generation,
 paid requests or choosing an image provider. See `docs/novel-library.md`.
 
+Use `panther novels plan-illustrations --game GAME --id COMPLETED_CHAPTER_ID --work-dir
+/private/path/plans` for source-pinned optional artwork planning and independent text/metadata
+review. It uses subscription Codex, exact chapter excerpts, saved game style and selected character
+portrait/model pairs. Plans and revisions remain private and separate from manuscript text;
+current artwork does not prove historical appearance. Resume the same directory without repinning
+inputs; use a new directory for a deliberate new revision. Missing references and creative staging
+stay explicit. This command cannot generate/upload images, choose a paid model, approve spending
+or change reader selections. It does not alter completed/in-flight editorial workflow versions.
+
 Narrative organization uses `docs/novel-library.md`: `panther novels stories/books` and
 `save-story/save-book` submit explicit private story/book/volume records. Books pin immutable
 chapter editions and order, optional indexed cover, credit and finished related media. Keep
