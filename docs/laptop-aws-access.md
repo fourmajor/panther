@@ -5,6 +5,12 @@ This is explicitly owner-approved **administrator-equivalent** access, not a lim
 An unlocked, compromised Mac or malicious authorized helper can administer the account. This is
 not sandbox isolation or MFA per command. Normal CDK, PR, diff and spending gates still apply.
 Game operations continue to use Panther authentication, not this administrative AWS profile.
+The machine role has `AdministratorAccess`. In this account, the CDK bootstrap
+CloudFormation execution role also has `AdministratorAccess` (verified through IAM on
+2026-09-29). CDK may use that role, and if assuming a bootstrap role fails it may proceed
+with the machine role's direct credentials. Therefore an unattended CDK deployment is
+effectively account-administrative, not limited to the resources shown in one stack diff.
+Diff review remains mandatory; neither CDK nor Keychain access is a spending cap.
 
 ## Design and cost
 
