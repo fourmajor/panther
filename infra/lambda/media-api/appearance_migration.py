@@ -403,7 +403,6 @@ def verification(media, game, cid):
             raise ValueError("Imported selection does not preserve exact source keys")
     if set(by_key) != set(keys):
         raise ValueError("Every retained source must be imported before activation")
-    versions = retained_versions(media, game, cid, {p["sourceSha256"] for p in by_key.values()})
 
     def observed(key):
         head = media.raw_s3.head_object(Bucket=media.BUCKET_NAME, Key=key)
@@ -423,6 +422,7 @@ def verification(media, game, cid):
         evidence = list(executor.map(observed, keys))
     if inventory(media, game, cid) != keys:
         raise ValueError("Retained source inventory changed during verification")
+    versions = retained_versions(media, game, cid, {p["sourceSha256"] for p in by_key.values()})
     digest = hashlib.sha256(
         json.dumps(
             {"sources": evidence, "versions": versions}, sort_keys=True, separators=(",", ":")
