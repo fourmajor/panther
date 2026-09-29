@@ -218,6 +218,7 @@ function clearSession() {
   elements.previewBody.replaceChildren();
   if (elements.previewDialog.open) elements.previewDialog.close();
   elements.username.textContent = "Signed out";
+  closeAccountSettings();
   sessionStorage.removeItem("panther.tokens");
   sessionStorage.removeItem("panther.oauth");
 }
@@ -236,7 +237,7 @@ async function login() {
     code_challenge_method: "S256",
     redirect_uri: config.redirectUri,
     response_type: "code",
-    scope: "openid profile",
+    scope: "openid profile email aws.cognito.signin.user.admin",
     state: oauthState,
   });
   window.location.assign(`${config.cognitoDomain}/oauth2/authorize?${parameters}`);
@@ -2825,5 +2826,175 @@ async function start() {
     showWelcome(error.message);
   }
 }
+
+// Account operations use the first-party HttpOnly session. Credentials never go
+// into storage, URLs, generic asset APIs, or browser logs.
+let accountSettingsEpoch = 0;
+function closeAccountSettings() {
+  accountSettingsEpoch += 1;
+  const dialog = document.getElementById("account-settings-dialog");
+  if (dialog.open) dialog.close();
+  document.getElementById("account-settings-body").replaceChildren();
+}
+
+async function accountRequest(action, values = {}, recovery = false) {
+  if (!recovery) await ensureSession();
+  return withSessionLock(async () => {
+    if (!recovery && logoutPending()) throw new Error("Sign in again to manage your account.");
+    const response = await fetch(recovery ? "/auth/recovery" : "/auth/account", {
+      method:"POST", credentials:"same-origin", headers:{"content-type":"application/json"},
+      body:JSON.stringify({action,...values}), signal:AbortSignal.timeout(30000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Account operation failed. Please retry.");
+    return result;
+  });
+}
+
+function accountSection(host, title, description) {
+  const section=document.createElement("section"), heading=document.createElement("h3"), copy=document.createElement("p");
+  heading.textContent=title; copy.textContent=description; section.append(heading,copy); host.append(section); return section;
+}
+
+function accountField(form, label, type="text", value="") {
+  const wrapper=document.createElement("label"), input=document.createElement("input"), caption=document.createElement("span");
+  caption.textContent=label; input.type=type; input.value=value; input.maxLength=type==="password"?256:254;
+  input.autocomplete=type==="password"?"new-password":"off"; wrapper.append(caption,input); form.append(wrapper); return input;
+}
+
+function accountForm(section, title, action) {
+  const form=document.createElement("form"), button=document.createElement("button"), status=document.createElement("p");
+  button.type="submit"; button.className="quiet-button"; button.textContent=title; status.setAttribute("role","status");
+  form.append(button,status); section.append(form);
+  form.addEventListener("submit", async event => {
+    event.preventDefault(); const epoch=accountSettingsEpoch;
+    const buttons=[...form.querySelectorAll("button")]; buttons.forEach(b=>b.disabled=true);
+    showLoading(status,"Saving your account changes…");
+    try {
+      const message=await action();
+      if (epoch===accountSettingsEpoch) status.textContent=message || "Saved.";
+    } catch(error) {
+      if (epoch===accountSettingsEpoch) status.textContent=error.name==="TimeoutError"?"Request timed out. Reload account details before retrying.":error.message;
+    } finally {
+      form.querySelectorAll('input[type="password"]').forEach(input=>input.value="");
+      buttons.forEach(b=>b.disabled=false);
+    }
+  });
+  return form;
+}
+
+async function openAccountSettings(recovery=false) {
+  closeAccountSettings(); const epoch=accountSettingsEpoch;
+  const dialog=document.getElementById("account-settings-dialog"), host=document.getElementById("account-settings-body");
+  document.getElementById("account-settings-title").textContent=recovery?"Password recovery":"Account settings";
+  dialog.showModal();
+  if (recovery) {
+    const section=accountSection(host,"Recover your account","Enter your username. Recovery requires a previously verified email address. We do not disclose whether an account exists.");
+    let username;
+    const request=accountForm(section,"Send recovery code",async()=>{
+      await accountRequest("forgot",{username:username.value.trim()},true);
+      return "If this account can recover by email, a code has been sent. Check your inbox and spam folder.";
+    });
+    username=accountField(request,"Username"); username.required=true; username.autocomplete="username";
+    let code,password,confirmation;
+    const confirm=accountForm(section,"Reset password",async()=>{
+      if(password.value!==confirmation.value) throw new Error("The new passwords do not match.");
+      await accountRequest("confirm",{username:username.value.trim(),code:code.value.trim(),password:password.value},true);
+      return "Password reset. Close this window and sign in with your new password.";
+    });
+    code=accountField(confirm,"Recovery code"); code.required=true; code.autocomplete="one-time-code";
+    password=accountField(confirm,"New password","password"); password.required=true; password.minLength=16;
+    confirmation=accountField(confirm,"Confirm new password","password"); confirmation.required=true;
+    return;
+  }
+  showLoading(host,"Loading your account details…");
+  let profile;
+  try {profile=await accountRequest("get");}
+  catch(error) {
+    if(epoch===accountSettingsEpoch) {host.textContent=error.message+" If you signed in before account self-service was enabled, sign out and sign in once to enable it.";}
+    return;
+  }
+  if(epoch!==accountSettingsEpoch) return;
+  host.replaceChildren();
+  const identity=accountSection(host,"Profile",`Signed in as ${profile.username}. Your login username stays unchanged.`);
+  let displayName,avatar;
+  const profileForm=accountForm(identity,"Save profile",async()=>{
+    await accountRequest("profile",{name:displayName.value.trim(),picture:avatar.value}); return "Profile saved.";
+  });
+  displayName=accountField(profileForm,"Display name","text",profile.name); displayName.maxLength=120;
+  const avatarLabel=document.createElement("label"), avatarTitle=document.createElement("span"), avatarPreview=document.createElement("img");
+  avatarTitle.textContent="Avatar"; avatar=document.createElement("select"); avatar.setAttribute("aria-label","Avatar");
+  for(const [name,label] of [["","No avatar"],["panther","Panther"],["moon","Moon"],["star","Star"]]) {
+    const option=document.createElement("option"); option.value=name?`${window.location.origin}/avatars/${name}.svg`:""; option.textContent=label; avatar.append(option);
+  }
+  avatar.value=[...avatar.options].some(o=>o.value===profile.picture)?profile.picture:"";
+  avatarPreview.className="account-avatar"; avatarPreview.alt="Selected avatar";
+  function showAvatar(){avatarPreview.hidden=!avatar.value;if(avatar.value)avatarPreview.src=avatar.value;else avatarPreview.removeAttribute("src");}
+  avatar.addEventListener("change",showAvatar); showAvatar(); avatarLabel.append(avatarTitle,avatar,avatarPreview); profileForm.append(avatarLabel);
+
+  const emailSection=accountSection(host,"Email & recovery",`Current email: ${profile.email || "Not configured"} · ${profile.emailVerified?"Verified":"Not verified"}. A replacement address becomes active only after verification.`);
+  let email;
+  const emailForm=accountForm(emailSection,"Send email verification",async()=>{
+    await accountRequest("email",{email:email.value.trim()}); return "Verification requested for the new address. Enter the code below; your old address remains active until verified.";
+  });
+  email=accountField(emailForm,"Email address","email",profile.email); email.required=true; email.autocomplete="email";
+  let emailCode;
+  const verifyForm=accountForm(emailSection,"Verify email",async()=>{
+    await accountRequest("verify-email",{code:emailCode.value.trim()}); return "Email verified. Reopen account settings to see the active address.";
+  });
+  emailCode=accountField(verifyForm,"Email verification code"); emailCode.required=true; emailCode.autocomplete="one-time-code";
+  accountForm(emailSection,"Resend email code",async()=>{await accountRequest("resend-email");return "Verification requested. Check the pending or current address.";});
+
+  const passwordSection=accountSection(host,"Password","Use at least 16 characters, with upper/lowercase letters, a number and a symbol. Cognito stores and verifies your password.");
+  let previous,proposed,confirmation;
+  const passwordForm=accountForm(passwordSection,"Change password",async()=>{
+    if(proposed.value!==confirmation.value) throw new Error("The new passwords do not match.");
+    await accountRequest("password",{previousPassword:previous.value,proposedPassword:proposed.value}); return "Password changed. Other sessions are not automatically signed out.";
+  });
+  previous=accountField(passwordForm,"Current password","password"); previous.autocomplete="current-password"; previous.required=true;
+  proposed=accountField(passwordForm,"New password","password"); proposed.required=true; proposed.minLength=16;
+  confirmation=accountField(passwordForm,"Confirm new password","password"); confirmation.required=true;
+
+  const mfaSection=accountSection(host,"Authenticator security",`Authenticator MFA is ${profile.totpEnabled?"enabled":"not enabled"}. Keep a secure backup in your authenticator. Email password recovery does not remove MFA; losing the authenticator requires administrator help. Panther does not issue recovery codes.`);
+  if(!profile.totpEnabled) {
+    const enrollment=document.createElement("div");
+    accountForm(mfaSection,"Set up authenticator",async()=>{
+      const result=await accountRequest("mfa-start"); if(epoch!==accountSettingsEpoch)return;
+      enrollment.replaceChildren();
+      const secretLabel=document.createElement("label"), secret=document.createElement("input"), label=document.createElement("span");
+      label.textContent="Authenticator setup key"; secret.value=result.secretCode; secret.readOnly=true; secret.autocomplete="off";
+      secretLabel.append(label,secret); enrollment.append(secretLabel);
+      const help=document.createElement("p"); help.textContent="Add this key manually to your authenticator as a time-based (TOTP) account. This secret is only displayed here and is removed when you close this window."; enrollment.append(help);
+      let code;
+      const confirmMfa=accountForm(enrollment,"Enable authenticator",async()=>{
+        const result=await accountRequest("mfa-confirm",{code:code.value.trim()});
+        if(result.verified===false)throw new Error("Authenticator code was not verified. Try a fresh code.");
+        const done=document.createElement("p"); done.textContent="Authenticator enabled. Reopen account settings to see the current status.";
+        enrollment.replaceChildren(done); return "Authenticator enabled.";
+      });
+      code=accountField(confirmMfa,"Authenticator code"); code.required=true; code.inputMode="numeric"; code.pattern="[0-9]{6}"; code.autocomplete="one-time-code";
+      return "Setup key ready below. MFA is not enabled until the code is verified.";
+    });
+    mfaSection.append(enrollment);
+  } else {
+    let acknowledge;
+    const disable=accountForm(mfaSection,"Disable authenticator",async()=>{
+      if(!acknowledge.checked)throw new Error("Confirm that you want to remove authenticator protection.");
+      await accountRequest("mfa-disable"); return "Authenticator disabled. Reopen account settings for the current status.";
+    });
+    acknowledge=accountField(disable,"I understand this removes authenticator protection","checkbox");
+  }
+  const sessions=accountSection(host,"Sessions","Sign out everywhere revokes Cognito refresh credentials and prevents renewal. Existing Panther API tokens can remain usable until their one-hour expiry. It also signs out this browser.");
+  let confirmed;
+  const allSessions=accountForm(sessions,"Sign out everywhere",async()=>{
+    if(!confirmed.checked)throw new Error("Confirm that you want to sign out all devices.");
+    await accountRequest("sign-out-everywhere"); await logout();
+  });
+  confirmed=accountField(allSessions,"Sign out all my devices","checkbox");
+}
+document.getElementById("account-settings-button").addEventListener("click",()=>openAccountSettings());
+document.getElementById("password-recovery-button").addEventListener("click",()=>openAccountSettings(true));
+document.getElementById("account-settings-close").addEventListener("click",closeAccountSettings);
+document.getElementById("account-settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeAccountSettings();});
 
 start();

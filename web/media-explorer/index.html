@@ -28,6 +28,7 @@
       </nav>
       <div class="account" id="account" hidden>
         <span id="username"></span>
+        <button class="quiet-button" id="account-settings-button" type="button">Account</button>
         <button class="quiet-button" id="logout-button" type="button">Sign out</button>
       </div>
     </header>
@@ -59,6 +60,7 @@
           reimaginings, and the wonderfully unnecessary videos in between.
         </p>
         <button class="primary-button" id="login-button" type="button">Sign in</button>
+        <button class="quiet-button" id="password-recovery-button" type="button">Forgot password?</button>
         <p class="error" id="auth-error" role="alert" hidden></p>
       </section>
 
@@ -232,6 +234,11 @@
         <a class="quiet-button link-button" id="open-original" target="_blank" rel="noreferrer">Open original</a>
         <span id="asset-download-status" role="status"></span>
       </div>
+    </dialog>
+
+    <dialog id="account-settings-dialog" class="account-settings-dialog" aria-labelledby="account-settings-title">
+      <header class="account-settings-heading"><div><p class="eyebrow">Your Panther account</p><h2 id="account-settings-title">Account settings</h2></div><button class="quiet-button" id="account-settings-close" aria-label="Close account settings" type="button">×</button></header>
+      <div class="account-settings-body" id="account-settings-body"></div>
     </dialog>
 
     <template id="folder-template">

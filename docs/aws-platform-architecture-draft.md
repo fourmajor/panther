@@ -147,11 +147,12 @@ limited to 5 MB, loads progressively behind a poster image, and preserves links 
 and provenance manifest. Rendering happens in the user's browser, so no rendering service remains
 running between visits.
 
-The first two Cognito users are provisioned by a CDK custom resource. It creates strong passwords at
-deployment time and stores them as SSM SecureString parameters; plaintext passwords never enter Git,
-CDK context, CloudFormation outputs, or Lambda logs. The custom resource exists because
-CloudFormation cannot model a Cognito user's permanent password or an SSM SecureString value. It runs
-only during stack lifecycle operations.
+Configured Cognito users are provisioned by a CDK custom resource using private deployment data.
+Credential-policy version 2 preserves existing accounts/passwords, sends temporary Cognito email
+invitations for new accounts and purges the previous retrievable SSM password copies. Cognito is
+the sole password authority. The provisioner cannot set permanent passwords, delete accounts,
+read secrets or write parameters. It runs only during stack lifecycle operations. See
+[account management](account-management.md) for rollout verification and self-service controls.
 
 ### Processing
 

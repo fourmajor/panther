@@ -1,3 +1,9 @@
+"""Invite new accounts, preserve existing credentials, and purge legacy copies.
+
+Never log events, email addresses or temporary credentials. Cognito owns passwords.
+"""
+
+import re
 import secrets
 import string
 
@@ -9,7 +15,7 @@ cognito = boto3.client("cognito-idp")
 ssm = boto3.client("ssm")
 
 
-def _password():
+def _temporary_password():
     groups = [
         string.ascii_lowercase,
         string.ascii_uppercase,
@@ -23,58 +29,15 @@ def _password():
     return "".join(characters)
 
 
-def _read_or_create_password(parameter_name):
+def _user_exists(user_pool_id, username):
     try:
-        value = ssm.get_parameter(Name=parameter_name, WithDecryption=True)["Parameter"]["Value"]
-        return value, False
-    except ssm.exceptions.ParameterNotFound:
-        password = _password()
-        ssm.put_parameter(
-            Name=parameter_name,
-            Description="Generated Panther media explorer password",
-            Value=password,
-            Type="SecureString",
-            Tier="Standard",
-            Tags=[
-                {"Key": "Project", "Value": "Panther"},
-                {"Key": "ManagedBy", "Value": "AWS-CDK"},
-                {"Key": "Environment", "Value": "production"},
-            ],
-        )
-        return password, True
-
-
-def _user_status(user_pool_id, username):
-    try:
-        return cognito.admin_get_user(UserPoolId=user_pool_id, Username=username).get("UserStatus")
+        cognito.admin_get_user(UserPoolId=user_pool_id, Username=username)
+        return True
     except cognito.exceptions.UserNotFoundException:
-        return None
+        return False
 
 
-def _upsert_user(user_pool_id, username, parameter_name):
-    password, password_was_created = _read_or_create_password(parameter_name)
-    user_status = _user_status(user_pool_id, username)
-    if user_status is None:
-        cognito.admin_create_user(
-            UserPoolId=user_pool_id,
-            Username=username,
-            TemporaryPassword=password,
-            MessageAction="SUPPRESS",
-        )
-    if user_status in {None, "FORCE_CHANGE_PASSWORD"} or password_was_created:
-        cognito.admin_set_user_password(
-            UserPoolId=user_pool_id,
-            Username=username,
-            Password=password,
-            Permanent=True,
-        )
-
-
-def _delete_user(user_pool_id, username, parameter_name):
-    try:
-        cognito.admin_delete_user(UserPoolId=user_pool_id, Username=username)
-    except (cognito.exceptions.UserNotFoundException, cognito.exceptions.ResourceNotFoundException):
-        pass
+def _purge_legacy_copy(parameter_name):
     try:
         ssm.delete_parameter(Name=parameter_name)
     except ssm.exceptions.ParameterNotFound:
@@ -86,14 +49,40 @@ def handler(event, _context):
     user_pool_id = properties["UserPoolId"]
     username = properties["Username"]
     parameter_name = properties["PasswordParameterName"]
+    if not isinstance(username, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", username):
+        raise ValueError("Invalid configured account")
+    if parameter_name != f"/panther/media-explorer/users/{username}/password":
+        raise ValueError("Unexpected legacy credential location")
+    if event["RequestType"] not in {"Create", "Update", "Delete"}:
+        raise ValueError("Invalid provisioning operation")
+    if event["RequestType"] == "Update":
+        old = event.get("OldResourceProperties", properties)
+        if old.get("UserPoolId") != user_pool_id or old.get("Username") != username:
+            raise ValueError("Account replacement requires an explicit separate migration")
     physical_id = f"{user_pool_id}:{username}"
 
     try:
-        if event["RequestType"] == "Delete":
-            _delete_user(user_pool_id, username, parameter_name)
-        else:
-            _upsert_user(user_pool_id, username, parameter_name)
+        if event["RequestType"] != "Delete" and not _user_exists(user_pool_id, username):
+            email = properties.get("InvitationEmail")
+            if (
+                not isinstance(email, str)
+                or len(email) > 254
+                or not re.fullmatch(r"[^\s@\x00-\x1f]+@[^\s@\x00-\x1f]+\.[^\s@\x00-\x1f]+", email)
+            ):
+                raise ValueError("New accounts require a private invitation email")
+            cognito.admin_create_user(
+                UserPoolId=user_pool_id,
+                Username=username,
+                TemporaryPassword=_temporary_password(),
+                UserAttributes=[{"Name": "email", "Value": email}],
+                DesiredDeliveryMediums=["EMAIL"],
+            )
+        # CONFIRMED and FORCE_CHANGE_PASSWORD accounts are never reset. Removal
+        # preserves the account; no AdminDeleteUser permission exists.
+        _purge_legacy_copy(parameter_name)
     except ClientError as error:
-        raise RuntimeError(error.response.get("Error", {}).get("Code", "AWS service error"))
+        raise RuntimeError(
+            error.response.get("Error", {}).get("Code", "AWS service error")
+        ) from None
 
     return {"PhysicalResourceId": physical_id}
