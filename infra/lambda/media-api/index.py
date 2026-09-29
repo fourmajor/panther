@@ -802,6 +802,10 @@ def _upload(event):
 def handler(event, _context):
     route_key = event.get("routeKey", "")
     try:
+        if route_key in {"GET /video-collections", "POST /video-collections"}:
+            import video_collections
+            import sys
+            return video_collections.handle(event, sys.modules[__name__])
         if route_key in {"GET /transcript-selection", "POST /transcript-selection"}:
             import transcript_selection
             import sys

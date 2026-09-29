@@ -113,6 +113,19 @@ def test_transcript_selection_cli_preserves_guard_and_retry_identity(setup, monk
         "reason": "Prefer raw evidence", "expectedRevision": "b" * 32, "operationId": "a" * 32}
 
 
+def test_video_collection_cli_preserves_order_and_guard(setup, monkeypatch, tmp_path):
+    calls=[]
+    monkeypatch.setattr(cloud,"api",lambda *args,**kwargs:calls.append((args,kwargs)) or {"collection":None})
+    body={"gameId":"example","id":"favorites","name":"Favorites","description":"Synthetic",
+        "assetKeys":["games/example/assets/video-two/original/a.mp4","games/example/assets/video-one/original/a.mp4"],"expectedRevision":"b"*32}
+    file=tmp_path/"collection.json"
+    file.write_text(json.dumps(body))
+    result=CliRunner().invoke(main,["videos","save-collection",str(file),"--operation-id","a"*32])
+    assert result.exit_code==0 and "Collection operation ID: " + "a"*32 in result.output
+    assert calls[-1][0][1:3]==("POST","/video-collections")
+    assert calls[-1][1]["json"]=={**body,"operationId":"a"*32}
+
+
 def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypatch):
     store, config = setup
     calls = []

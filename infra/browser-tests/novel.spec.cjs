@@ -100,6 +100,27 @@ async function previewFixture(page) {
   });
 }
 
+test('explicit novel references can preview and open same-game video collections',async({page})=>{
+  await fixture(page);
+  const collection={schemaVersion:1,entityType:'VideoCollection',gameId:'campaign-a',id:'favorites',name:'Favorite scenes',description:'A private collection of illustrated scenes.',assetKeys:[],revision:'a'.repeat(32)};
+  const requested=[];
+  await page.route(`${api}/video-collections*`,route=>{
+    const url=new URL(route.request().url());requested.push(url.searchParams.get('id'));
+    return route.fulfill({headers,json:url.searchParams.get('id')?{collection,...(url.searchParams.get('metadataOnly')?{}:{assets:[],warnings:[]})}:{collections:[collection],cursor:null}});
+  });
+  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],markdown:'The Favorite scenes were recalled. Other memories remain uncertain.',
+    readerReferences:{schemaVersion:1,mentions:[{text:'Favorite scenes',target:{type:'collection',id:'favorites'}},{text:'Other memories',target:{type:'collection',id:'other',gameId:'campaign-b'}}]},details:{review:{},sourceKeys:[]}}}));
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  const link=page.locator('#novel-prose').getByRole('link',{name:'Favorite scenes',exact:true});
+  await expect(link).toBeVisible();await expect(page.locator('#novel-prose').getByRole('link')).toHaveCount(1);
+  await link.focus();const preview=page.getByRole('dialog',{name:'Link preview'});
+  await expect(preview).toContainText('A private collection of illustrated scenes.');
+  expect(requested).not.toContain('other');
+  await preview.getByRole('link',{name:'Open linked page'}).click();
+  await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
+  await expect(page.getByLabel('Ordered collection')).toHaveValue('favorites');
+});
+
 for(const width of [1280,390]) test(`novel hover previews show summaries and images without obscuring controls at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:900}); await previewFixture(page);
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);

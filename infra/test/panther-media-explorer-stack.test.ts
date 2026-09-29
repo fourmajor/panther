@@ -74,9 +74,24 @@ test("canonical transcript selections have JWT routes and partition-scoped trans
   assert.deepEqual([writes.Action].flat(), ["dynamodb:PutItem"]);
   assert.deepEqual(writes.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"], [
     "transcript-selection#*", "transcript-selection-ops#*", "transcript-selection-history#*",
+    "video-collections#*", "video-collection-ops#*", "video-collection-history#*",
   ]);
   const guard = statements.find(statement => JSON.stringify(statement.Condition || {}).includes("v2#*#transcripts"));
   assert.deepEqual([guard.Action].flat(), ["dynamodb:ConditionCheckItem"]);
+});
+
+test("private video collections reuse indexed on-demand storage and scoped writes", () => {
+  const template=mediaExplorerTemplate();
+  for(const method of ["GET","POST"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey:`${method} /video-collections`,AuthorizationType:"JWT",
+  });
+  const policies=JSON.stringify(template.findResources("AWS::IAM::Policy"));
+  assert.match(policies,/video-collection-history#\*/);
+  assert.match(policies,/dynamodb:BatchGetItem/);
+  assert.match(policies,/v2#\*#all/);
+  const headers=JSON.stringify(template.findResources("AWS::CloudFront::ResponseHeadersPolicy"));
+  assert.match(headers,/media-src 'self' blob:/);
+  template.resourceCountIs("AWS::EC2::NatGateway",0);
 });
 
 test("unlisted shares isolate public version reads from publisher mutations", () => {
@@ -429,7 +444,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 60);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 62);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

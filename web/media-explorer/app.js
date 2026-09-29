@@ -1003,7 +1003,7 @@ function previewElement(contentType, url, title) {
 }
 
 async function previewFile(file) {
-  for (const media of elements.previewBody.querySelectorAll("audio, video")) media.pause();
+  for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); }
   const epoch = ++previewEpoch;
   const download = document.getElementById("asset-download");
   download.disabled = true; download.onclick = null;
@@ -1031,6 +1031,7 @@ async function previewFile(file) {
     elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
     elements.openOriginal.href = result.url;
     if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
+    if (result.contentType.startsWith("video/")) configureVideoPreview({...result,key:assetRef},elements.previewBody.firstChild,epoch);
     void renderAssetLinks(assetRef, epoch);
     void renderAssetVersions(assetRef, epoch);
     if (structured) {
@@ -1065,7 +1066,7 @@ async function downloadAsset(key, button, status, current = () => true) {
 
 function closePreview() {
   previewEpoch += 1;
-  for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.removeAttribute("src"); media.load(); }
+  for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); media.removeAttribute("src"); media.load(); }
   elements.previewDialog.close();
   elements.previewBody.replaceChildren();
   elements.openOriginal.removeAttribute("href");
@@ -1148,9 +1149,17 @@ function proseMarkdown(parent, markdown, references) {
 }
 
 // Typed destinations, not artifact-supplied URLs. Add a resolver when a new data type has a page.
-function narrativeReferences(chapter, assets, chapters) {
+function narrativeReferences(chapter, assets, chapters, collections = []) {
   const characters = state.gameDetail.characters || [];
   const resolvers = {
+    collection: target => {
+      const collection=collections.find(c=>c.id===target.id && c.gameId===state.gameId && c.entityType==="VideoCollection");
+      if(!collection || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(target.id))return null;
+      return {identity:`collection:${collection.id}`,target,make:text=>{
+        const link=document.createElement("a");link.href=gamePath("videos")+`?collection=${encodeURIComponent(collection.id)}`;link.textContent=text;link.title=`Video collection: ${collection.name}`;
+        link.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();navigate(link.getAttribute("href"));};return link;
+      }};
+    },
     character: target => {
       const c = characters.find(c => c.id === target.id);
       if (!c || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(c.id)) return null;
@@ -1337,6 +1346,11 @@ async function narrativePreviewData(target, gameId) {
     const supplied = metadataPreview(asset?.metadata);
     if (previewText(supplied.summary)) { summary = previewText(supplied.summary); source = "description"; }
     imageKey = supplied.imageKey;
+  } else if (target.type === "collection") {
+    const result=await api("/video-collections",{gameId,id:target.id,metadataOnly:"true"});
+    if(result.collection?.gameId!==gameId || result.collection?.entityType!=="VideoCollection")throw new Error("Collection unavailable");
+    title=result.collection.name;summary=previewText(result.collection.description);
+    if(!summary){summary=`${result.collection.assetKeys.length} saved video references. No description recorded.`;source="metadata";}
   } else throw new Error("Unsupported preview target");
   let imageUrl;
   if (typeof imageKey === "string" && imageKey.startsWith(`games/${gameId}/assets/`) && !imageKey.split("/").includes("..")) {
@@ -1536,8 +1550,11 @@ async function loadNovel(chapterId, epoch) {
     novel.status.hidden = true;
     // Link enrichment is optional: a catalog outage must not prevent reading the manuscript.
     proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, [], chapters));
-    void allAssets(gameId).then(assets => {
-      if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters));
+    const collectionIds=[...new Set((chapter.readerReferences?.schemaVersion===1 && Array.isArray(chapter.readerReferences.mentions) && chapter.readerReferences.mentions.length<=200 ? chapter.readerReferences.mentions : [])
+      .filter(m=>m?.target?.type==="collection" && (!m.target.gameId || m.target.gameId===gameId) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(m.target.id)).map(m=>m.target.id))];
+    const collectionReferences=(async()=>{const records=[];for(let offset=0;offset<collectionIds.length;offset+=8){if(!current())return records;const batch=await Promise.all(collectionIds.slice(offset,offset+8).map(id=>api("/video-collections",{gameId,id,metadataOnly:"true"}).then(r=>r.collection).catch(()=>null)));records.push(...batch.filter(Boolean));}return records;})();
+    void Promise.all([allAssets(gameId),collectionReferences]).then(([assets,collections]) => {
+      if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters,collections));
     }).catch(() => {
       if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Refresh chapters to retry."; }
     });
@@ -1564,7 +1581,10 @@ function clearLibrary() {
   document.getElementById("library-list").replaceChildren();
   document.getElementById("library-list").hidden = false;
   document.getElementById("library-status").hidden = false;
-  if (!state.tokens) assetIndex = null;
+  if (!state.tokens) {
+    assetIndex = null; videoPlaylist = null;
+    videoLibraryView = {gameId:null,search:"",category:"all",tag:"",character:"",collection:""};
+  }
 }
 
 async function allAssets(gameId, onProgress = () => {}, section = "all") {
@@ -1604,6 +1624,200 @@ function assetLink(asset, label) {
   return link;
 }
 
+let videoLibraryView = {gameId:null, search:"", category:"all", tag:"", character:"", collection:""};
+let videoPlaylist = null;
+
+function renderVideoLibrary(assets, list, status, current, loadMore) {
+  const gameId = state.gameId;
+  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",category:"all",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
+  const view = videoLibraryView;
+  view.collection=new URLSearchParams(location.search).get("collection") || "";
+  const controls = document.createElement("section"), cards = document.createElement("div"), collectionsStatus = document.createElement("p"), summary = document.createElement("p");
+  controls.className = "video-library-controls"; controls.setAttribute("aria-label", "Filter videos");
+  cards.className = "video-library-cards"; summary.setAttribute("role", "status"); collectionsStatus.setAttribute("role", "status");
+  const field = (text, element, id) => { const label = document.createElement("label"); label.textContent = text; element.id = id; label.htmlFor = id; const wrap = document.createElement("div"); wrap.append(label,element); controls.append(wrap); return element; };
+  const search = field("Search loaded videos",document.createElement("input"),"video-search"); search.type = "search"; search.maxLength = 300; search.value = view.search;
+  const category = field("Relationship to the game",document.createElement("select"),"video-category");
+  for (const [value,label] of [["all","All categories"],["playful-derivative","Playful derivatives"],["creative-reimagining","Creative reimaginings"],["grounded-adaptation","Grounded adaptations"],["canonical-source","Canonical sources"],["reference","References"],["unclassified","Unclassified / unknown"]]) category.add(new Option(label,value));
+  category.value = view.category;
+  const tag = field("Tag",document.createElement("select"),"video-tag"); tag.add(new Option("All tags",""));
+  for (const name of [...new Set(assets.flatMap(a=>a.metadata?.tags || []))].sort()) tag.add(new Option(name,name));
+  tag.value = view.tag;
+  const character = field("Featuring character",document.createElement("select"),"video-character"); character.add(new Option("All characters",""));
+  for (const c of state.gameDetail?.characters || []) character.add(new Option(c.name,c.id));
+  character.value = view.character;
+  const collection = field("Ordered collection",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
+  const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
+  controls.append(collectionsStatus,retry,summary); list.append(controls,cards);
+  let displayed = assets, chosen = null, sequence = 0;
+  const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; list.append(more);
+  more.onclick = () => { more.disabled = true; more.textContent = "Loading more…"; loadMore(); };
+  const posters = new Map(), posterLinks = new Map(), posterRequests = new Map(); let imageGeneration=0;
+  async function images() {
+    const generation=++imageGeneration;
+    retry.hidden = true;
+    const entries = [...posters.entries()], keys = entries.map(([key])=>key);
+    for (let offset=0;offset<keys.length;offset+=60) {
+      const batch = keys.slice(offset,offset+60);
+      try {
+        const missing=batch.filter(key=>!posterRequests.has(key) && (!posterLinks.has(key) || posterLinks.get(key).expires<=Date.now()));
+        if(missing.length) {
+          const request=api("/image-links", {}, {body:{gameId,keys:missing}}).then(links=>{
+            for(const key of missing)posterLinks.set(key,{...links.images?.[key],expires:Date.now()+Math.max(0,Number(links.expiresIn)-30)*1000});
+          }).finally(()=>{for(const key of missing)posterRequests.delete(key);});
+          for(const key of missing)posterRequests.set(key,request);
+        }
+        await Promise.all(batch.map(key=>posterRequests.get(key)).filter(Boolean));
+        if (!current() || generation!==imageGeneration) return;
+        for (const key of batch) for (const host of posters.get(key) || []) {
+          if (!host.isConnected) continue;
+          const image = document.createElement("img"); image.alt = host.dataset.alt; image.loading = "lazy";
+          image.onload = () => { if (current() && generation===imageGeneration && host.isConnected) host.replaceChildren(image); };
+          image.onerror = () => { if (current() && generation===imageGeneration && host.isConnected) { host.textContent = "Preview unavailable; the video can still be opened."; retry.hidden = false; } };
+          if (posterLinks.get(key)?.url) { image.src = posterLinks.get(key).url; host.replaceChildren(image); }
+          else { host.textContent = "Preview unavailable; the video can still be opened."; retry.hidden = false; }
+        }
+      } catch { if (current() && generation===imageGeneration) { for (const key of batch) for (const host of posters.get(key) || []) if(host.isConnected) host.textContent = "Preview unavailable; the video can still be opened."; retry.hidden = false; } }
+    }
+  }
+  retry.onclick = () => { posterLinks.clear(); void images(); };
+  function draw() {
+    if (!current()) return;
+    cards.replaceChildren(); posters.clear();
+    const needle = view.search.trim().toLocaleLowerCase();
+    const selected = displayed.filter(a => (!needle || [a.metadata?.title,a.metadata?.description,...(a.metadata?.tags || [])].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle))
+      && (view.category === "all" || (a.metadata?.category || "unclassified") === view.category)
+      && (!view.tag || a.metadata?.tags?.includes(view.tag)) && (!view.character || a.metadata?.characterIds?.includes(view.character)));
+    summary.textContent = `${selected.length} of ${displayed.length} ${chosen ? "collection members" : "loaded videos"} match. ${chosen ? "Collection order is preserved; playback never starts automatically." : "Load more to search additional catalog pages."}`;
+    status.textContent = chosen ? `${chosen.name} · ${chosen.description || "No description supplied."}` : displayed.length ? "Episodes, experiments and playful derivatives share this private library. Classification is explicit, never inferred from appearance." : "No videos yet for this game.";
+    more.hidden = Boolean(chosen) || !loadMore;
+    videoPlaylist = chosen ? {gameId,collection:chosen,assets:displayed} : null;
+    for (const asset of selected) {
+      const card = document.createElement("article"); card.className = "novel-card session-card video-card";
+      const poster = document.createElement("div"); poster.className = "video-card-poster"; poster.textContent = "No preview image selected";
+      const imageKey = asset.metadata?.extra?.preview?.schemaVersion === 1 ? asset.metadata.extra.preview.imageKey : null;
+      if (sameGameKey(imageKey) && /\.(png|jpe?g|webp|avif|gif|svg)$/i.test(imageKey)) {
+        poster.textContent = "Loading selected preview…"; poster.dataset.alt = `Preview of ${asset.metadata?.title || asset.name}`;
+        if (!posters.has(imageKey)) posters.set(imageKey,[]); posters.get(imageKey).push(poster);
+      }
+      const title = document.createElement("h2"); title.append(assetLink(asset));
+      const description = document.createElement("p"); description.textContent = asset.metadata?.description || "No description supplied.";
+      const categoryText = document.createElement("p"); categoryText.className = "video-category-label";
+      categoryText.textContent = (asset.metadata?.category || "unclassified").replaceAll("-"," ");
+      if (asset.metadata?.category === "playful-derivative") card.classList.add("playful-video");
+      const info = document.createElement("p"); info.textContent = `${asset.kind} · ${new Date(asset.lastModified).toLocaleString()} · ${(asset.metadata?.tags || []).join(", ") || "No tags"}`;
+      const creator = asset.metadata?.extra?.creator; const credit = document.createElement("p"); credit.textContent = `Creator: ${typeof creator === "string" ? creator : "Not recorded"}`;
+      card.append(poster,categoryText,title,description,info,credit);
+      const related = document.createElement("p");
+      for (const id of asset.metadata?.characterIds || []) { const c = state.gameDetail?.characters.find(c=>c.id===id); if (!c) continue; const link=document.createElement("a"); link.href=gamePath("characters")+`/${encodeURIComponent(id)}`; link.textContent=c.name; related.append(link,document.createTextNode(" · ")); }
+      if (asset.metadata?.sessionId) related.append(document.createTextNode(`Session: ${asset.metadata.sessionId}`));
+      if (related.childNodes.length) card.append(related);
+      cards.append(card);
+    }
+    void images();
+  }
+  search.oninput = () => { view.search=search.value; draw(); };
+  category.onchange = () => { view.category=category.value; draw(); };
+  tag.onchange = () => { view.tag=tag.value; draw(); };
+  character.onchange = () => { view.character=character.value; draw(); };
+  async function choose() {
+    const generation=++sequence; view.collection=collection.value;
+    const url=new URL(location.href);if(view.collection)url.searchParams.set("collection",view.collection);else url.searchParams.delete("collection");history.replaceState(null,"",url);
+    if (!view.collection) { chosen=null; displayed=assets; collectionsStatus.textContent=""; draw(); return; }
+    showLoading(collectionsStatus,"Loading exact collection members…");
+    try {
+      const result=await api("/video-collections",{gameId,id:view.collection});
+      if (!current() || generation !== sequence) return;
+      chosen=result.collection; displayed=result.assets;
+      collectionsStatus.textContent=result.warnings?.length ? `${result.warnings.length} unavailable members are not substituted. Collection: ${chosen.assetKeys.length} saved members; ${displayed.length} playable catalog entries.` : `${displayed.length} saved members in explicit order.`;
+      draw();
+    } catch(error) { if(current() && generation===sequence) { chosen=null; displayed=[]; videoPlaylist=null; cards.replaceChildren(); summary.textContent="Collection not loaded; no partial playlist is presented."; collectionsStatus.textContent=`${error.message}. Select the library or refresh to retry.`; } }
+  }
+  collection.onchange=choose;
+  void (async()=>{
+    try {
+      let cursor=null, seen=new Set(), count=0;
+      const nextPage=async()=>{
+        showLoading(collectionsStatus,"Fetching saved collections…");
+        const result=await api("/video-collections",{gameId,cursor}); if(!current())return;
+        for(const item of result.collections) { if([...collection.options].some(o=>o.value===item.id)) continue; collection.add(new Option(`${item.name} (${item.assetKeys.length})`,item.id)); count++; }
+        cursor=result.cursor;
+        if(cursor && seen.has(cursor)) throw new Error("Repeated collection cursor"); if(cursor)seen.add(cursor);
+        collection.disabled=false;
+        collectionsStatus.textContent=`${count} loaded collections. Saving collections uses Panther CLI; it does not classify videos or alter source assets.`;
+        collectionMore.hidden=!cursor; collectionMore.disabled=false;
+      };
+      const collectionMore=document.createElement("button"); collectionMore.type="button"; collectionMore.className="quiet-button"; collectionMore.textContent="Load more collections"; collectionMore.hidden=true; controls.append(collectionMore);
+      collectionMore.onclick=async()=>{ collectionMore.disabled=true; try{await nextPage();}catch(error){if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. Refresh to retry.`;} };
+      await nextPage();
+      if(view.collection) { if(![...collection.options].some(o=>o.value===view.collection)) collection.add(new Option("Selected collection",view.collection)); collection.value=view.collection; await choose(); }
+    } catch(error) { if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. The loaded video library remains usable.`; }
+  })();
+  draw();
+}
+
+function configureVideoPreview(asset, video, epoch) {
+  const gameId=state.gameId, current=()=>epoch===previewEpoch && gameId===state.gameId && state.tokens;
+  const host=document.createElement("section"); host.className="video-player-details"; video.after(host);
+  const notice=document.createElement("p"); notice.textContent=`${(asset.metadata?.category || "unclassified").replaceAll("-"," ")} · Classification and provenance remain as recorded. A dramatization or playful derivative is not a canonical session transcript.`; host.append(notice);
+  const preview=asset.metadata?.extra?.preview;
+  if(preview?.schemaVersion===1 && sameGameKey(preview.imageKey)) void api("/image-links",{},{body:{gameId,keys:[preview.imageKey]}}).then(result=>{if(current() && result.images?.[preview.imageKey]?.url)video.poster=result.images[preview.imageKey].url;}).catch(()=>{});
+  const playlist=videoPlaylist?.gameId===gameId ? videoPlaylist : null;
+  const index=playlist?.assets.findIndex(a=>a.key===asset.key) ?? -1;
+  if(index>=0) {
+    const navigation=document.createElement("nav"); navigation.setAttribute("aria-label","Ordered collection playback");
+    const label=document.createElement("p"); label.textContent=`${playlist.collection.name} · ${index+1} of ${playlist.assets.length} available videos. Order is explicit; no automatic playback.`;
+    const button=(name,position)=>{const node=document.createElement("button");node.type="button";node.className="quiet-button";node.textContent=name;node.disabled=position<0 || position>=playlist.assets.length;node.onclick=()=>{if(current()){const entry=playlist.assets[position];void previewFile({...entry,name:entry.metadata?.title || entry.name});}};return node;};
+    navigation.append(label,button("Previous collection video",index-1),button("Next collection video",index+1));host.append(navigation);
+  }
+  const captions=document.createElement("details"), heading=document.createElement("summary"), captionStatus=document.createElement("p");
+  heading.textContent="Caption tracks"; captionStatus.setAttribute("role","status");captionStatus.textContent="Finding explicitly associated WebVTT exports…";
+  captions.append(heading,captionStatus);host.append(captions);
+  let blobUrl=null;
+  video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
+  void(async()=>{
+    try {
+      const assets=await allAssets(gameId);if(!current())return;
+      const directory=asset.key.slice(0,asset.key.lastIndexOf("/")+1);
+      const tracks=assets.filter(a=>a.kind==="video-captions" && a.key.endsWith(".vtt") && sameGameKey(a.key)
+        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)));
+      if(!tracks.length){captionStatus.textContent="No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
+      const label=document.createElement("label"), select=document.createElement("select"), load=document.createElement("button");
+      label.textContent="Caption export";select.id="video-caption-export";label.htmlFor=select.id;
+      select.add(new Option("Choose a recorded caption track",""));for(const track of tracks)select.add(new Option(track.metadata?.title || track.name,track.key));
+      if(tracks.length===1)select.value=tracks[0].key;
+      load.type="button";load.className="quiet-button";load.textContent="Load selected captions";load.disabled=!select.value;
+      select.onchange=()=>{load.disabled=!select.value;};
+      load.onclick=async()=>{
+        const chosen=tracks.find(t=>t.key===select.value);if(!chosen)return;
+        load.disabled=true;select.disabled=true;captionStatus.textContent="Loading the selected caption export…";
+        const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);video.pantherCaptionController=controller;
+        try{
+          if(!Number.isFinite(chosen.size) || chosen.size>512*1024)throw new Error("Caption export exceeds the 512 KiB player limit; download its original instead");
+          const signed=await api("/object-url",{key:chosen.key},{signal:controller.signal}), response=await fetch(signed.url,{signal:controller.signal});
+          if(!response.ok || Number(response.headers.get("content-length"))>512*1024)throw new Error("Caption file is unavailable or too large");
+          // Bound streaming reads as well as catalog/header sizes. Never buffer an arbitrary asset.
+          const reader=response.body.getReader();let size=0;const chunks=[];
+          try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>512*1024)throw new Error("Caption file is too large");chunks.push(value);}}
+          finally{await reader.cancel();}
+          const text=await new Blob(chunks).text();if(!/^\uFEFF?WEBVTT(?:\s|$)/.test(text))throw new Error("Selected export is not WebVTT");
+          if(!current())return;
+          video.pantherCaptionController=null;video.querySelectorAll("track").forEach(t=>t.remove());video.pantherCleanup();
+          blobUrl=URL.createObjectURL(new Blob([text],{type:"text/vtt"}));
+          const track=document.createElement("track");track.kind="captions";track.label=chosen.metadata?.title || chosen.name;track.src=blobUrl;track.default=true;
+          track.onload=()=>{if(current()){track.track.mode="showing";captionStatus.textContent="Selected captions loaded. These are the recorded export, not newly verified speech.";}};
+          track.onerror=()=>{if(current())captionStatus.textContent="Captions could not be decoded. Retry or download the original export.";};
+          video.append(track);track.track.mode="showing";
+        }catch(error){if(current())captionStatus.textContent=`Captions unavailable: ${error.message}. Retry or open the original export.`;}
+        finally{clearTimeout(timer);if(video.pantherCaptionController===controller)video.pantherCaptionController=null;if(current()){load.disabled=false;select.disabled=false;}}
+      };
+      captions.append(label,select,load);
+      for(const track of tracks)captions.append(assetLink(track,`Open caption export · ${track.metadata?.title || track.name}`));
+      captionStatus.textContent=`${tracks.length} explicitly associated caption exports. No language, author or review status is guessed.`;
+    }catch(error){if(current())captionStatus.textContent=`Caption lookup unavailable: ${error.message}. Video playback remains usable.`;}
+  })();
+}
+
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
@@ -1637,6 +1851,10 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
         && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
+    if (section === "videos") {
+      renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
+      return;
+    }
     status.textContent = selected.length
       ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
         : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."

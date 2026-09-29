@@ -54,6 +54,83 @@ async function fixture(page) {
   });
 }
 
+for(const width of [1280,390]) test(`playful video filters, ordered collections and captions at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000});await fixture(page);
+  const second=prefix+'second-video/original/take.webm',poster=prefix+'poster-a/original/frame.svg';
+  const caption=video.slice(0,video.lastIndexOf('/')+1)+'captions.vtt';
+  const clip=(key,title,category,tags)=>({key,name:key.split('/').at(-1),kind:'silly-video',contentType:'video/webm',size:100,lastModified:'2026-01-01T12:00:00Z',sourceKeys:[],metadata:{title,description:'Synthetic test clip',category,tags,characterIds:['hero'],extra:{creator:'Example Artist',preview:{schemaVersion:1,imageKey:poster}}}});
+  const videos=[clip(video,'Practice joke','playful-derivative',['table-joke']),clip(second,'Scene test','creative-reimagining',['experiment'])];
+  const captionAsset={key:caption,name:'captions.vtt',kind:'video-captions',contentType:'text/vtt',size:80,lastModified:'2026-01-01T12:00:00Z',sourceKeys:[],metadata:{title:'Synthetic captions'}};
+  let galleryRequests=0;
+  await page.route(`${api}/assets?**`,route=>route.fulfill({headers,json:{assets:new URL(route.request().url()).searchParams.get('section')==='videos'?videos:[...videos,captionAsset],cursor:null}}));
+  await page.route(`${api}/game?**`,route=>route.fulfill({headers,json:{game:{id:'test-game',name:'Test Game',purpose:'test'},players:[],memberships:[],characters:[{id:'hero',name:'Example Hero'}]}}));
+  const collection={schemaVersion:1,entityType:'VideoCollection',id:'favorites',name:'Favorite takes',description:'Ordered synthetic clips',assetKeys:[second,video],revision:'a'.repeat(32)};
+  await page.route(`${api}/video-collections?**`,route=>route.fulfill({headers,json:new URL(route.request().url()).searchParams.get('id')?{collection,assets:[videos[1],videos[0]],warnings:[]}:{collections:[collection],cursor:null}}));
+  await page.route(`${api}/image-links`,route=>{galleryRequests++;return route.fulfill({headers,json:{images:{[poster]:{url:'https://audio.example/frame.svg'}},expiresIn:300}});});
+  await page.route('https://audio.example/frame.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#647552"/></svg>'}));
+  await page.route(`${api}/object-url?**`,route=>{
+    const key=new URL(route.request().url()).searchParams.get('key');
+    return route.fulfill({headers,json:{...(videos.find(a=>a.key===key)||captionAsset),expiresIn:300,url:key===caption?'https://audio.example/captions.vtt':'https://audio.example/test.webm'}});
+  });
+  await page.route('https://audio.example/captions.vtt',route=>route.fulfill({headers,contentType:'text/vtt',body:'WEBVTT\n\n00:00.000 --> 00:01.000\nSynthetic caption\n'}));
+  await page.goto(`${origin}/games/test-game/videos`);
+  // Browser-created footage is synthetic and remains inside the isolated test runner.
+  const bytes=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;
+    const stream=canvas.captureStream(10),recorder=new MediaRecorder(stream,{mimeType:'video/webm'}),parts=[];
+    recorder.ondataavailable=e=>parts.push(e.data);const done=new Promise(r=>recorder.onstop=r);recorder.start();
+    for(let i=0;i<12;i++){canvas.getContext('2d').fillRect(0,0,160,90);await new Promise(r=>setTimeout(r,100));}
+    recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());return Array.from(new Uint8Array(await new Blob(parts).arrayBuffer()));
+  });
+  await page.route('https://audio.example/test.webm',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
+  const cards=page.locator('.video-card');await expect(cards).toHaveCount(2);
+  await expect(cards.first().locator('img')).toBeVisible();expect(galleryRequests).toBe(1);
+  await page.getByLabel('Relationship to the game').selectOption('playful-derivative');await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toHaveClass(/playful-video/);
+  await page.getByLabel('Search loaded videos').fill('practice');await expect(cards).toHaveCount(1);
+  await page.getByLabel('Search loaded videos').fill('missing');await expect(cards).toHaveCount(0);
+  await page.getByLabel('Search loaded videos').fill('');await page.getByLabel('Relationship to the game').selectOption('all');
+  await page.getByLabel('Tag',{exact:true}).selectOption('experiment');await expect(cards).toHaveCount(1);
+  await page.getByLabel('Tag',{exact:true}).selectOption('');
+  expect(galleryRequests).toBe(1); // Filtering does not re-sign every thumbnail.
+  await page.getByLabel('Ordered collection').selectOption('favorites');
+  await expect(cards.first()).toContainText('Scene test');await expect(cards).toHaveCount(2);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`video-collections-${width}.png`),fullPage:true});
+  await cards.first().getByRole('link',{name:'Scene test',exact:true}).click();
+  const body=page.locator('#preview-body');await expect(body).toContainText('1 of 2 available videos');
+  await expect(body.getByRole('button',{name:'Previous collection video'})).toBeDisabled();
+  await body.getByRole('button',{name:'Next collection video'}).click();
+  await expect(page.locator('#preview-title')).toHaveText('Practice joke');
+  await body.getByText('Caption tracks',{exact:true}).click();
+  await body.getByRole('button',{name:'Load selected captions'}).click();
+  await expect(body).toContainText('Selected captions loaded');
+  await expect.poll(()=>body.locator('video track').evaluate(t=>t.readyState)).toBe(2);
+  expect(await body.locator('video track').evaluate(t=>t.track.mode)).toBe('showing');
+  const original=body.getByRole('link',{name:'Open caption export · Synthetic captions'});
+  await expect(original).toBeVisible();
+  const viewport=await body.boundingBox();await page.mouse.move(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
+  for(let scrolls=0;scrolls<5;scrolls++) {
+    const box=await original.boundingBox();if(box.y+box.height<viewport.y+viewport.height)break;
+    await page.mouse.wheel(0,200);await expect.poll(async()=>(await original.boundingBox()).y).toBeLessThan(box.y);
+  }
+  await expect(original).toBeInViewport();
+  expect(await original.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`video-captions-${width}.png`)});
+  await page.keyboard.press('Escape');await expect(page.locator('#preview-body')).toBeEmpty();
+});
+
+test('unavailable collection never substitutes library videos',async({page})=>{
+  await fixture(page);
+  await page.route(`${api}/video-collections?**`,route=>new URL(route.request().url()).searchParams.get('id')
+    ?route.fulfill({status:503,headers,json:{error:'Try later'}}):route.fulfill({headers,json:{collections:[{id:'favorites',name:'Favorites',assetKeys:[video]}],cursor:null}}));
+  await page.goto(`${origin}/games/test-game/videos`);
+  await page.getByLabel('Ordered collection').selectOption('favorites');
+  await expect(page.locator('#library-list')).toContainText('Collection not loaded; no partial playlist');
+  await expect(page.locator('.video-card')).toHaveCount(0);
+  await page.getByLabel('Ordered collection').selectOption('');await expect(page.locator('.video-card')).toHaveCount(1);
+});
+
 for (const width of [1280,390]) test(`transcript search, versions, canonical choice and continuous source at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:900}); await fixture(page);
   const records=assets.map(a=>({...a,metadata:{...a.metadata,extra:{...a.metadata.extra,
@@ -308,7 +385,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
   await expect(page.locator('#library-status')).toContainText('No transcripts yet');
   await expect(page.locator('#preview-body')).toBeEmpty();
   expect(errors).toEqual([]);
@@ -332,6 +409,9 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await page.route('https://audio.example/take.mp4',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
   const link=page.locator('#library-list').getByRole('link',{name:'video-comparison',exact:true});
   await expect(link).toBeVisible();
+  // New library filters/posters extend the page. Test normal document scrolling,
+  // then retain the hit-test so clipping/overlays cannot be hidden by click automation.
+  await link.scrollIntoViewIfNeeded();await expect(link).toBeInViewport();
   const box=await link.boundingBox(); expect(box.x+box.width).toBeLessThanOrEqual(width);
   expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await link.click();
@@ -348,7 +428,7 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await page.keyboard.press('Escape'); expect(await page.evaluate(()=>window.previousVideo.paused)).toBe(true);
   await expect(page.locator('#asset-generation')).toBeEmpty();
   await page.reload(); await expect(page.locator('.session-card')).toHaveCount(1);
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
   await expect(page).toHaveURL(`${origin}/games/other-game/videos`);
   await expect(page.locator('#library-status')).toContainText('No videos yet');
 });
@@ -483,7 +563,7 @@ test('late catalog and document responses cannot populate a different game',asyn
     arrived(); await new Promise(resolve=>{release=resolve;}); await route.fulfill({headers,json:{assets,cursor:null}});
   });
   await page.goto(`${origin}/games/test-game/audio`); await waiting;
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
   await expect(page.locator('#library-status')).toContainText('No recordings yet'); release();
   await expect(page.locator('#library-list')).toBeEmpty();
 });
