@@ -39,6 +39,7 @@ typedef struct {
     unsigned index, rate, channels;
     uint64_t total, part_frames, chunk_frames;
     double first_adc, part_start, last_adc, last_flush;
+    double peak;
 } Writer;
 static volatile sig_atomic_t stopping = 0;
 static void stop_signal(int unused) { (void)unused; stopping = 1; }
@@ -137,6 +138,15 @@ static int close_part(Writer *w) {
     return 0;
 }
 static int consume(Writer *w, const Packet *p) {
+    /* Advisory metering stays on the consumer, never the real-time callback. */
+    w->peak=0;
+    for (unsigned long i=0;i<p->frames*w->channels;i++) {
+        const unsigned char *b=p->bytes+i*3;
+        int32_t value=(int32_t)((uint32_t)b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16);
+        if (value&0x800000) value-=0x1000000;
+        double level=fabs((double)value)/8388608.0;
+        if (level>w->peak) w->peak=level;
+    }
     uint64_t offset=0;
     while (offset < p->frames) {
         if (w->fd < 0) {
@@ -195,6 +205,18 @@ static int report(Capture *c, Writer *w, int synthetic) {
     close(fd);
     return result ? -1 : 0;
 }
+static void meter(Capture *c, Writer *w, int running) {
+    /* Disposable local UI telemetry, not a capture-integrity or backup claim.
+     * A telemetry failure must never abort recording. Atomic rename avoids torn reads. */
+    int fd=open(".capture-meter.tmp",O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
+    if (fd<0) return;
+    char row[256];
+    int n=snprintf(row,sizeof row,"{\"schemaVersion\":1,\"frames\":%llu,\"sampleRate\":%u,\"peak\":%.6f,\"running\":%s,\"errorCode\":%d,\"checkedAt\":%lld}\n",
+        (unsigned long long)w->total,c->rate,w->peak,running?"true":"false",atomic_load(&c->error),(long long)time(NULL));
+    int ok=n>0 && n<(int)sizeof row && !write_all(fd,row,n);
+    close(fd);
+    if (ok) (void)rename(".capture-meter.tmp","capture-meter.json");
+}
 int main(int argc, char **argv) {
     if (argc!=2 && argc!=5) { fprintf(stderr,"Usage: capture --list | DEVICE FOLDER SECONDS CHUNK_SECONDS\n"); return 2; }
     int synthetic=argc==5 && !strncmp(argv[1],"--synthetic",11);
@@ -246,7 +268,7 @@ int main(int argc, char **argv) {
         if (error==paNoError) error=Pa_StartStream(stream);
         if (error!=paNoError) { fprintf(stderr,"Capture: %s\n",Pa_GetErrorText(error)); fail(&c,DEVICE_ERROR); }
     }
-    double began=monotonic_now(), last_progress=began;
+    double began=monotonic_now(), last_progress=began, last_meter=began;
     uint64_t last_total=0, synthetic_frame=0;
     unsigned char tone[512*3];
     while (!atomic_load(&c.error) && !stopping) {
@@ -263,6 +285,7 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[1],"--synthetic-queue-full") && drain(&c,&w)) break;
         if (w.total!=last_total) { last_total=w.total; last_progress=monotonic_now(); }
+        if (monotonic_now()-last_meter>=0.25) { meter(&c,&w,1); last_meter=monotonic_now(); }
         if (atomic_load(&c.completed)) break;
         if ((!synthetic && (!stream || Pa_IsStreamActive(stream)<=0)) || monotonic_now()-last_progress>5) { fail(&c,STALLED); break; }
         usleep(1000);
@@ -275,6 +298,7 @@ int main(int argc, char **argv) {
     close(w.journal);
     if (!w.total) fail(&c,DEVICE_ERROR);
     if (report(&c,&w,synthetic)) { fprintf(stderr,"Could not persist capture health.\n"); fail(&c,DISK_ERROR); }
+    meter(&c,&w,0);
     int error=atomic_load(&c.error);
     fprintf(stderr,"Capture ended: frames=%llu, rate=%u, error=%d. No missing samples were synthesized.\n",(unsigned long long)w.total,c.rate,error);
     free(c.memory);

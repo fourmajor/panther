@@ -7,6 +7,8 @@ Lossless FLAC originals remain the inputs for transcription, not the lossy liste
 Recording and recognition use the CLI. Capture works
 offline. Whisper.cpp and pyannote Community-1 run locally; no paid inference or audio uploads to
 model providers. Audio backup uses `--sync` during capture or `recording sync` afterward.
+Add `--tui` to `recording start` for the [recording den dashboard](recording-tui.md),
+and optionally `--live` for the local provisional transcript. The plain CLI remains available.
 Transcription now publishes the completed raw transcript and triggers the
 [editorial workflows](editorial-workflows.md) by default; use `--local-only` to defer publication.
 The web app browses
