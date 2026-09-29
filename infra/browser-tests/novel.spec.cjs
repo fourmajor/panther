@@ -12,10 +12,10 @@ const chapters = [
   {id:first,title:'The Lantern Room',sessionId:'session-one',createdAt:200},
   {id:second,title:'Beyond the Harbor',sessionId:'session-two',createdAt:300},
   {id:old,title:'The Earlier Lantern',sessionId:'session-one',createdAt:100},
-].map(c=>({...c,gameId:'campaign-a',publishedAt:c.createdAt,publicationStatus:'accepted',reviewStatus:'ai-reviewed-unverified',notice:''}));
+].map(c=>({...c,assetKey:`games/campaign-a/assets/chapter-${c.id.slice(0,8)}/original/chapter.json`,gameId:'campaign-a',publishedAt:c.createdAt,publicationStatus:'accepted',reviewStatus:'ai-reviewed-unverified',notice:''}));
 
 async function fixture(page) {
-  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-operator'}))+'.test'})));
+  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,sub:'synthetic-reader','cognito:username':'example-operator'}))+'.test'})));
   await page.route(`${origin}/**`, route=>{
     const pathname = new URL(route.request().url()).pathname;
     if(pathname==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
@@ -30,6 +30,7 @@ async function fixture(page) {
     if(url.pathname==='/assets') body={assets:gameId==='campaign-a'?[{key:'games/campaign-a/assets/chart-a/original/map.png',name:'map.png',kind:'map',contentType:'image/png',metadata:{title:'Harbor chart',characterIds:['mira']},sourceKeys:[],lastModified:'2026-01-01T00:00:00Z'}]:[],cursor:null};
     if(url.pathname==='/character') return route.fulfill({status:404,headers,json:{error:'Character not found'}});
     if(url.pathname==='/characters') body={characters:[]};
+    if(['/novel-stories','/novel-books'].includes(url.pathname)) body={records:[],cursor:null};
     if(url.pathname==='/novel') body={chapters:gameId==='campaign-a'?(url.searchParams.get('cursor')?[chapters[2]]:chapters.slice(0,2)):[],cursor:gameId==='campaign-a'&&!url.searchParams.get('cursor')?'next':null};
     if(url.pathname==='/novel-chapter') {
       const chapter=chapters.find(c=>c.id===url.searchParams.get('chapterId'));
@@ -48,6 +49,65 @@ test('repeated chapter cursor fails without showing a partial library', async({p
   await expect(page.locator('#novel-status')).toContainText('No partial list is shown');
   await expect(page.locator('#novel-list')).toBeEmpty();
   expect(requests).toBe(2);
+});
+
+async function booksFixture(page) {
+  await fixture(page);
+  const cover='games/campaign-a/assets/cover/original/cover.png';
+  const story={schemaVersion:1,entityType:'NarrativeStory',gameId:'campaign-a',id:'harbor-tales',title:'Harbor Tales',synopsis:'A synthetic story about finding a path through the harbor.'};
+  const book={schemaVersion:1,entityType:'NarrativeBook',gameId:'campaign-a',id:'book-one',storyId:story.id,title:'The Lantern Voyage',
+    synopsis:'An explicitly ordered reading edition, not an upload timeline.',authorCredit:'Synthetic editorial team',status:'approved',classification:'grounded-adaptation',order:1,
+    coverAssetKey:cover,revision:'d'.repeat(32),previousRevision:'e'.repeat(32),relatedAssetKeys:[],
+    volumes:[{id:'volume-one',title:'Volume One: The Harbor',chapterKeys:[chapters[2].assetKey,chapters[1].assetKey]}]};
+  await page.route(`${api}/novel-stories*`,route=>route.fulfill({headers,json:{records:[story],cursor:null}}));
+  await page.route(`${api}/novel-books*`,route=>{
+    const revision=new URL(route.request().url()).searchParams.get('revision');
+    return route.fulfill({headers,json:revision?{record:{...book,revision,status:revision===book.previousRevision?'draft':'approved'}}:{records:[book],cursor:null}});
+  });
+  await page.route(`${api}/image-links`,route=>route.fulfill({headers,json:{images:{[cover]:{url:'https://images.example/cover.svg'}},expiresIn:300}}));
+  await page.route('https://images.example/cover.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="220"><rect width="160" height="220" fill="#647552"/><text x="10" y="50" fill="white">Synthetic cover</text></svg>'}));
+  return book;
+}
+
+for(const width of [1280,390]) test(`organized book and pinned editions are usable at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:1000});
+  const book=await booksFixture(page);
+  await page.goto(`${origin}/games/campaign-a/novel`);
+  await expect(page.getByRole('heading',{name:'Harbor Tales',exact:true})).toBeVisible();
+  const title=page.getByRole('link',{name:'The Lantern Voyage',exact:true});
+  await accessibleInViewport(title,width);
+  await expect(page.getByRole('img',{name:'Cover for The Lantern Voyage'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`novel-book-library-${width}.png`),fullPage:true});
+  await title.click();
+  await expect(page.getByRole('heading',{name:'Volume One: The Harbor'})).toBeVisible();
+  await expect(page.locator('#novel-list ol a')).toHaveText(['The Earlier Lantern','Beyond the Harbor']);
+  await page.getByRole('link',{name:'The Earlier Lantern',exact:true}).click();
+  await expect(page.locator('#novel-title')).toHaveText('The Earlier Lantern');
+  await expect(page.locator('#novel-notice')).toContainText('Approved private selection');
+  await expect(page.locator('#novel-pagination a')).toHaveText(['Beyond the Harbor →']);
+  await expect(page.locator('#novel-pagination a')).toHaveAttribute('href',new RegExp(`bookRevision=${book.revision}`));
+  await page.getByRole('button',{name:'← All chapters'}).click();
+  await page.getByRole('link',{name:'Previous book revision'}).click();
+  await expect(page.locator('#novel-list')).toContainText('Private draft');
+});
+
+test('reading position is stored per account and game and resumes explicitly',async({page})=>{
+  await fixture(page);
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
+  await page.mouse.wheel(0,750);
+  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('panther.reading.v1:synthetic-reader:campaign-a')||'null')?.paragraph || 0)).toBeGreaterThan(0);
+  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('panther.reading.v1:synthetic-reader:campaign-a')));
+  expect(saved.chapterId).toBe(first); expect(saved.percent).toBeGreaterThan(0);
+  await page.reload();
+  const resume=page.getByRole('button',{name:new RegExp('Resume at .*saved on this device')});
+  await expect(resume).toBeVisible(); await resume.click();
+  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(0);
+  await page.evaluate(()=>{const tokens=JSON.parse(sessionStorage.getItem('panther.tokens'));tokens.id_token='test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,sub:'different-synthetic-reader','cognito:username':'example-operator'}))+'.test';sessionStorage.setItem('panther.tokens',JSON.stringify(tokens));});
+  await page.reload();
+  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
+  await expect(page.locator('#novel-resume')).toBeHidden();
 });
 
 for (const width of [1280,390]) test(`chapter Details connects finished assets at ${width}`,async({page})=>{

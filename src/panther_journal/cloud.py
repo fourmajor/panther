@@ -477,6 +477,8 @@ def character_set_portrait(game, character_id, portrait_key, expected_revision, 
 
 
 def register(group):
+    from panther_journal.novel_library import novels
+    group.add_command(novels)
     from panther_journal.character_details import register as register_details
 
     register_details(character)

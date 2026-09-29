@@ -10,11 +10,12 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 
 export class GameCatalog extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
     bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
-    const table = new dynamodb.Table(this, "Data", {
+    const table = this.table = new dynamodb.Table(this, "Data", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
