@@ -146,6 +146,11 @@ Old releases and logs are retained for explicit cleanup, not silently deleted.
 2. Codex writes a native Blender build script using the saved lessons. The authorized worker
    executes it locally. It saves editable source, scripts,
    modeling notes, and a self-contained GLB. Each agent stage is limited to 30 minutes.
+   A durable script-hash checkpoint separates inference from native execution. After a native
+   interruption the worker resumes that exact saved script, not a second inference request;
+   changes to the script stop recovery rather than silently executing different code.
+   Recovery also compares the original immutable job/reference/appearance pins before reusing
+   any candidate. A bounded second candidate retains the first candidate and its critique.
 3. Trusted code reopens the source with auto-execution disabled, fresh-imports the GLB, checks
    finite geometry/dimensions/embedded dependencies, enforces 200,000 triangles and 5 MiB, and
    renders the actual GLB from eight angles. Blender validation is limited to 15 minutes.
@@ -153,6 +158,10 @@ Old releases and logs are retained for explicit cleanup, not silently deleted.
    this GLB at desktop/mobile sizes, including loading, rotation, reset, and failure fallback.
 5. A separate subscription-backed Codex visual review compares the references and inspection
    renders. At most two candidates are tried; failed quality leaves the old model current.
+   Source/model bytes, the fresh-import report and all eight inspection renders are checksum
+   pinned before review. A changed or missing evidence file blocks publication on recovery.
+   Older two-file evidence checkpoints are archived locally and revalidated/reviewed under
+   this complete evidence contract; they are not a permanent weaker publication path.
 6. Upload candidate files, inspection renders, evidence, and provenance through Panther. The broker
    verifies the evidence matches the candidate, locks reference advancement briefly, checks that
    this is still the latest job and the original activation revision, then publishes a new

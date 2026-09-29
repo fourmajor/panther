@@ -185,3 +185,159 @@ def test_in_progress_publication_is_reconciled_without_rerunning_inference(tmp_p
     )
     assert result["status"] == "PUBLISHED"
     assert api.call_args.args[2] == "/model-jobs/complete"
+
+
+def synthetic_job_runtime(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[1]
+    job = {
+        "jobId": "1" * 64,
+        "gameId": "example-game",
+        "characterId": "hero",
+        "status": "RUNNING",
+        "appearanceId": "ordinary",
+        "workflowVersion": 2,
+        "appearanceSelection": {"portraitKey": "synthetic", "modelKey": None},
+        "views": {view: {"key": f"{view}.png"} for view in worker.VIEWS},
+    }
+    api = Mock(return_value={"status": "PUBLISHED"})
+    monkeypatch.setattr(worker.cloud, "api", api)
+    monkeypatch.setattr(worker, "download", lambda config, ref, path: path.write_bytes(b"ref"))
+    monkeypatch.setattr(worker, "validate_glb", lambda path: None)
+    upload = Mock(side_effect=lambda config, path, job, attempt: f"synthetic/{path.name}")
+    monkeypatch.setattr(worker, "upload_file", upload)
+    stages = []
+
+    def agent(folder, images, prompt, heartbeat, stage):
+        stages.append(stage)
+        if stage == "build":
+            (folder / "build.py").write_text("# synthetic test script")
+        return {"passed": True, "assessment": "Synthetic test only", "issues": []}
+
+    def process(command, *, folder, **kwargs):
+        if str(repo / "ops/model-worker/validate.py") in command:
+            (folder / "renders").mkdir(exist_ok=True)
+            for view in worker.VIEWS:
+                (folder / "renders" / f"{view}.png").write_bytes(b"synthetic render")
+            (folder / "validation.json").write_text("{}")
+        elif str(folder / "build.py") in command:
+            (folder / "model.blend").write_bytes(b"synthetic source")
+            (folder / "model.glb").write_bytes(b"synthetic model")
+        return 0
+
+    monkeypatch.setattr(worker, "agent", agent)
+    monkeypatch.setattr(worker, "run_process", process)
+    return repo, job, api, upload, stages, process
+
+
+def test_native_interruption_resumes_script_without_repeating_inference(tmp_path, monkeypatch):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    interrupted = [False]
+
+    def stop_once(command, **kwargs):
+        if str(kwargs["folder"] / "build.py") in command and not interrupted[0]:
+            interrupted[0] = True
+            raise worker.Deferred("synthetic native interruption")
+        return process(command, **kwargs)
+
+    monkeypatch.setattr(worker, "run_process", stop_once)
+    claim = {"job": job, "lease": "synthetic-lease"}
+    with pytest.raises(worker.Deferred):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    checkpoint = json.loads((tmp_path / job["jobId"] / "checkpoint.json").read_text())
+    assert checkpoint["phase"] == "blender" and len(checkpoint["scriptSha256"]) == 64
+    assert not upload.called
+    worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert stages == ["build", "review"]
+    assert api.call_args.args[2] == "/model-jobs/complete"
+
+
+def test_changed_saved_script_stops_before_native_execution(tmp_path, monkeypatch):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(worker, "run_process", Mock(side_effect=worker.Deferred("interrupt")))
+    claim = {"job": job, "lease": "synthetic-lease"}
+    with pytest.raises(worker.Deferred):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    (tmp_path / job["jobId"] / "candidate-1" / "build.py").write_text("# changed")
+    native = Mock(side_effect=process)
+    monkeypatch.setattr(worker, "run_process", native)
+    with pytest.raises(click.ClickException, match="script changed"):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert stages == ["build"] and not native.called and not upload.called
+
+
+def test_recovery_rejects_changed_pinned_inputs(tmp_path, monkeypatch):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(worker, "run_process", Mock(side_effect=worker.Deferred("interrupt")))
+    claim = {"job": job, "lease": "lease"}
+    with pytest.raises(worker.Deferred):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    job["appearanceSelection"]["portraitKey"] = "different-selection"
+    with pytest.raises(click.ClickException, match="Recovery inputs changed"):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert stages == ["build"] and not upload.called
+
+
+def test_old_evidence_checkpoint_is_preserved_and_revalidated(tmp_path, monkeypatch):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    claim = {"job": job, "lease": "lease"}
+    worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    path = tmp_path / job["jobId"] / "checkpoint.json"
+    checkpoint = json.loads(path.read_text())
+    checkpoint["validatedHashes"] = {
+        key: value
+        for key, value in checkpoint["validatedHashes"].items()
+        if key in {"model.glb", "model.blend"}
+    }
+    path.write_text(json.dumps(checkpoint))
+    stages.clear()
+    worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    folder = tmp_path / job["jobId"] / "candidate-1"
+    assert stages == ["review"]
+    assert (
+        folder / "checkpoint-evidence-v1" / "renders/back.png"
+    ).read_bytes() == b"synthetic render"
+    assert (
+        json.loads((folder / "checkpoint-evidence-v1" / "checkpoint.json").read_text())
+        == checkpoint
+    )
+    assert len(json.loads(path.read_text())["validatedHashes"]) == 11
+
+
+def test_bounded_refinement_preserves_inputs_and_first_candidate(tmp_path, monkeypatch):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    original = worker.agent
+
+    def review(folder, images, prompt, heartbeat, stage):
+        result = original(folder, images, prompt, heartbeat, stage)
+        if stage == "review" and folder.name == "candidate-1":
+            return {"passed": False, "assessment": "Synthetic failure", "issues": ["anatomy"]}
+        return result
+
+    monkeypatch.setattr(worker, "agent", review)
+    claim = {"job": job, "lease": "lease"}
+    with pytest.raises(worker.Deferred, match="bounded refinement"):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert not upload.called
+    second = tmp_path / job["jobId"] / "candidate-2"
+    assert json.loads((second / "inputs.json").read_text()) == job
+    assert json.loads((second / "previous-critique.json").read_text())["issues"] == ["anatomy"]
+    worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert stages == ["build", "review", "build", "review"]
+    assert (tmp_path / job["jobId"] / "candidate-1" / "model.blend").is_file()
+
+
+@pytest.mark.parametrize("filename", ["model.glb", "validation.json", "renders/back.png"])
+def test_changed_review_evidence_blocks_publication(tmp_path, monkeypatch, filename):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    original = worker.agent
+
+    def changed_evidence(folder, images, prompt, heartbeat, stage):
+        result = original(folder, images, prompt, heartbeat, stage)
+        if stage == "review":
+            (folder / filename).write_bytes(b"changed after inspection")
+        return result
+
+    monkeypatch.setattr(worker, "agent", changed_evidence)
+    with pytest.raises(click.ClickException, match="inspection evidence changed"):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, {"job": job, "lease": "lease"})
+    assert not upload.called
