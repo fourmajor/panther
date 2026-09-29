@@ -232,7 +232,7 @@ main {
 .novel-progress { color:var(--muted); font-size:.85rem; }
 .tv-library { margin-top:1.5rem; display:grid; gap:1rem; }
 .tv-library > section { display:grid; gap:1rem; }
-.tv-library select { width:100%; max-width:40rem; min-width:0; }
+.tv-library select { width:100%; max-width:40rem; min-width:0; min-height:2.75rem; padding:.6rem .75rem; font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:.4rem; }
 .tv-episode-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,19rem),1fr)); gap:1rem; }
 .tv-episode-card h4 { font:1.7rem Georgia,serif; margin:.7rem 0; }
 .tv-episode-card a,.tv-library > p a { color:var(--accent); text-underline-offset:.2em; }
