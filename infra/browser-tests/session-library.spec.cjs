@@ -54,6 +54,77 @@ async function fixture(page) {
   });
 }
 
+for (const width of [1280,390]) test(`transcript search, versions, canonical choice and continuous source at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:900}); await fixture(page);
+  const records=assets.map(a=>({...a,metadata:{...a.metadata,extra:{...a.metadata.extra,
+    version:{schemaVersion:1,seriesId:a.key===corrected?'corrected-series':'raw-series',number:1}}},
+    ...([raw,corrected].includes(a.key)?{transcript:{state:'available',participants:[{id:'alex',name:'Alex',segmentCount:1}],unassignedSegments:1,reviewStatus:a.key===raw?'unreviewed':'ai-reviewed-unverified'}}:{})}));
+  await page.route(`${api}/assets?**`,route=>route.fulfill({headers,json:{assets:records,cursor:null}}));
+  let selection=null,submitted;
+  await page.route(`${api}/transcript-selection**`,route=>{
+    if(route.request().method()==='POST') {
+      submitted=route.request().postDataJSON();
+      expect(submitted.key).toBe(raw); expect(submitted.expectedRevision).toBeNull();
+      expect(submitted.operationId).toMatch(/^[a-f0-9]{32}$/);
+      selection={...submitted,revision:'a'.repeat(32)};
+    }
+    return route.fulfill({headers,json:{selection}});
+  });
+  await page.goto(`${origin}/games/test-game/transcripts`);
+  await expect(page.locator('.transcript-session')).toHaveCount(1);
+  await expect(page.locator('.transcript-session')).toContainText('Alex');
+  await page.goto(`${origin}/games/test-game/transcripts?asset=${encodeURIComponent(raw)}`);
+  const body=page.locator('#preview-body');
+  await expect(body).toContainText('No canonical reading version has been designated');
+  await expect(body.locator('.transcript-segment')).toHaveCount(2);
+  const search=body.getByLabel('Search speech or player names');
+  await search.fill('Pizza'); await search.press('Enter');
+  await expect(body).toContainText('Match 1 of 1');
+  await expect(body.locator('.transcript-current-match')).toContainText('Pizza?');
+  await expect(body.locator('.transcript-segment')).toHaveCount(2);
+  expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
+  await body.getByText('Source recording · listen at a transcript timestamp',{exact:true}).click();
+  await expect(body.locator('audio')).toBeVisible();
+  await expect(body.locator('.transcript-seek').first()).toBeEnabled();
+  await body.locator('.transcript-seek').first().click();
+  await expect.poll(()=>body.locator('audio').evaluate(a=>a.paused)).toBe(false);
+  await body.getByText('Choose this canonical reading version',{exact:true}).click();
+  await body.getByLabel('Selection reason').fill('Prefer original evidence for this test');
+  await body.getByRole('checkbox').check();
+  await body.getByRole('button',{name:'Use this version as canonical'}).click();
+  await expect(body).toContainText('Selection saved. Immutable transcripts and review state are unchanged');
+  await expect(body).toContainText('Viewing the canonical reading version');
+  expect(submitted.reason).toBe('Prefer original evidence for this test');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`transcript-reader-${width}.png`)});
+  await body.getByLabel('Session transcript version').selectOption(corrected);
+  await expect(body).toContainText('The lantern.');
+  await expect(body).toContainText('Viewing a non-canonical version');
+  await expect(body.getByRole('link',{name:'Open canonical reading version'})).toBeVisible();
+  await expect(body).toContainText('ai-reviewed-unverified');
+});
+
+test('canonical selection failure never claims success and retries the exact operation',async({page})=>{
+  await fixture(page); let attempts=[];
+  await page.route(`${api}/transcript-selection**`,route=>{
+    if(route.request().method()==='POST') {
+      attempts.push(route.request().postDataJSON());
+      return route.fulfill({status:409,headers,json:{error:'Selection changed; reload'}});
+    }
+    return route.fulfill({headers,json:{selection:null}});
+  });
+  await page.goto(`${origin}/games/test-game/transcripts?asset=${encodeURIComponent(raw)}`);
+  const body=page.locator('#preview-body');
+  await body.getByText('Choose this canonical reading version',{exact:true}).click();
+  await body.getByLabel('Selection reason').fill('Reading preference');
+  await body.getByRole('checkbox').check();
+  const save=body.getByRole('button',{name:'Use this version as canonical'});
+  await save.click(); await expect(body).toContainText('Selection not confirmed');
+  await save.click(); await expect.poll(()=>attempts.length).toBe(2);
+  expect(attempts[1]).toEqual(attempts[0]);
+  await expect(body).not.toContainText('Selection saved');
+});
+
 for (const width of [1280,390]) test(`loading feedback reports real catalog progress at ${width}`, async ({page}) => {
   await page.setViewportSize({width,height:900});
   await fixture(page);

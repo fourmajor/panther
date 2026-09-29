@@ -750,6 +750,19 @@ model-viewer,
 
 #asset-download-status { flex-basis: 100%; overflow-wrap: anywhere; }
 
+.transcript-session { grid-column: 1 / -1; display: grid; gap: 1rem; }
+.transcript-session > h2, .transcript-session > p { margin: 0; }
+.transcript-session > p { color: var(--muted); }
+.transcript-tools { padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; display: flex; flex-wrap: wrap; gap: .75rem; }
+.transcript-tools > label, .transcript-tools > p, .transcript-tools > div, .transcript-tools > details { flex-basis: 100%; min-width: 0; }
+.transcript-tools input[type="search"], .transcript-tools select, #canonical-reason { width: 100%; min-width: 0; box-sizing: border-box; }
+.transcript-tools details { overflow-wrap: anywhere; }
+.transcript-tools details label { display: block; margin-block: .5rem; }
+.transcript-tools audio { width: 100%; max-width: 40rem; }
+.transcript-match { border-left: 3px solid var(--accent); padding-left: .75rem; }
+.transcript-current-match { background: var(--panel); outline: 2px solid var(--accent); }
+.transcript-seek { font-size: .85rem; }
+
 .link-button {
   color: inherit;
   text-decoration: none;

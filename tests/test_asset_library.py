@@ -12,6 +12,10 @@ from test_model_jobs import broker, put, request, unpack  # noqa: F401
 
 @pytest.fixture
 def library(monkeypatch):
+    # Load indexed browsing with real boto3 before the S3-only media stub replaces
+    # it; focused test runs must not depend on another module's collection order.
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
+    import browse_index  # noqa: F401
     media, s3 = load_media_api(monkeypatch)
     spec = importlib.util.spec_from_file_location(
         "asset_library_test", Path(__file__).parents[1] / "infra/lambda/media-api/asset_library.py"
@@ -34,6 +38,21 @@ def library(monkeypatch):
     s3.head_object = head
     s3.list_objects_v2 = listing
     return lib, media, s3
+
+
+def test_transcript_projection_observes_speakers_not_roster_attendance(library):
+    lib, _, _ = library
+    summary = lib.transcript_summary({"entityType": "PlayerTranscript", "players": [
+        {"id": "alex", "name": "Alex"}, {"id": "blair", "name": "Blair"}],
+        "segments": [{"playerId": "alex", "text": "hello"}, {"playerId": None, "text": "unknown"}]})
+    assert summary["participants"] == [{"id": "alex", "name": "Alex", "segmentCount": 1}]
+    assert summary["unassignedSegments"] == 1 and summary["reviewStatus"] == "unreviewed"
+    corrected = lib.transcript_summary({"stage": "corrected-transcript", "reviewStatus": "ai-reviewed-unverified",
+        "payload": {"transcript": {"players": [{"id": "alex", "name": "Alex"}, {"id": "alex", "name": "Ambiguous"}],
+                                   "segments": [{"playerId": "alex"}]}}})
+    assert corrected["participants"][0]["name"] is None
+    assert corrected["reviewStatus"] == "ai-reviewed-unverified"
+    assert lib.transcript_summary({})["state"] == "unavailable"
 
 
 def test_library_access_uses_private_configuration_not_a_builtin_identity(library, monkeypatch):

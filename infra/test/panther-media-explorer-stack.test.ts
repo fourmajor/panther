@@ -62,6 +62,23 @@ test("browsing uses retained on-demand indexes and event-driven read-only S3 ind
   template.resourceCountIs("AWS::EC2::NatGateway",0);
 });
 
+test("canonical transcript selections have JWT routes and partition-scoped transactional permissions", () => {
+  const template = mediaExplorerTemplate();
+  for (const method of ["GET", "POST"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: `${method} /transcript-selection`, AuthorizationType: "JWT",
+  });
+  const statements = Object.values(template.findResources("AWS::IAM::Policy"))
+    .flatMap(resource => resource.Properties.PolicyDocument.Statement);
+  const writes = statements.find(statement => JSON.stringify(statement.Condition || {}).includes("transcript-selection#*"));
+  assert.ok(writes);
+  assert.deepEqual([writes.Action].flat(), ["dynamodb:PutItem"]);
+  assert.deepEqual(writes.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"], [
+    "transcript-selection#*", "transcript-selection-ops#*", "transcript-selection-history#*",
+  ]);
+  const guard = statements.find(statement => JSON.stringify(statement.Condition || {}).includes("v2#*#transcripts"));
+  assert.deepEqual([guard.Action].flat(), ["dynamodb:ConditionCheckItem"]);
+});
+
 test("unlisted shares isolate public version reads from publisher mutations", () => {
   const template = mediaExplorerTemplate();
   for (const route of ["POST /asset-shares", "POST /asset-shares/revoke", "POST /asset-shares/preview"]) {
@@ -412,7 +429,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 58);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 60);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

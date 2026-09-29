@@ -1641,6 +1641,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
         : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
       : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
+    const sessionGroups = new Map();
     for (const asset of selected) {
       const card = document.createElement("article"); card.className = "novel-card session-card";
       const heading = document.createElement("h2");
@@ -1649,7 +1650,24 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       const kind = document.createElement("p");
       kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${section === "videos" ? "Video" : asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
       const date = document.createElement("p"); date.textContent = new Date(asset.lastModified).toLocaleString();
-      card.append(heading, kind, date); list.append(card);
+      card.append(heading, kind, date);
+      if (section === "transcripts") {
+        const sessionId = asset.metadata?.sessionId || "";
+        if (!sessionGroups.has(sessionId)) {
+          const group = document.createElement("section"), title = document.createElement("h2"), note = document.createElement("p");
+          group.className = "transcript-session";
+          title.textContent = sessionId ? `Session · ${sessionId}` : "Session not identified";
+          note.textContent = "Loaded transcript versions. Canonical selection is separate from review or human verification; dates below are file creation dates, not inferred session dates.";
+          group.append(title, note); list.append(group); sessionGroups.set(sessionId, group);
+        }
+        const summary = document.createElement("p"), version = asset.metadata?.extra?.version;
+        const observed = asset.transcript;
+        summary.textContent = observed?.state === "available"
+          ? `Observed speakers: ${observed.participants.map(p => p.name || p.id).join(", ") || "None assigned"} · ${observed.unassignedSegments} unassigned segments · Review: ${observed.reviewStatus}`
+          : "Speaker summary unavailable; open the preserved transcript to inspect its evidence.";
+        const revision = document.createElement("p"); revision.textContent = version ? `Asset version ${version.number} · ${version.seriesId}` : "Version metadata unavailable — inventory verification required.";
+        card.append(summary, revision); sessionGroups.get(sessionId).append(card);
+      } else list.append(card);
     }
     if (page.cursor) {
       const more = document.createElement("button");
@@ -2118,7 +2136,7 @@ function renderStructuredAsset(asset, epoch) {
   const doc = asset.document;
   if (!doc) { elements.previewBody.textContent = "Structured preview unavailable. Use Open original; the source is unchanged."; return; }
   const host = document.createElement("div"); host.className = "structured-asset";
-  const transcript = doc.entityType === "PlayerTranscript" ? doc : doc.stage === "corrected-transcript" ? doc.payload?.transcript : null;
+  const transcript = doc.entityType === "PlayerTranscript" ? doc : ["corrected-transcript", "edited-transcript"].includes(doc.stage) ? doc.payload?.transcript : null;
   if (transcript && Array.isArray(transcript.segments)) {
     const notice = document.createElement("p"); notice.className = "novel-notice";
     const edited = [asset.kind, doc.stage, doc.artifactType].some(kind => ["corrected-transcript", "edited-transcript"].includes(kind));
@@ -2128,12 +2146,14 @@ function renderStructuredAsset(asset, epoch) {
     host.append(notice);
     if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
+    const navigation = transcriptNavigation(host, asset, transcript, epoch, people);
     for (const segment of transcript.segments) {
       const line = document.createElement("section"); line.className = "transcript-segment";
       const heading = document.createElement("h3"), text = document.createElement("p");
       heading.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)} · ${people.get(segment.playerId) || segment.playerId || "Unassigned speaker"}`;
       text.textContent = typeof segment.text === "string" ? segment.text : "[Missing text]";
       line.append(heading, text);
+      navigation.add(line, segment);
       const annotations = Object.fromEntries(Object.entries(segment).filter(([k]) => !["start","end","text","playerId"].includes(k)));
       if (Object.keys(annotations).length) line.append(detailBlock("Evidence and annotations", annotations));
       host.append(line);
@@ -2143,6 +2163,7 @@ function renderStructuredAsset(asset, epoch) {
       Object.entries(transcript).filter(([key]) => key !== "segments")
     )));
     if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
+    navigation.finish();
   } else if (doc.entityType === "Recording" && Array.isArray(doc.parts)) {
     const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} lossless original parts retained. One continuous listening copy; assembly does not repair capture gaps.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
@@ -2183,6 +2204,145 @@ function renderStructuredAsset(asset, epoch) {
     const pre = document.createElement("pre"); pre.textContent = JSON.stringify(doc,null,2); host.append(pre);
   }
   elements.previewBody.replaceChildren(host);
+}
+
+function transcriptNavigation(host, asset, transcript, epoch, people) {
+  const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
+  const sessionId = asset.metadata?.sessionId || transcript.sessionId;
+  const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");
+  const label = document.createElement("label"), search = document.createElement("input"), results = document.createElement("p"), previous = document.createElement("button"), next = document.createElement("button");
+  label.textContent = "Search speech or player names"; search.type = "search"; search.maxLength = 500; search.id = "transcript-search"; label.htmlFor = search.id;
+  search.placeholder = "Find a name, place or phrase…"; results.setAttribute("role", "status");
+  previous.type = next.type = "button"; previous.className = next.className = "quiet-button";
+  previous.textContent = "Previous match"; next.textContent = "Next match";
+  tools.append(label, search, previous, next, results); host.append(tools);
+  const versionLabel = document.createElement("label"), versions = document.createElement("select");
+  versions.id = "transcript-version"; versions.disabled = true; versionLabel.htmlFor = versions.id; versionLabel.textContent = "Session transcript version";
+  versions.add(new Option("Finding saved versions…", asset.key)); tools.append(versionLabel, versions);
+  const selection = document.createElement("div"), selectionStatus = document.createElement("p");
+  selectionStatus.setAttribute("role", "status"); selectionStatus.textContent = sessionId ? "Checking the explicit canonical selection…" : "Canonical selection unavailable: this transcript has no session identity.";
+  selection.append(selectionStatus); tools.append(selection);
+  const source = document.createElement("details"), sourceHeading = document.createElement("summary"), sourceStatus = document.createElement("p"), audio = document.createElement("audio");
+  sourceHeading.textContent = "Source recording · listen at a transcript timestamp";
+  sourceStatus.setAttribute("role", "status"); sourceStatus.textContent = "Finding the exact source recording and its continuous listening copy…";
+  audio.controls = true; audio.preload = "metadata"; audio.hidden = true;
+  source.append(sourceHeading, sourceStatus, audio); tools.append(source);
+  const lines = []; let matches = [], position = -1;
+  const update = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    matches = []; position = -1;
+    lines.forEach((entry,index) => {
+      entry.line.classList.remove("transcript-match", "transcript-current-match");
+      if (query && entry.search.includes(query)) { matches.push(index); entry.line.classList.add("transcript-match"); }
+    });
+    previous.disabled = next.disabled = matches.length === 0;
+    results.textContent = query ? `${matches.length} matching ${matches.length === 1 ? "line" : "lines"}. All source lines remain visible.` : `${lines.length} transcript lines. Search does not hide or edit evidence.`;
+  };
+  const move = direction => {
+    if (!matches.length) return;
+    lines.forEach(entry => entry.line.classList.remove("transcript-current-match"));
+    position = (position + direction + matches.length) % matches.length;
+    const line = lines[matches[position]].line;
+    line.classList.add("transcript-current-match"); line.tabIndex = -1;
+    line.scrollIntoView({block:"center", behavior:"instant"}); line.focus({preventScroll:true});
+    results.textContent = `Match ${position+1} of ${matches.length}. All source lines remain visible.`;
+  };
+  search.addEventListener("input", update);
+  search.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); move(event.shiftKey ? -1 : 1); } });
+  previous.onclick = () => move(-1); next.onclick = () => move(1);
+  versions.onchange = () => { const chosen = versions.value; if (sameGameKey(chosen)) void previewFile({key:chosen,name:versions.selectedOptions[0].textContent}); };
+  const seeks = [];
+  let duration = null;
+  const seek = async seconds => {
+    if (!current() || duration === null || !Number.isFinite(seconds) || seconds < 0 || seconds >= duration) return;
+    source.open = true;
+    try { audio.currentTime = seconds; await audio.play(); }
+    catch { if (current()) sourceStatus.textContent = "Playback could not start. Use the source audio controls or refresh its link; transcript evidence is unchanged."; }
+  };
+  const configure = async () => {
+    try {
+      const assets = await allAssets(gameId);
+      if (!current()) return;
+      const variants = assets.filter(a => a.metadata?.sessionId === sessionId && ["transcript","raw-transcript","corrected-transcript","edited-transcript"].includes(a.kind) && a.key.endsWith(".json"));
+      variants.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
+      versions.replaceChildren();
+      for (const variant of variants) {
+        const v = variant.metadata?.extra?.version;
+        versions.add(new Option(`${variant.kind.replaceAll("-"," ")} · ${v ? `v${v.number}` : "version unavailable"} · ${variant.metadata?.title || variant.name}`, variant.key));
+      }
+      if (!variants.some(a => a.key === asset.key)) versions.add(new Option("Viewed version · not present in the catalog", asset.key));
+      versions.value = asset.key; versions.disabled = versions.options.length < 2;
+      const index = new Map(assets.map(a => [a.key,a])), visited = new Set(), pending = [asset.key], recordings = new Map();
+      while (pending.length) {
+        const key = pending.pop(); if (visited.has(key) || !sameGameKey(key)) continue; visited.add(key);
+        const candidate = index.get(key); if (!candidate) continue;
+        if (candidate.recording?.partCount > 0) { recordings.set(key,candidate); continue; }
+        pending.push(...(candidate.sourceKeys || []));
+      }
+      if (recordings.size !== 1) { sourceStatus.textContent = recordings.size ? "Multiple source recordings are associated. Open Inputs to choose one; no source is guessed." : "No exact source recording is linked. Original evidence remains available in Inputs."; return; }
+      const [recordingKey, recording] = [...recordings][0];
+      source.append(assetLink(recording, "Open source recording"));
+      const copies = assets.filter(a => a.playback?.recordingKey === recordingKey && sameGameKey(a.playback.audioKey) && index.get(a.playback.audioKey)?.kind === "recording-playback");
+      copies.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
+      if (!copies.length) { sourceStatus.textContent = "The linked source recording has no completed continuous listening copy yet. Open the source recording for status and original files."; return; }
+      const copy = copies[0].playback, signed = await api("/object-url", {key:copy.audioKey});
+      if (!current()) return;
+      audio.hidden = false; audio.src = signed.url;
+      attachMediaRecovery(audio, copy.audioKey, current);
+      const ready = () => { if (current()) { duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null; seeks.forEach(({button,start}) => { button.disabled = duration === null || !Number.isFinite(start) || start < 0 || start >= duration; }); } };
+      audio.addEventListener("loadedmetadata", ready);
+      if (audio.readyState >= 1) ready();
+      sourceStatus.textContent = "Continuous listening copy of the linked source. Timestamps follow the transcript; capture warnings and attribution uncertainty still apply.";
+    } catch (error) { if (current()) { versions.replaceChildren(new Option("Version navigation unavailable",asset.key)); sourceStatus.textContent = `Source navigation unavailable: ${error.message}. Use Inputs or reopen to retry.`; } }
+  };
+  void configure();
+  if (sessionId && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sessionId)) void (async () => {
+    try {
+      let chosen = await api("/transcript-selection", {gameId,sessionId});
+      if (!current()) return;
+      const report = () => {
+        selectionStatus.textContent = chosen.warning || (chosen.selection
+          ? `${chosen.selection.key === asset.key ? "Viewing the canonical reading version" : "Viewing a non-canonical version"}. Canonical selection is not human verification; review/uncertainty remain as reported above.`
+          : "No canonical reading version has been designated for this session. This is an archived transcript, not an approved record.");
+        selection.querySelector('[data-canonical-link]')?.remove();
+        if (chosen.selection?.key && chosen.selection.key !== asset.key && sameGameKey(chosen.selection.key)) {
+          const link = assetLink({key:chosen.selection.key}, "Open canonical reading version"); link.dataset.canonicalLink = "true"; selection.append(link);
+        }
+      };
+      report();
+      const details = document.createElement("details"), heading = document.createElement("summary"), explanation = document.createElement("p"), reasonLabel = document.createElement("label"), reason = document.createElement("input"), confirmLabel = document.createElement("label"), confirm = document.createElement("input"), button = document.createElement("button"), status = document.createElement("p");
+      heading.textContent = "Choose this canonical reading version";
+      explanation.textContent = "This changes a session pointer only. It does not correct raw text, verify speakers, approve game facts or regenerate adaptations. Previous selections are retained.";
+      reason.id = "canonical-reason"; reason.maxLength = 500; reasonLabel.htmlFor = reason.id; reasonLabel.textContent = "Selection reason";
+      confirm.type = "checkbox"; confirmLabel.append(confirm, " I understand this is a reading selection, not human verification.");
+      button.type = "button"; button.className = "quiet-button"; button.textContent = "Use this version as canonical"; button.disabled = true;
+      status.setAttribute("role", "status");
+      const enable = () => { button.disabled = !confirm.checked || !reason.value.trim(); };
+      reason.addEventListener("input", enable); confirm.addEventListener("change", enable);
+      let request;
+      button.onclick = async () => {
+        request ||= {gameId, sessionId, key:asset.key, expectedRevision:chosen.selection?.revision || null,
+          reason:reason.value.trim(), operationId:crypto.randomUUID().replaceAll("-","")};
+        reason.disabled = confirm.disabled = button.disabled = true; status.textContent = "Saving the guarded selection…";
+        try {
+          await api("/transcript-selection", {}, {body:request});
+          chosen = await api("/transcript-selection", {gameId,sessionId});
+          if (!current()) return;
+          report(); status.textContent = "Selection saved. Immutable transcripts and review state are unchanged.";
+        } catch (error) { if (current()) { status.textContent = `Selection not confirmed: ${error.message}. An exact retry uses the same operation identity; reload if another selection changed.`; button.disabled = false; } }
+      };
+      details.append(heading, explanation, reasonLabel, reason, confirmLabel, button, status); selection.append(details);
+    } catch (error) { if (current()) selectionStatus.textContent = `Canonical selection unavailable: ${error.message}. No version is assumed canonical.`; }
+  })();
+  return {
+    add(line, segment) {
+      lines.push({line, search:`${people.get(segment.playerId) || segment.playerId || "Unassigned speaker"} ${segment.text || ""}`.toLocaleLowerCase()});
+      const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button transcript-seek";
+      button.textContent = `Listen from ${timestamp(segment.start)}`; button.disabled = true;
+      button.onclick = () => { void seek(segment.start); }; line.append(button); seeks.push({button,start:segment.start});
+    },
+    finish: update,
+  };
 }
 
 document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });

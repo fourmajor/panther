@@ -39,6 +39,14 @@ assets version-plan --output PRIVATE_PLAN.json`, dry-run/apply with `panther ass
 verify the complete catalog across all games. Keep plans/reports outside Git. See
 `docs/asset-versions.md`.
 
+Session transcript reading selections are explicit pointers, not approvals. Use `panther transcripts
+selection --game GAME --session SESSION` to inspect one, then `panther transcripts select` with
+the exact immutable `--key`, a factual `--reason`, and the current `--expected-revision` (omit only
+for the first selection). Retain `--operation-id` for exact retries after uncertain responses.
+Selection preserves raw/corrected versions and audit history; it never asserts human verification,
+resolves uncertain speakers or regenerates adaptations. Never infer canonical status from recency.
+See `docs/transcript-reader.md`.
+
 Generated narration/voice performances use the premium `panther narration` workflow with
 ElevenLabs Eleven v3 through fal. Never use Chatterbox or system TTS as a preview/fallback.
 Prepare a private version-1 manifest with gameId, projectId, purpose (audition/production),
