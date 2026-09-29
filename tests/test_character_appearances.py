@@ -410,3 +410,39 @@ def test_selection_rejects_bad_glb_and_rechecks_conflicting_character_at_promoti
         )["statusCode"]
         == 400
     )
+
+
+def test_initial_artwork_is_create_only_and_retry_does_not_create_a_model_or_write_s3(
+    looks, monkeypatch
+):
+    from unittest.mock import Mock
+
+    module, media, keys = looks
+    module.browse_index.table().delete_item(
+        Key={"pk": "character-looks-migration#test-game#example-character", "sk": "complete"}
+    )
+    put = Mock(side_effect=AssertionError("Artwork initialization never writes S3"))
+    monkeypatch.setattr(media.raw_s3, "put_object", put)
+    body = {
+        "gameId": "test-game",
+        "characterId": "example-character",
+        "portraitKey": keys[0],
+        "title": "Synthetic title",
+        "summary": "Synthetic overview",
+    }
+    first = module.initialize(media, body, "fictional-owner")
+    assert first["profile"][2]["model"] == {"posterKey": keys[0]} and not first["replayed"]
+    replay = module.initialize(media, body, "fictional-owner")
+    assert replay["replayed"] and replay["profile"][3] == first["profile"][3]
+    with pytest.raises(ValueError, match="already selected"):
+        module.initialize(media, {**body, "summary": "Different request"}, "fictional-owner")
+    put.assert_not_called()
+
+
+def test_bounded_body_parser_accepts_api_gateway_base64_but_not_large_envelopes(looks):
+    import base64
+
+    encoded = base64.b64encode(b'{"id":"ordinary"}').decode()
+    assert looks[0].parse_body({"body": encoded, "isBase64Encoded": True}) == {"id": "ordinary"}
+    with pytest.raises(ValueError, match="bounded size"):
+        looks[0].parse_body({"body": " " * (96 * 1024 + 1)})

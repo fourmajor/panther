@@ -123,3 +123,43 @@ def test_roster_only_character_migration_does_not_invent_artwork(looks):  # noqa
     assert proof["sourceCount"] == 0 and proof["currentSelection"] is None
     result = module.finalize(looks[1], proof, uuid.uuid4().hex, {"sub": "fictional-owner"})
     assert json.loads(result["body"])["status"] == "complete-without-artwork"
+
+
+def test_planning_handler_is_available_while_writes_are_staged_closed(looks, monkeypatch):  # noqa: F811
+    key, _ = source(looks)
+    monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
+    monkeypatch.setenv("APPEARANCE_WRITES_ENABLED", "false")
+    event = {
+        "routeKey": "POST /character-appearance-migration/prepare",
+        "body": json.dumps(
+            {"gameId": "test-game", "characterId": "example-character", "sourceKey": key}
+        ),
+        "requestContext": {
+            "authorizer": {
+                "jwt": {
+                    "claims": {"sub": "fictional-owner", "cognito:username": "example-operator"}
+                }
+            }
+        },
+    }
+    response = looks[0].handle(event, looks[1])
+    assert (
+        response["statusCode"] == 200 and json.loads(response["body"])["plan"]["sourceKey"] == key
+    )
+    response = looks[0].handle({**event, "body": '{"gameId":"different-game"}'}, looks[1])
+    assert response["statusCode"] == 409
+
+
+def test_unresolvable_retained_history_and_invalid_glb_are_explicit_blockers(looks):  # noqa: F811
+    module = importlib.import_module("appearance_migration")
+    key, raw = source(looks)
+    looks[1].s3.put_object(Bucket=looks[1].BUCKET_NAME, Key=looks[2][1], Body=b"invalid" * 15)
+    with pytest.raises(ValueError, match="invalid GLB"):
+        module.prepare(looks[1], "test-game", "example-character", key)
+    looks[1].raw_s3.put_object(
+        Bucket=looks[1].BUCKET_NAME,
+        Key=key.replace("profile.json", "history/unresolvable.json"),
+        Body=raw,
+    )
+    with pytest.raises(ValueError, match="Unresolvable retained"):
+        module.inventory(looks[1], "test-game", "example-character")
