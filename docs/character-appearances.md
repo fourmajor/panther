@@ -53,6 +53,12 @@ pin `appearance` and `selection`; a portrait-only edition clears the previously 
 Restoration adds a guarded activation event and retains identical retry arguments. Selection
 record timestamps are labeled as technical recording times, never fictional dates.
 
+An exact deep link may preview a stored, unactivated selection. The viewer adds only that
+server-resolved pair (and its pinned descriptor if needed) to its temporary controls, labeled
+**Unselected preview edition**. It never adds an activation event, marks it official or promotes
+other candidates into history. Switching between that preview and official editions stays
+aligned with the displayed image/model; viewing/reloading never changes the current selection.
+
 Existing `character set-model` and `set-portrait` commands use the exact 32-hex activation
 revision returned by `character show`. They create a new immutable pair; no S3 profile is
 overwritten. Explicit semantic asset versions are preserved separately: appearance ordering

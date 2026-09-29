@@ -2,13 +2,14 @@ const {test,expect}=require('@playwright/test');
 const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 
-async function fixture(page,{lostResponse=false,ambiguous=false}={}) {
+async function fixture(page,{lostResponse=false,ambiguous=false,unselected=false}={}) {
   const gameId='example-game',characterId='hero';
   const portrait=id=>`games/${gameId}/assets/${id}/original/portrait.svg`;
   const character={gameId,id:characterId,name:'Synthetic Hero',title:'Scout',summary:'Fictional appearance history.'};
   const timing={sessionId:null,eventId:null,date:null};
   const pair=(id,appearanceId,modelKey=null)=>({id,appearanceId,appearanceRevision:'b'.repeat(32),revision:'c'.repeat(32),portraitKey:portrait(id),modelKey,sourceKey:null,provenanceKey:null});
   const selections=[pair('current','ordinary','games/example-game/assets/current/original/model.glb'),pair('earlier','ordinary',ambiguous?'games/example-game/assets/current/original/model.glb':null),pair('stone','stone')];
+  const previews=unselected?[pair('preview','ordinary'),pair('preview-state','candidate-look')]:[];
   let current='current',revision='a'.repeat(32),first=true;
   const posted=[],requests=[];
   const history=()=>({schemaVersion:2,gameId,characterId,current,activationRevision:revision,selections,
@@ -22,10 +23,10 @@ async function fixture(page,{lostResponse=false,ambiguous=false}={}) {
     else if(url.pathname==='/game') body={game:{id:gameId,name:'Synthetic Game',purpose:'test'},characters:[character],players:[],memberships:[]};
     else if(url.pathname==='/character-versions') body=history();
     else if(url.pathname==='/character') {
-      const selected=selections.find(s=>s.id===(url.searchParams.get('selectionId')||current));
+      const selected=[...selections,...previews].find(s=>s.id===(url.searchParams.get('selectionId')||current));
       if(!selected || (url.searchParams.get('appearanceId') && url.searchParams.get('appearanceId')!==selected.appearanceId))
         return route.fulfill({status:404,json:{error:'Exact appearance selection not found'}});
-      body={character,selection:selected,appearance:history().appearances.find(a=>a.id===selected.appearanceId),
+      body={character,selection:selected,appearance:history().appearances.find(a=>a.id===selected.appearanceId)||{id:'candidate-look',name:'Unselected physical-state proposal',story:timing},
         poster:{key:selected.portraitKey,url:`https://test.s3.amazonaws.com/${selected.id}.svg`},
         model:selected.modelKey?{key:selected.modelKey,url:'https://test.s3.amazonaws.com/model.glb',size:1024,cameraOrbit:'0deg 75deg auto',fieldOfView:'30deg'}:null,warnings:[]};
     } else if(url.pathname==='/character-appearance-current') {
@@ -47,6 +48,34 @@ async function fixture(page,{lostResponse=false,ambiguous=false}={}) {
 }
 
 for(const width of [1280,390]) {
+  for(const separateState of [false,true]) test(`unselected exact preview keeps controls aligned at ${width}px, separate state ${separateState}`,async({page},testInfo)=>{
+    await page.setViewportSize({width,height:900});const control=await fixture(page,{unselected:true});
+    const id=separateState?'preview-state':'preview',appearance=separateState?'candidate-look':'ordinary';
+    await page.goto(`https://panther.place/games/example-game/characters/hero?appearance=${appearance}&selection=${id}`);
+    await expect(page.locator('#appearance-status')).toContainText('Previewing an unselected edition');
+    await expect(page.locator('#appearance-state')).toHaveValue(appearance);
+    await expect(page.locator('#model-version')).toHaveValue(id);
+    await expect(page.locator('#model-version option:checked')).toContainText('Unselected preview edition');
+    await expect(page.locator('#portrait-version-preview')).toHaveAttribute('src',new RegExp(`${id}.svg$`));
+    await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',new RegExp(`${id}.svg$`));
+    await expect(page.locator('#model-load')).toBeHidden();
+    await expect(page.locator('#appearance-events')).toContainText('Synthetic selection');
+    await expect(page.locator('#appearance-events')).not.toContainText('preview');
+    const menu=page.locator('#model-version');await menu.scrollIntoViewIfNeeded();
+    const bounds=await menu.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    const screenshot=testInfo.outputPath('unselected-edition.png');await page.screenshot({path:screenshot,fullPage:true});await testInfo.attach('unselected-edition',{path:screenshot,contentType:'image/png'});
+    if(separateState) await page.locator('#appearance-state').selectOption('ordinary');
+    else await menu.selectOption('current');
+    await expect(page.locator('#appearance-status')).toContainText('current official artwork pair');
+    await expect(menu).toHaveValue('current');await expect(page.locator('#model-load')).toBeVisible();
+    if(separateState) await page.locator('#appearance-state').selectOption('candidate-look');
+    else await menu.selectOption(id);
+    await expect(page.locator('#appearance-status')).toContainText('Previewing an unselected edition');
+    await expect(menu).toHaveValue(id);
+    await page.reload();await expect(menu).toHaveValue(id);
+    expect(control.posted).toEqual([]);
+  });
   test(`appearance pairs, portrait-only states and guarded restore at ${width}px`,async({page},testInfo)=>{
     await page.setViewportSize({width,height:900});const control=await fixture(page,{lostResponse:true});
     await page.goto('https://panther.place/games/example-game/characters/hero');
@@ -56,6 +85,7 @@ for(const width of [1280,390]) {
     await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',/earlier.svg$/);
     await expect(page.locator('#model-load')).toBeHidden();
     await expect(page.locator('#character-model')).not.toHaveAttribute('src',/model.glb/);
+    await expect(page.locator('#character-model')).toHaveJSProperty('src',null);
     await page.locator('#appearance-state').selectOption('stone');
     await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',/stone.svg$/);
     await expect(page).toHaveURL(/appearance=stone&selection=stone/);
