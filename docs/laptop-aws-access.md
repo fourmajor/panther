@@ -25,6 +25,11 @@ is added by this stack.
 
 Use recovery SSO for the initial deployment. Keep machine configuration, production assembly,
 diff, outputs and AWS config backups outside Git in owner-only storage, never in CI artifacts.
+Local native checks require matching macOS Command Line Tools and SDK versions. If `xcrun`
+selects an SDK newer than the installed Swift compiler supports, set `SDKROOT` to a compatible
+installed SDK for the setup command; do not change global Xcode settings or weaken Keychain
+security to work around a compilation failure. Normal AWS credential refresh runs the pinned
+helper directly and does not invoke Swift or compile anything.
 
 1. Create a new mode-700 directory outside the repository, preferably in the owner's Panther
    application-support directory. From the repo root:
