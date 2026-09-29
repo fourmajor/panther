@@ -254,13 +254,28 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
     original = raw()
     storage = {"raw": original}
     completed = []
-    catalog = {"players": [{"id": "person", "name": "Person"}], "characters": []}
+    catalog = {
+        "players": [{"id": "person", "name": "Person"}],
+        "characters": [{"id": "hero", "name": "Synthetic Hero"}],
+    }
+    selected = {
+        "id": "official-pair",
+        "appearanceId": "ordinary",
+        "appearanceRevision": "b" * 32,
+        "revision": "c" * 32,
+        "portraitKey": "games/test-game/assets/portrait/original/portrait.png",
+        "modelKey": None,
+        "sourceKey": None,
+        "provenanceKey": None,
+    }
 
     def api(config, method, route, **kwargs):
         if route == "/game":
             return catalog
         if route == "/editorial-context":
             return {"items": [], "cursor": None}
+        if route == "/character-versions":
+            return {"schemaVersion": 2, "current": selected["id"], "selections": [selected]}
         if route.endswith("complete"):
             completed.append(kwargs["json"])
         return {"ok": True}
@@ -338,6 +353,11 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
         )
         artifacts[stage] = {"key": completed[-1]["outputKey"]}
     assert len(completed) == len(STAGES)
+    assert seen_inputs["context"]["catalog"]["officialArtwork"]["hero"] == selected
+    assert (
+        storage["context.json"]["payload"]["evidence"]["catalog"]["officialArtwork"]["hero"]
+        == selected
+    )
     assert storage["novel-chapter.md"] == storage["novel-chapter.json"]["payload"]["chapter"]
     assert "Separate synthetic editorial note" not in storage["novel-chapter.md"]
     assert storage["novel-chapter.json"]["payload"]["review"]["uncertainties"]

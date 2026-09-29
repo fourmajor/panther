@@ -402,6 +402,13 @@ def process(config, root, claim):
             if history["current"] is not None and selected is None:
                 raise click.ClickException("Pinned official artwork selection is missing")
             catalog["officialArtwork"][character["id"]] = selected
+            if selected:
+                sources.extend(
+                    selected[field]
+                    for field in ("portraitKey", "modelKey", "sourceKey", "provenanceKey")
+                    if selected.get(field)
+                )
+        sources = list(dict.fromkeys(sources))
         candidates, cursor = [], None
         while True:
             page = cloud.api(

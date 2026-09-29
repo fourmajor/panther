@@ -491,13 +491,13 @@ def test_character_commands_preserve_revision_and_only_publish_requested_fields(
         calls.append((method, route, kwargs))
         if route == "/characters":
             return {"characters": [], "cursor": None}
-        return {"profile": {"id": "captain"}, "revision": '"abc"'}
+        return {"profile": {"id": "captain"}, "revision": "a" * 32}
 
     monkeypatch.setattr(cloud, "api", api)
     runner = CliRunner()
     assert runner.invoke(main, ["character", "list", "--game", "test-game"]).exit_code == 0
     result = runner.invoke(main, ["character", "show", "--game", "test", "--character", "captain"])
-    assert json.loads(result.output)["revision"] == '"abc"'
+    assert json.loads(result.output)["revision"] == "a" * 32
     args = [
         "character",
         "set-model",
@@ -513,7 +513,11 @@ def test_character_commands_preserve_revision_and_only_publish_requested_fields(
         "Tested replacement",
     ]
     assert runner.invoke(main, args).exit_code != 0
-    result = runner.invoke(main, args + ["--expected-revision", '"abc"'])
+    for invalid in ['"abc"', '"' + "a" * 32 + '"', "A" * 32]:
+        before = len(calls)
+        rejected = runner.invoke(main, args + ["--expected-revision", invalid])
+        assert rejected.exit_code != 0 and len(calls) == before
+    result = runner.invoke(main, args + ["--expected-revision", "a" * 32])
     assert result.exit_code == 0, result.output
     assert calls[-1] == (
         "PUT",
@@ -525,7 +529,7 @@ def test_character_commands_preserve_revision_and_only_publish_requested_fields(
                 "webKey": "web",
                 "sourceKey": "source",
                 "provenanceKey": None,
-                "expectedRevision": '"abc"',
+                "expectedRevision": "a" * 32,
                 "reason": "Tested replacement",
             }
         },

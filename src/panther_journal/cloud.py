@@ -427,6 +427,14 @@ def character_create_profile(manifest):
     click.echo(json.dumps(api(configuration(), "POST", "/character-profile", json=body), indent=2))
 
 
+def activation_revision(_context, _parameter, value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{32}", value):
+        raise click.BadParameter(
+            "Use the exact 32 lowercase hex activation revision from character show, without embedded quotes"
+        )
+    return value
+
+
 @character.command("set-model")
 @click.option("--game", required=True)
 @click.option("--character", "character_id", required=True)
@@ -438,13 +446,14 @@ def character_create_profile(manifest):
 @click.option(
     "--expected-revision",
     required=True,
+    callback=activation_revision,
     help="Exact 32-hex current activation revision from character show.",
 )
 @click.option("--reason", required=True, help="Why this model is becoming the current model.")
 def character_set_model(
     game, character_id, web_key, source_key, provenance_key, expected_revision, reason
 ):
-    """Publish a model; preserve the portrait, previous profile, and all old assets."""
+    """Publish a paired model edition; preserve the portrait and all previous artwork."""
     body = {
         "gameId": slug(game),
         "characterId": slug(character_id),
@@ -461,10 +470,10 @@ def character_set_model(
 @click.option("--game", required=True)
 @click.option("--character", "character_id", required=True)
 @click.option("--portrait-key", required=True)
-@click.option("--expected-revision", required=True)
+@click.option("--expected-revision", required=True, callback=activation_revision)
 @click.option("--reason", required=True)
 def character_set_portrait(game, character_id, portrait_key, expected_revision, reason):
-    """Replace the selected portrait, preserving old assets, profile history and model."""
+    """Select a new portrait/model pair, preserving old editions and the selected model."""
     body = {
         "gameId": slug(game),
         "characterId": slug(character_id),

@@ -18,10 +18,13 @@ panther model jobs --job-id JOB_ID
 ```
 
 The manifest includes `kind`, `gameId`, `characterId`, `appearanceId`, `revisionId`,
-`expectedRevision` (the exact quoted profile revision), and `views`. The eight view labels are
+`expectedRevision` (the exact 32-hex activation revision), and `views`. The eight view labels are
 `front`, `front-right`, `right`, `back-right`, `back`, `back-left`, `left`, `front-left`.
 Each maps to a distinct existing immutable Panther image key. The server checks type, size,
-checksum, game, completeness, and current profile revision before committing anything.
+checksum, game, explicit character/appearance metadata, completeness, and current activation
+revision before committing anything. Workflow v2 pins the exact appearance descriptor and
+portrait/model/source selection; its job identity includes those immutable pins. Claims require
+workerVersion=2, preventing an old worker from consuming the changed contract.
 
 The completed-set commit is the event trigger: no separate generation command is needed.
 Individual image uploads deliberately do not trigger partial builds. Updated images require a
@@ -152,8 +155,13 @@ Old releases and logs are retained for explicit cleanup, not silently deleted.
    renders. At most two candidates are tried; failed quality leaves the old model current.
 6. Upload candidate files, inspection renders, evidence, and provenance through Panther. The broker
    verifies the evidence matches the candidate, locks reference advancement briefly, checks that
-   this is still the latest job and the original profile revision, then publishes through the
-   existing conditional model-selection logic. It preserves portrait, prior profile, and assets.
+   this is still the latest job and the original activation revision, then publishes a new
+   immutable artwork pair. It preserves the portrait, earlier selections, and source assets.
+
+Before deploying the appearance cutover, inspect the complete model-job inventory through
+Panther authentication and stop old workers. Unpinned nonterminal jobs are explicit rollout
+blockers: do not guess their selected source, rewrite checksum pins, or silently process them
+using today's artwork. Historical completed job documents retain actual generation provenance.
 
 The quality judgment remains fallible. Successful rendering alone is not proof of likeness.
 Input contradictions, structural failures, browser failures, or low visual quality stop publication.
