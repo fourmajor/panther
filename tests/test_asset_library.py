@@ -55,6 +55,23 @@ def test_transcript_projection_observes_speakers_not_roster_attendance(library):
     assert lib.transcript_summary({})["state"] == "unavailable"
 
 
+def test_novel_summary_observes_title_without_manuscript_or_approval(library):
+    lib, _, _ = library
+    asset = {"key": "games/example-game/assets/chapter/original/chapter.json",
+             "lastModified": "2026-01-01T00:00:00Z", "metadata": {}}
+    doc = {"entityType": "EditorialArtifact", "stage": "novel-chapter", "gameId": "example-game", "jobId": "a" * 64,
+           "sessionId": "session-one", "publicationStatus": "accepted-with-notes",
+           "payload": {"chapter": "# The Lantern\n\nSecret manuscript."}}
+    summary = lib.novel_summary(doc, asset)
+    assert summary["title"] == "The Lantern"
+    assert summary["publicationStatus"] == "accepted-with-notes"
+    assert "Secret manuscript" not in json.dumps(summary)
+    assert "approved" not in summary
+    assert lib.novel_summary({**doc, "jobId": "bad"}, asset)["state"] == "unavailable"
+    assert lib.novel_summary({**doc, "publicationStatus": "pending"}, asset)["state"] == "unavailable"
+    assert lib.novel_summary({**doc, "gameId": "other-game"}, asset)["state"] == "unavailable"
+
+
 def test_library_access_uses_private_configuration_not_a_builtin_identity(library, monkeypatch):
     import browse_index
     monkeypatch.setattr(browse_index, "page", lambda *_: {"assets": [], "cursor": None})

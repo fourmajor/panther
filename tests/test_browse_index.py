@@ -24,7 +24,7 @@ def index(monkeypatch):
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
             AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST")
-        module.table().put_item(Item={"pk": "v2#catalog", "sk": "ready"})
+        module.table().put_item(Item={"pk": "v3#catalog", "sk": "ready"})
         yield module
 
 
@@ -97,8 +97,9 @@ def test_backfill_dry_run_apply_verify(index, monkeypatch):
 
 
 def test_initial_cutover_fails_closed(index):
-    index.table().delete_item(Key={"pk": "v2#catalog", "sk": "ready"})
+    index.table().delete_item(Key={"pk": "v3#catalog", "sk": "ready"})
     index.table().put_item(Item={"pk": "v1#catalog", "sk": "ready"})
+    index.table().put_item(Item={"pk": "v2#catalog", "sk": "ready"})
     with pytest.raises(index.IndexNotReady):
         index.page("example", "videos")
 

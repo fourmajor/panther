@@ -1,6 +1,9 @@
 import importlib
 import json
 
+import boto3
+from botocore.exceptions import ClientError
+
 import pytest
 
 from test_editorial import editorial, submitted  # noqa: F401
@@ -10,7 +13,24 @@ from test_model_jobs import broker, put, request, unpack  # noqa: F401
 @pytest.fixture
 def novel(editorial, monkeypatch):  # noqa: F811
     monkeypatch.delitem(__import__("sys").modules, "novel", raising=False)
-    return importlib.import_module("novel")
+    monkeypatch.setenv("ASSET_BROWSE_TABLE", "novel-browse")
+    boto3.resource("dynamodb").create_table(
+        TableName="novel-browse",
+        KeySchema=[
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
+        BillingMode="PAY_PER_REQUEST",
+    )
+    module = importlib.import_module("novel")
+    monkeypatch.setattr(module.browse_index, "boto3", boto3)
+    monkeypatch.setattr(module.browse_index, "ClientError", ClientError)
+    module.browse_index.table().put_item(Item={"pk": "v3#catalog", "sk": "ready"})
+    return module
 
 
 def completed(novel, *, status="DONE", publication="accepted"):
@@ -25,9 +45,12 @@ def completed(novel, *, status="DONE", publication="accepted"):
         "stage": "novel-chapter",
         "publicationStatus": publication,
         "payload": {
-            "readerReferences": {"schemaVersion": 1, "mentions": [
-                {"text": "the captain", "target": {"type": "character", "id": "captain"}}
-            ]},
+            "readerReferences": {
+                "schemaVersion": 1,
+                "mentions": [
+                    {"text": "the captain", "target": {"type": "character", "id": "captain"}}
+                ],
+            },
             "chapter": "**Adapted from fictional microphone-test material; not campaign canon.**\n\n# A Synthetic Story\n\nOnly the **story**.\n\n## Editorial notes\n\nA fictional sign on the wall.",
             "review": {
                 "markdown": "Private editorial audit",
@@ -47,6 +70,7 @@ def completed(novel, *, status="DONE", publication="accepted"):
             "output": reference,
         }
     )
+    novel.browse_index.refresh(m.media, key)
     return job, key
 
 
@@ -106,9 +130,13 @@ def test_altered_artifact_and_foreign_reference_are_rejected(novel):
 
 def test_pagination_is_bounded_and_cursor_scoped_to_game(novel):
     completed(novel)
-    for i in range(25):
-        novel.jobs.table.put_item(
-            Item={"pk": "RUNS", "sk": f"{i:064x}", "jobId": f"{i:064x}", "gameId": "test-game"}
+    for i in range(101):
+        novel.browse_index.table().put_item(
+            Item={
+                "pk": novel.browse_index.partition("test-game", "novels"),
+                "sk": f"z{i:04}",
+                "payload": json.dumps({"novel": {"state": "unavailable"}}),
+            }
         )
     page = unpack(request(novel, "GET /novel", query={"gameId": "test-game"}))
     assert page["cursor"]
@@ -117,17 +145,42 @@ def test_pagination_is_bounded_and_cursor_scoped_to_game(novel):
     )
     assert not next_page["cursor"]
     assert (
-        request(novel, "GET /novel", query={"gameId": "other-game", "cursor": page["cursor"]})[
-            "statusCode"
-        ]
-        == 400
-    )
-    assert (
         request(novel, "GET /novel", query={"gameId": "test-game", "cursor": "garbage"})[
             "statusCode"
         ]
         == 400
     )
+    assert (
+        request(novel, "GET /novel", query={"gameId": "other-game", "cursor": page["cursor"]})[
+            "statusCode"
+        ]
+        == 400
+    )
+
+
+def test_listing_never_opens_manuscripts_and_uses_completed_exact_output(novel, monkeypatch):
+    job, key = completed(novel)
+    monkeypatch.setattr(novel.jobs, "document", lambda *_: pytest.fail("Listing opened manuscript"))
+    monkeypatch.setattr(
+        novel.jobs.media.s3, "head_object", lambda **_: pytest.fail("Listing read S3")
+    )
+    q = {"gameId": "test-game"}
+    assert unpack(request(novel, "GET /novel", query=q))["chapters"][0]["assetKey"] == key
+    novel.jobs.table.update_item(
+        Key={"pk": "TASKS", "sk": f"{job['jobId']}:novel-chapter"},
+        UpdateExpression="SET #o = :o",
+        ExpressionAttributeNames={"#o": "output"},
+        ExpressionAttributeValues={":o": {"key": key + "other"}},
+    )
+    assert unpack(request(novel, "GET /novel", query=q))["chapters"] == []
+
+
+def test_index_upgrade_and_incomplete_status_reads_fail_closed(novel, monkeypatch):
+    completed(novel)
+    monkeypatch.setattr(novel, "committed_records", lambda _: (_ for _ in ()).throw(RuntimeError()))
+    assert request(novel, "GET /novel", query={"gameId": "test-game"})["statusCode"] == 503
+    novel.browse_index.table().delete_item(Key={"pk": "v3#catalog", "sk": "ready"})
+    assert request(novel, "GET /novel", query={"gameId": "test-game"})["statusCode"] == 503
 
 
 def test_working_draft_label_is_not_added_to_prose(novel):

@@ -1,12 +1,53 @@
 """Read-only, game-scoped projection of completed novel stages; never modifies artifacts."""
 
-import base64
-import json
 import re
+from datetime import datetime
+import time
 
-from boto3.dynamodb.conditions import Attr, Key
+import boto3
+
 from botocore.exceptions import ClientError
 import editorial_jobs as jobs
+import browse_index
+
+
+def committed_records(summaries):
+    """Bounded projected batch reads; no manuscript reads and no task-token projection."""
+    keys = [
+        {"pk": prefix, "sk": s["id"] + (":novel-chapter" if prefix == "TASKS" else "")}
+        for s in summaries
+        for prefix in ("RUNS", "TASKS")
+    ]
+    keys = list({(k["pk"], k["sk"]): k for k in keys}.values())
+    records = {}
+    deadline = time.monotonic() + 20
+    for offset in range(0, len(keys), 100):
+        pending = {
+            jobs.table.name: {
+                "Keys": keys[offset : offset + 100],
+                "ConsistentRead": True,
+                "ProjectionExpression": "pk, sk, gameId, sessionId, createdAt, #s, #o",
+                "ExpressionAttributeNames": {"#s": "status", "#o": "output"},
+            }
+        }
+        for _ in range(20):
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    "Chapter status reads timed out; no incomplete list was returned"
+                )
+            response = boto3.resource("dynamodb").batch_get_item(RequestItems=pending)
+            records.update(
+                {
+                    (r["pk"], r["sk"]): r
+                    for r in response.get("Responses", {}).get(jobs.table.name, [])
+                }
+            )
+            pending = response.get("UnprocessedKeys", {})
+            if not pending:
+                break
+        if pending:
+            raise RuntimeError("Chapter status reads are incomplete; retry")
+    return records
 
 
 def chapter(job):
@@ -73,6 +114,7 @@ def handler(event, _context):
     # Same configured publisher access as the editorial/catalog APIs; memberships are game roles,
     # not authorization grants. Future multi-group access must change this policy explicitly.
     from access_policy import authorized
+
     if not authorized(claims, "MODEL_PUBLISHERS"):
         return jobs.response(403, {"error": "Owner or DM sign-in required"})
     q = event.get("queryStringParameters") or {}
@@ -93,36 +135,47 @@ def handler(event, _context):
             )
         if event.get("routeKey") != "GET /novel":
             return jobs.response(404, {"error": "Unknown operation"})
-        args = {
-            "KeyConditionExpression": Key("pk").eq("RUNS"),
-            "FilterExpression": Attr("gameId").eq(game),
-            "ConsistentRead": True,
-            "Limit": 20,
-        }
-        if q.get("cursor"):
-            cursor = json.loads(base64.urlsafe_b64decode(q["cursor"]))
-            if cursor.get("gameId") != game or not re.fullmatch(
-                r"[a-f0-9]{64}", cursor.get("sk", "")
-            ):
-                raise ValueError("Invalid cursor")
-            args["ExclusiveStartKey"] = {"pk": "RUNS", "sk": cursor["sk"]}
-        page = jobs.table.query(**args)
+        page = browse_index.page(game, "novels", q.get("cursor"))
+        summaries = [
+            a["novel"] for a in page["assets"] if a.get("novel", {}).get("state") == "available"
+        ]
+        records = committed_records(summaries)
         chapters = []
-        for job in page.get("Items", []):
-            result = chapter(job)
-            if result:
-                chapters.append(
-                    {
-                        k: v for k, v in result.items()
-                        if k not in {"markdown", "details", "readerReferences"}
-                    }
-                )
-        cursor = None
-        if page.get("LastEvaluatedKey"):
-            cursor = base64.urlsafe_b64encode(
-                json.dumps({"gameId": game, "sk": page["LastEvaluatedKey"]["sk"]}).encode()
-            ).decode()
-        return jobs.response(200, {"chapters": chapters, "cursor": cursor})
+        for asset in page["assets"]:
+            summary = asset.get("novel", {})
+            if summary.get("state") != "available":
+                continue
+            task = records.get(("TASKS", f"{summary['id']}:novel-chapter"))
+            job = records.get(("RUNS", summary["id"]))
+            if (
+                not task
+                or task.get("status") != "DONE"
+                or task.get("output", {}).get("key") != asset["key"]
+                or not job
+                or job.get("gameId") != game
+                or job.get("sessionId") != summary["sessionId"]
+            ):
+                continue  # Uploaded candidates are not committed completed chapters.
+            timestamp = int(
+                datetime.fromisoformat(summary["publishedAt"].replace("Z", "+00:00")).timestamp()
+            )
+            chapters.append(
+                {
+                    **summary,
+                    "gameId": game,
+                    "createdAt": job["createdAt"],
+                    "publishedAt": timestamp,
+                    "notice": "",
+                    "generation": asset.get("metadata", {}).get("extra", {}).get("generation"),
+                }
+            )
+        return jobs.response(200, {"chapters": chapters, "cursor": page["cursor"]})
+    except browse_index.IndexNotReady as error:
+        return jobs.response(503, {"error": str(error)})
+    except RuntimeError:
+        return jobs.response(
+            503, {"error": "Chapter status reads are incomplete; refresh to retry"}
+        )
     except (ValueError, TypeError, KeyError, AttributeError):
         return jobs.response(
             400, {"error": "Could not read the chapter or page; refresh and retry"}
