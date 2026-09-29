@@ -27,7 +27,8 @@ async function fixture(page) {
       memberships:[{playerId:'person',role:'dungeon-master',characterIds:[]}] };
     if (url.pathname === '/objects') body = { prefixes:[],objects:[{name: url.searchParams.get('prefix').includes('test-b') ? 'test-only.flac' : 'campaign-only.flac', key: url.searchParams.get('prefix')+'assets/test/original/audio.flac',size:10,lastModified:'2026-01-01T00:00:00Z'}] };
     if (url.pathname === '/characters') body = {characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}] : [], cursor:null};
-    if (url.pathname === '/character') return route.fulfill({status:404,json:{error:'Character not found'},headers:jsonHeaders});
+    if (url.pathname === '/character') body={character:{gameId:id,id:url.searchParams.get('characterId'),name:url.searchParams.get('characterId')==='guide'?'Lantern Guide':'Test Hero'},appearance:null,selection:null,poster:null,model:null,warnings:[]};
+    if (url.pathname === '/character-versions') body={schemaVersion:2,appearances:[],selections:[],activations:[],current:null,activationRevision:null};
     return route.fulfill({ json:body, headers:jsonHeaders });
   });
   await page.route('https://panther.place/**', route => {
