@@ -123,6 +123,52 @@ test('failed catalog removes activity and offers recovery', async ({page}) => {
   await expect(page.locator('#library-status .loading-state')).toHaveCount(0);
 });
 
+for (const width of [1280,390]) for (const filename of ['portrait.png','take.mp4','model.blend']) {
+  test(`original download uses selected revision and fresh attachment link: ${filename} at ${width}`, async ({page}) => {
+    await page.setViewportSize({width,height:900}); await fixture(page);
+    const key=prefix+'revision-two/original/'+filename;
+    let signed=0;
+    await page.route(`${api}/object-url?**`, route => {
+      const query=new URL(route.request().url()).searchParams;
+      expect(query.get('key')).toBe(key);
+      const downloading=query.get('download')==='true';
+      if(downloading) signed++;
+      const contentType=filename.endsWith('.png')?'image/png':filename.endsWith('.mp4')?'video/mp4':'application/octet-stream';
+      return route.fulfill({headers,json:{key,filename,size:14,contentType,expiresIn:300,
+        url:downloading?`https://audio.example/download/${signed}`:'https://audio.example/preview'}});
+    });
+    await page.route('https://audio.example/download/**',route=>route.fulfill({contentType:'application/octet-stream',
+      headers:{'content-disposition':`attachment; filename="${filename}"`},body:Buffer.from('original bytes')}));
+    await page.route('https://audio.example/preview',route=>route.fulfill({contentType:'image/svg+xml',
+      body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240"><rect width="400" height="240" fill="#334436"/></svg>'}));
+    await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(key)}`);
+    const button=page.getByRole('button',{name:'Download original',exact:true});
+    await expect(button).toBeEnabled();
+    await page.locator('#preview-dialog').evaluate(el=>el.scrollTop=el.scrollHeight);
+    await expect(button).toBeInViewport();
+    await expect(page.getByRole('link',{name:'Open original',exact:true})).toBeInViewport();
+    for(let i=0;i<2;i++) {
+      const pending=page.waitForEvent('download'); await button.click();
+      const downloaded=await pending;
+      expect(downloaded.suggestedFilename()).toBe(filename);
+      expect(fs.readFileSync(await downloaded.path(),'utf8')).toBe('original bytes');
+    }
+    expect(signed).toBe(2);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:test.info().outputPath(`download-${filename}-${width}.png`)});
+  });
+}
+
+test('download permission failure is actionable and does not navigate away',async({page})=>{
+  await fixture(page); await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(video)}`);
+  await expect(page.getByRole('button',{name:'Download original',exact:true})).toBeEnabled();
+  await page.route(`${api}/object-url?**`,route=>route.fulfill({status:403,headers,json:{error:'Not permitted'}}));
+  await page.getByRole('button',{name:'Download original',exact:true}).click();
+  await expect(page.locator('#asset-download-status')).toContainText('Download unavailable');
+  await expect(page.locator('#preview-dialog')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Download original',exact:true})).toBeEnabled();
+});
+
 for (const width of [1280,390]) test(`image creation metadata distinguishes costs and inference at ${width}`, async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page);
   const key=prefix+'portrait-a/original/portrait.png';

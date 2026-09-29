@@ -92,6 +92,7 @@
               <label for="portrait-version">Official portrait <select id="portrait-version" aria-label="Official portrait version"></select></label>
             </div>
             <p id="appearance-status" role="status"></p>
+            <div id="appearance-downloads" class="appearance-pickers" aria-label="Download selected appearances"></div>
             <img id="portrait-version-preview" class="portrait-version-preview" alt="" hidden>
           </section>
           <div class="model-layout" id="character-model-area">
@@ -227,7 +228,9 @@
       <section id="asset-links" class="asset-links" aria-label="Asset connections"></section>
       <div class="preview-footer">
         <span id="preview-details"></span>
+        <button class="quiet-button" id="asset-download" type="button" disabled>Download original</button>
         <a class="quiet-button link-button" id="open-original" target="_blank" rel="noreferrer">Open original</a>
+        <span id="asset-download-status" role="status"></span>
       </div>
     </dialog>
 
