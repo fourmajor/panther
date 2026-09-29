@@ -1,5 +1,7 @@
 import copy
 import hashlib
+import runpy
+from pathlib import Path
 
 import pytest
 from click import ClickException
@@ -97,3 +99,53 @@ def test_known_version_families_survive_new_physical_states_and_reordered_select
         ]
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schemaVersion": True},
+        {"schemaVersion": 1.0},
+        {"number": 10001},
+        {"number": True},
+        {"seriesId": "Not Valid"},
+        {"seriesId": "a" * 97},
+        {"previousKey": "games/test-game/assets/b/original/b.png"},
+        {"number": 2, "previousKey": []},
+        {"number": 2, "previousKey": "games/foreign/assets/a/original/a.png"},
+        {"number": 2, "previousKey": "not-an-asset"},
+    ],
+)
+def test_planner_matches_server_version_shape_rejections(change):
+    key = "games/test-game/assets/a/original/a.png"
+    item = record(key)
+    version = {"schemaVersion": 1, "seriesId": "known-family", "number": 1, **change}
+    item["metadata"]["extra"]["version"] = version
+    validator = runpy.run_path(
+        str(Path(__file__).parents[1] / "infra/lambda/media-api/asset_metadata.py")
+    )["validate_version"]
+    with pytest.raises(ValueError):
+        validator(version, key)
+    with pytest.raises(ClickException, match="Invalid explicit asset version"):
+        version_plan([item], {})
+
+
+def test_first_version_explicit_null_predecessor_is_preserved_like_server():
+    key = "games/test-game/assets/a/original/a.png"
+    item = record(key)
+    version = {"schemaVersion": 1, "seriesId": "known-family", "number": 1, "previousKey": None}
+    item["metadata"]["extra"]["version"] = version
+    validator = runpy.run_path(
+        str(Path(__file__).parents[1] / "infra/lambda/media-api/asset_metadata.py")
+    )["validate_version"]
+    assert validator(version, key) == version
+    assert version_plan([item], {})["migrations"] == []
+    assert item["metadata"]["extra"]["version"] == version
+
+
+def test_malformed_extra_is_an_explicit_blocker_not_an_unhandled_crash():
+    key = "games/test-game/assets/a/original/a.png"
+    item = record(key)
+    item["metadata"]["extra"] = []
+    with pytest.raises(ClickException, match="Invalid explicit asset metadata"):
+        version_plan([item], {})
