@@ -220,6 +220,36 @@ input revisions, then export and verify the actual animated GLB. Publish a new a
 and artwork pair through Panther. Viewer capability does not prove existing models are rigged
 or animation-ready, and does not authorize a paid animation provider.
 
+#### Local animation review gate
+
+Start from the exact selected model and portrait downloaded through Panther with their checksums
+and selection/profile revisions retained privately. Preserve the original GLB and make a separate
+editable scene and delivery candidate. Do not silently replace geometry or promote a candidate
+because it has an animation clip. Motion direction is an adaptation choice, not new character canon.
+
+Review the fresh-imported exported GLB, not just the authored scene. Read its sampler input
+accessor time bounds and map those seconds to the review scene's actual frame rate; glTF export
+may normalize the first authored Blender frame to time zero. Comparing the authored frame numbers
+after import can falsely report a seam mismatch. Configure the desired review frame rate **before**
+import: the importer converts seconds to keyframe positions using the scene's frame rate. Changing
+FPS afterward does not rescale those keys and can sample the wrong phase or endpoint. Check finite
+evaluated (deformed) mesh positions,
+actual moving vertices, start/end positional agreement and stationary body/equipment where intended.
+An embedded clip with no evaluated movement is not a successful idle animation. Record the sampled
+times and tolerance, and retain failed checks when correcting a test assumption.
+
+Inspect at least front/three-quarter and profile renders at the rest and opposing motion extremes.
+Check all face, ear, beard/hair and costume attachments, including small separate detail meshes;
+skinning the main head does not bind those pieces automatically. Sampled positional equality is not
+proof of a smooth velocity seam, natural performance or faithful anatomy. Inspect the loop in motion
+before promoting it, and disclose any sampled-only coverage. Base-model quality and animation quality
+are independent: preserve the current static official selection when either required gate fails.
+
+Character-specific scripts, source files, renders, pins and review reports remain outside Git.
+Unactivated local studies are not published assets or completed workflow coverage. Future generalized
+worker integration must preserve these gates and immutable input pins, rather than blindly adding a
+head-turn to every current model. This guidance does not change an in-flight job or authorize spending.
+
 No EC2, NAT, provisioned database, hosted runner, or always-on inference service is introduced.
 Costs are retained storage, API/queue activity, and state transitions. Laptop polling is usage,
 not literally zero; stop the worker to eliminate idle polls. Step Functions waiting itself does
