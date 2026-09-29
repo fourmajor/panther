@@ -15,7 +15,7 @@ const chapters = [
 ].map(c=>({...c,assetKey:`games/campaign-a/assets/chapter-${c.id.slice(0,8)}/original/chapter.json`,gameId:'campaign-a',publishedAt:c.createdAt,publicationStatus:'accepted',reviewStatus:'ai-reviewed-unverified',notice:''}));
 
 async function fixture(page) {
-  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,sub:'synthetic-reader','cognito:username':'example-operator'}))+'.test'})));
+  await page.addInitScript(()=>{if(!sessionStorage.getItem('panther.tokens'))sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,sub:'synthetic-reader','cognito:username':'example-operator'}))+'.test'}));});
   await page.route(`${origin}/**`, route=>{
     const pathname = new URL(route.request().url()).pathname;
     if(pathname==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
