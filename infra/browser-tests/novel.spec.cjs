@@ -87,8 +87,8 @@ async function previewFixture(page) {
   // Synthetic one-pixel PNG, never private artwork.
   const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
   await page.route('https://images.example/**',route=>route.fulfill({body:png,contentType:'image/png'}));
-  await page.route(`${api}/character-profile*`,route=>route.fulfill({headers,json:{profile:{id:'mira',name:'Mira Vale',
-    summary:'A patient navigator who charts the harbor and keeps careful records.',model:{posterKey:portrait}}}}));
+  await page.route(`${api}/character-details*`,route=>route.fulfill({headers,json:{character:{id:'mira',name:'Mira Vale',details:{
+    overview:'A patient navigator who charts the harbor and keeps careful records.',thumbnailAssetKey:portrait}}}}));
   await page.route(`${api}/object-url*`,route=>route.fulfill({headers,json:{key:new URL(route.request().url()).searchParams.get('key'),
     url:'https://images.example/portrait.png',size:png.length,contentType:'image/png',expiresIn:300}}));
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[{key:chart,name:'map.png',kind:'map',contentType:'image/png',size:png.length,
@@ -170,9 +170,9 @@ test('touch opens a preview first and its explicit open link navigates',async({b
 test('late or failed previews never leak across games and never prevent navigation',async({page})=>{
   await previewFixture(page); let release, arrived;
   const waiting=new Promise(resolve=>{arrived=resolve;});
-  await page.route(`${api}/character-profile*`,async route=>{
+  await page.route(`${api}/character-details*`,async route=>{
     arrived(); await new Promise(resolve=>{release=resolve;});
-    await route.fulfill({headers,json:{profile:{summary:'STALE CHARACTER DESCRIPTION'}}});
+    await route.fulfill({headers,json:{character:{details:{overview:'STALE CHARACTER DESCRIPTION'}}}});
   });
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await expect(page.locator('#novel-prose a')).toHaveCount(3);
@@ -184,7 +184,7 @@ test('late or failed previews never leak across games and never prevent navigati
 
 test('unsafe summary text and unavailable images remain inert and text-only',async({page})=>{
   await previewFixture(page);
-  await page.route(`${api}/character-profile*`,route=>route.fulfill({headers,json:{profile:{summary:'<script>window.attacked=true</script>',model:{posterKey:'games/foreign/assets/portrait/original/x.png'}}}}));
+  await page.route(`${api}/character-details*`,route=>route.fulfill({headers,json:{character:{details:{overview:'<script>window.attacked=true</script>',thumbnailAssetKey:'games/foreign/assets/portrait/original/x.png'}}}}));
   const imageRequests=[]; page.on('request',r=>{if(r.url().includes('/object-url'))imageRequests.push(r.url());});
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await expect(page.locator('#novel-prose a')).toHaveCount(3);

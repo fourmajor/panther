@@ -24,11 +24,6 @@ raw_s3 = s3
 s3 = Storage(raw_s3, BUCKET_NAME)
 SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "300"))
 ROOT_PREFIX = "games/"
-CHARACTER_PROFILE_PATTERN = re.compile(
-    r"^games/(?P<game_id>[a-z0-9]+(?:-[a-z0-9]+)*)/characters/"
-    r"(?P<character_id>[a-z0-9]+(?:-[a-z0-9]+)*)/profile\.json$"
-)
-MAX_CHARACTER_COUNT = 100
 MAX_MODEL_BYTES = 5 * 1024 * 1024
 MAX_POSTER_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
@@ -110,30 +105,6 @@ def _character_summary(profile, *, game_id, character_id):
         "name": name,
         "title": title or "Character",
     }
-
-
-def _list_characters(_event):
-    characters = []
-    game = _query(_event, "gameId")
-    if game is not None and not _valid_slug(game):
-        return _response(400, {"error": "Invalid game identifier"})
-    paginator = s3.get_paginator("list_objects_v2")
-    pages = paginator.paginate(Bucket=BUCKET_NAME, Prefix=f"games/{game}/characters/" if game else ROOT_PREFIX)
-    for page in pages:
-        for item in page.get("Contents", []):
-            match = CHARACTER_PROFILE_PATTERN.fullmatch(item["Key"])
-            if not match:
-                continue
-            profile = _get_json(item["Key"])
-            summary = _character_summary(profile, **match.groupdict())
-            if summary:
-                characters.append(summary)
-            if len(characters) >= MAX_CHARACTER_COUNT:
-                break
-        if len(characters) >= MAX_CHARACTER_COUNT:
-            break
-    characters.sort(key=lambda item: (item["name"].casefold(), item["gameId"], item["id"]))
-    return _response(200, {"characters": characters})
 
 
 def _asset_metadata(key, *, maximum, expected_types):
@@ -832,8 +803,6 @@ def handler(event, _context):
             return _list_objects(event)
         if route_key == "GET /object-url":
             return _object_url(event)
-        if route_key == "GET /characters":
-            return _list_characters(event)
         if route_key == "GET /character":
             return _character(event)
         return _response(404, {"error": "Not found"})

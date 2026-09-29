@@ -252,7 +252,10 @@ def slug(value):
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Structured metadata JSON; see panther instructions.",
 )
-@click.option("--new-version-of", help="Immutable key of the earlier asset; Panther assigns the next version in that series.")
+@click.option(
+    "--new-version-of",
+    help="Immutable key of the earlier asset; Panther assigns the next version in that series.",
+)
 @click.option(
     "--json", "as_json", is_flag=True, help="Machine-readable result without signed URLs."
 )
@@ -274,7 +277,9 @@ def upload(file, game, asset, kind, metadata, new_version_of=None, as_json=False
     if new_version_of:
         extra = details.setdefault("extra", {})
         if not isinstance(extra, dict) or "version" in extra:
-            raise click.ClickException("Set the predecessor with --new-version-of, not metadata.extra.version.")
+            raise click.ClickException(
+                "Set the predecessor with --new-version-of, not metadata.extra.version."
+            )
         extra["version"] = {"previousKey": new_version_of}
     content_type = {".glb": "model/gltf-binary", ".md": "text/markdown"}.get(
         file.suffix.lower(), mimetypes.guess_type(file.name)[0] or "application/octet-stream"
@@ -381,9 +386,13 @@ def character():
 
 
 @character.command("list")
-def character_list():
-    """List characters as JSON."""
-    click.echo(json.dumps(api(configuration(), "GET", "/characters"), indent=2))
+@click.option("--game", required=True)
+def character_list(game):
+    """List the complete structured character roster for a game."""
+    from panther_journal.character_details import pages
+
+    records = pages(configuration(), "/characters", {"gameId": slug(game)}, "characters")
+    click.echo(json.dumps({"characters": records}, indent=2))
 
 
 @character.command("show")
@@ -457,15 +466,25 @@ def character_set_model(
 @click.option("--reason", required=True)
 def character_set_portrait(game, character_id, portrait_key, expected_revision, reason):
     """Replace the selected portrait, preserving old assets, profile history and model."""
-    body = {"gameId": slug(game), "characterId": slug(character_id), "portraitKey": portrait_key,
-            "expectedRevision": expected_revision, "reason": reason}
+    body = {
+        "gameId": slug(game),
+        "characterId": slug(character_id),
+        "portraitKey": portrait_key,
+        "expectedRevision": expected_revision,
+        "reason": reason,
+    }
     click.echo(json.dumps(api(configuration(), "PUT", "/character-portrait", json=body), indent=2))
 
 
 def register(group):
+    from panther_journal.character_details import register as register_details
+
+    register_details(character)
     from panther_journal.video_library import videos
+
     group.add_command(videos)
     from panther_journal.transcript_selection import transcripts
+
     group.add_command(transcripts)
     from panther_journal.shares import share
     from panther_journal.asset_migrations import assets

@@ -74,6 +74,7 @@
         <section class="roster" aria-label="Players"><h2>Players</h2><ul id="player-roster"></ul></section>
         <div class="status" id="characters-status" role="status">Loading…</div>
         <div class="character-list" id="character-list" aria-live="polite"></div>
+        <button class="quiet-button" id="characters-more" type="button" hidden>Load more characters</button>
 
         <article class="character-profile" id="character-profile" hidden>
           <button class="back-button" id="character-back" type="button">← All characters</button>
@@ -85,6 +86,7 @@
             </div>
           </div>
 
+          <section id="character-facts" class="character-facts" aria-label="Character information"></section>
           <p id="character-no-model" hidden>No portrait or 3D model has been added yet.</p>
           <img id="character-portrait-only" class="character-portrait-only" alt="" hidden>
           <section class="appearance-history" id="appearance-history" aria-label="Appearance versions">

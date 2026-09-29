@@ -22,6 +22,20 @@ function mediaExplorerTemplate(stage = "purge"): Template {
   return Template.fromStack(stack);
 }
 
+test("character facts are catalog-owned, authenticated, and migration capability is explicit", () => {
+  const template = mediaExplorerTemplate();
+  for (const RouteKey of ["GET /characters", "GET /character-details", "POST /character-details", "POST /character-details/migrate", "GET /character-details/inventory", "GET /character-details/verify"]) {
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey, AuthorizationType:"JWT"});
+  }
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler:"catalog.handler", Environment:{Variables:Match.objectLike({ASSET_MIGRATORS:"example-operator",CATALOG_EDITORS:"example-operator,example-editor"})},
+  });
+  const routes = Object.values(template.findResources("AWS::ApiGatewayV2::Route"));
+  const character = routes.find((r:any)=>r.Properties.RouteKey==="GET /characters") as any;
+  const details = routes.find((r:any)=>r.Properties.RouteKey==="GET /character-details") as any;
+  assert.deepEqual(character.Properties.Target,details.Properties.Target);
+});
+
 test("gallery image links use one JWT-authorized batch route", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -479,7 +493,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 64);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 69);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

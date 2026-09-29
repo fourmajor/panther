@@ -366,11 +366,13 @@ def test_character_commands_preserve_revision_and_only_publish_requested_fields(
 
     def api(_config, method, route, **kwargs):
         calls.append((method, route, kwargs))
+        if route == "/characters":
+            return {"characters": [], "cursor": None}
         return {"profile": {"id": "captain"}, "revision": '"abc"'}
 
     monkeypatch.setattr(cloud, "api", api)
     runner = CliRunner()
-    assert runner.invoke(main, ["character", "list"]).exit_code == 0
+    assert runner.invoke(main, ["character", "list", "--game", "test-game"]).exit_code == 0
     result = runner.invoke(main, ["character", "show", "--game", "test", "--character", "captain"])
     assert json.loads(result.output)["revision"] == '"abc"'
     args = [

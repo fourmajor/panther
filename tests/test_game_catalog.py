@@ -20,6 +20,7 @@ def catalog(monkeypatch):
     monkeypatch.setenv("ASSET_BUCKET_NAME", "test-assets")
     monkeypatch.setenv("CATALOG_TABLE", "test-catalog")
     monkeypatch.setenv("CATALOG_EDITORS", "example-operator,example-editor")
+    monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
     with mock_aws():
         boto3.client("dynamodb").create_table(

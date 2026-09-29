@@ -140,22 +140,12 @@ def response_body(response):
     return json.loads(response["body"])
 
 
-def test_lists_character_manifests_without_asset_urls(monkeypatch):
+def test_old_character_storage_scan_route_is_retired(monkeypatch):
     module, _fake_s3 = load_media_api(monkeypatch)
 
     response = module.handler(event("/characters"), None)
 
-    assert response["statusCode"] == 200
-    assert response_body(response) == {
-        "characters": [
-            {
-                "gameId": "example-game",
-                "id": "example-character",
-                "name": "Example Character",
-                "title": "Navigator",
-            }
-        ]
-    }
+    assert response["statusCode"] == 404
 
 
 def test_portrait_only_character_can_be_viewed(monkeypatch):

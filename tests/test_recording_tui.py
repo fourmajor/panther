@@ -53,6 +53,17 @@ def test_tui_stop_resize_errors_history_and_finalization(size, tmp_path):
         backend = FakeBackend()
         app = RecordingApp(backend, reduced_motion=True)
         async with app.run_test(size=size) as pilot:
+
+            async def settled(predicate):
+                # Timer snapshots run in a thread and position restoration runs
+                # after a screen refresh. Wait for the observed state, not one
+                # presumed scheduler turn on a loaded runner.
+                async with asyncio.timeout(3):
+                    while not predicate():
+                        await app.refresh_status()
+                        await pilot.pause()
+                        await asyncio.sleep(0.02)
+
             await app.refresh_status()
             await pilot.pause()
             assert backend.started
@@ -67,15 +78,24 @@ def test_tui_stop_resize_errors_history_and_finalization(size, tmp_path):
             log.scroll_home(animate=False)
             await pilot.pause()
             backend.status["text"] += "\n[101s] Alex: new speech"
-            await app.refresh_status()
-            await pilot.pause()
+            await settled(
+                lambda: (
+                    app.transcript == backend.status["text"]
+                    and not app.following
+                    and log.scroll_y == 0
+                )
+            )
             assert log.scroll_y == 0 and not app.following
             assert "line 0" in app.transcript and "new speech" in app.transcript
             # Earlier backfill must keep the visible speech anchored, not just its
             # numerical offset within a now-longer transcript.
             backend.status["text"] = "Earlier backfilled speech\n" + backend.status["text"]
-            await app.refresh_status()
-            await pilot.pause()
+            await settled(
+                lambda: (
+                    app.transcript == backend.status["text"]
+                    and log.lines[int(log.scroll_y)].text.startswith("[0s] Alex")
+                )
+            )
             assert log.lines[int(log.scroll_y)].text.startswith("[0s] Alex")
             await pilot.press("l")
             await pilot.pause()
