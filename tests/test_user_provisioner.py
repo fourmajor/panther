@@ -180,7 +180,25 @@ def test_aws_errors_do_not_expose_private_values(provisioner, monkeypatch):
     assert str(error.value) == "AccessDeniedException"
 
 
-def test_prepare_and_purge_rollback_never_delete_or_reset_credentials(provisioner, monkeypatch):
+@pytest.mark.parametrize("version", [None, 1, "prepare", True, 3])
+@pytest.mark.parametrize("operation", ["Create", "Update", "Delete"])
+def test_obsolete_policy_fails_before_any_account_or_parameter_operation(
+    provisioner, monkeypatch, version, operation
+):
+    module, properties = provisioner
+
+    def forbidden(**_kwargs):
+        pytest.fail("Invalid policy must not access accounts or credentials")
+
+    monkeypatch.setattr(module.cognito, "admin_get_user", forbidden)
+    monkeypatch.setattr(module.cognito, "admin_create_user", forbidden)
+    monkeypatch.setattr(module.ssm, "delete_parameter", forbidden)
+    invalid = {**properties, "CredentialPolicyVersion": version}
+    with pytest.raises(ValueError, match="policy version 2"):
+        module.handler({"RequestType": operation, "ResourceProperties": invalid}, None)
+
+
+def test_obsolete_rollback_cannot_restore_password_copies_or_reset_accounts(provisioner, monkeypatch):
     module, properties = provisioner
     module.cognito.admin_create_user(
         UserPoolId=properties["UserPoolId"], Username=properties["Username"]
@@ -190,12 +208,13 @@ def test_prepare_and_purge_rollback_never_delete_or_reset_credentials(provisione
     )
 
     def forbidden(**_kwargs):
-        pytest.fail("Preparation/rollback must not read or reset credentials")
+        pytest.fail("Rollback must not read or reset credentials")
 
     monkeypatch.setattr(module.cognito, "admin_set_user_password", forbidden)
     monkeypatch.setattr(module.ssm, "get_parameter", forbidden)
     prepared = {k: v for k, v in properties.items() if k != "CredentialPolicyVersion"}
-    module.handler({"RequestType": "Update", "ResourceProperties": prepared}, None)
+    with pytest.raises(ValueError, match="policy version 2"):
+        module.handler({"RequestType": "Update", "ResourceProperties": prepared}, None)
     assert module.ssm.parameters
     module.handler(
         {
@@ -205,8 +224,7 @@ def test_prepare_and_purge_rollback_never_delete_or_reset_credentials(provisione
         None,
     )
     assert not module.ssm.parameters
-    module.handler(
-        {"RequestType": "Update", "ResourceProperties": prepared}, None
-    )  # Purge rollback uses safe deployed code.
+    with pytest.raises(ValueError, match="policy version 2"):
+        module.handler({"RequestType": "Update", "ResourceProperties": prepared}, None)
     assert not module.ssm.parameters
     assert module._user_exists(properties["UserPoolId"], properties["Username"])

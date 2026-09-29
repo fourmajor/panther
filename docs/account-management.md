@@ -6,12 +6,16 @@ and invitation addresses are private deployment data, never repository fixtures 
 
 ## Credential-policy version 2
 
-This is a **two-deployment** cutover. The first deployment (default `credentialCutover=prepare`)
-installs the non-resetting handler and narrowed permissions without invoking existing account
-resources or deleting copies. Only after that deployment reaches `UPDATE_COMPLETE` may a separate
-`credentialCutover=purge` deployment add the version trigger. Otherwise a failed one-step deployment
-could roll back to the old resetting handler after some copies were deleted. Never combine these
-deployments or roll back to pre-cutover application code after deletion.
+The **two-deployment** cutover completed on 2026-09-29. Preparation first installed the non-resetting
+handler and narrowed permissions without invoking existing account resources. A separate purge
+deployment then added the version trigger. Private full-inventory verification confirmed unchanged
+account identities, attributes, status, MFA and groups, unchanged pool/client identities, and absence
+of every managed legacy password parameter. No password value was retrieved.
+
+Version 2 is now unconditional. The temporary `credentialCutover` context and preparation behavior
+are retired; specifying either old mode fails synthesis. The handler rejects missing/obsolete policy
+versions before accessing Cognito or SSM. Never restore a pre-cutover template/handler: the split
+rollout prevented rollback to the old password-resetting handler after deleting copies.
 
 The existing `User-USERNAME` constructs and physical identities remain unchanged. The CDK
 custom-resource property `CredentialPolicyVersion: 2` forces each configured account through
@@ -60,12 +64,10 @@ removal of reset/read/write permissions and the obsolete password-location outpu
 roster/capabilities unchanged. Preparation deliberately omits invitation properties: do not add
 accounts during this first rollout. Existing custom-resource **properties must remain unchanged**.
 
-Use `--context credentialCutover=prepare` for the first CDK diff/deploy. Confirm stack completion
-and the safe deployed handler/permissions before continuing. Next, use `--context credentialCutover=purge`
-for a fresh diff/deploy. Its only account change should be the version-2 trigger (and any separately
-reviewed private invitation inputs); the handler/pool/client/IAM definitions must match the prepared
-deployment, so purge rollback cannot restore the old resetting handler. Missing copies stay deleted;
-rollback never reconstructs them. New accounts are added only after preparation, in purge mode.
+For current deployments, omit `credentialCutover` entirely. Preview only intended stacks using the
+private configuration and preserve all existing account resource IDs and capability assignments.
+New accounts require private invitation addresses; the permanent-password storage path cannot be
+re-enabled. Existing accounts never receive an invitation or reset just because configuration changes.
 
 After deployment, privately verify every configured account's identity/status/access is unchanged
 and every corresponding legacy parameter is absent. Check removal by name/metadata only, never
@@ -75,10 +77,10 @@ credential copies are intentionally unrecoverable through Panther; the actual Co
 are unchanged. Earlier private backups, exports and historical logs are outside this deletion's
 scope and must not be claimed erased.
 
-After successful full-inventory verification, remove the temporary preparation mode in a follow-up
-PR so version 2 becomes unconditional. Keep the issue open until that cleanup is deployed; preparation
-is a rollout checkpoint, not a permanent password-copy storage exception. Never use an old whole-stack
-template or pre-cutover handler as a recovery mechanism.
+The follow-up cleanup removes the temporary mode without changing account custom-resource
+properties. Verify the deployed handler and repeat the private preservation/absence checks after
+cleanup. Earlier migration evidence remains private operational history, not a supported legacy
+format. Never use an old whole-stack template or pre-cutover handler as a recovery mechanism.
 
 ## Self-service web controls
 
@@ -118,6 +120,7 @@ states that limit explicitly. Do not claim that global sign-out remotely clears 
 storage or overrides offline token caches.
 
 Local security tests and self-hosted Playwright exercise these paths with fictional credentials.
-Completion of #21 still requires production deployment, confirming private account preservation,
-deletion of every managed legacy parameter, and an actual verified-email recovery/MFA check. Test
-fixtures are not evidence that a real user's email is verified or that a real invitation was received.
+Completion of #21 still requires the cleanup deployment and an actual verified-email recovery/MFA
+check. Account preservation and legacy-copy deletion were verified privately after the purge.
+Test fixtures are not evidence that a real user's email is verified or that an invitation was received;
+do not alter real passwords or MFA merely to test these flows without separate owner authorization.
