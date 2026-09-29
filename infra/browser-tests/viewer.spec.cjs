@@ -158,6 +158,10 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     });
     expect(dimensions.every(value => Number.isFinite(value) && value > 0)).toBe(true);
     await expect(page.locator('#model-reset')).toBeEnabled();
+    if (!localModel) {
+      await expect(page.locator('#model-animation-controls')).toBeHidden();
+      await expect(page.locator('#model-animation-empty')).toBeVisible();
+    }
     await expect(page.locator('#model-version option')).toHaveCount(2);
     const orbitBeforeZoom = await viewer.evaluate(el => el.getCameraOrbit().radius);
     await page.locator('#model-zoom-in').click();
@@ -200,5 +204,60 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await expect(page.locator('#model-fallback')).toBeVisible();
     await expect(page.locator('#fallback-poster')).toBeVisible();
     await expect(page.locator('#model-reset')).toBeDisabled();
+  });
+}
+
+for (const width of [1280,390]) for (const reduced of [false,true]) {
+  test(`character idle playback, visibility and motion controls at ${width}px reduced=${reduced}`, async ({page},testInfo) => {
+    test.setTimeout(90000);
+    await page.setViewportSize({width,height:900});
+    await page.emulateMedia({reducedMotion:reduced?'reduce':'no-preference'});
+    const bytes=syntheticModel(1,undefined,true);
+    const character={gameId:'test-game',id:'test-character',name:'Synthetic animated fixture'};
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
+      const url=new URL(route.request().url());
+      return route.fulfill({json:url.pathname==='/character-versions'?appearanceHistory(1,true):{
+        games:[{id:'test-game',name:'Test Game',purpose:'test'}],game:{id:'test-game',name:'Test Game',purpose:'test'},
+        players:[],memberships:[],characters:[],assets:[],cursor:null,
+        ...appearanceView(character,1,true,url,bytes.length)},headers:{'access-control-allow-origin':'https://panther.place'}});
+    });
+    await page.route('https://test.s3.amazonaws.com/model-*.glb',route=>route.fulfill({contentType:'model/gltf-binary',body:bytes,headers:{'access-control-allow-origin':'https://panther.place'}}));
+    await page.route('https://test.s3.amazonaws.com/portrait.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60"><rect width="40" height="60" fill="tan"/></svg>'}));
+    await page.route('https://panther.place/**',route=>{
+      const pathname=new URL(route.request().url()).pathname;
+      if(pathname==='/config.js')return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
+      const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+      return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html',headers:{'content-security-policy':policy}});
+    });
+    await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'synthetic'}))+'.test'})));
+    await page.goto('https://panther.place/characters/test-game/test-character');
+    await page.locator('#character-model').scrollIntoViewIfNeeded();
+    await page.locator('#model-load').click();
+    const viewer=page.locator('#character-model'),button=page.locator('#model-animation-toggle');
+    await expect.poll(()=>viewer.evaluate(el=>el.loaded),{timeout:30000}).toBe(true);
+    await expect(page.locator('#model-animation-clip')).toHaveValue('Panther Idle');
+    await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(reduced);
+    if(reduced)await button.click();
+    // Keep the model actually on screen; mobile scrolling to controls may pause it.
+    await viewer.scrollIntoViewIfNeeded();
+    await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(false);
+    const initial=await viewer.evaluate(el=>el.currentTime);
+    await expect.poll(()=>viewer.evaluate(el=>el.currentTime)).not.toBe(initial);
+    const orbit=await viewer.evaluate(el=>el.getCameraOrbit().theta);
+    await viewer.evaluate(el=>{el.cameraOrbit='30deg 75deg auto';el.jumpCameraToGoal();});
+    await expect.poll(()=>viewer.evaluate(el=>el.getCameraOrbit().theta)).not.toBe(orbit);
+    await page.evaluate(()=>window.scrollTo(0,0));
+    if(width===390)await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(true);
+    await viewer.scrollIntoViewIfNeeded();
+    await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(false);
+    await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'));});
+    await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(true);
+    await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));});
+    await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(false);
+    await button.click();
+    await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(true);
+    await expect(button).toHaveAttribute('aria-pressed','false');
+    const bounds=await button.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);
+    await page.screenshot({path:testInfo.outputPath('animated-controls.png'),fullPage:true});
   });
 }
