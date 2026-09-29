@@ -1,5 +1,13 @@
 # Panther agent instructions
 
+Curated chapter artwork uses `panther novels illustrations` and `save-illustrations` with exact
+completed chapter and immutable same-game image keys, meaningful alt text/captions and a guarded
+selection revision. This is a separate illustrative adaptation, not manuscript text or canon.
+Only before/after-chapter placement is supported. Draft selections default to text-only; approved
+private selections remain optional for readers. Never infer associations from filenames or mutate
+an image's source lineage to justify selecting it. This capability does not authorize generation,
+paid requests or choosing an image provider. See `docs/novel-library.md`.
+
 Narrative organization uses `docs/novel-library.md`: `panther novels stories/books` and
 `save-story/save-book` submit explicit private story/book/volume records. Books pin immutable
 chapter editions and order, optional indexed cover, credit and finished related media. Keep

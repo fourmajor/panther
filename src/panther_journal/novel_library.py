@@ -49,7 +49,11 @@ def saving(kind):
                 cloud.api(
                     cloud.configuration(),
                     "POST",
-                    "/novel-stories" if kind == "story" else "/novel-books",
+                    {
+                        "story": "/novel-stories",
+                        "book": "/novel-books",
+                        "illustrations": "/novel-illustrations",
+                    }[kind],
                     json=body,
                 ),
                 indent=2,
@@ -59,5 +63,12 @@ def saving(kind):
     return command
 
 
-for command in [listing("stories"), listing("books"), saving("story"), saving("book")]:
+for command in [
+    listing("stories"),
+    listing("books"),
+    listing("illustrations"),
+    saving("story"),
+    saving("book"),
+    saving("illustrations"),
+]:
     novels.add_command(command)

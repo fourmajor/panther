@@ -361,7 +361,7 @@ test("novel reader is authenticated and has only read permissions", () => {
 
 test("novel organization is scoped metadata, not manuscript or workflow mutation", () => {
   const template = mediaExplorerTemplate();
-  for(const path of ["novel-stories","novel-books"]) for(const method of ["GET","POST"])
+  for(const path of ["novel-stories","novel-books","novel-illustrations"]) for(const method of ["GET","POST"])
     template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:`${method} /${path}`,AuthorizationType:"JWT"});
   const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("EditorialProcessingNovelLibrary"));
   const serialized=JSON.stringify(policies);
@@ -549,7 +549,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 92);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 94);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

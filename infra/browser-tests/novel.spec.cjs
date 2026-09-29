@@ -32,6 +32,7 @@ async function fixture(page) {
     if(url.pathname==='/character-versions') body={schemaVersion:2,appearances:[],selections:[],activations:[],current:null,activationRevision:null};
     if(url.pathname==='/characters') body={characters:[]};
     if(['/novel-stories','/novel-books'].includes(url.pathname)) body={records:[],cursor:null};
+    if(url.pathname==='/novel-illustrations') return route.fulfill({status:404,headers,json:{error:'No artwork selected'}});
     if(url.pathname==='/novel') body={chapters:gameId==='campaign-a'?(url.searchParams.get('cursor')?[chapters[2]]:chapters.slice(0,2)):[],cursor:gameId==='campaign-a'&&!url.searchParams.get('cursor')?'next':null};
     if(url.pathname==='/novel-chapter') {
       const chapter=chapters.find(c=>c.id===url.searchParams.get('chapterId'));
@@ -41,6 +42,47 @@ async function fixture(page) {
     return route.fulfill({json:body,headers});
   });
 }
+
+for(const width of [1280,390])test(`curated chapter illustrations preserve prose and text-only reading at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});await fixture(page);
+  const chapterKey='games/campaign-a/assets/chapter/original/novel.json';
+  const imageKey='games/campaign-a/assets/art/original/harbor.png';
+  const record={schemaVersion:1,entityType:'ChapterIllustrations',gameId:'campaign-a',id:first,chapterKey,
+    revision:'d'.repeat(32),previousRevision:'e'.repeat(32),status:'approved',illustrations:[
+      {assetKey:imageKey,placement:'before-chapter',altText:'A lantern above a fictional harbor',caption:'An illustrative adaptation.'}]};
+  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],markdown:'The door opened.\n\nRain traced the windows.',details:{artifact:{key:chapterKey},review:{markdown:'Separate editorial audit'},sourceKeys:[]}}}));
+  await page.route(`${api}/novel-illustrations*`,route=>route.fulfill({headers,json:{record}}));
+  let requests=0;
+  await page.route(`${api}/image-links`,route=>{requests++;return route.fulfill({headers,json:{images:{[imageKey]:{url:origin+'/chapter-art.png'}}}});});
+  await page.route(origin+'/chapter-art.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64')}));
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await expect(page.locator('#novel-art-before img')).toBeVisible();
+  await expect(page.locator('#novel-art-before img')).toHaveJSProperty('naturalWidth',1);
+  await expect(page.locator('#novel-prose')).toHaveText('The door opened.Rain traced the windows.');
+  await expect(page.getByText('Previous artwork selection')).toHaveAttribute('href',/illustrationRevision=eeee/);
+  await expect(page.locator('#novel-art-before figcaption')).toContainText('View image and provenance');
+  const toggle=page.getByRole('checkbox',{name:'Show chapter artwork'});
+  await toggle.uncheck();await expect(page.locator('#novel-art-before')).toBeHidden();
+  await expect(page.locator('#novel-prose')).toBeVisible();
+  await toggle.check();await expect(page.locator('#novel-art-before img')).toBeVisible();expect(requests).toBe(2);
+  await expect(page.locator('#novel-artwork')).toBeInViewport();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await page.screenshot({path:test.info().outputPath(`novel-illustrations-${width}.png`),fullPage:true});
+});
+
+test('draft illustrations and image failures never hide or alter the manuscript',async({page})=>{
+  await fixture(page);
+  const chapterKey='games/campaign-a/assets/chapter/original/novel.json',imageKey='games/campaign-a/assets/art/original/image.png';
+  await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],markdown:'The complete chapter.',details:{artifact:{key:chapterKey},review:{markdown:'Audit'},sourceKeys:[]}}}));
+  await page.route(`${api}/novel-illustrations*`,route=>route.fulfill({headers,json:{record:{schemaVersion:1,entityType:'ChapterIllustrations',gameId:'campaign-a',id:first,chapterKey,status:'draft',illustrations:[{assetKey:imageKey,placement:'after-chapter',altText:'A harbor',caption:''}]}}}));
+  await page.route(`${api}/image-links`,route=>route.fulfill({status:503,headers,json:{error:'Unavailable'}}));
+  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
+  await expect(page.getByText('Private draft · hidden by default',{exact:false})).toBeVisible();
+  await expect(page.getByRole('checkbox',{name:'Show chapter artwork'})).not.toBeChecked();
+  await page.getByRole('checkbox',{name:'Show chapter artwork'}).check();
+  await expect(page.getByRole('button',{name:'Artwork unavailable · retry'})).toBeVisible();
+  await expect(page.locator('#novel-prose')).toHaveText('The complete chapter.');
+});
 
 test('repeated chapter cursor fails without showing a partial library', async({page})=>{
   await fixture(page);

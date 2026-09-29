@@ -127,6 +127,22 @@ def test_novel_cli_lists_all_pages_and_preserves_exact_edit_envelope(setup, monk
     manifest.write_text(json.dumps(body))
     result = CliRunner().invoke(main, ["novels", "save-book", str(manifest)])
     assert result.exit_code == 0 and calls[-1] == ("POST", "/novel-books", {"json": body})
+    result = CliRunner().invoke(main, ["novels", "save-illustrations", str(manifest)])
+    assert result.exit_code == 0 and calls[-1] == ("POST", "/novel-illustrations", {"json": body})
+    result = CliRunner().invoke(
+        main,
+        [
+            "novels",
+            "illustrations",
+            "--game",
+            "test-game",
+            "--id",
+            "a" * 64,
+            "--revision",
+            "b" * 32,
+        ],
+    )
+    assert result.exit_code == 0 and calls[-1][1] == "/novel-illustrations"
     assert (
         CliRunner()
         .invoke(main, ["novels", "books", "--game", "test-game", "--revision", "b" * 32])

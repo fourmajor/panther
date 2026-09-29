@@ -1441,7 +1441,7 @@ function renderGeneration(host, metadata) {
 }
 
 const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", "manuscript",
-  "details", "notice", "pagination", "read", "show-details", "download", "back", "refresh", "resume", "progress"]
+  "details", "notice", "pagination", "read", "show-details", "download", "back", "refresh", "resume", "progress", "artwork", "art-before", "art-after"]
   .map(name => [name, document.getElementById(`novel-${name}`)]));
 let currentChapter = null;
 let currentNovelBook = null;
@@ -1455,6 +1455,64 @@ function clearNovel() {
   novel.reader.hidden = true;
   for (const part of ["list", "prose", "details", "pagination", "title", "notice"]) novel[part].replaceChildren();
   novel.resume.replaceChildren(); novel.resume.hidden = true; novel.progress.textContent = "";
+  for(const name of ["artwork", "art-before", "art-after"]) novel[name].replaceChildren();
+  novel.artwork.hidden=true;
+}
+
+async function novelIllustrations(chapter,current) {
+  const params={gameId:state.gameId,id:chapter.id};
+  const pinned=new URL(location.href).searchParams.get("illustrationRevision");
+  if(pinned)params.revision=pinned;
+  let record;
+  try { record=(await api("/novel-illustrations",params)).record; }
+  catch(error) {
+    if(!current() || error.status===404)return;
+    novel.artwork.hidden=false;
+    const note=document.createElement("p");note.textContent="Artwork could not be checked. The complete chapter remains readable.";
+    const retry=document.createElement("button");retry.textContent="Retry artwork";
+    retry.onclick=()=>{novel.artwork.replaceChildren();novelIllustrations(chapter,current);};
+    novel.artwork.replaceChildren(note,retry);return;
+  }
+  if(!current() || !record)return;
+  const key=chapter.details?.artifact?.key;
+  if(record.entityType!=="ChapterIllustrations" || record.schemaVersion!==1 || record.gameId!==state.gameId || record.id!==chapter.id
+    || record.chapterKey!==key || !["draft","approved"].includes(record.status) || !Array.isArray(record.illustrations) || record.illustrations.length>12
+    || record.illustrations.some(i=>!i || !sameGameKey(i.assetKey) || !["before-chapter","after-chapter"].includes(i.placement) || typeof i.altText!=="string" || !i.altText || typeof i.caption!=="string")){
+      novel.artwork.hidden=false;novel.artwork.textContent="Artwork selection is invalid for this chapter edition. No substitute images were shown.";return;
+    }
+  novel.artwork.hidden=false;
+  const note=document.createElement("p");note.textContent=`Artwork is an illustrative adaptation, not additional campaign facts. ${record.status==="approved"?"Approved private selection":"Private draft · hidden by default"}.`;
+  const label=document.createElement("label"),toggle=document.createElement("input");toggle.type="checkbox";toggle.checked=record.status==="approved";
+  label.append(toggle,document.createTextNode("Show chapter artwork"));novel.artwork.replaceChildren(note,label);
+  if(record.previousRevision && /^[a-f0-9]{32}$/.test(record.previousRevision)){
+    const previous=document.createElement("a"),url=new URL(location.href);url.searchParams.set("illustrationRevision",record.previousRevision);
+    previous.href=url.pathname+url.search;previous.textContent="Previous artwork selection";previous.onclick=e=>{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();navigate(previous.getAttribute("href"));};novel.artwork.append(previous);
+  }
+  const figures=record.illustrations.map(item=>{
+    const figure=document.createElement("figure");figure.className="novel-illustration";
+    const host=document.createElement("div"),caption=document.createElement("figcaption");caption.textContent=item.caption;
+    // Use the established typed asset destination, never an artifact-supplied URL.
+    const typed=assetLink({key:item.assetKey},"View image and provenance");caption.append(document.createTextNode(item.caption?" · ":""),typed);
+    figure.append(host,caption);novel[item.placement==="before-chapter"?"art-before":"art-after"].append(figure);
+    return {item,figure,host};
+  });
+  let generation=0;
+  async function loadFigures() {
+    const mine=++generation;
+    const active=()=>current() && toggle.checked && mine===generation;
+    try {
+      const result=await api("/image-links",{},{body:{gameId:state.gameId,keys:record.illustrations.map(i=>i.assetKey)}});
+      if(!active())return;
+      for(const {item,host} of figures){
+        const image=document.createElement("img");image.alt=item.altText;image.decoding="async";
+        const fail=()=>{if(!active())return;const message=document.createElement("p");message.className="illustration-fallback";message.textContent="Image unavailable. The chapter text is unaffected.";const retry=document.createElement("button");retry.textContent="Retry image access";retry.onclick=loadFigures;host.replaceChildren(message,retry);};
+        image.onerror=fail;const file=result.images?.[item.assetKey];if(file?.url){host.replaceChildren(image);image.src=file.url;}else fail();
+      }
+    } catch { if(active())for(const {host} of figures){const retry=document.createElement("button");retry.textContent="Artwork unavailable · retry";retry.onclick=loadFigures;host.replaceChildren(retry);} }
+  }
+  function show(){for(const name of ["art-before","art-after"])novel[name].hidden=!toggle.checked;
+    if(toggle.checked && figures.length)loadFigures();else generation++;}
+  toggle.onchange=show;show();
 }
 
 function novelProgressKey() {
@@ -2046,6 +2104,7 @@ async function loadNovel(chapterId, epoch) {
     novelView(false);
     novel.reader.hidden = false;
     novel.status.hidden = true;
+    novelIllustrations(chapter,current);
     readingProgress(chapter,selectedBook,current);
     // Link enrichment is optional: a catalog outage must not prevent reading the manuscript.
     proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, [], chapters));
