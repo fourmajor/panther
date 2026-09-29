@@ -1615,6 +1615,7 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   const gameId = state.gameId;
   if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",category:"all",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
   const view = videoLibraryView;
+  view.collection=new URLSearchParams(location.search).get("collection") || "";
   const controls = document.createElement("section"), cards = document.createElement("div"), collectionsStatus = document.createElement("p"), summary = document.createElement("p");
   controls.className = "video-library-controls"; controls.setAttribute("aria-label", "Filter videos");
   cards.className = "video-library-cards"; summary.setAttribute("role", "status"); collectionsStatus.setAttribute("role", "status");
@@ -1705,8 +1706,9 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   character.onchange = () => { view.character=character.value; draw(); };
   async function choose() {
     const generation=++sequence; view.collection=collection.value;
+    const url=new URL(location.href);if(view.collection)url.searchParams.set("collection",view.collection);else url.searchParams.delete("collection");history.replaceState(null,"",url);
     if (!view.collection) { chosen=null; displayed=assets; collectionsStatus.textContent=""; draw(); return; }
-    collectionsStatus.textContent="Loading exact collection members…";
+    showLoading(collectionsStatus,"Loading exact collection members…");
     try {
       const result=await api("/video-collections",{gameId,id:view.collection});
       if (!current() || generation !== sequence) return;
@@ -1720,6 +1722,7 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
     try {
       let cursor=null, seen=new Set(), count=0;
       const nextPage=async()=>{
+        showLoading(collectionsStatus,"Fetching saved collections…");
         const result=await api("/video-collections",{gameId,cursor}); if(!current())return;
         for(const item of result.collections) { if([...collection.options].some(o=>o.value===item.id)) continue; collection.add(new Option(`${item.name} (${item.assetKeys.length})`,item.id)); count++; }
         cursor=result.cursor;
@@ -1755,7 +1758,7 @@ function configureVideoPreview(asset, video, epoch) {
   heading.textContent="Caption tracks"; captionStatus.setAttribute("role","status");captionStatus.textContent="Finding explicitly associated WebVTT exports…";
   captions.append(heading,captionStatus);host.append(captions);
   let blobUrl=null;
-  video.pantherCleanup=()=>{if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
+  video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
   void(async()=>{
     try {
       const assets=await allAssets(gameId);if(!current())return;
@@ -1772,9 +1775,10 @@ function configureVideoPreview(asset, video, epoch) {
       load.onclick=async()=>{
         const chosen=tracks.find(t=>t.key===select.value);if(!chosen)return;
         load.disabled=true;select.disabled=true;captionStatus.textContent="Loading the selected caption export…";
+        const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);video.pantherCaptionController=controller;
         try{
           if(!Number.isFinite(chosen.size) || chosen.size>512*1024)throw new Error("Caption export exceeds the 512 KiB player limit; download its original instead");
-          const signed=await api("/object-url",{key:chosen.key}), response=await fetch(signed.url);
+          const signed=await api("/object-url",{key:chosen.key},{signal:controller.signal}), response=await fetch(signed.url,{signal:controller.signal});
           if(!response.ok || Number(response.headers.get("content-length"))>512*1024)throw new Error("Caption file is unavailable or too large");
           // Bound streaming reads as well as catalog/header sizes. Never buffer an arbitrary asset.
           const reader=response.body.getReader();let size=0;const chunks=[];
@@ -1782,14 +1786,14 @@ function configureVideoPreview(asset, video, epoch) {
           finally{await reader.cancel();}
           const text=await new Blob(chunks).text();if(!/^\uFEFF?WEBVTT(?:\s|$)/.test(text))throw new Error("Selected export is not WebVTT");
           if(!current())return;
-          video.querySelectorAll("track").forEach(t=>t.remove());video.pantherCleanup();
+          video.pantherCaptionController=null;video.querySelectorAll("track").forEach(t=>t.remove());video.pantherCleanup();
           blobUrl=URL.createObjectURL(new Blob([text],{type:"text/vtt"}));
           const track=document.createElement("track");track.kind="captions";track.label=chosen.metadata?.title || chosen.name;track.src=blobUrl;track.default=true;
           track.onload=()=>{if(current()){track.track.mode="showing";captionStatus.textContent="Selected captions loaded. These are the recorded export, not newly verified speech.";}};
           track.onerror=()=>{if(current())captionStatus.textContent="Captions could not be decoded. Retry or download the original export.";};
           video.append(track);track.track.mode="showing";
         }catch(error){if(current())captionStatus.textContent=`Captions unavailable: ${error.message}. Retry or open the original export.`;}
-        finally{if(current()){load.disabled=false;select.disabled=false;}}
+        finally{clearTimeout(timer);if(video.pantherCaptionController===controller)video.pantherCaptionController=null;if(current()){load.disabled=false;select.disabled=false;}}
       };
       captions.append(label,select,load);
       for(const track of tracks)captions.append(assetLink(track,`Open caption export · ${track.metadata?.title || track.name}`));
