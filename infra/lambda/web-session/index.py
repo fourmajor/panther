@@ -148,14 +148,16 @@ def account_operation(body, access):
             "totpEnabled": "SOFTWARE_TOKEN_MFA" in user.get("UserMFASettingList", []),
         }
     if action == "profile":
-        name, picture = text(body["name"], 120, 0), text(body["picture"], 1000, 0)
+        name = text(body["name"], 120, 0)
+        picture = None if body["picture"] is None else text(body["picture"], 1000, 0)
         if picture and picture not in {
             f"{SITE_ORIGIN}/avatars/{name}.svg" for name in ("panther", "moon", "star")
         }:
             raise ValueError()
         client.update_user_attributes(
             AccessToken=access,
-            UserAttributes=[{"Name": "name", "Value": name}, {"Name": "picture", "Value": picture}],
+            UserAttributes=[{"Name": "name", "Value": name}]
+            + ([{"Name": "picture", "Value": picture}] if picture is not None else []),
         )
     elif action == "email":
         email = text(body["email"], 254)

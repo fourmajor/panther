@@ -233,6 +233,15 @@ def test_account_network_failure_preserves_cookie_already_rotated(session):
     assert module.read_cookie({"cookies": result["cookies"]}) == "rotated-secret"
 
 
+def test_profile_partial_update_preserves_unmodified_existing_avatar(session):
+    module, _, calls = account_client(session)
+    result = module.handler(
+        event("account", body={"action": "profile", "name": "Example", "picture": None}), None
+    )
+    assert result["statusCode"] == 200
+    assert calls[-1][1]["UserAttributes"] == [{"Name": "name", "Value": "Example"}]
+
+
 def test_recovery_has_origin_guards_generic_existence_response_and_no_credentials_in_outputs(
     session,
 ):

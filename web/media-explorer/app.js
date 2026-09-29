@@ -2919,7 +2919,8 @@ async function openAccountSettings(recovery=false) {
   const identity=accountSection(host,"Profile",`Signed in as ${profile.username}. Your login username stays unchanged.`);
   let displayName,avatar;
   const profileForm=accountForm(identity,"Save profile",async()=>{
-    await accountRequest("profile",{name:displayName.value.trim(),picture:avatar.value}); return "Profile saved.";
+    const selected=["","panther","moon","star"].some(name=>avatar.value===(name?`${window.location.origin}/avatars/${name}.svg`:""));
+    await accountRequest("profile",{name:displayName.value.trim(),picture:selected?avatar.value:null}); return "Profile saved.";
   });
   displayName=accountField(profileForm,"Display name","text",profile.name); displayName.maxLength=120;
   const avatarLabel=document.createElement("label"), avatarTitle=document.createElement("span"), avatarPreview=document.createElement("img");
@@ -2927,9 +2928,11 @@ async function openAccountSettings(recovery=false) {
   for(const [name,label] of [["","No avatar"],["panther","Panther"],["moon","Moon"],["star","Star"]]) {
     const option=document.createElement("option"); option.value=name?`${window.location.origin}/avatars/${name}.svg`:""; option.textContent=label; avatar.append(option);
   }
-  avatar.value=[...avatar.options].some(o=>o.value===profile.picture)?profile.picture:"";
+  const knownAvatar=[...avatar.options].some(o=>o.value===profile.picture);
+  if(!knownAvatar&&profile.picture) {const existing=document.createElement("option");existing.value=profile.picture;existing.textContent="Existing avatar — choose a preset to replace it";avatar.append(existing);}
+  avatar.value=profile.picture || "";
   avatarPreview.className="account-avatar"; avatarPreview.alt="Selected avatar";
-  function showAvatar(){avatarPreview.hidden=!avatar.value;if(avatar.value)avatarPreview.src=avatar.value;else avatarPreview.removeAttribute("src");}
+  function showAvatar(){const permitted=["panther","moon","star"].some(name=>avatar.value===`${window.location.origin}/avatars/${name}.svg`);avatarPreview.hidden=!permitted;if(permitted)avatarPreview.src=avatar.value;else avatarPreview.removeAttribute("src");}
   avatar.addEventListener("change",showAvatar); showAvatar(); avatarLabel.append(avatarTitle,avatar,avatarPreview); profileForm.append(avatarLabel);
 
   const emailSection=accountSection(host,"Email & recovery",`Current email: ${profile.email || "Not configured"} · ${profile.emailVerified?"Verified":"Not verified"}. A replacement address becomes active only after verification.`);

@@ -131,7 +131,9 @@ test('closing account setup discards a delayed authenticator secret',async({page
   });
   await page.goto('https://panther.place/media'); await page.getByRole('button',{name:'Account',exact:true}).click();
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click(); await seen;
-  await page.getByRole('button',{name:'Close account settings'}).click(); release();
+  await page.getByRole('button',{name:'Close account settings'}).click();
+  const completed=page.waitForResponse(response=>response.url().endsWith('/auth/account'));
+  release(); await completed;
   await expect(page.locator('#account-settings-body')).toBeEmpty();
   await expect(page.getByText('DELAYED-SYNTHETIC-SECRET')).toHaveCount(0);
 });
