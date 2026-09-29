@@ -17,6 +17,47 @@ from novel_library import indexed
 VERSION = 1
 MAX_SOURCE_BYTES = 64 * 1024
 MAX_SNAPSHOTS = 500
+MAX_RETAINED_VERSIONS = 1002
+
+
+def retained_versions(media, game, cid, represented_hashes):
+    """Never silently exclude source versions retained only by S3 versioning."""
+    prefix = f"games/{game}/characters/{cid}/"
+    pattern = re.compile(re.escape(prefix) + r"(?:profile\.json|history/[a-f0-9]{64}\.json)$")
+    versions = []
+    for page in media.raw_s3.get_paginator("list_object_versions").paginate(
+        Bucket=media.BUCKET_NAME, Prefix=prefix
+    ):
+        for version in page.get("Versions", []):
+            key = version["Key"]
+            if not pattern.fullmatch(key):
+                if key.startswith(prefix + "history/") and key.endswith(".json"):
+                    raise ValueError("Unresolvable retained source version filename")
+                continue
+            if not 0 < version["Size"] <= MAX_SOURCE_BYTES:
+                raise ValueError("Retained source version exceeds its bounded size")
+            versions.append({"key": key, "versionId": version["VersionId"]})
+            if len(versions) > MAX_RETAINED_VERSIONS:
+                raise ValueError("Retained versions exceed the complete verification limit")
+
+    def inspect(version):
+        source = media.raw_s3.get_object(
+            Bucket=media.BUCKET_NAME, Key=version["key"], VersionId=version["versionId"]
+        )
+        raw = source["Body"].read(MAX_SOURCE_BYTES + 1)
+        digest = hashlib.sha256(raw).hexdigest()
+        if not 0 < len(raw) <= MAX_SOURCE_BYTES or digest not in represented_hashes:
+            raise ValueError(
+                "Retained S3 source version lacks an imported byte-preserving snapshot"
+            )
+        return {**version, "sha256": digest}
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        evidence = list(executor.map(inspect, versions))
+    evidence.sort(key=lambda item: (item["key"], item["versionId"]))
+    if len(json.dumps(evidence).encode()) > 192 * 1024:
+        raise ValueError("Retained source evidence exceeds its bounded verification envelope")
+    return evidence
 
 
 def inventory(media, game, cid):
@@ -362,6 +403,7 @@ def verification(media, game, cid):
             raise ValueError("Imported selection does not preserve exact source keys")
     if set(by_key) != set(keys):
         raise ValueError("Every retained source must be imported before activation")
+    versions = retained_versions(media, game, cid, {p["sourceSha256"] for p in by_key.values()})
 
     def observed(key):
         head = media.raw_s3.head_object(Bucket=media.BUCKET_NAME, Key=key)
@@ -382,7 +424,9 @@ def verification(media, game, cid):
     if inventory(media, game, cid) != keys:
         raise ValueError("Retained source inventory changed during verification")
     digest = hashlib.sha256(
-        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            {"sources": evidence, "versions": versions}, sort_keys=True, separators=(",", ":")
+        ).encode()
     ).hexdigest()
     current = by_key.get(f"games/{game}/characters/{cid}/profile.json")
     return {
@@ -391,6 +435,7 @@ def verification(media, game, cid):
         "characterId": cid,
         "inventoryHash": digest,
         "sourceCount": len(keys),
+        "retainedVersions": versions,
         "currentSelection": current,
     }
 
@@ -421,6 +466,7 @@ def finalize(media, expected, operation, claims):
         "recordedAt": datetime.now(timezone.utc).isoformat(),
         "actor": claims["sub"],
         "operationId": operation,
+        "verificationJson": json.dumps(actual, separators=(",", ":")),
     }
     put = {
         "Put": {

@@ -163,3 +163,19 @@ def test_unresolvable_retained_history_and_invalid_glb_are_explicit_blockers(loo
     )
     with pytest.raises(ValueError, match="Unresolvable retained"):
         module.inventory(looks[1], "test-game", "example-character")
+
+
+def test_version_only_retained_source_blocks_activation_instead_of_disappearing(looks):  # noqa: F811
+    module = importlib.import_module("appearance_migration")
+    media = looks[1]
+    media.raw_s3.put_bucket_versioning(
+        Bucket=media.BUCKET_NAME, VersioningConfiguration={"Status": "Enabled"}
+    )
+    key, raw = source(looks)
+    media.raw_s3.put_object(
+        Bucket=media.BUCKET_NAME, Key=key, Body=raw + b" ", ContentType="application/json"
+    )
+    plan, _, _ = module.prepare(media, "test-game", "example-character", key)
+    module.apply(media, plan, "fictional-owner")
+    with pytest.raises(ValueError, match="Retained S3 source version lacks"):
+        module.verification(media, "test-game", "example-character")

@@ -62,6 +62,10 @@ story is an object with sessionId, eventId and date, each nullable. Unknown stay
 4. Activate the exact imported current pair only after its complete history is verified.
    A source change invalidates the prepared plan. Roster-only characters remain explicitly
    without selected artwork, not a fabricated appearance.
+   Verification also checks retained S3 profile/history object versions against imported
+   source bytes and records their exact version IDs. A version available only in S3 history
+   without a corresponding byte-preserving snapshot is an explicit migration blocker;
+   extend the importer to capture that evidence before cutover, never exempt or delete it.
 5. Verify every game and remove old read/write paths. Browser history must query bounded
    structured metadata, never scan or individually open every S3 profile snapshot.
 6. Update model-reference jobs, publication commands, version-family maintenance and editorial
