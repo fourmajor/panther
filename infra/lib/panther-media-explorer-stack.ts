@@ -33,6 +33,7 @@ import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 import { ModelProcessing } from "./model-processing";
 import { GameCatalog } from "./game-catalog";
+import { TVLibrary } from "./tv-library";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
 
@@ -437,6 +438,8 @@ export class PantherMediaExplorerStack extends Stack {
     }));
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
+      catalogTable:gameCatalog.table,publishers:accessEnvironment.MODEL_PUBLISHERS});
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
     new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });

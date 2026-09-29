@@ -14,6 +14,10 @@ def videos():
     """Browse/save private video collections; never start generation."""
 
 
+from panther_journal.tv_library import register as register_tv  # noqa: E402
+register_tv(videos)
+
+
 @videos.command("collections")
 @click.option("--game", required=True)
 @click.option("--id", "identity", help="Inspect one collection with its exact members.")

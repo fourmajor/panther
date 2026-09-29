@@ -1936,6 +1936,7 @@ function sameGameKey(key) {
 }
 
 function clearLibrary() {
+  currentTVEpisode = null;
   document.getElementById("movie-workspace").replaceChildren();
   document.getElementById("movie-workspace").hidden = true;
   document.getElementById("session-library").hidden = true;
@@ -1987,9 +1988,96 @@ function assetLink(asset, label) {
 
 let videoLibraryView = {gameId:null, search:"", category:"all", tag:"", character:"", collection:""};
 let videoPlaylist = null;
+let currentTVEpisode = null;
+
+function setupTVLibrary(list,status,current,videoHost) {
+  const gameId=state.gameId, nav=document.createElement("nav"), host=document.createElement("section");
+  nav.className="novel-tabs";nav.setAttribute("aria-label","Video library views");host.className="tv-library";host.setAttribute("aria-label","TV episode library");
+  const all=document.createElement("button"), tv=document.createElement("button");
+  all.type=tv.type="button";all.className=tv.className="quiet-button";all.textContent="Video library";tv.textContent="TV episodes";
+  nav.append(all,tv);list.append(nav,host,videoHost);
+  let loaded=false,series=[],episodes=[],sequence=0;
+  const alive=()=>current() && host.isConnected;
+  const params=()=>new URLSearchParams(location.search);
+  const url=(changes)=>{const next=new URL(location.href);for(const [key,value] of Object.entries(changes))if(value)next.searchParams.set(key,value);else next.searchParams.delete(key);history.replaceState(null,"",next);};
+  const active=()=>!host.hidden;
+  const ordered=(id)=>{const parent=series.find(s=>s.id===id),numbers=new Map(parent?.seasons.map(s=>[s.id,s.number]) || []);
+    return episodes.filter(e=>e.seriesId===id).sort((a,b)=>(numbers.get(a.seasonId) || 10001)-(numbers.get(b.seasonId) || 10001)||a.number-b.number||a.id.localeCompare(b.id));};
+  const setMode=(value)=>{host.hidden=!value;videoHost.hidden=value;status.hidden=value;all.setAttribute("aria-pressed",String(!value));tv.setAttribute("aria-pressed",String(value));};
+  const paged=async(path)=>{const records=[],seen=new Set();let cursor;
+    do{const page=await api(path,{gameId,cursor});if(!alive())return null;if(!Array.isArray(page.records))throw new Error("Episode catalog response is incomplete");records.push(...page.records);cursor=page.cursor;
+      if(records.length>5000 || seen.size>=200 || (cursor && seen.has(cursor)))throw new Error("Episode catalog exceeds its reader limit or returned a repeated cursor; no partial catalog is shown");if(cursor)seen.add(cursor);
+    }while(cursor);return records;};
+  const episodeHref=(record,revision=record.revision)=>gamePath("videos")+`?view=episodes&series=${encodeURIComponent(record.seriesId)}&episode=${encodeURIComponent(record.id)}&episodeRevision=${encodeURIComponent(revision)}`;
+  function references(parent,label,keys,byKey) {
+    if(!keys.length)return;const heading=document.createElement("h3"),links=document.createElement("ul");heading.textContent=label;
+    for(const key of keys){const item=document.createElement("li"),asset=byKey.get(key);if(asset)item.append(assetLink(asset));else item.textContent="Pinned reference unavailable";links.append(item);}parent.append(heading,links);
+  }
+  async function posters() {
+    const images=[...host.querySelectorAll('[data-tv-poster]')],keys=[...new Set(images.map(i=>i.dataset.tvPoster))];
+    for(let offset=0;offset<keys.length;offset+=60){if(!alive())return;const batch=keys.slice(offset,offset+60);
+      try{const result=await api("/image-links",{},{body:{gameId,keys:batch}});if(!alive())return;for(const image of images.filter(i=>batch.includes(i.dataset.tvPoster))){const item=result.images?.[image.dataset.tvPoster];if(item?.url)image.src=item.url;else image.remove();}}
+      catch{if(alive())for(const image of images.filter(i=>batch.includes(i.dataset.tvPoster)))image.remove();}}
+  }
+  function browse() {
+    if(!alive())return;currentTVEpisode=null;host.replaceChildren();
+    const heading=document.createElement("h2"),notice=document.createElement("p");heading.textContent="TV episodes";notice.textContent="Creative episodic reimaginings · private drafts and approved selections, not canonical session records.";host.append(heading,notice);
+    if(!series.length){const empty=document.createElement("p");empty.textContent="No series organized yet. Panther CLI can create a series and explicitly select finished episode cuts.";host.append(empty);return;}
+    const label=document.createElement("label"),select=document.createElement("select");label.textContent="Series";select.id="tv-series-select";label.htmlFor=select.id;
+    for(const record of series)select.add(new Option(record.title,record.id));
+    const selected=params().get("series") || series[0].id;
+    if(!series.some(s=>s.id===selected))throw new Error("Selected series unavailable");select.value=selected;
+    select.onchange=()=>{url({series:select.value,episode:null,episodeRevision:null});browse();};host.append(label,select);
+    const parent=series.find(s=>s.id===selected),synopsis=document.createElement("p");synopsis.textContent=parent.synopsis || "No series synopsis supplied.";host.append(synopsis);
+    const entries=ordered(selected);
+    if(entries.some(e=>!parent.seasons.some(s=>s.id===e.seasonId)))throw new Error("An episode's season is unavailable; no incomplete series is shown");
+    for(const season of parent.seasons){const section=document.createElement("section"),title=document.createElement("h3"),description=document.createElement("p"),cards=document.createElement("div");title.textContent=`Season ${season.number} · ${season.title}`;description.textContent=season.synopsis;cards.className="tv-episode-cards";section.append(title,description,cards);
+      for(const episode of entries.filter(e=>e.seasonId===season.id)){const card=document.createElement("article");card.className="novel-card tv-episode-card";
+        if(episode.posterAssetKey){const image=document.createElement("img");image.alt=`Episode poster for ${episode.title}`;image.dataset.tvPoster=episode.posterAssetKey;image.className="tv-poster";image.addEventListener("error",()=>image.remove());card.append(image);}
+        const meta=document.createElement("p"),h=document.createElement("h4"),link=document.createElement("a"),summary=document.createElement("p"),runtime=document.createElement("p");meta.className="eyebrow";meta.textContent=`Episode ${episode.number} · ${episode.status === "approved" ? "Approved private selection" : "Private draft"}`;
+        link.textContent=episode.title;link.href=episodeHref(episode);link.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();void choose(episode.id,episode.revision);};h.append(link);summary.textContent=episode.synopsis || "No episode synopsis supplied.";
+        const cut=episode.cuts.find(c=>c.id===episode.selectedCutId);runtime.textContent=cut?.durationSeconds ? `Reported runtime: ${cut.durationSeconds}s · ${episode.cuts.length} cut${episode.cuts.length===1?"":"s"}` : `Runtime not recorded · ${episode.cuts.length} cut${episode.cuts.length===1?"":"s"}`;card.append(meta,h,summary,runtime);cards.append(card);}
+      if(!cards.childNodes.length){const empty=document.createElement("p");empty.textContent="No episodes organized in this season yet.";cards.append(empty);}host.append(section);}
+    void posters();
+  }
+  async function choose(id,revision=null,play=false) {
+    const generation=++sequence;host.replaceChildren();const loading=document.createElement("p");host.append(loading);const progress=showLoading(loading,"Reading the exact episode and pinned representations…");
+    try{const result=await api("/tv-episodes",{gameId,id,revision});if(!alive() || generation!==sequence || !active())return;
+      const episode=result.record,byKey=new Map(result.assets.map(a=>[a.key,a])),parent=series.find(s=>s.id===episode.seriesId);
+      if(episode.gameId!==gameId || !parent || !parent.seasons.some(s=>s.id===episode.seasonId))throw new Error("Episode parent organization unavailable");
+      url({view:"episodes",series:episode.seriesId,episode:episode.id,episodeRevision:episode.revision});host.replaceChildren();
+      const back=document.createElement("button");back.type="button";back.className="back-button";back.textContent="← All episodes";back.onclick=()=>{sequence++;url({episode:null,episodeRevision:null});browse();};
+      const title=document.createElement("h2"),notice=document.createElement("p"),synopsis=document.createElement("p");title.textContent=episode.title;notice.className="novel-notice";notice.textContent=`${parent.title} · Episode ${episode.number} · ${episode.status==="approved"?"Approved private selection":"Private draft"}. Creative reimagining, not a canonical session record.`;synopsis.textContent=episode.synopsis;host.append(back,title,notice,synopsis);
+      if(result.warnings.length){const warning=document.createElement("p");warning.textContent=`${result.warnings.length} pinned assets are unavailable. No newer version was substituted.`;host.append(warning);}
+      const label=document.createElement("label"),cuts=document.createElement("select"),button=document.createElement("button"),cutStatus=document.createElement("p");label.textContent="Episode cut";cuts.id="tv-cut-select";label.htmlFor=cuts.id;for(const cut of episode.cuts)cuts.add(new Option(cut.title+(cut.id===episode.selectedCutId?" · selected edition":""),cut.id));cuts.value=episode.selectedCutId;
+      button.type="button";button.className="quiet-button";button.textContent="Play selected cut";cutStatus.setAttribute("role","status");
+      const selected=()=>episode.cuts.find(c=>c.id===cuts.value);
+      const update=()=>{const cut=selected();button.disabled=!byKey.has(cut.assetKey);cutStatus.textContent=button.disabled?"This pinned video is unavailable; no alternative was selected.":cut.durationSeconds?`Reported runtime ${cut.durationSeconds}s. Evidence: ${cut.durationEvidence}`:"Runtime is unknown until measured or played.";};
+      const context={gameId,record:episode,assets:byKey,series:parent,episodes:ordered(parent.id),activate:choose};
+      button.onclick=()=>{if(alive()){currentTVEpisode=context;videoPlaylist=null;const asset=byKey.get(selected().assetKey);if(asset)void previewFile({...asset,name:episode.title+" · "+selected().title});}};cuts.onchange=update;update();host.append(label,cuts,button,cutStatus);
+      const history=document.createElement("p");history.textContent=`Organization revision ${episode.revision.slice(0,8)}. `;if(episode.previousRevision){const previous=document.createElement("a");previous.textContent="Previous episode revision";previous.href=episodeHref(episode,episode.previousRevision);previous.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();void choose(episode.id,episode.previousRevision);};history.append(previous);}host.append(history);
+      references(host,"Source references",episode.sourceAssetKeys,byKey);const sessions=[...new Set(episode.sourceAssetKeys.map(k=>byKey.get(k)?.metadata?.sessionId).filter(Boolean))];if(sessions.length){const session=document.createElement("p");session.textContent=`Source sessions recorded in asset metadata: ${sessions.join(", ")}`;host.append(session);}
+      references(host,"Related finished media",episode.relatedAssetKeys,byKey);
+      if(episode.preparationAssetKeys.length){const preparation=document.createElement("details"),summary=document.createElement("summary");summary.textContent="Production preparation · not finished Inputs/Outputs";preparation.append(summary);references(preparation,"Scripts, storyboards and planning references",episode.preparationAssetKeys,byKey);host.append(preparation);}
+      const credits=document.createElement("section"),creditTitle=document.createElement("h3"),creditList=document.createElement("ul");creditTitle.textContent="Credits";for(const credit of episode.credits){const item=document.createElement("li");item.textContent=`${credit.role}: ${credit.name}`;creditList.append(item);}if(!episode.credits.length){const empty=document.createElement("li");empty.textContent="Credits not supplied.";creditList.append(empty);}credits.append(creditTitle,creditList);host.append(credits);
+      currentTVEpisode=context;
+      if(play && !button.disabled)button.click();
+    }catch(error){if(alive() && generation===sequence){currentTVEpisode=null;loading.textContent=`${error.message}. Return to the video library or retry.`;const retry=document.createElement("button");retry.type="button";retry.textContent="Retry episode";retry.className="quiet-button";retry.onclick=()=>void choose(id,revision,play);host.append(retry);}}
+  }
+  async function load() {
+    const loading=document.createElement("p");host.replaceChildren(loading);const progress=showLoading(loading,"Reading series and episode organization…");
+    try{if(!loaded){series=await paged("/tv-series");episodes=await paged("/tv-episodes");if(!alive() || !series || !episodes)return;series.sort((a,b)=>a.title.localeCompare(b.title));loaded=true;}
+      if(!active())return;if(params().get("episode"))await choose(params().get("episode"),params().get("episodeRevision"));else browse();
+    }catch(error){if(alive()){loaded=false;host.replaceChildren(loading);loading.textContent=`${error.message}. The ordinary video library remains usable.`;const retry=document.createElement("button");retry.type="button";retry.className="quiet-button";retry.textContent="Retry TV library";retry.onclick=()=>void load();host.append(retry);}}
+  }
+  all.onclick=()=>{sequence++;currentTVEpisode=null;setMode(false);url({view:null,series:null,episode:null,episodeRevision:null});};
+  tv.onclick=()=>{setMode(true);url({view:"episodes"});void load();};
+  const requested=params().get("view")==="episodes" || params().has("series") || params().has("episode");setMode(requested);if(requested)void load();
+}
 
 function renderVideoLibrary(assets, list, status, current, loadMore) {
   const gameId = state.gameId;
+  const videoHost=document.createElement("div");setupTVLibrary(list,status,current,videoHost);
   if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",category:"all",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
   const view = videoLibraryView;
   view.collection=new URLSearchParams(location.search).get("collection") || "";
@@ -2009,9 +2097,9 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   character.value = view.character;
   const collection = field("Ordered collection",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
   const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
-  controls.append(collectionsStatus,retry,summary); list.append(controls,cards);
+  controls.append(collectionsStatus,retry,summary); videoHost.append(controls,cards);
   let displayed = assets, chosen = null, sequence = 0;
-  const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; list.append(more);
+  const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; videoHost.append(more);
   more.onclick = () => { more.disabled = true; more.textContent = "Loading more…"; loadMore(); };
   const posters = new Map(), posterLinks = new Map(), posterRequests = new Map(); let imageGeneration=0;
   async function images() {
@@ -2123,6 +2211,11 @@ function configureVideoPreview(asset, video, epoch) {
   const notice=document.createElement("p"); notice.textContent=`${(asset.metadata?.category || "unclassified").replaceAll("-"," ")} · Classification and provenance remain as recorded. A dramatization or playful derivative is not a canonical session transcript.`; host.append(notice);
   const preview=asset.metadata?.extra?.preview;
   if(preview?.schemaVersion===1 && sameGameKey(preview.imageKey)) void api("/image-links",{},{body:{gameId,keys:[preview.imageKey]}}).then(result=>{if(current() && result.images?.[preview.imageKey]?.url)video.poster=result.images[preview.imageKey].url;}).catch(()=>{});
+  const episode=currentTVEpisode?.gameId===gameId && currentTVEpisode.record.cuts.some(c=>c.assetKey===asset.key)?currentTVEpisode:null;
+  if(episode){const heading=document.createElement("h3"),label=document.createElement("p"),navigation=document.createElement("nav");heading.textContent=episode.record.title;label.textContent=`${episode.series.title} · Episode ${episode.record.number} · ${episode.record.status==="approved"?"Approved private selection":"Private draft"}. No automatic playback.`;navigation.setAttribute("aria-label","Episode playback");
+    const index=episode.episodes.findIndex(e=>e.id===episode.record.id);for(const [name,position] of [["Previous episode",index-1],["Next episode",index+1]]){const button=document.createElement("button");button.type="button";button.className="quiet-button";button.textContent=name;button.disabled=position<0 || position>=episode.episodes.length;button.onclick=()=>{if(current()){closePreview();void episode.activate(episode.episodes[position].id,episode.episodes[position].revision,true);}};navigation.append(button);}host.append(heading,label,navigation);
+    if(episode.record.posterAssetKey)void api("/image-links",{},{body:{gameId,keys:[episode.record.posterAssetKey]}}).then(result=>{if(current() && result.images?.[episode.record.posterAssetKey]?.url)video.poster=result.images[episode.record.posterAssetKey].url;}).catch(()=>{});
+  }
   const playlist=videoPlaylist?.gameId===gameId ? videoPlaylist : null;
   const index=playlist?.assets.findIndex(a=>a.key===asset.key) ?? -1;
   if(index>=0) {
@@ -2138,11 +2231,12 @@ function configureVideoPreview(asset, video, epoch) {
   video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
   void(async()=>{
     try {
-      const assets=await allAssets(gameId);if(!current())return;
+      const assets=episode ? [...episode.assets.values()] : await allAssets(gameId);if(!current())return;
       const directory=asset.key.slice(0,asset.key.lastIndexOf("/")+1);
       const tracks=assets.filter(a=>a.kind==="video-captions" && a.key.endsWith(".vtt") && sameGameKey(a.key)
-        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)));
-      if(!tracks.length){captionStatus.textContent="No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
+        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)
+          || (episode?.record.cuts.find(c=>c.id===episode.record.selectedCutId)?.assetKey===asset.key && episode.record.captionAssetKeys.includes(a.key))));
+      if(!tracks.length){captionStatus.textContent=episode?"No caption export is registered for this episode cut. Other exports may be available on its asset page; burned-in subtitles remain in the original.":"No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
       const label=document.createElement("label"), select=document.createElement("select"), load=document.createElement("button");
       label.textContent="Caption export";select.id="video-caption-export";label.htmlFor=select.id;
       select.add(new Option("Choose a recorded caption track",""));for(const track of tracks)select.add(new Option(track.metadata?.title || track.name,track.key));

@@ -617,6 +617,24 @@ this does not change its official portrait/model selection or create session rec
 in Videos regardless of kind. Novel readers link exact unambiguous character names and asset titles
 without changing the stored prose; aliases require explicit typed references in the chapter artifact.
 
+## TV episode organization
+
+Use `panther videos series/episodes --game GAME` to list structured records; add `--id ID`
+and optionally `--revision REVISION` for exact history. Save private JSON outside Git with
+`panther videos save-series FILE` or `panther videos save-episode FILE`. These plural commands
+organize existing media, unlike singular `panther video` paid production.
+Both envelopes require gameId, id, title, synopsis, reason, operationId and expectedRevision
+(null for creation; exact current revision for edits). Retain identical requests for retries.
+Series require seasons with distinct id/number and title/synopsis; do not remove existing seasons.
+Episodes require seriesId, seasonId, number, status (draft/approved), cuts, selectedCutId,
+posterAssetKey (nullable), captionAssetKeys, credits, sourceAssetKeys, relatedAssetKeys and
+preparationAssetKeys. Each cut has id/title/assetKey/durationSeconds/durationEvidence; unknown
+duration and evidence are both null, never guessed. Credits contain role/name. Empty arrays
+are valid. Cuts and finished references are exact same-game assets; captions are genuine
+WebVTT and posters supported browser images. Preparation references stay separate from
+finished Inputs/Outputs. Private approval does not publish, assert canon or authorize spending.
+Missing editions must remain explicit, never silently substituted. See docs/tv-library.md.
+
 ## Reliability and reporting
 
 Files are streamed directly to private storage, limited to 1 GiB each, and protected by a signed

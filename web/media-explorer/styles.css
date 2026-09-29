@@ -230,6 +230,13 @@ main {
 .novel-resume { padding:1rem; margin-bottom:1rem; background:var(--panel); border-left:3px solid var(--accent); }
 .novel-resume a { color:var(--accent); }
 .novel-progress { color:var(--muted); font-size:.85rem; }
+.tv-library { margin-top:1.5rem; display:grid; gap:1rem; }
+.tv-library > section { display:grid; gap:1rem; }
+.tv-library select { width:100%; max-width:40rem; min-width:0; min-height:2.75rem; padding:.6rem .75rem; font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:.4rem; }
+.tv-episode-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,19rem),1fr)); gap:1rem; }
+.tv-episode-card h4 { font:1.7rem Georgia,serif; margin:.7rem 0; }
+.tv-episode-card a,.tv-library > p a { color:var(--accent); text-underline-offset:.2em; }
+.tv-poster { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:.4rem; }
 @media(max-width:600px) { .novel-book { gap:1rem; flex-direction:column; } .novel-cover { width:6rem; height:8rem; } }
 .novel-card { border: 1px solid var(--line); border-radius: .6rem; padding: 1.5rem; background: var(--panel); overflow-wrap: anywhere; }
 .novel-card h2 { font: 1.8rem Georgia, serif; }
