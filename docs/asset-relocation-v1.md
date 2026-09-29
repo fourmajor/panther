@@ -29,7 +29,10 @@ each entry's sorted Python JSON encoding, excluding `dryRun` and `action` (see
    against the pinned source. Apply the remaining metadata-only plan. Rebuild/verify the all-game
    materialized browsing index and verify affected browser/model/source relationships. Browsing
    never falls back to a storage scan or the former physical path.
-5. Only after those checks, dry-run then apply `--action retire`. This rechecks the selected
+5. Allow all previously issued unversioned payload links to expire after the last catalog cutover
+   (currently 300 seconds; verify the deployed signing TTL). This avoids breaking open pages that
+   still hold the former physical URL. Only after that grace period and those checks, dry-run then
+   apply `--action retire`. This rechecks the selected
    destination and the original exact source version; it adds a conditional **recoverable delete
    marker**, never deletes an original version. Repeat verify and all-game auditing.
 6. Remove the context and redeploy. Confirm the temporary route, Lambda and extra permissions

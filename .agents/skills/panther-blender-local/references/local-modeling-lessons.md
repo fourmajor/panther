@@ -72,3 +72,29 @@ Local scripting, rendering, self-review, and fresh-open checks worked without a 
 as an optimized GLB, or browser-validated. Reopening and finite-coordinate checks established
 file integrity, not visual quality, manifoldness, or web readiness. Do not automate publication
 or promote the experimental construction method on the strength of those checks alone.
+
+## Automated realistic-character review (September 29)
+
+Two bounded candidates passed fresh-import, triangle/size, render and browser checks but failed
+independent visual review. Boxy anatomy, disconnected clothing, simplistic hands, flat materials
+and a depth-poor side silhouette remained despite refinements. Technical readiness and visual
+acceptance are separate gates; never publish the last attempt merely because retries ran out.
+
+For a realistic human, changing trim, buttons or strand counts is not a method change when the
+primary anatomy is still a primitive assembly. Rebuild the connected primary forms, or investigate
+an appropriately licensed anatomical base mesh, before another expensive detail pass. Compare
+untextured front/profile silhouettes and face proportions first. A base mesh may help anatomy;
+it does not reconstruct identity, clothing, hairstyle, textures or a usable animation rig.
+
+The official Blender Studio Human Base Meshes v1.4.1 data bundle was downloaded from Blender's
+mirror and its library was readable in native Blender 5.2.1 with auto-execution disabled. This
+establishes file availability, **not** a successful character reconstruction. The ZIP SHA-256 was
+`811f43accbb31a88266d932f8f5563b2d13586fca0ba2693aad1f5fe582b3515`.
+Source: [Blender demo/asset downloads](https://www.blender.org/download/demo-files/).
+Recheck license/version and actual file hashes before reuse; data is not an executable add-on.
+
+The automated worker currently supplies the eight pinned image references, not this mesh library.
+Do not assume an outside file is available in its sandbox, inject it into an existing checkpoint,
+or silently change a queued job's inputs. Any future supplied geometry needs explicit immutable
+source/provenance pins and recovery checks before it becomes part of the generalized worker.
+Keep downloaded libraries and character experiments outside Git. No paid service is implied.

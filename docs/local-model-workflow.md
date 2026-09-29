@@ -186,6 +186,12 @@ apply it with `panther assets migrate`, then prepare another plan to verify zero
 This adds exact reference lineage and marks unpublished candidates and inspection evidence as
 intermediate; it preserves bytes and existing version records. Missing job identities or reference
 assets block the migration rather than being inferred from filenames. Retain private audit reports.
+If a role correction changes an inspection image's physical folder, the metadata-only operation
+must reject it. Split those exact-version moves into the reviewed temporary
+[indexed relocation v1](asset-relocation-v1.md) rollout, preserving stable references and original
+bytes. Verify every affected file and every game's index, retire former entries recoverably after
+issued links expire, and remove the temporary capability. Do not exempt old renders or bypass
+the Panther operation with S3 writes.
 
 Before deploying the appearance cutover, inspect the complete model-job inventory through
 Panther authentication and stop old workers. Unpinned nonterminal jobs are explicit rollout
