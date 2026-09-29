@@ -31,7 +31,11 @@ def library(novel, monkeypatch):  # noqa: F811
 
 def call(library, kind="story", body=None, **query):
     module, novel_module = library
-    route = "/novel-stories" if kind == "story" else "/novel-books"
+    route = {
+        "story": "/novel-stories",
+        "book": "/novel-books",
+        "illustration": "/novel-illustrations",
+    }[kind]
     return module.handle(
         {
             "routeKey": ("POST " if body else "GET ") + route,
@@ -76,6 +80,119 @@ def book(library, **changes):
         relatedAssetKeys=[],
         **changes,
     )
+
+
+def illustrations(library):
+    job, chapter = completed(library[1])
+    key = "games/test-game/assets/illustration/original/image.png"
+    asset = {
+        "key": key,
+        "kind": "portrait",
+        "contentType": "image/png",
+        "size": 20,
+        "metadata": {"extra": {"relationshipRole": "finished"}},
+    }
+    library[1].browse_index.table().put_item(
+        Item={
+            "pk": library[1].browse_index.partition("test-game", "all"),
+            "sk": key,
+            "observed": 1,
+            "payload": json.dumps(asset),
+        }
+    )
+    return envelope(
+        id=job["jobId"],
+        chapterKey=chapter,
+        status="approved",
+        illustrations=[
+            {
+                "assetKey": key,
+                "placement": "before-chapter",
+                "altText": "A fictional harbor",
+                "caption": "Illustrative adaptation",
+            }
+        ],
+    )
+
+
+def test_illustrations_pin_exact_chapter_and_keep_revision_history(library):
+    body = illustrations(library)
+    first = unpack(call(library, "illustration", body))["record"]
+    assert first["entityType"] == "ChapterIllustrations"
+    assert first["chapterKey"] == body["chapterKey"]
+    assert unpack(call(library, "illustration", body))["replayed"]
+    second = unpack(
+        call(
+            library,
+            "illustration",
+            {
+                **body,
+                "expectedRevision": first["revision"],
+                "operationId": uuid.uuid4().hex,
+                "illustrations": [],
+            },
+        )
+    )["record"]
+    assert second["previousRevision"] == first["revision"]
+    assert (
+        unpack(call(library, "illustration", id=body["id"], revision=first["revision"]))["record"]
+        == first
+    )
+    assert unpack(call(library, "illustration", body))["record"] == second
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["foreign", "alt", "placement", "duplicate", "chapter", "unfinished", "internal", "oversized"],
+)
+def test_illustrations_reject_invalid_inputs_without_writes(library, invalid):
+    body = illustrations(library)
+    entry = body["illustrations"][0]
+    if invalid == "foreign":
+        entry["assetKey"] = "games/other/assets/image/original/image.png"
+    if invalid == "alt":
+        entry["altText"] = ""
+    if invalid == "placement":
+        entry["placement"] = "after-paragraph-guess"
+    if invalid == "duplicate":
+        body["illustrations"] *= 2
+    if invalid == "chapter":
+        body["id"] = "f" * 64
+    if invalid == "unfinished":
+        library[1].jobs.table.update_item(
+            Key={"pk": "TASKS", "sk": body["id"] + ":novel-chapter"},
+            UpdateExpression="SET #s = :s",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":s": "RUNNING"},
+        )
+    if invalid in {"internal", "oversized"}:
+        db = library[1].browse_index.table()
+        key = {"pk": library[1].browse_index.partition("test-game", "all"), "sk": entry["assetKey"]}
+        item = db.get_item(Key=key)["Item"]
+        asset = json.loads(item["payload"])
+        if invalid == "internal":
+            asset["metadata"]["extra"]["relationshipRole"] = "intermediate"
+        else:
+            asset["size"] = 9 * 1024**2
+        db.put_item(Item={**item, "payload": json.dumps(asset)})
+    assert call(library, "illustration", body)["statusCode"] == 400
+    assert unpack(call(library, "illustration"))["records"] == []
+
+
+def test_illustration_catalog_race_and_nonpublisher_blocked(library, monkeypatch):
+    body = illustrations(library)
+    original = library[0].indexed
+
+    def stale(game, keys):
+        result = original(game, keys)
+        for item in result.values():
+            item["observed"] += 1
+        return result
+
+    monkeypatch.setattr(library[0], "indexed", stale)
+    assert call(library, "illustration", body)["statusCode"] == 409
+    monkeypatch.setenv("MODEL_PUBLISHERS", "")
+    assert call(library, "illustration", body)["statusCode"] == 403
 
 
 def test_story_revision_history_conflicts_and_exact_retries(library):
@@ -163,11 +280,13 @@ def test_source_index_conflict_and_authorization_are_not_bypassed(library, monke
     call(library, body=envelope())
     body = book(library)
     original = library[0].indexed
+
     def changed(game, keys):
         found = original(game, keys)
         for item in found.values():
             item["observed"] += 1
         return found
+
     monkeypatch.setattr(library[0], "indexed", changed)
     assert call(library, "book", body)["statusCode"] == 409
     assert unpack(call(library, "book"))["records"] == []

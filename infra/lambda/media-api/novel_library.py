@@ -78,6 +78,8 @@ def save(media, body, claims, kind):
             "relatedAssetKeys",
         }
         if kind == "book"
+        else {"chapterKey", "status", "illustrations"}
+        if kind == "illustration"
         else set()
     )
     if not isinstance(body, dict) or set(body) != common | additional:
@@ -98,7 +100,11 @@ def save(media, body, claims, kind):
         raise ValueError("Invalid revision or operation identity")
     record = {
         "schemaVersion": 1,
-        "entityType": "NarrativeBook" if kind == "book" else "NarrativeStory",
+        "entityType": {
+            "book": "NarrativeBook",
+            "story": "NarrativeStory",
+            "illustration": "ChapterIllustrations",
+        }[kind],
         "gameId": game,
         "id": identity,
         "title": text(body["title"], 160),
@@ -131,6 +137,106 @@ def save(media, body, claims, kind):
         return {k: serializer.serialize(v) for k, v in value.items()}
 
     guards = []
+    if kind == "illustration":
+        chapter_key = body["chapterKey"]
+        entries = body["illustrations"]
+        if (
+            body["status"] not in {"draft", "approved"}
+            or not isinstance(entries, list)
+            or len(entries) > 12
+        ):
+            raise ValueError("Invalid illustration selection")
+        normalized = []
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {
+                "assetKey",
+                "placement",
+                "altText",
+                "caption",
+            }:
+                raise ValueError("Expected explicit illustration descriptions and placement")
+            if entry["placement"] not in {"before-chapter", "after-chapter"}:
+                raise ValueError("Illustrations belong outside the unchanged manuscript")
+            normalized.append(
+                {
+                    "assetKey": entry["assetKey"],
+                    "placement": entry["placement"],
+                    "altText": text(entry["altText"], 1000),
+                    "caption": text(entry["caption"], 1000, empty=True),
+                }
+            )
+        keys = [chapter_key, *[entry["assetKey"] for entry in normalized]]
+        if any(
+            not isinstance(k, str)
+            or not asset_library.valid_key(media, game, k)
+            or not k.startswith(f"games/{game}/")
+            for k in keys
+        ) or len(set(keys)) != len(keys):
+            raise ValueError("Choose distinct same-game assets")
+        sources = indexed(game, keys)
+        assets = {k: json.loads(v["payload"]) for k, v in sources.items()}
+        if any(k not in assets or assets[k].get("key") != k for k in keys):
+            raise ValueError("Illustration sources must exist in the catalog")
+        summary = assets[chapter_key].get("novel", {})
+        if (
+            summary.get("state") != "available"
+            or summary.get("id") != identity
+            or summary.get("assetKey") != chapter_key
+        ):
+            raise ValueError("Pin the exact completed chapter edition")
+        import novel
+
+        committed = novel.committed_records([summary])
+        task_key = {"pk": "TASKS", "sk": identity + ":novel-chapter"}
+        task = committed.get(("TASKS", task_key["sk"]))
+        job = committed.get(("RUNS", identity))
+        if (
+            not task
+            or task.get("status") != "DONE"
+            or task.get("output", {}).get("key") != chapter_key
+            or not job
+            or job.get("gameId") != game
+            or job.get("sessionId") != summary.get("sessionId")
+        ):
+            raise ValueError("An unfinished or foreign chapter cannot be illustrated")
+        guards.append(
+            {
+                "ConditionCheck": {
+                    "TableName": novel.jobs.table.name,
+                    "Key": encode(task_key),
+                    "ConditionExpression": "#s = :done AND #o = :output",
+                    "ExpressionAttributeNames": {"#s": "status", "#o": "output"},
+                    "ExpressionAttributeValues": encode(
+                        {":done": "DONE", ":output": task["output"]}
+                    ),
+                }
+            }
+        )
+        for entry in normalized:
+            asset = assets[entry["assetKey"]]
+            if (
+                asset.get("contentType")
+                not in {"image/png", "image/jpeg", "image/webp", "image/avif"}
+                or not 0 < asset.get("size", 0) <= 8 * 1024**2
+                or asset_metadata.internal(asset["kind"])
+                or asset.get("lineageWarning")
+                or asset.get("metadata", {}).get("extra", {}).get("relationshipRole") != "finished"
+            ):
+                raise ValueError(
+                    "Choose a finished browser-compatible image, not a workflow internal"
+                )
+        for key, source in sources.items():
+            guards.append(
+                {
+                    "ConditionCheck": {
+                        "TableName": db.name,
+                        "Key": encode({"pk": browse_index.partition(game, "all"), "sk": key}),
+                        "ConditionExpression": "observed = :observed",
+                        "ExpressionAttributeValues": encode({":observed": source["observed"]}),
+                    }
+                }
+            )
+        record.update(chapterKey=chapter_key, status=body["status"], illustrations=normalized)
     if kind == "book":
         story_id = slug(media, body["storyId"])
         story_key = {"pk": partition(game, "story"), "sk": story_id}
@@ -337,7 +443,13 @@ def handle(event, media):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     if not authorized(claims, "MODEL_PUBLISHERS"):
         return media._response(403, {"error": "Novel library sign-in required"})
-    kind = "story" if event["routeKey"].endswith("/novel-stories") else "book"
+    kind = {
+        "/novel-stories": "story",
+        "/novel-books": "book",
+        "/novel-illustrations": "illustration",
+    }.get(event["routeKey"].split()[-1])
+    if kind is None:
+        return media._response(404, {"error": "Narrative route not found"})
     try:
         if event["routeKey"].startswith("POST "):
             return save(media, json.loads(event.get("body") or "{}"), claims, kind)

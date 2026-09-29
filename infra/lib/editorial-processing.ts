@@ -128,7 +128,7 @@ export class EditorialProcessing extends Construct {
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"], resources:[props.catalogTable.tableArn],
       conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["GAMES"]}}}));
     const libraryIntegration = new integrations.HttpLambdaIntegration("NovelLibraryIntegration", library);
-    for (const route of ["/novel-stories", "/novel-books"]) {
+    for (const route of ["/novel-stories", "/novel-books", "/novel-illustrations"]) {
       props.api.addRoutes({path:route,methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration:libraryIntegration,authorizer:props.authorizer});
     }
     // Review decisions cannot dispatch jobs or spend. Retain immutable revision-specific audit rows.

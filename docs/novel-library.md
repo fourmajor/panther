@@ -1,5 +1,36 @@
 # Private stories, books and reading editions
 
+## Optional chapter artwork
+
+`ChapterIllustrations` schema 1 is a separate private selection, not a manuscript amendment.
+`GET/POST /novel-illustrations` uses the same publisher authorization, retained metadata table,
+immutable revision history, exact-operation replay and conflict guards as books. The identity is
+the completed chapter's exact 64-character job ID. It pins `chapterKey`, `status` (`draft` or
+`approved`) and at most twelve distinct existing indexed image revisions. Each entry has exactly
+`assetKey`, `placement` (`before-chapter` or `after-chapter`), nonempty `altText` (1–1000 characters)
+and `caption` (0–1000 characters). The common envelope still includes `gameId`, `id`, `title`,
+`synopsis`, `expectedRevision`, a stable 32-character `operationId` and `reason`.
+
+Use `panther novels save-illustrations PRIVATE_MANIFEST.json`, then
+`panther novels illustrations --game GAME --id CHAPTER_ID [--revision REVISION]` to inspect it.
+An empty entry list explicitly removes current artwork without deleting earlier selections or
+image bytes. Images must be finished, same-game PNG/JPEG/WebP/AVIF, at most 8 MiB each. Chapter
+completion and source catalog observations are transaction guards. A selected image may be curated
+reference art; association does not fabricate a derivation or change its generation metadata.
+
+The reader fetches only the selected chapter's set and one bounded image-link batch, never an image
+inventory scan. Artwork is labeled illustrative, responsive and optional. Draft art starts hidden;
+an approved private selection starts visible. Readers can switch to text-only and inspect the
+previous selection. Image errors offer fresh-access retries without hiding prose. Artwork stays
+outside prose blocks, preserving paragraph reading progress, chapter text and manuscript downloads.
+Inline placement, automatic illustration planning/generation, provider/model choice and spending
+are intentionally not implemented or authorized by this capability.
+
+Deploy the CDK API/web changes after successful owned-runner browser verification. There are no
+earlier `ChapterIllustrations` records to migrate: older chapters have no selection until explicitly
+curated, not a fallback schema. Existing image contracts and generation/version/storage migrations
+still apply to any selected image. Verify all games' existing catalog readiness before rollout.
+
 Chapters remain immutable editorial assets. Organization is separate structured application data
 in the retained on-demand catalog: `NarrativeStory` and `NarrativeBook`, schema 1. No new S3 paths,
 manuscript edits, paid generation, public sharing or provisioned compute are needed.

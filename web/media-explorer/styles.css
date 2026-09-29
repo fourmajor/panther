@@ -230,6 +230,14 @@ main {
 .novel-resume { padding:1rem; margin-bottom:1rem; background:var(--panel); border-left:3px solid var(--accent); }
 .novel-resume a { color:var(--accent); }
 .novel-progress { color:var(--muted); font-size:.85rem; }
+.novel-artwork { margin:1rem 0; color:var(--muted); font-size:.9rem; }
+.novel-artwork label { display:flex; align-items:center; gap:.6rem; }
+.novel-artwork input { width:auto; }
+.novel-illustration { margin:2rem 0; }
+.novel-illustration img { display:block; width:100%; max-height:70vh; object-fit:contain; border-radius:.5rem; }
+.novel-illustration figcaption { margin-top:.7rem; color:var(--muted); font-size:.85rem; line-height:1.5; }
+.novel-illustration a { color:inherit; text-decoration-color:var(--muted); }
+.novel-illustration .illustration-fallback { padding:1rem; border:1px solid var(--line); border-radius:.5rem; }
 .tv-library { margin-top:1.5rem; display:grid; gap:1rem; }
 .tv-library > section { display:grid; gap:1rem; }
 .tv-library select { width:100%; max-width:40rem; min-width:0; min-height:2.75rem; padding:.6rem .75rem; font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:.4rem; }
