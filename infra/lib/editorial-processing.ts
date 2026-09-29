@@ -16,7 +16,7 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** Each editorial discipline is a durable callback stage, not a Lambda-hosted AI call. */
 export class EditorialProcessing extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
   }) {
     super(scope, id);
     const plan = JSON.parse(fs.readFileSync(path.join(__dirname,
@@ -108,6 +108,28 @@ export class EditorialProcessing extends Construct {
     const novelIntegration = new integrations.HttpLambdaIntegration("NovelIntegration", reader);
     for (const route of ["/novel", "/novel-chapter"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration: novelIntegration, authorizer: props.authorizer });
+    }
+    // Organization is a separate metadata API. It cannot modify manuscripts, jobs or spend.
+    const library = new lambda.Function(this, "NovelLibrary", {
+      runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+      handler: "novel_library.handler", code,
+      environment: {...environment, ASSET_BROWSE_TABLE: props.browseTable.tableName,
+        CATALOG_TABLE: props.catalogTable.tableName}, memorySize: 256, timeout: Duration.seconds(30),
+      logGroup: new logs.LogGroup(this, "NovelLibraryLogs", {retention: logs.RetentionDays.ONE_MONTH}),
+    });
+    table.grantReadData(library);
+    props.browseTable.grant(library, "dynamodb:GetItem", "dynamodb:Query", "dynamodb:BatchGetItem");
+    library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"], resources:[props.browseTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#*", "novel-library-history#*", "novel-library-ops#*"]}}}));
+    library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[props.browseTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "v3#*#all"]}}}));
+    library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[table.tableArn],
+      conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["TASKS"]}}}));
+    library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"], resources:[props.catalogTable.tableArn],
+      conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["GAMES"]}}}));
+    const libraryIntegration = new integrations.HttpLambdaIntegration("NovelLibraryIntegration", library);
+    for (const route of ["/novel-stories", "/novel-books"]) {
+      props.api.addRoutes({path:route,methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration:libraryIntegration,authorizer:props.authorizer});
     }
     // Review decisions cannot dispatch jobs or spend. Retain immutable revision-specific audit rows.
     const reviews = new dynamodb.Table(this, "MovieReviews", {

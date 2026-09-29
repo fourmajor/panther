@@ -330,6 +330,20 @@ test("novel reader is authenticated and has only read permissions", () => {
   assert.doesNotMatch(serialized, /PutItem|UpdateItem|DeleteItem|PutObject|states:|InvokeFunction/);
 });
 
+test("novel organization is scoped metadata, not manuscript or workflow mutation", () => {
+  const template = mediaExplorerTemplate();
+  for(const path of ["novel-stories","novel-books"]) for(const method of ["GET","POST"])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:`${method} /${path}`,AuthorizationType:"JWT"});
+  const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("EditorialProcessingNovelLibrary"));
+  const serialized=JSON.stringify(policies);
+  assert.match(serialized,/novel-library-history#\*/); assert.match(serialized,/dynamodb:ConditionCheckItem/);
+  assert.doesNotMatch(serialized,/s3:|states:|InvokeFunction|UpdateItem|DeleteItem/);
+  const statements=policies.flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
+  const writes=statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  assert.equal(writes.length,1);
+  assert.deepEqual(writes[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],["novel-library#*","novel-library-history#*","novel-library-ops#*"]);
+});
+
 test("media explorer uses private static hosting and Cognito authentication", () => {
   const template = mediaExplorerTemplate();
 
@@ -493,7 +507,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 69);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 73);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

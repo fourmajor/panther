@@ -97,6 +97,25 @@ def test_instructions_ship_with_cli():
     assert "administrator key is used only for GET billing checks" in result.output
 
 
+def test_novel_cli_lists_all_pages_and_preserves_exact_edit_envelope(setup, monkeypatch, tmp_path):
+    calls=[]
+    def api(_config,method,path,**kwargs):
+        calls.append((method,path,kwargs))
+        if method=="POST":
+            return {"record":kwargs["json"]}
+        return {"records":[{"id":"second" if kwargs["params"].get("cursor") else "first"}],
+                "cursor":None if kwargs["params"].get("cursor") else "next"}
+    monkeypatch.setattr(cloud,"api",api)
+    result=CliRunner().invoke(main,["novels","books","--game","test-game"])
+    assert result.exit_code==0 and '"second"' in result.output
+    manifest=tmp_path/"book.json"
+    body={"gameId":"test-game","id":"book-one","operationId":"a"*32,"expectedRevision":None}
+    manifest.write_text(json.dumps(body))
+    result=CliRunner().invoke(main,["novels","save-book",str(manifest)])
+    assert result.exit_code==0 and calls[-1]==("POST","/novel-books",{"json":body})
+    assert CliRunner().invoke(main,["novels","books","--game","test-game","--revision","b"*32]).exit_code!=0
+
+
 def test_transcript_selection_cli_preserves_guard_and_retry_identity(setup, monkeypatch):
     calls = []
     monkeypatch.setattr(cloud, "api", lambda *args, **kwargs: calls.append((args, kwargs)) or {"selection": None})

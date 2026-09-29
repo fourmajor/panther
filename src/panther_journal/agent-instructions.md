@@ -1,5 +1,13 @@
 # Panther agent instructions
 
+Narrative organization uses `docs/novel-library.md`: `panther novels stories/books` and
+`save-story/save-book` submit explicit private story/book/volume records. Books pin immutable
+chapter editions and order, optional indexed cover, credit and finished related media. Keep
+manifests outside Git and retain operation IDs for exact retries. Preserve prior organization
+revisions; do not replace selected editions automatically. Source AI acceptance is not private
+book approval or canon. Use grounded-adaptation, creative-reimagining, playful-derivative or
+unclassified honestly; never infer approval, facts or chronology from filenames/upload dates.
+
 Character facts use the versioned catalog contract in `docs/character-profiles.md`.
 Read them with `panther character details --game GAME --character CHARACTER`; use
 `edit-details` with a complete guarded envelope for updates. Keep unknown facts explicitly

@@ -1302,15 +1302,134 @@ function renderGeneration(host, metadata) {
 }
 
 const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", "manuscript",
-  "details", "notice", "pagination", "read", "show-details", "download", "back", "refresh"]
+  "details", "notice", "pagination", "read", "show-details", "download", "back", "refresh", "resume", "progress"]
   .map(name => [name, document.getElementById(`novel-${name}`)]));
 let currentChapter = null;
+let currentNovelBook = null;
+let novelProgressCleanup = null;
 
 function clearNovel() {
+  novelProgressCleanup?.(); novelProgressCleanup = null;
+  currentNovelBook = null;
   dismissNarrativePreview(true);
   currentChapter = null;
   novel.reader.hidden = true;
   for (const part of ["list", "prose", "details", "pagination", "title", "notice"]) novel[part].replaceChildren();
+  novel.resume.replaceChildren(); novel.resume.hidden = true; novel.progress.textContent = "";
+}
+
+function novelProgressKey() {
+  try {
+    const sub = decodeToken(state.tokens?.id_token)?.sub;
+    return typeof sub === "string" && sub.length <= 256 ? `panther.reading.v1:${sub}:${state.gameId}` : null;
+  } catch { return null; }
+}
+
+function savedNovelProgress() {
+  try {
+    const key = novelProgressKey();
+    const value = key && JSON.parse(localStorage.getItem(key) || "null");
+    if (value?.schemaVersion !== 1 || value.gameId !== state.gameId || !/^[a-f0-9]{64}$/.test(value.chapterId)
+      || !Number.isInteger(value.paragraph) || value.paragraph < 0 || value.paragraph > 100000
+      || !Number.isFinite(value.percent) || value.percent < 0 || value.percent > 100
+      || (value.bookRevision !== null && !/^[a-f0-9]{32}$/.test(value.bookRevision))
+      || (value.bookId !== null && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.bookId))) return null;
+    return value;
+  } catch { return null; }
+}
+
+function readingProgress(chapter, book, current) {
+  const key = novelProgressKey();
+  if (!key) { novel.progress.textContent = "Reading position unavailable for this sign-in."; return; }
+  novel.progress.textContent = "Reading position is saved on this device.";
+  const saved = savedNovelProgress();
+  if (saved?.chapterId === chapter.id) {
+    const button = document.createElement("button"); button.className = "quiet-button";
+    button.textContent = `Resume at ${saved.percent}% · saved on this device`;
+    button.addEventListener("click", () => {
+      novelView(false);
+      const paragraphs = [...novel.prose.children];
+      const target = paragraphs[Math.min(saved.paragraph, paragraphs.length - 1)];
+      if (target) { target.tabIndex = -1; target.focus({preventScroll:true}); target.scrollIntoView({block:"start",behavior:"smooth"}); }
+    });
+    novel.resume.replaceChildren(button); novel.resume.hidden = false;
+  }
+  let timer;
+  const save = () => {
+    if (!current() || novel.manuscript.hidden || novel.reader.hidden) return;
+    const paragraphs = [...novel.prose.children];
+    if (!paragraphs.length || novel.prose.getBoundingClientRect().top > innerHeight) return;
+    let paragraph = 0;
+    for (let i = 0; i < paragraphs.length; i++) if (paragraphs[i].getBoundingClientRect().top <= innerHeight * .3) paragraph = i;
+    const percent = Math.round(100 * (paragraph + 1) / paragraphs.length);
+    try {
+      localStorage.setItem(key, JSON.stringify({schemaVersion:1,gameId:state.gameId,chapterId:chapter.id,
+        bookId:book?.id || null,bookRevision:book?.revision || null,paragraph,percent,title:chapter.title,updatedAt:Date.now()}));
+      novel.progress.textContent = `${percent}% through this chapter · position saved on this device`;
+    } catch { novel.progress.textContent = "This browser cannot save reading position. The chapter remains available."; }
+  };
+  const onScroll = () => { clearTimeout(timer); timer = setTimeout(save, 250); };
+  window.addEventListener("scroll", onScroll, {passive:true});
+  novelProgressCleanup = () => { clearTimeout(timer); window.removeEventListener("scroll", onScroll); };
+}
+
+async function novelOrganization(gameId, current) {
+  const results = [];
+  for (const type of ["stories", "books"]) {
+    const records = [], seen = new Set(); let cursor;
+    do {
+      const page = await api(`/novel-${type}`, {gameId,cursor});
+      if (!current()) return null;
+      if (!Array.isArray(page.records)) throw new Error("The book library could not be read completely");
+      records.push(...page.records); cursor = page.cursor;
+      if (records.length > 5000 || seen.size >= 200 || (cursor && seen.has(cursor))) throw new Error("The book library exceeds its bounded reader limit or returned a repeated cursor");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    results.push(records);
+  }
+  return {stories:results[0],books:results[1]};
+}
+
+const narrativeClassification = {"grounded-adaptation":"Grounded adaptation", "creative-reimagining":"Creative reimagining", "playful-derivative":"Playful derivative", "unclassified":"Creative classification not assigned"};
+
+function bookLink(title, book, chapterId) {
+  const link = novelLink(title, chapterId || "", book.id);
+  link.href = gamePath(chapterId ? `novel/${chapterId}` : "novel") + `?book=${encodeURIComponent(book.id)}&bookRevision=${encodeURIComponent(book.revision)}`;
+  return link;
+}
+
+function bookCard(book, story, byKey, current) {
+  const card = document.createElement("article"); card.className = "novel-card novel-book";
+  const content = document.createElement("div");
+  const heading = document.createElement("h2"); heading.append(bookLink(book.title,book));
+  const meta = document.createElement("p"); meta.className = "eyebrow";
+  meta.textContent = `${story?.title || "Story unavailable"} · ${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
+  const synopsis = document.createElement("p"); synopsis.textContent = book.synopsis || "No synopsis provided.";
+  const details = document.createElement("p"); details.textContent = [narrativeClassification[book.classification] || "Unclassified",book.authorCredit,
+    `${book.volumes.length} volume${book.volumes.length === 1 ? "" : "s"}`,`Revision ${book.revision.slice(0,8)}`].filter(Boolean).join(" · ");
+  content.append(meta,heading,synopsis,details); card.append(content);
+  if(book.previousRevision){const previous=bookLink("Previous book revision",{...book,revision:book.previousRevision});content.append(previous);}
+  if (book.coverAssetKey) {
+    const image = document.createElement("img"); image.alt = `Cover for ${book.title}`; image.className = "novel-cover";
+    image.dataset.novelCover = book.coverAssetKey;
+    card.prepend(image);
+    image.addEventListener("error",()=>image.remove());
+  }
+  if (book.volumes.some(v=>v.chapterKeys.some(k=>!byKey.has(k)))) {
+    const warning=document.createElement("p"); warning.textContent="Some pinned chapters are unavailable. No newer edition was substituted."; content.append(warning);
+  }
+  return card;
+}
+
+async function novelCovers(gameId,current) {
+  const images=[...novel.list.querySelectorAll('[data-novel-cover]')], keys=[...new Set(images.map(i=>i.dataset.novelCover))];
+  for(let offset=0;offset<keys.length;offset+=60){
+    if(!current())return;
+    const batch=keys.slice(offset,offset+60);
+    try{const result=await api("/image-links",{},{body:{gameId,keys:batch}});if(!current())return;
+      for(const image of images.filter(i=>batch.includes(i.dataset.novelCover))){const item=result.images?.[image.dataset.novelCover];if(item?.url)image.src=item.url;else image.remove();}
+    }catch{if(current())for(const image of images.filter(i=>batch.includes(i.dataset.novelCover)))image.remove();}
+  }
 }
 
 function novelView(details) {
@@ -1637,9 +1756,9 @@ document.addEventListener("pointerdown", event => {
 window.addEventListener("resize", positionNarrativePreview);
 document.addEventListener("scroll", positionNarrativePreview, true);
 
-function novelLink(title, id) {
+function novelLink(title, id, bookId = null) {
   const link = document.createElement("a");
-  link.href = gamePath(`novel/${id}`);
+  link.href = gamePath(`novel/${id}`) + (bookId ? `?book=${encodeURIComponent(bookId)}` + (currentNovelBook?.id===bookId ? `&bookRevision=${encodeURIComponent(currentNovelBook.revision)}` : "") : "");
   link.textContent = title;
   link.addEventListener("click", event => {
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -1714,6 +1833,19 @@ async function loadNovel(chapterId, epoch) {
       }
       if (cursor) seenCursors.add(cursor);
     } while (cursor);
+    loading.update("Reading story and book organization…");
+    const organization = await novelOrganization(gameId,current);
+    if (!organization || !current()) return;
+    const byKey = new Map(chapters.filter(c=>c.assetKey).map(c=>[c.assetKey,c]));
+    const bookId = new URLSearchParams(location.search).get("book");
+    let selectedBook = bookId ? organization.books.find(b=>b.id===bookId) : null;
+    if (bookId && !selectedBook) throw new Error("The selected book is unavailable");
+    const bookRevision = new URLSearchParams(location.search).get("bookRevision");
+    if(bookRevision){if(!bookId || !/^[a-f0-9]{32}$/.test(bookRevision))throw new Error("Invalid book revision");
+      selectedBook=(await api("/novel-books",{gameId,id:bookId,revision:bookRevision})).record;
+      if(!current())return;
+      if(!selectedBook || selectedBook.id!==bookId || selectedBook.gameId!==gameId || selectedBook.revision!==bookRevision)throw new Error("Book revision unavailable");}
+    currentNovelBook = selectedBook;
     // A session can have multiple immutable editions; only the latest appears in the TOC.
     chapters.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
     const sessions = new Map();
@@ -1721,35 +1853,61 @@ async function loadNovel(chapterId, epoch) {
       if (!sessions.has(chapter.sessionId)) sessions.set(chapter.sessionId, []);
       sessions.get(chapter.sessionId).push(chapter);
     }
-    const ordered = [...sessions.values()].sort((a, b) => a.at(-1).createdAt - b.at(-1).createdAt || a[0].sessionId.localeCompare(b[0].sessionId)).map(v => v[0]);
+    const ordered = selectedBook ? selectedBook.volumes.flatMap(v=>v.chapterKeys.map(k=>byKey.get(k)).filter(Boolean)) : [...sessions.values()].sort((a, b) => a.at(-1).createdAt - b.at(-1).createdAt || a[0].sessionId.localeCompare(b[0].sessionId)).map(v => v[0]);
     if (!chapterId) {
-      novel.status.hidden = Boolean(ordered.length);
+      const saved = savedNovelProgress();
+      if (saved && chapters.some(c=>c.id===saved.chapterId)) {
+        const link = novelLink(`Resume ${chapters.find(c=>c.id===saved.chapterId).title} · ${saved.percent}% · saved on this device`,saved.chapterId,saved.bookId);
+        if(saved.bookId && saved.bookRevision)link.href += `&bookRevision=${encodeURIComponent(saved.bookRevision)}`;
+        novel.resume.append(link); novel.resume.hidden = false;
+      }
+      if (selectedBook) {
+        novel.list.append(bookCard(selectedBook,organization.stories.find(s=>s.id===selectedBook.storyId),byKey,current));
+        for(const volume of selectedBook.volumes) {
+          const section=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ol"); heading.textContent=volume.title;
+          for(const key of volume.chapterKeys){const chapter=byKey.get(key), item=document.createElement("li"); if(chapter)item.append(bookLink(chapter.title,selectedBook,chapter.id));else item.textContent="Pinned chapter unavailable";list.append(item);}
+          section.append(heading,list);novel.list.append(section);
+        }
+        const publication=document.createElement("p");publication.textContent="Approval selects a private reading edition. It does not publish the book publicly or establish campaign canon.";novel.list.append(publication);
+        if(selectedBook.relatedAssetKeys.length){const related=document.createElement("nav");related.setAttribute("aria-label","Related book assets");for(const key of selectedBook.relatedAssetKeys){related.append(assetLink({key}),document.createTextNode(" · "));}novel.list.append(related);}
+        novel.status.hidden=true;void novelCovers(gameId,current);return;
+      }
+      for(const story of organization.stories){const books=organization.books.filter(b=>b.storyId===story.id).sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
+        const section=document.createElement("section"), heading=document.createElement("h2"), synopsis=document.createElement("p");heading.textContent=story.title;synopsis.textContent=story.synopsis;section.append(heading,synopsis);
+        for(const book of books)section.append(bookCard(book,story,byKey,current));if(!books.length){const empty=document.createElement("p");empty.textContent="No books organized yet.";section.append(empty);}novel.list.append(section);}
+      if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
+      const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters · source editions";novel.list.append(sourceHeading);
+      novel.status.hidden = Boolean(ordered.length || organization.stories.length);
       novel.status.textContent = "No chapters yet. Completed novel chapters will appear here automatically.";
       for (const [index, chapter] of ordered.entries()) {
         const card = document.createElement("div"); card.className = "novel-card";
-        const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
+        const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1} · not an approved book selection`;
         const title = document.createElement("h2"); title.append(novelLink(chapter.title, chapter.id));
         const meta = document.createElement("p"); meta.textContent = `${chapter.sessionId} · ${chapterDate(chapter)}${chapter.publicationStatus === "accepted-with-notes" ? " · Working draft" : ""}`;
         card.append(number, title, meta); novel.list.append(card);
       }
+      void novelCovers(gameId,current);
       return;
     }
     loading.update("Reading the selected chapter…");
     const chapter = await api("/novel-chapter", {gameId, chapterId});
     if (!current()) return;
     currentChapter = chapter;
+    if(selectedBook && !ordered.some(c=>c.id===chapter.id))throw new Error("This chapter edition is not selected in the book");
     novel.title.textContent = chapter.title;
     proseMarkdown(novel.prose, chapter.markdown);
     chapterDetails(chapter, sessions.get(chapter.sessionId) || [chapter]);
     novel.notice.textContent = [chapter.notice,
       state.gameDetail.game.purpose === "test" ? "Test-game adaptation · not campaign canon." : "",
       chapter.publicationStatus === "accepted-with-notes" ? "Working draft · AI review left unresolved notes. See Details." : "",
+      selectedBook ? `${selectedBook.title} · ${selectedBook.status === "approved" ? "Approved private selection" : "Private draft"} · ${narrativeClassification[selectedBook.classification]}.` : "Source edition · not an approved book selection.",
       sessions.get(chapter.sessionId)?.[0].id !== chapter.id ? "You are reading an earlier version. See Details for the latest." : "",
     ].filter(Boolean).join(" ");
     novel.notice.hidden = !novel.notice.textContent;
     novelView(false);
     novel.reader.hidden = false;
     novel.status.hidden = true;
+    readingProgress(chapter,selectedBook,current);
     // Link enrichment is optional: a catalog outage must not prevent reading the manuscript.
     proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, [], chapters));
     const collectionIds=[...new Set((chapter.readerReferences?.schemaVersion===1 && Array.isArray(chapter.readerReferences.mentions) && chapter.readerReferences.mentions.length<=200 ? chapter.readerReferences.mentions : [])
@@ -1760,12 +1918,13 @@ async function loadNovel(chapterId, epoch) {
     }).catch(() => {
       if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Refresh chapters to retry."; }
     });
-    const index = ordered.findIndex(c => c.sessionId === chapter.sessionId);
-    if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id));
-    if (index >= 0 && index < ordered.length - 1) novel.pagination.append(novelLink(`${ordered[index + 1].title} →`, ordered[index + 1].id));
+    const index = ordered.findIndex(c => selectedBook ? c.id === chapter.id : c.sessionId === chapter.sessionId);
+    if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id,selectedBook?.id));
+    if (index >= 0 && index < ordered.length - 1) novel.pagination.append(novelLink(`${ordered[index + 1].title} →`, ordered[index + 1].id,selectedBook?.id));
   } catch (error) {
     if (!current()) return;
     novel.status.hidden = false;
+    novel.list.replaceChildren();
     novel.status.textContent = `${error.message}. Use Refresh chapters to retry.`;
   }
 }
@@ -2768,7 +2927,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
 document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 novel.refresh.addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 document.getElementById("character-assets-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
-novel.back.addEventListener("click", () => navigate(gamePath("novel")));
+novel.back.addEventListener("click", () => navigate(gamePath("novel") + (currentNovelBook ? `?book=${encodeURIComponent(currentNovelBook.id)}&bookRevision=${encodeURIComponent(currentNovelBook.revision)}` : "")));
 novel.read.addEventListener("click", () => novelView(false));
 novel["show-details"].addEventListener("click", () => novelView(true));
 novel.download.addEventListener("click", () => {

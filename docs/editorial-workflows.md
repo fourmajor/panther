@@ -130,9 +130,10 @@ provider choice. Keep enrollment recordings private and separate from ordinary g
 
 Open **Novel** after choosing a game, or use `/games/GAME_ID/novel`. Completed
 `novel-chapter` stages appear automatically, even while the independent video branch is still
-running. The table of contents shows one chapter per source session, using the newest run's
-completed edition. Sessions are ordered by their first run's creation time; this is an initial
-ordering convention, not a user-edited book/volume structure. Each edition has a stable URL at
+running. The source-editions list shows one chapter per source session, using the newest run's
+completed edition. This source list is not an approved book order. Stories, books and volumes have
+explicit revisioned organization and immutable edition selections; see `novel-library.md`.
+Each source edition has a stable URL at
 `/games/GAME_ID/novel/JOB_ID`. Details links to earlier editions without overwriting assets.
 
 The reader uses the checksummed JSON artifact's `payload.chapter`, **not** the older Markdown

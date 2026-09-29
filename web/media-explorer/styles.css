@@ -223,6 +223,14 @@ main {
 .game-purpose { color: var(--accent); }
 .game-ruleset { flex-basis: 100%; overflow-wrap: anywhere; }
 .novel-list { display: grid; gap: 1rem; }
+.novel-list > section { display:grid; gap:1rem; }
+.novel-book { display:flex; gap:1.5rem; align-items:flex-start; margin-bottom:1rem; }
+.novel-cover { width:8rem; height:11rem; object-fit:cover; border-radius:.3rem; flex-shrink:0; }
+.novel-book > div { min-width:0; }
+.novel-resume { padding:1rem; margin-bottom:1rem; background:var(--panel); border-left:3px solid var(--accent); }
+.novel-resume a { color:var(--accent); }
+.novel-progress { color:var(--muted); font-size:.85rem; }
+@media(max-width:600px) { .novel-book { gap:1rem; flex-direction:column; } .novel-cover { width:6rem; height:8rem; } }
 .novel-card { border: 1px solid var(--line); border-radius: .6rem; padding: 1.5rem; background: var(--panel); overflow-wrap: anywhere; }
 .novel-card h2 { font: 1.8rem Georgia, serif; }
 .novel-card p:last-child { margin-bottom: 0; color: var(--muted); font-size: .85rem; }

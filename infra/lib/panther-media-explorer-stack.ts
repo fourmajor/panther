@@ -436,8 +436,8 @@ export class PantherMediaExplorerStack extends Stack {
       actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn],
     }));
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
-    new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
-    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table });
+    const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
     new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/character", "/character-profile", "/character-versions"]) {
