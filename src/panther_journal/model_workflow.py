@@ -234,7 +234,11 @@ def upload_file(config, file, job, attempt):
         "title": file.name,
         "category": "reference",
         "characterIds": [job["characterId"]],
-        "sourceKeys": [job["views"][view]["key"] for view in VIEWS],
+        # The full eight-image lineage lives in the provenance JSON. Compact S3
+        # metadata links that document, avoiding the S3 user-metadata size limit.
+        "sourceKeys": []
+        if file.name == "provenance.json"
+        else [f"games/{job['gameId']}/assets/{asset_id}/original/provenance.json"],
         "extra": {
             "jobId": job["jobId"],
             "sha256": checksum,
@@ -567,6 +571,7 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
             {
                 "jobId": job["jobId"],
                 "inputs": job["views"],
+                "sourceKeys": [job["views"][view]["key"] for view in VIEWS],
                 "appearanceId": job["appearanceId"],
                 "workflowVersion": job["workflowVersion"],
                 "appearanceSelection": job["appearanceSelection"],
@@ -598,9 +603,9 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
             )
         outputs = {}
         for name, filename in {
+            "provenanceKey": "provenance.json",
             "webKey": "model.glb",
             "sourceKey": "model.blend",
-            "provenanceKey": "provenance.json",
             "evidenceKey": "evidence.json",
         }.items():
             heartbeat()

@@ -37,7 +37,9 @@ def test_upload_new_model_edition_uses_exact_pinned_semantic_predecessor(tmp_pat
     assert upload.call_args.kwargs["kind"] == "model-3d"
     metadata = json.loads((tmp_path / "model.glb.metadata.json").read_text())
     assert metadata["characterIds"] == ["hero"] and metadata["extra"]["appearanceId"] == "ordinary"
-    assert metadata["sourceKeys"] == [job["views"][view]["key"] for view in worker.VIEWS]
+    assert metadata["sourceKeys"] == [
+        f"games/example-game/assets/model-job-{'0' * 32}-1/original/provenance.json"
+    ]
 
 
 def test_provenance_revision_preserves_its_registered_kind(tmp_path, monkeypatch):
@@ -60,6 +62,7 @@ def test_provenance_revision_preserves_its_registered_kind(tmp_path, monkeypatch
     worker.upload_file({}, file, job, 2)
     assert upload.call_args.kwargs["kind"] == "model-provenance"
     assert upload.call_args.kwargs["new_version_of"] == prior
+    assert json.loads((tmp_path / "provenance.json.metadata.json").read_text())["sourceKeys"] == []
 
 
 def test_qa_image_includes_runtime_plan_and_discovers_tests_before_jobs():
@@ -276,6 +279,10 @@ def test_native_interruption_resumes_script_without_repeating_inference(tmp_path
     worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
     assert stages == ["build", "review"]
     assert api.call_args.args[2] == "/model-jobs/complete"
+    provenance = json.loads(
+        (tmp_path / job["jobId"] / "candidate-1" / "provenance.json").read_text()
+    )
+    assert provenance["sourceKeys"] == [job["views"][view]["key"] for view in worker.VIEWS]
 
 
 def test_final_rejected_candidate_completes_without_uploading_artwork(tmp_path, monkeypatch):

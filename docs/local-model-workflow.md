@@ -172,8 +172,16 @@ Old releases and logs are retained for explicit cleanup, not silently deleted.
 
 ### Repair earlier model output metadata
 
-Run `panther assets model-output-plan --output /private/path/model-output-v1.json` to inventory
-all games and join explicit output job IDs to the recorded immutable reference sets. Dry-run and
+Run `panther assets model-output-inputs --directory /private/path/model-inputs` to prepare
+small private JSON input manifests from explicit recorded jobs across all games. Upload each
+with `panther upload`, its paired metadata JSON, kind `model-provenance`, and the game/asset ID
+in the generated `input-map.json`. The manifest keeps the full eight-reference lineage outside
+S3's limited metadata headers. Verify existing objects after an interrupted upload rather than
+overwriting them.
+
+Run `panther assets model-output-plan --input-map /private/path/model-inputs/input-map.json
+--output /private/path/model-output-v1.json` to checksum-verify those uploaded inputs and join
+explicit output job IDs to the recorded immutable reference sets. Dry-run and
 apply it with `panther assets migrate`, then prepare another plan to verify zero remaining changes.
 This adds exact reference lineage and marks unpublished candidates and inspection evidence as
 intermediate; it preserves bytes and existing version records. Missing job identities or reference

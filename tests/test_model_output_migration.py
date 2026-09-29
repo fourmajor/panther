@@ -26,7 +26,12 @@ def inventory(status="FAILED"):
             "extra": {"jobId": job["jobId"], "version": {"number": 2}},
         },
     }
-    return [*refs, output], job
+    input_key = f"{prefix}model-inputs-{'a' * 32}/original/inputs.json"
+    return [
+        *refs,
+        {"key": input_key, "metadata": {"extra": {"modelInputManifest": True}}},
+        output,
+    ], job
 
 
 @pytest.mark.parametrize(
@@ -36,23 +41,24 @@ def inventory(status="FAILED"):
 def test_model_backfill_uses_exact_job_inputs_and_publication_status(status, role):
     records, job = inventory(status)
     before = copy.deepcopy(records)
-    plan = model_output_plan(records, [job])
+    input_key = records[-2]["key"]
+    plan = model_output_plan(records, [job], {job["jobId"]: input_key})
     edit = plan["migrations"][0]
     assert edit["expectedVersionId"] == "exact-version"
-    assert edit["metadata"]["sourceKeys"] == [job["views"][v]["key"] for v in VIEWS]
+    assert edit["metadata"]["sourceKeys"] == [job["views"]["front"]["key"], input_key]
     assert edit["metadata"]["extra"]["relationshipRole"] == role
     assert edit["metadata"]["extra"]["version"] == {"number": 2}
     assert records == before
     records[-1]["metadata"] = edit["metadata"]
-    assert model_output_plan(records, [job])["migrations"] == []
+    assert model_output_plan(records, [job], {job["jobId"]: input_key})["migrations"] == []
 
 
 def test_model_backfill_blocks_unknown_identity_and_missing_reference():
     records, job = inventory()
     with pytest.raises(click.ClickException, match="recorded job"):
-        model_output_plan(records, [])
+        model_output_plan(records, [], {})
     with pytest.raises(click.ClickException, match="incomplete or crosses"):
-        model_output_plan(records[1:], [job])
+        model_output_plan(records[1:], [job], {})
     del records[-1]["metadata"]["extra"]["jobId"]
     with pytest.raises(click.ClickException, match="explicit job identity"):
-        model_output_plan(records, [job])
+        model_output_plan(records, [job], {})
