@@ -215,8 +215,18 @@ DEFAULT_ROOT = Path.home() / "Library/Application Support/Panther/recordings"
     default=False,
     help="Sync completed chunks through Panther in the background.",
 )
-def start(game, session, device, seconds, output_root, chunk_seconds, sync_enabled):
+@click.option("--tui", is_flag=True, help="Open the keyboard-friendly recording dashboard.")
+@click.option("--live", is_flag=True, help="With --tui, launch the existing live transcript worker.")
+@click.option("--reduced-motion", is_flag=True, help="With --tui, keep recording indicators static.")
+def start(game, session, device, seconds, output_root, chunk_seconds, sync_enabled,
+          tui=False, live=False, reduced_motion=False):
     """Stream to durable short FLAC parts, optionally syncing completed parts in the background."""
+    if tui:
+        from panther_journal.recording_tui import launch
+        return launch(game, session, device, seconds, output_root, chunk_seconds,
+                      sync_enabled, live, reduced_motion)
+    if live or reduced_motion:
+        raise click.ClickException("--live and --reduced-motion require --tui.")
     from panther_journal.recording_sync import checkpoint
 
     if sys.platform != "darwin" or not device or ":" in device or device.startswith("--"):

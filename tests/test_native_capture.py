@@ -72,9 +72,24 @@ def test_native_queue_and_chunk_boundaries_preserve_every_sample(native, tmp_pat
     assert audit(folder)["status"] == "consistent"
     health = json.loads((folder / "capture-health.json").read_text())
     assert health["backend"] == "synthetic-native" and health["capturedFrames"] == 57600
+    meter = json.loads((folder / "capture-meter.json").read_text())
+    assert meter["frames"] == 57600 and not meter["running"]
+    assert 0 < meter["peak"] < 1 and meter["errorCode"] == 0
     # Reopening the same folder must fail instead of overwriting captured data.
     assert run(native, folder, "--synthetic", 1)[0] != 0
     assert pcm(folder) == expected
+
+
+def test_advisory_meter_failure_does_not_abort_capture(native, tmp_path):
+    folder, _ = folder_at(tmp_path)
+    untouched = tmp_path / "untouched.txt"
+    untouched.write_text("untouched")
+    (folder / ".capture-meter.tmp").symlink_to(untouched)
+    code, log = run(native, folder, "--synthetic", .4)
+    assert code == 0, log
+    assert pcm(folder) == b"".join(i.to_bytes(3, "little") for i in range(19200))
+    assert untouched.read_text() == "untouched"
+    assert not (folder / "capture-meter.json").exists()
 
 
 @pytest.mark.parametrize(
