@@ -517,6 +517,15 @@ profile-backed sequence of official portrait and model selections. Named appeara
 parallel magical variants, and automatic choice of the right appearance for a session remain
 separate future work; a model upload alone does not make it official.
 
+Named-appearance metadata is staged separately: `character appearances`, `appearance-assets`,
+`selections`, and `appearance-current` inspect its records. Complete guarded JSON envelopes
+and all-game dry-run/import/verification commands are documented in
+`docs/character-appearances.md`. Production mutation endpoints currently fail closed until the
+CDK-owned consumer cutover freezes old publishers and enables the migration. Do not try to
+work around this guard or assume these records are already the viewer's source of truth.
+Physical states, immutable portrait/model pairs, and current-selection events are distinct;
+unknown fictional timing stays unknown. Uploading a candidate never makes it official.
+
 ## Kinds and categories
 
 Private ordered video collections use `panther videos collections` and `panther videos
