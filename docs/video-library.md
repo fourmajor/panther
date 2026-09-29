@@ -69,5 +69,7 @@ publisher capability remains unchanged; no public bucket, new role assignment, p
 always-on server or automatic generation is added. Sign-out clears transient collection state.
 This uses existing asset metadata/index fields, not a new asset standard with legacy exceptions;
 all existing videos get the same read-time presentation. No source files are altered. The new
-collection data type has no earlier records to migrate. The independent catalog-v2 all-game
-backfill from #19 must still complete before production browsing is declared upgraded.
+collection data type has no earlier records to migrate. The catalog-v3 all-game rebuild,
+verification and activation must complete before production browsing is declared upgraded.
+
+Structured series, seasons and episode editions are documented in [TV library](tv-library.md).

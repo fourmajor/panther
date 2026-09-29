@@ -116,6 +116,19 @@ def test_novel_cli_lists_all_pages_and_preserves_exact_edit_envelope(setup, monk
     assert CliRunner().invoke(main,["novels","books","--game","test-game","--revision","b"*32]).exit_code!=0
 
 
+def test_tv_cli_keeps_guarded_private_metadata_operations_exact(setup, monkeypatch, tmp_path):
+    calls=[]
+    monkeypatch.setattr(cloud,"api",lambda config,method,path,**kwargs:calls.append((method,path,kwargs)) or {"records":[],"cursor":None})
+    assert CliRunner().invoke(main,["videos","series","--game","test-game"]).exit_code==0
+    assert calls[-1]==("GET","/tv-series",{"params":{"gameId":"test-game"}})
+    file=tmp_path/"episode.json"
+    body={"gameId":"test-game","id":"episode-one","operationId":"a"*32,"expectedRevision":"b"*32}
+    file.write_text(json.dumps(body))
+    result=CliRunner().invoke(main,["videos","save-episode",str(file)])
+    assert result.exit_code==0 and calls[-1]==("POST","/tv-episodes",{"json":body})
+    assert "a"*32 in result.output
+
+
 def test_transcript_selection_cli_preserves_guard_and_retry_identity(setup, monkeypatch):
     calls = []
     monkeypatch.setattr(cloud, "api", lambda *args, **kwargs: calls.append((args, kwargs)) or {"selection": None})
