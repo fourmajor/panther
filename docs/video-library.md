@@ -37,7 +37,10 @@ Existing collection edits require the exact current revision. Lists are paginate
 offers Load more collections and the CLI follows scoped cursors. Membership lookup uses batches
 of at most fifty exact metadata reads. Throttled/unprocessed reads fail explicitly, not as guessed
 missing videos. Truly unavailable members are reported without substitution and retained in the
-saved collection. Previous/next playback preserves the available member order, without autoplay.
+saved collection. Combined member metadata has a 4 MiB delivery limit; oversized collections fail
+explicitly instead of exceeding the API response limit or discarding source links. Use a smaller
+collection when that limit is reached. Previous/next playback preserves the available member order,
+without autoplay.
 
 ## Posters and captions
 

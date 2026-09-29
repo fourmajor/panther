@@ -135,3 +135,28 @@ def test_unprocessed_catalog_reads_fail_instead_of_claiming_missing_members(libr
     monkeypatch.setattr(library[1], "table", lambda: SimpleNamespace(name="synthetic-browse"))
     with pytest.raises(RuntimeError, match="incomplete"):
         library[0].members(library[2], "example", [a["key"] for a in library[3]])
+
+
+def test_oversized_member_metadata_never_returns_a_partial_collection(library, monkeypatch):
+    from types import SimpleNamespace
+
+    keys = [f"games/example/assets/large-{i}/original/clip.mp4" for i in range(15)]
+    items = [
+        {
+            "sk": key,
+            "observed": 1,
+            "payload": json.dumps(
+                {**library[3][0], "key": key, "metadata": {"description": "a" * 300_000}}
+            ),
+        }
+        for key in keys
+    ]
+
+    class Large:
+        def batch_get_item(self, **kwargs):
+            return {"Responses": {"synthetic-browse": items}}
+
+    monkeypatch.setattr(library[0].boto3, "resource", lambda *_: Large())
+    monkeypatch.setattr(library[1], "table", lambda: SimpleNamespace(name="synthetic-browse"))
+    with pytest.raises(library[0].CollectionReadError, match="reader limit"):
+        library[0].members(library[2], "example", keys)

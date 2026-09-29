@@ -17,6 +17,10 @@ import asset_library
 import browse_index
 
 
+class CollectionReadError(RuntimeError):
+    pass
+
+
 def partition(game):
     return f"video-collections#{game}"
 
@@ -43,14 +47,20 @@ def members(media, game, keys):
     }
     found = {}
     resource = boto3.resource("dynamodb")
-    for _ in range(4):
+    for _ in range(20):
         result = resource.batch_get_item(RequestItems=pending)
         found.update({item["sk"]: item for item in result.get("Responses", {}).get(db.name, [])})
         pending = result.get("UnprocessedKeys", {})
         if not pending:
             break
     if pending:
-        raise RuntimeError("Collection catalog reads are incomplete; please retry")
+        raise CollectionReadError(
+            "Collection catalog reads are incomplete; please retry. No missing members were assumed."
+        )
+    if sum(len(item["payload"].encode()) for item in found.values()) > 4 * 1024**2:
+        raise CollectionReadError(
+            "Collection metadata exceeds the reader limit. Use a smaller collection; no members were omitted."
+        )
     for key in keys:
         item = found.get(key)
         asset = decode(item)
@@ -257,6 +267,8 @@ def handle(event, media):
                 else None,
             },
         )
+    except CollectionReadError as error:
+        return media._response(503, {"error": str(error)})
     except (ValueError, KeyError, TypeError):
         return media._response(
             400,

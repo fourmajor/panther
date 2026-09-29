@@ -385,7 +385,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
   await expect(page.locator('#library-status')).toContainText('No transcripts yet');
   await expect(page.locator('#preview-body')).toBeEmpty();
   expect(errors).toEqual([]);
@@ -428,7 +428,7 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await page.keyboard.press('Escape'); expect(await page.evaluate(()=>window.previousVideo.paused)).toBe(true);
   await expect(page.locator('#asset-generation')).toBeEmpty();
   await page.reload(); await expect(page.locator('.session-card')).toHaveCount(1);
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
   await expect(page).toHaveURL(`${origin}/games/other-game/videos`);
   await expect(page.locator('#library-status')).toContainText('No videos yet');
 });
@@ -563,7 +563,7 @@ test('late catalog and document responses cannot populate a different game',asyn
     arrived(); await new Promise(resolve=>{release=resolve;}); await route.fulfill({headers,json:{assets,cursor:null}});
   });
   await page.goto(`${origin}/games/test-game/audio`); await waiting;
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
   await expect(page.locator('#library-status')).toContainText('No recordings yet'); release();
   await expect(page.locator('#library-list')).toBeEmpty();
 });
