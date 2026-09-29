@@ -1657,7 +1657,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
           const group = document.createElement("section"), title = document.createElement("h2"), note = document.createElement("p");
           group.className = "transcript-session";
           title.textContent = sessionId ? `Session · ${sessionId}` : "Session not identified";
-          note.textContent = "Loaded transcript versions. Canonical selection is separate from review or human verification; dates below are file creation dates, not inferred session dates.";
+          note.textContent = "Loaded transcript versions. Canonical selection is separate from review or human verification; dates below are file modification times, not inferred session dates.";
           group.append(title, note); list.append(group); sessionGroups.set(sessionId, group);
         }
         const summary = document.createElement("p"), version = asset.metadata?.extra?.version;
