@@ -257,6 +257,7 @@ for (const width of [1280,390]) for (const reduced of [false,true]) {
     await button.click();
     await expect.poll(()=>viewer.evaluate(el=>el.paused)).toBe(true);
     await expect(button).toHaveAttribute('aria-pressed','false');
+    await expect(page.locator('#model-status')).toHaveText('Model ready. Drag, zoom, or use the keyboard to explore.');
     const bounds=await button.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);
     await page.screenshot({path:testInfo.outputPath('animated-controls.png'),fullPage:true});
   });

@@ -3195,7 +3195,9 @@ document.getElementById("model-pan-right").addEventListener("click", () => panCh
 elements.characterModel.addEventListener("progress", (event) => {
   const progress = Math.max(0, Math.min(1, event.detail.totalProgress || 0));
   elements.modelProgressBar.style.transform = `scaleX(${progress})`;
-  elements.modelStatus.textContent = `Loading the 3D model… ${Math.round(progress * 100)}%`;
+  elements.modelStatus.textContent = elements.characterModel.loaded && progress === 1
+    ? "Model ready. Drag, zoom, or use the keyboard to explore."
+    : `Loading the 3D model… ${Math.round(progress * 100)}%`;
 });
 elements.characterModel.addEventListener("load", () => {
   elements.modelProgressBar.style.transform = "scaleX(1)";
