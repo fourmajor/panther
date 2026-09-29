@@ -58,7 +58,13 @@ rejects aliases, mixed returned versions, missing/duplicate cases, altered reque
 options, invalid distributions, nonfinite/boolean numbers and a Score inconsistent with its scale.
 
 Reports give per-task raw accuracy, coverage/abstention, selective accuracy, multiclass Brier score
-and mean observed latency. An abstain-only benchmark control is labeled separately; it is not a
+and observed mean/P50/P95/maximum latency. Percentiles use linear interpolation over the observed
+samples, not a population estimate. Report schema 2 also includes a full expected-versus-selected
+confusion matrix, accepted-error count and five-bin top-choice probability calibration summary.
+The provider's `confidence` is not treated as a correctness probability. These very small smoke-test
+bins cannot establish calibration or justify production thresholds. Reports are recomputed from
+original private captures using the same scorer; source captures and benchmark requests are unchanged.
+An abstain-only benchmark control is labeled separately; it is not a
 measurement of Panther's existing AI workflow. No accepted answers produces null selective
 accuracy, not a fabricated zero or perfect score. Missing costs stay incomplete; reported response
 cost is not independently reconciled billing. Tests use explicitly simulated responses, not Jev

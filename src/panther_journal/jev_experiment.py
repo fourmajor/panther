@@ -212,6 +212,31 @@ def validate(response, case):
     return selected, probabilities, acted
 
 
+def percentile(values, quantile):
+    """Linear interpolation over observed samples, not a population estimate."""
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+def calibration(rows):
+    # Top-choice probability, not the vendor's distribution-sharpness confidence.
+    bins = []
+    for index in range(5):
+        members = [row for row in rows if min(4, int(row['probability'] * 5)) == index]
+        if members:
+            bins.append({'lower': index / 5, 'upper': (index + 1) / 5,
+                         'samples': len(members),
+                         'meanPredictedProbability': mean(row['probability'] for row in members),
+                         'observedAccuracy': mean(row['correct'] for row in members)})
+    return {'bins': bins, 'expectedCalibrationError': sum(
+        entry['samples'] / len(rows) * abs(entry['meanPredictedProbability'] - entry['observedAccuracy'])
+        for entry in bins),
+        'notice': 'Descriptive five-bin smoke-test statistic; too few samples to establish calibration.'}
+
+
 def evaluate(records):
     if not isinstance(records, list) or len(records) != len(CASES):
         raise ValueError("Require one captured response for every synthetic case")
@@ -242,13 +267,18 @@ def evaluate(records):
         models.add(response["model"])
         brier = sum((p - int(label == case[3])) ** 2 for label, p in probabilities.items())
         by_task[case[1]].append(
-            {"correct": selected == case[3], "acted": acted, "brier": brier, "latency": latency}
+            {"correct": selected == case[3], "acted": acted, "brier": brier, "latency": latency,
+             "expected": case[3], "selected": selected, "probability": probabilities[selected]}
         )
     if len(models) != 1:
         raise ValueError("Do not pool different actual model versions")
     metrics = {}
     for task, rows in by_task.items():
         accepted = [r for r in rows if r["acted"]]
+        confusion = {expected: {selected: 0 for selected in CRITERIA[task]}
+                     for expected in CRITERIA[task]}
+        for row in rows:
+            confusion[row['expected']][row['selected']] += 1
         metrics[task] = {
             "samples": len(rows),
             "accuracy": mean(r["correct"] for r in rows),
@@ -257,6 +287,12 @@ def evaluate(records):
             "selectiveAccuracy": mean(r["correct"] for r in accepted) if accepted else None,
             "multiclassBrier": mean(r["brier"] for r in rows),
             "meanLatencyMs": mean(r["latency"] for r in rows),
+            "p50LatencyMs": percentile([r['latency'] for r in rows], 0.5),
+            "p95LatencyMs": percentile([r['latency'] for r in rows], 0.95),
+            "maxLatencyMs": max(r['latency'] for r in rows),
+            "confusionMatrix": confusion,
+            "acceptedErrors": sum(not r['correct'] for r in accepted),
+            "calibration": calibration(rows),
             "abstainOnlyControlAccuracy": mean(c[3] == "uncertain" for c in CASES if c[1] == task),
         }
     return {
@@ -265,6 +301,7 @@ def evaluate(records):
         "inferenceProvider": "TypeSafe",
         "actualModel": models.pop(),
         "scope": "synthetic smoke test, not an adoption evaluation",
+        "reportSchemaVersion": 2,
         "metrics": metrics,
         "cost": {
             "currency": "USD",
