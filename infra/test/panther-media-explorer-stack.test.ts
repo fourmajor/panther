@@ -550,6 +550,6 @@ test("remembered sign-in uses maximum rotating refresh sessions and an uncached 
   });
   template.hasResourceProperties("AWS::Lambda::Function", {
     Environment: { Variables: Match.objectLike({ SITE_ORIGIN: "https://panther.place", WEB_CLIENT_ID: Match.anyValue() }) },
-    Timeout: 15, MemorySize: 128,
+    Timeout: 30, MemorySize: 128,
   });
 });
