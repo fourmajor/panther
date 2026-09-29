@@ -11,8 +11,10 @@ Game operations continue to use Panther authentication, not this administrative 
 `PantherMachineAccess` owns the IAM role, certificate trust anchor and Roles Anywhere profile.
 Trust is restricted to the exact anchor, account, certificate subject and issuer. The profile
 permits one role and issues one-hour sessions. The AWS signing helper authenticates using an exact
-certificate serial in macOS Keychain. CLI calls obtain fresh credentials; supporting SDKs refresh
-automatically. No background daemon, permanent IAM access keys, credential server/export, hosted
+certificate serial in a dedicated macOS Keychain. Its random unlock password is held as a generic
+item in the user's login Keychain; the private signing key is non-extractable. The credential
+process unlocks only Panther's Keychain and obtains one-hour credentials for CLI and SDK calls.
+No background daemon, permanent IAM access keys, credential server/export, hosted
 compute, Secrets Manager, or AWS Private CA is added.
 
 [Roles Anywhere has no additional service charge](https://aws.amazon.com/about-aws/whats-new/2022/07/aws-identity-access-management-iam-roles-anywhere-workloads-outside-aws/).
@@ -28,8 +30,8 @@ diff, outputs and AWS config backups outside Git in owner-only storage, never in
 Local native checks require matching macOS Command Line Tools and SDK versions. If `xcrun`
 selects an SDK newer than the installed Swift compiler supports, set `SDKROOT` to a compatible
 installed SDK for the setup command; do not change global Xcode settings or weaken Keychain
-security to work around a compilation failure. Normal AWS credential refresh runs the pinned
-helper directly and does not invoke Swift or compile anything.
+security to work around a compilation failure. Normal AWS credential refresh uses the copied
+owner-only Python wrapper and pinned helper; it does not invoke Swift or compile anything.
 
 1. Create a new mode-700 directory outside the repository, preferably in the owner's Panther
    application-support directory. From the repo root:
@@ -40,15 +42,23 @@ helper directly and does not invoke Swift or compile anything.
    ```
 
    This verifies the pinned official helper's SHA-256 and code signature, generates the certificate,
-   and imports the key as non-extractable into the existing default user Keychain. The import ACL
-   permits the helper, not all applications. No default-Keychain or search-list changes are made.
+   and imports the key as non-extractable into a new Panther-only Keychain. Its random password
+   is stored as an owner-specific generic item in the existing login Keychain, never in Git or
+   AWS. The import ACL permits the signed helper, not all applications. The Panther Keychain is
+   appended to the user's Keychain search list without changing the default or earlier entries.
    Plaintext PEM keys exist only in an owner-only temporary directory during import
    and are removed afterwards; deletion is not a guarantee of forensic erasure. No secret wrapping
-   password is passed in argv. Native failure logs are retained privately, not forwarded to CI.
-   After import, a scoped native check adds the verified AWS developer to this key's macOS
-   partition list. The signing ACL must already contain only the exact helper, and the key must
-   remain non-extractable. Unexpected identities, ACLs or partitions fail closed. No other keys
-   are searched or modified. macOS may ask for local authorization to persist this change.
+   signing-key password is retained as a file. macOS `security` commands briefly receive the
+   dedicated Keychain password in process arguments; same-user processes may observe it.
+   Native failure logs are retained privately, not forwarded to CI.
+   After import, a read-only native check proves the exact certificate resolves to a
+   non-extractable private key. Its signing ACL must contain only the helper, and the signing
+   key must be the sole private key with its label in its specific Keychain. Only then does
+   the native verifier add the signed AWS helper's developer partition to this one key.
+   Unexpected identities, duplicate labels, ACLs or partitions fail closed. No other keys are
+   modified. macOS asks once for the **generated Panther Keychain password**, not the Mac login
+   password. `prepare` briefly copies that password to the clipboard for pasting into the dialog,
+   then clears it if the clipboard is unchanged.
    If import fails, use a new directory and inspect Keychain for a partially imported identity.
    If only the access check fails after the configuration was saved, resume with:
 
@@ -58,7 +68,7 @@ helper directly and does not invoke Swift or compile anything.
 
    The default `keychain` command is read-only; `--repair` explicitly permits this scoped correction.
    Never grant all applications access, change a whole Keychain's partition list, or store a Mac
-   password to silence prompts. Normal macOS authorization is retained; the tool never collects it.
+   login password to silence prompts. The generated password is separate from the login password.
 
 2. Set `PANTHER_MACHINE_ACCESS_FILE=PRIVATE_DIRECTORY/machine-access.json` and the existing
    `PANTHER_IDENTITIES_FILE`. Build `infra`, confirm the authenticated account, then preview only
@@ -76,18 +86,24 @@ helper directly and does not invoke Swift or compile anything.
 3. Run `setup.py configure --directory PRIVATE_DIRECTORY --outputs PRIVATE_OUTPUTS` from the
    repo root. It validates the output account/region/exact role, privately backs up existing AWS
    config, and adds `panther-laptop-admin`. A conflicting existing profile fails closed. Existing
-   SSO/default profiles stay unchanged. STS verifies the identity without displaying credentials.
+   SSO/default profiles stay unchanged. To rotate an existing machine profile, also supply
+   `--previous-directory OLD_PRIVATE_DIRECTORY --previous-outputs OLD_PRIVATE_OUTPUTS`.
+   Rotation accepts only an exact known predecessor and saves a private config backup.
+   STS verifies the identity without displaying credentials.
    Use `--profile panther-laptop-admin` for infrastructure work, not `aws sso login` for this profile.
 
 4. Verify independently obtained sessions, IAM permission simulation and a read-only CDK diff
    through the new profile. Never display signing-helper credential output. Keep the certificate,
    AWS credentials and personal folders out of Docker and the self-hosted runner.
 
-The official helper is signed but not notarized. Importing it with `security import -T` alone can
-leave an Apple-only partition list that repeatedly blocks signing despite the helper-specific ACL.
-The scoped correction above fixes that second gate; normal native authorization may require a
-one-time local approval for the setup tool. Keychain must unlock after reboot, normally with the OS login. Do not
-store the owner's login password to automate unlock. See the [AWS helper documentation](https://docs.aws.amazon.com/rolesanywhere/latest/userguide/credential-helper.html).
+The official helper is signed but not notarized. Importing with `security import -T` alone can
+leave the partition list absent or Apple-only, repeatedly blocking signing despite the helper ACL.
+The scoped correction fixes that second gate. After OS login unlocks the user's login Keychain,
+the credential process retrieves Panther's generated password and unlocks only its dedicated
+Keychain on demand. It does not store or request the owner's Mac login password. This protects
+against casual key export but is **not** a boundary against malware already running as the owner:
+that process may retrieve the unlock secret or invoke the credential process. See the
+[AWS helper documentation](https://docs.aws.amazon.com/rolesanywhere/latest/userguide/credential-helper.html).
 
 ## Rotation and recovery
 

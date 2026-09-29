@@ -1,13 +1,14 @@
-// Modify only the identity selected by the exact certificate, never an entire Keychain.
+// Verify or narrowly repair only the exact Panther certificate's private Keychain key.
 import Foundation
 import Security
+
 
 func fail(_ stage: String, _ status: OSStatus = errSecParam) -> Never {
     fputs("Panther Keychain verification failed at \(stage) (\(status)).\n", stderr)
     exit(1)
 }
 guard CommandLine.arguments.count == 4,
-      ["check", "repair"].contains(CommandLine.arguments[3]) else { fail("arguments") }
+      ["check", "inspect", "repair"].contains(CommandLine.arguments[3]) else { fail("arguments") }
 let certificatePath = CommandLine.arguments[1]
 let helperPath = CommandLine.arguments[2]
 let mode = CommandLine.arguments[3]
@@ -23,8 +24,32 @@ guard SecIdentityCopyPrivateKey(identity, &key) == errSecSuccess, let key = key,
       let attributes = SecKeyCopyAttributes(key) as? [String: Any],
       (attributes[kSecAttrIsExtractable as String] as? Bool) == false else { fail("non-extractable key") }
 let item = unsafeBitCast(key, to: SecKeychainItem.self)
+var keychain: SecKeychain?
+guard SecKeychainItemCopyKeychain(item, &keychain) == errSecSuccess, let keychain = keychain else { fail("selected keychain") }
+var length: UInt32 = 4096
+var pathBuffer = [CChar](repeating: 0, count: Int(length))
+guard SecKeychainGetPath(keychain, &length, &pathBuffer) == errSecSuccess,
+      let keychainPath = String(validatingUTF8: pathBuffer), keychainPath.hasPrefix("/") else { fail("keychain path") }
+var metadata: CFTypeRef?
+let query: [String: Any] = [kSecClass as String: kSecClassKey,
+                            kSecValueRef as String: key,
+                            kSecReturnAttributes as String: true,
+                            kSecMatchLimit as String: kSecMatchLimitOne]
+guard SecItemCopyMatching(query as CFDictionary, &metadata) == errSecSuccess,
+      let attributesForItem = metadata as? [String: Any],
+      let label = attributesForItem[kSecAttrLabel as String] as? String,
+      label == "Imported Private Key" else { fail("target key label") }
+var matches: CFTypeRef?
+let search: [String: Any] = [kSecClass as String: kSecClassKey,
+                            kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+                            kSecAttrLabel as String: label,
+                            kSecMatchSearchList as String: [keychain],
+                            kSecReturnRef as String: true,
+                            kSecMatchLimit as String: kSecMatchLimitAll]
+guard SecItemCopyMatching(search as CFDictionary, &matches) == errSecSuccess,
+      let refs = matches as? [SecKey], refs.count == 1, CFEqual(refs[0], key) else { fail("unique matching key") }
 
-func contents() -> (SecAccess, SecACL, CFArray?, SecKeychainPromptSelector, [String]) {
+func contents() -> (SecAccess, SecACL?, CFArray?, SecKeychainPromptSelector, [String]) {
     var access: SecAccess?
     guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access = access else { fail("access") }
     var array: CFArray?
@@ -66,21 +91,38 @@ func contents() -> (SecAccess, SecACL, CFArray?, SecKeychainPromptSelector, [Str
             partitions.append((acl, apps, selector, values))
         }
     }
-    guard signingLists == 1, partitions.count == 1 else { fail("unique signing and partition ACLs") }
-    let partition = partitions[0]
-    return (access, partition.0, partition.1, partition.2, partition.3)
+    guard signingLists == 1, partitions.count <= 1 else {
+        fputs("Panther ACL counts: signing=\(signingLists), partitions=\(partitions.count).\n", stderr)
+        fail("unique signing and partition ACLs")
+    }
+    let partition = partitions.first
+    return (access, partition?.0, partition?.1, partition?.2 ?? SecKeychainPromptSelector(), partition?.3 ?? [])
 }
 
-let (access, partitionACL, apps, selector, values) = contents()
-if !values.contains(helperPartition) {
-    guard mode == "repair" else { fail("missing helper developer partition") }
+let (access, existingACL, apps, selector, values) = contents()
+if mode == "repair" && !values.contains(helperPartition) {
     let data = try PropertyListSerialization.data(fromPropertyList: ["Partitions": values + [helperPartition]], format: .xml, options: 0)
     let hex = data.map { String(format: "%02x", $0) }.joined()
-    let update = SecACLSetContents(partitionACL, apps, hex as CFString, selector)
-    guard update == errSecSuccess else { fail("scoped partition update", update) }
-    // Normal OS authorization remains enabled; no password is collected, cached or passed in argv.
-    let persist = SecKeychainItemSetAccess(item, access)
-    guard persist == errSecSuccess else { fail("persist scoped access", persist) }
+    if let existingACL = existingACL {
+        let updated = SecACLSetContents(existingACL, apps, hex as CFString, selector)
+        guard updated == errSecSuccess else { fail("update scoped partition", updated) }
+    } else {
+        var partitionACL: SecACL?
+        let created = SecACLCreateWithSimpleContents(access, nil, hex as CFString, SecKeychainPromptSelector(), &partitionACL)
+        guard created == errSecSuccess, let partitionACL = partitionACL else { fail("create scoped partition", created) }
+        let auth: [String] = [kSecACLAuthorizationPartitionID as String]
+        let setAuth = SecACLUpdateAuthorizations(partitionACL, auth as CFArray)
+        guard setAuth == errSecSuccess else { fail("partition authorization", setAuth) }
+    }
+    let persisted = SecKeychainItemSetAccess(item, access)
+    guard persisted == errSecSuccess else { fail("persist scoped partition", persisted) }
 }
-guard contents().4.contains(helperPartition) else { fail("persisted helper partition") }
-print("Verified exact Panther identity: non-extractable key, single-helper signing ACL, approved AWS developer partition.")
+let finalValues = mode == "repair" ? contents().4 : values
+if mode != "inspect" && !finalValues.contains(helperPartition) { fail("missing helper developer partition") }
+let summary: [String: Any] = ["targetLabel": label,
+                              "keychainPath": keychainPath,
+                              "partitions": finalValues,
+                              "partitionPresent": finalValues.contains(helperPartition)]
+let output = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys])
+guard let text = String(data: output, encoding: .utf8) else { fail("verification output") }
+print(text)
