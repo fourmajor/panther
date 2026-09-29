@@ -490,6 +490,10 @@ A revision commits exact inputs
 and triggers once; new images use new immutable keys and a new revision ID. Repeating the same
 commit is idempotent. Preserve previous reference sets. Use `panther model jobs` to inspect work.
 
+Model output repairs use `panther assets model-output-plan` across all games, followed by guarded
+`assets migrate` dry-run/apply and a second plan verifying zero changes. Rejected candidates stay
+as intermediate evidence; completed quality failures do not publish new artwork versions.
+
 The owner-authorized local worker uses Codex CLI with ChatGPT subscription auth, native Blender,
 fresh-import checks, private self-hosted browser QA, and an independent visual review. No AWS
 credentials are needed for game operations. Never fall back to API keys, paid providers, credit

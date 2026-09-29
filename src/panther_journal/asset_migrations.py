@@ -98,6 +98,92 @@ def generation_plan(records, facts):
     return {"schemaVersion": 1, "migrations": migrations}
 
 
+def model_output_plan(records, jobs):
+    """Backfill exact model-job inputs and distinguish rejected candidates from artwork."""
+    from panther_journal.model_workflow import VIEWS
+
+    known = {record["key"] for record in records}
+    by_id = {job["jobId"]: job for job in jobs}
+    migrations = []
+    for record in records:
+        metadata = copy.deepcopy(record["metadata"])
+        extra = metadata.setdefault("extra", {})
+        job_id = extra.get("jobId")
+        if job_id is None:
+            if "/assets/model-job-" in record["key"]:
+                raise click.ClickException(
+                    "Model output has no explicit job identity; migration blocked"
+                )
+            continue
+        job = by_id.get(job_id)
+        if job is None and "/assets/model-job-" not in record["key"]:
+            continue  # Other workflow types can also record a jobId.
+        if job is None or set(job.get("views", {})) != set(VIEWS):
+            raise click.ClickException(
+                "Model output lacks its complete recorded job; migration blocked"
+            )
+        inputs = [job["views"][view]["key"] for view in VIEWS]
+        prefix = f"games/{job['gameId']}/assets/"
+        if not record["key"].startswith(prefix) or any(
+            key not in known or not key.startswith(prefix) for key in inputs
+        ):
+            raise click.ClickException("Model job input inventory is incomplete or crosses games")
+        metadata["sourceKeys"] = list(dict.fromkeys([*metadata.get("sourceKeys", []), *inputs]))
+        extra["relationshipRole"] = (
+            "finished"
+            if job["status"] == "PUBLISHED" and record["kind"] == "model-3d"
+            else "intermediate"
+        )
+        if metadata == record["metadata"]:
+            continue
+        migrations.append(
+            {
+                "schemaVersion": 1,
+                "key": record["key"],
+                "expectedVersionId": record["versionId"],
+                "kind": record["kind"],
+                "metadata": metadata,
+                "reason": "Model output v1: exact pinned references; unpublished candidates and inspection evidence are intermediate",
+            }
+        )
+    return {"schemaVersion": 1, "migrations": migrations}
+
+
+@assets.command("model-output-plan")
+@click.option("--output", required=True, type=click.Path(path_type=Path))
+def plan_model_outputs(output):
+    """Inventory ALL games and prepare guarded model output metadata repairs."""
+    from panther_journal.character_details import pages, private_file
+
+    config = cloud.configuration()
+    records = []
+    for game in cloud.api(config, "GET", "/games")["games"]:
+        for asset in pages(config, "/assets", {"gameId": game["id"]}, "assets"):
+            if (
+                asset.get("metadata", {}).get("extra", {}).get("jobId")
+                or "/assets/model-job-" in asset["key"]
+            ):
+                info = cloud.api(config, "GET", "/object-url", params={"key": asset["key"]})
+                records.append({k: info[k] for k in ("key", "versionId", "kind", "metadata")})
+            else:
+                records.append({"key": asset["key"], "metadata": asset.get("metadata", {})})
+    jobs, cursor, seen = [], None, set()
+    while True:
+        page = cloud.api(config, "GET", "/model-jobs", params={"cursor": cursor})
+        jobs.extend(page["jobs"])
+        cursor = page.get("nextCursor")
+        if not cursor:
+            break
+        if cursor in seen:
+            raise click.ClickException("Repeated job cursor; inventory is incomplete")
+        seen.add(cursor)
+    plan = model_output_plan(records, jobs)
+    private_file(output, plan)
+    click.echo(
+        f"Inventoried {len(records)} assets in all games; {len(plan['migrations'])} model metadata repairs."
+    )
+
+
 def version_plan(records, appearances):
     """Preserve explicit version families; appearance membership is not revision order."""
     known = {record["key"]: record for record in records}
