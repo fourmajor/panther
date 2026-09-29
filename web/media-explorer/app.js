@@ -2241,7 +2241,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   const move = direction => {
     if (!matches.length) return;
     lines.forEach(entry => entry.line.classList.remove("transcript-current-match"));
-    position = (position + direction + matches.length) % matches.length;
+    position = position < 0 ? (direction > 0 ? 0 : matches.length - 1) : (position + direction + matches.length) % matches.length;
     const line = lines[matches[position]].line;
     line.classList.add("transcript-current-match"); line.tabIndex = -1;
     line.scrollIntoView({block:"center", behavior:"instant"}); line.focus({preventScroll:true});

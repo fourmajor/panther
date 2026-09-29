@@ -26,8 +26,8 @@ publishers use `panther transcripts select --game GAME --session SESSION --key I
 The CLI prints the operation identity before submission. Retain it and all original arguments for
 an exact retry after an uncertain response. Conflicts require reinspection, never blind overwriting.
 
-The JWT-protected GET route is available to signed-in readers. POST uses the existing private
-publisher capability, not hardcoded users. CDK grants scoped writes to pointer, immutable audit
+The JWT-protected routes use the existing private publisher capability, matching the current asset
+reader authorization without expanding account access or hardcoding users. CDK grants scoped writes to pointer, immutable audit
 history and idempotency partitions, plus a condition check on the transcript index. The transaction
 guards the previously observed pointer and exact indexed asset revision, saving all records atomically.
 Operation reuse with different arguments is rejected; an exact replay reports both its historical

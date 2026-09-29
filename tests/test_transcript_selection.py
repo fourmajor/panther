@@ -59,7 +59,7 @@ def test_selection_is_explicit_guarded_audited_and_not_verification(selections):
     assert second["previousRevision"] == selection["revision"]
     replay = call(selections, body)["body"]
     assert replay["selection"] == second and replay["operation"] == selection
-    assert call(selections, username="example-reader")["body"]["selection"] == second
+    assert call(selections, username="example-reader")["statusCode"] == 403
     history = selections[1].table().get_item(Key={"pk": "transcript-selection-history#example#session-a", "sk": selection["revision"]})["Item"]
     assert json.loads(history["payload"]) == selection
     assert selections[3]["transcript"]["unassignedSegments"] == 1
@@ -78,3 +78,13 @@ def test_unauthorized_selection_and_missing_target_do_not_fall_back(selections):
     selections[1].table().delete_item(Key={"pk": selections[1].partition("example", "transcripts"), "sk": first["key"]})
     result = call(selections)["body"]
     assert result["selection"]["key"] == first["key"] and "No fallback" in result["warning"]
+
+
+@pytest.mark.parametrize("change", [{"transcript": {"state": "unavailable"}}, {"metadata": {"sessionId": "session-a"}}])
+def test_unreadable_or_unversioned_transcript_cannot_be_designated(selections, change):
+    asset = {**selections[3], **change}
+    db = selections[1].table()
+    db.update_item(Key={"pk": selections[1].partition("example", "transcripts"), "sk": asset["key"]},
+                   UpdateExpression="SET payload = :payload", ExpressionAttributeValues={":payload": json.dumps(asset)})
+    assert call(selections, request(selections))["statusCode"] == 400
+    assert call(selections)["body"]["selection"] is None

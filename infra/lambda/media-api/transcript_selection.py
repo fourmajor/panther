@@ -108,7 +108,7 @@ def select(media, body, claims):
 
 def handle(event, media):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    if not claims.get("sub") or (event.get("routeKey") == "POST /transcript-selection" and not authorized(claims, "MODEL_PUBLISHERS")):
+    if not authorized(claims, "MODEL_PUBLISHERS"):
         return media._response(403, {"error": "Transcript publisher sign-in required"})
     try:
         if event["routeKey"] == "POST /transcript-selection":
