@@ -482,6 +482,9 @@ def register(group):
     from panther_journal.character_details import register as register_details
 
     register_details(character)
+    from panther_journal.character_appearances import register as register_appearances
+
+    register_appearances(character)
     from panther_journal.video_library import videos
 
     group.add_command(videos)

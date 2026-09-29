@@ -34,6 +34,7 @@ import { Construct } from "constructs";
 import { ModelProcessing } from "./model-processing";
 import { GameCatalog } from "./game-catalog";
 import { TVLibrary } from "./tv-library";
+import { CharacterAppearances } from "./character-appearances";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
 
@@ -318,7 +319,6 @@ export class PantherMediaExplorerStack extends Stack {
         conditions: { StringEquals: { "s3:if-none-match": "*" } },
       }),
     );
-
     mediaApiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ["s3:PutObject"],
       resources: [privateAssets.arnForObjects("games/*/characters/*/history/*.json")],
@@ -329,7 +329,6 @@ export class PantherMediaExplorerStack extends Stack {
       resources: [privateAssets.arnForObjects("games/*/characters/*/profile.json")],
       conditions: { Null: { "s3:if-match": "false" } },
     }));
-
     const authorizer = new apigwv2Authorizers.HttpJwtAuthorizer(
       "CognitoAuthorizer",
       `https://cognito-idp.${this.region}.${this.urlSuffix}/${userPool.userPoolId}`,
@@ -438,6 +437,8 @@ export class PantherMediaExplorerStack extends Stack {
     }));
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new CharacterAppearances(this,"CharacterAppearances",{bucket:privateAssets,api:mediaApi,authorizer,
+      browseTable:assetBrowse.table,catalogTable:gameCatalog.table,accessEnvironment});
     new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
       catalogTable:gameCatalog.table,publishers:accessEnvironment.MODEL_PUBLISHERS});
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });

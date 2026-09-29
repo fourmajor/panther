@@ -36,6 +36,30 @@ test("character facts are catalog-owned, authenticated, and migration capability
   assert.deepEqual(character.Properties.Target,details.Properties.Target);
 });
 
+test("appearance foundation is JWT protected, staged closed, and cannot overwrite game files", () => {
+  const template = mediaExplorerTemplate();
+  for(const route of ["character-appearances","character-appearance-assets","character-selections","character-appearance-current"]) {
+    for(const method of ["GET","POST"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey:`${method} /${route}`,AuthorizationType:"JWT",
+    });
+  }
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"character_appearances.handler",
+    Environment:{Variables:Match.objectLike({APPEARANCE_WRITES_ENABLED:"false",ASSET_MIGRATORS:"example-operator"})},
+  });
+  const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("CharacterAppearances"));
+  const serialized=JSON.stringify(policies);
+  assert.doesNotMatch(serialized,/s3:PutObject|s3:DeleteObject|dynamodb:UpdateItem|dynamodb:DeleteItem|states:|InvokeFunction/);
+  const statements=policies.flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
+  const writes=statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  assert.equal(writes.length,1);
+  assert.deepEqual(writes[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],[
+    "character-looks#*","character-looks-history#*","character-looks-ops#*","character-looks-migration#*",
+  ]);
+  const guards=statements.filter(s=>[s.Action].flat().includes("dynamodb:ConditionCheckItem"));
+  assert.ok(guards.some(s=>s.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"].includes("character-looks-migration#*")));
+  template.resourceCountIs("AWS::EC2::NatGateway",0);
+});
+
 test("gallery image links use one JWT-authorized batch route", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -520,7 +544,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 77);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 92);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
