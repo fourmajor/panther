@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -14,6 +15,7 @@ from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 import index as media
 from visual_styles import STYLES, validate_style
+import character_details
 
 table = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
 serializer = TypeSerializer()
@@ -28,6 +30,8 @@ def clean(record):
     }
     if result.get("entityType") == "Game":
         result.setdefault("ruleset", None)
+    if result.get("entityType") == "Character" and "detailsJson" in result:
+        result["details"] = json.loads(result.pop("detailsJson"))
     return result
 
 
@@ -35,12 +39,21 @@ def read(pk, sk):
     return table.get_item(Key={"pk": pk, "sk": sk}, ConsistentRead=True).get("Item")
 
 
-def query(pk):
+def query(pk, summary=False):
     args = {"KeyConditionExpression": Key("pk").eq(pk), "ConsistentRead": True}
+    if summary:
+        args["ProjectionExpression"] = (
+            "pk, sk, entityType, schemaVersion, gameId, id, #n, playerId, #r, characterIds, detailsRevision, detailsSubtitle, detailsThumbnailKey"
+        )
+        args["ExpressionAttributeNames"] = {"#n": "name", "#r": "role"}
     items = []
     while True:
         result = table.query(**args)
         items.extend(result.get("Items", []))
+        if summary and len(items) > 500:
+            raise ValueError(
+                "Game roster exceeds the bounded reader; no partial roster was returned"
+            )
         if "LastEvaluatedKey" not in result:
             return items
         args["ExclusiveStartKey"] = result["LastEvaluatedKey"]
@@ -152,7 +165,7 @@ def detail(game_id):
         game = next((g for g in games() if g["id"] == game_id), None)
     if not game:
         return media._response(404, {"error": "Game not found"})
-    entries = query(f"GAME#{game_id}")
+    entries = query(f"GAME#{game_id}", summary=True)
     members = [clean(r) for r in entries if r["entityType"] == "GameMembership"]
     players = [clean(read("PLAYERS", m["playerId"])) for m in members]
     return media._response(
@@ -223,7 +236,7 @@ def create(body, actor):
                 "pk": f"GAME#{body['id']}",
                 "sk": f"CHARACTER#{character['id']}",
                 "entityType": "Character",
-                "schemaVersion": 1,
+                **character_details.initial_fields(),
                 "gameId": body["id"],
                 **character,
             }
@@ -380,7 +393,7 @@ def add_character(body, actor):
         "pk": f"GAME#{game}",
         "sk": f"CHARACTER#{character}",
         "entityType": "Character",
-        "schemaVersion": 1,
+        **character_details.initial_fields(),
         "gameId": game,
         "id": character,
         "name": label,
@@ -405,6 +418,7 @@ def create_character_profile(body, actor):
     roster = read(f"GAME#{game}", f"CHARACTER#{character}")
     if not roster:
         return media._response(404, {"error": "Character is not in this game's roster"})
+    character_details.decode(roster)
     title = name(body["title"])
     summary = media._text(body["summary"], maximum=1000)
     portrait = body["portraitKey"]
@@ -442,23 +456,138 @@ def create_character_profile(body, actor):
         },
     }
     key = f"games/{game}/characters/{character}/profile.json"
+    raw = json.dumps(profile).encode()
     result = media.s3.put_object(
         Bucket=media.BUCKET_NAME,
         Key=key,
-        Body=json.dumps(profile).encode(),
+        Body=raw,
         ContentType="application/json",
         IfNoneMatch="*",
     )
-    return media._response(201, {"profile": profile, "revision": result["ETag"]})
+    details = json.loads(roster["detailsJson"])
+    for field, value in [
+        ("overview", summary),
+        ("subtitle", title),
+        ("thumbnailAssetKey", portrait),
+    ]:
+        if details[field] is None:
+            details[field] = value
+    synchronization = character_details.save(
+        sys.modules[__name__],
+        {
+            "gameId": game,
+            "characterId": character,
+            "mode": "edit",
+            "details": details,
+            "expectedRevision": roster["detailsRevision"],
+            "expectedSourceHash": None,
+            "operationId": hashlib.sha256(f"{key}:{result['ETag']}".encode()).hexdigest()[:32],
+            "reason": "Initialize known overview and thumbnail from the published artwork profile",
+            "dryRun": False,
+        },
+        actor,
+        False,
+        source_evidence={
+            "key": key,
+            "etag": result["ETag"],
+            "versionId": result.get("VersionId"),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        },
+    )
+    return media._response(
+        201,
+        {
+            "profile": profile,
+            "revision": result["ETag"],
+            "detailsSynchronization": {
+                "statusCode": synchronization["statusCode"],
+                **json.loads(synchronization["body"]),
+            },
+        },
+    )
 
 
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     # One trusted group today: every configured account can read every game. A selector is not an ACL.
-    if not claims.get("sub") or claims.get("cognito:username") not in EDITORS:
+    route = event.get("routeKey")
+    migration = route in {
+        "POST /character-details/migrate",
+        "GET /character-details/inventory",
+        "GET /character-details/verify",
+    }
+    allowed = set(os.environ.get("ASSET_MIGRATORS", "").split(",")) if migration else EDITORS
+    if not claims.get("sub") or claims.get("cognito:username") not in allowed:
         return media._response(403, {"error": "This account cannot access the game catalog"})
     try:
-        route = event.get("routeKey")
+        if route == "GET /character-details/inventory":
+            game = identifier(media._query(event, "gameId"))
+            args = {
+                "Bucket": media.BUCKET_NAME,
+                "Prefix": f"games/{game}/characters/",
+                "MaxKeys": 100,
+            }
+            cursor = media._query(event, "cursor")
+            if cursor:
+                args["ContinuationToken"] = cursor
+            page = media.s3.list_objects_v2(**args)
+            profiles = []
+            for item in page.get("Contents", []):
+                parts = item["Key"].split("/")
+                if len(parts) == 5 and parts[-1] == "profile.json":
+                    character = identifier(parts[3])
+                    profiles.append(
+                        {
+                            "characterId": character,
+                            "key": item["Key"],
+                            "registered": bool(read(f"GAME#{game}", f"CHARACTER#{character}")),
+                        }
+                    )
+            return media._response(
+                200, {"profiles": profiles, "cursor": page.get("NextContinuationToken")}
+            )
+        if route in {
+            "GET /character-details",
+            "GET /character-details/verify",
+            "POST /character-details",
+            "POST /character-details/migrate",
+        }:
+            return character_details.handle(sys.modules[__name__], event, claims)
+        if route == "GET /characters":
+            game = identifier(media._query(event, "gameId"))
+            if not read("GAMES", game):
+                return media._response(404, {"error": "Game not found"})
+            args = {
+                "KeyConditionExpression": Key("pk").eq(f"GAME#{game}")
+                & Key("sk").begins_with("CHARACTER#"),
+                "ConsistentRead": True,
+                "Limit": 60,
+                "ProjectionExpression": "pk, sk, entityType, schemaVersion, gameId, id, #n, detailsRevision, detailsSubtitle, detailsThumbnailKey",
+                "ExpressionAttributeNames": {"#n": "name"},
+            }
+            cursor = media._query(event, "cursor")
+            if cursor:
+                key = json.loads(base64.urlsafe_b64decode(cursor))
+                if (
+                    not isinstance(key, dict)
+                    or set(key) != {"pk", "sk"}
+                    or key["pk"] != f"GAME#{game}"
+                    or not isinstance(key["sk"], str)
+                    or not key["sk"].startswith("CHARACTER#")
+                ):
+                    raise ValueError("Invalid character cursor")
+                args["ExclusiveStartKey"] = key
+            page = table.query(**args)
+            following = page.get("LastEvaluatedKey")
+            return media._response(
+                200,
+                {
+                    "characters": [clean(r) for r in page.get("Items", [])],
+                    "cursor": base64.urlsafe_b64encode(json.dumps(following).encode()).decode()
+                    if following
+                    else None,
+                },
+            )
         if route == "GET /games":
             return media._response(200, {"games": games()})
         if route == "GET /game":

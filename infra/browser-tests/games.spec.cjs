@@ -26,7 +26,7 @@ async function fixture(page) {
       characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}] : [],
       memberships:[{playerId:'person',role:'dungeon-master',characterIds:[]}] };
     if (url.pathname === '/objects') body = { prefixes:[],objects:[{name: url.searchParams.get('prefix').includes('test-b') ? 'test-only.flac' : 'campaign-only.flac', key: url.searchParams.get('prefix')+'assets/test/original/audio.flac',size:10,lastModified:'2026-01-01T00:00:00Z'}] };
-    if (url.pathname === '/characters') body = {characters:[]};
+    if (url.pathname === '/characters') body = {characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}] : [], cursor:null};
     if (url.pathname === '/character') return route.fulfill({status:404,json:{error:'Character not found'},headers:jsonHeaders});
     return route.fulfill({ json:body, headers:jsonHeaders });
   });

@@ -1,5 +1,13 @@
 # Panther agent instructions
 
+Character facts use the versioned catalog contract in `docs/character-profiles.md`.
+Read them with `panther character details --game GAME --character CHARACTER`; use
+`edit-details` with a complete guarded envelope for updates. Keep unknown facts explicitly
+unknown, typed statistics extensible, and relationships same-game and explicit. Player
+ownership is separate from login identity. List thumbnails do not replace official artwork.
+Use the all-game prepare/apply/verify character migration commands when upgrading old data;
+never add an S3-scan browsing fallback. Keep private edit files, plans, and reports outside Git.
+
 Approved soundtrack revisions use `panther soundtrack`; read `docs/soundtrack-finishing.md`.
 Reconciliation closes old video/narration submissions for that project, retains their complete
 history and matches every request to billed costs before allocating a bounded soundtrack

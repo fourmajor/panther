@@ -29,7 +29,8 @@ export class GameCatalog extends Construct {
       }),
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
       environment: { ASSET_BUCKET_NAME: props.bucket.bucketName,
-        CATALOG_TABLE: table.tableName, CATALOG_EDITORS: props.accessEnvironment.MODEL_PUBLISHERS },
+        CATALOG_TABLE: table.tableName, CATALOG_EDITORS: props.accessEnvironment.MODEL_PUBLISHERS,
+        ASSET_MIGRATORS: props.accessEnvironment.ASSET_MIGRATORS },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"],
@@ -42,12 +43,13 @@ export class GameCatalog extends Construct {
     fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"],
       resources: [props.bucket.bucketArn] }));
     fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:GetObject"],
-      resources: [props.bucket.arnForObjects("games/*/content/*"), props.bucket.arnForObjects("games/*/catalog/assets/*")] }));
+      resources: [props.bucket.arnForObjects("games/*/content/*"), props.bucket.arnForObjects("games/*/catalog/assets/*"),
+        props.bucket.arnForObjects("games/*/characters/*/profile.json")] }));
     fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["s3:PutObject"],
       resources: [props.bucket.arnForObjects("games/*/characters/*/profile.json")],
       conditions: { StringEquals: { "s3:if-none-match": "*" } } }));
     const integration = new integrations.HttpLambdaIntegration("CatalogIntegration", fn);
-    for (const route of ["/games", "/game", "/players"]) {
+    for (const route of ["/games", "/game", "/players", "/characters", "/character-details", "/character-details/inventory", "/character-details/verify"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration, authorizer: props.authorizer });
     }
     props.api.addRoutes({ path: "/games", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
@@ -55,5 +57,8 @@ export class GameCatalog extends Construct {
     props.api.addRoutes({ path: "/game/style", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
     props.api.addRoutes({ path: "/character-profile", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
     props.api.addRoutes({ path: "/game/characters", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });
+    for(const route of ["/character-details","/character-details/migrate"]) {
+      props.api.addRoutes({path:route,methods:[api.HttpMethod.POST],integration,authorizer:props.authorizer});
+    }
   }
 }

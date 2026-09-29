@@ -312,7 +312,10 @@ async function api(path, parameters = {}, options = {}) {
     throw new Error("Session expired");
   }
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "The media service could not be reached.");
+  if (!response.ok) {
+    const error = new Error(body.error || "The media service could not be reached.");
+    error.status = response.status; throw error;
+  }
   return body;
 }
 
@@ -521,17 +524,18 @@ function renderCharacterCard(character) {
     .join("")
     .slice(0, 2);
   marker.setAttribute("aria-hidden", "true");
+  if (character.detailsThumbnailKey) marker.dataset.imageKey = character.detailsThumbnailKey;
 
   const copy = document.createElement("span");
   const name = document.createElement("strong");
   name.textContent = character.name;
   const title = document.createElement("small");
-  title.textContent = character.title;
+  title.textContent = character.detailsSubtitle || character.title || "Character";
   copy.append(name, title);
 
   const arrow = document.createElement("span");
   arrow.className = "entry-arrow";
-  arrow.textContent = "View 3D model";
+  arrow.textContent = "View character";
   button.append(marker, copy, arrow);
   button.addEventListener("click", () => navigate(characterPath(character)));
   elements.characterList.append(button);
@@ -543,20 +547,36 @@ async function loadCharacters() {
   elements.characterList.hidden = false;
   elements.charactersStatus.hidden = false;
   showLoading(elements.charactersStatus, "Fetching character profiles…");
-  if (state.charactersLoaded) {
-    elements.charactersStatus.hidden = true;
-    return;
-  }
   try {
     const result = await api("/characters", { gameId: state.gameId });
     if (epoch !== routeEpoch) return;
-    const merged = new Map(state.gameDetail.characters.map(c => [c.id, { ...c, title: "Character" }]));
-    for (const c of result.characters) if (c.gameId === state.gameId) merged.set(c.id, c);
     elements.characterList.replaceChildren();
-    for (const character of merged.values()) renderCharacterCard(character);
+    // Registered catalog records only; a page never scans source profiles in S3.
+    for (const c of result.characters) if (c.gameId === state.gameId) renderCharacterCard(c);
+    void loadCharacterThumbnails(epoch);
+    const more = document.getElementById("characters-more");
+    const seen = new Set();
+    let cursor = result.cursor;
+    more.hidden = !cursor;
+    more.onclick = async () => {
+      more.disabled = true;
+      try {
+        if (seen.has(cursor)) throw new Error("Repeated cursor; character list is incomplete.");
+        const page = await api("/characters", {gameId: state.gameId, cursor});
+        if (epoch !== routeEpoch) return;
+        seen.add(cursor);
+        for (const c of page.characters) if (c.gameId === state.gameId) renderCharacterCard(c);
+        void loadCharacterThumbnails(epoch);
+        cursor = page.cursor; more.hidden = !cursor;
+        elements.charactersStatus.hidden = false;
+        elements.charactersStatus.textContent = cursor ? "More characters are available below." : "All characters loaded.";
+      } catch (error) { if (epoch === routeEpoch) { elements.charactersStatus.hidden = false; elements.charactersStatus.textContent = error.message; } }
+      finally { more.disabled = false; }
+    };
     state.charactersLoaded = true;
-    elements.charactersStatus.hidden = true;
-    if (!merged.size) {
+    elements.charactersStatus.hidden = !cursor;
+    if (cursor) elements.charactersStatus.textContent = "More characters are available below.";
+    if (!result.characters.length && !cursor) {
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent = "There are no character profiles yet.";
@@ -567,6 +587,22 @@ async function loadCharacters() {
     if (error.message !== "Session expired") {
       elements.charactersStatus.textContent = error.message;
     }
+  }
+}
+
+async function loadCharacterThumbnails(epoch) {
+  const hosts = [...elements.characterList.querySelectorAll("[data-image-key]:not([data-requested])")];
+  for (const host of hosts) host.dataset.requested = "true";
+  for (let offset=0; offset<hosts.length; offset+=60) {
+    const batch = hosts.slice(offset,offset+60), keys = [...new Set(batch.map(h=>h.dataset.imageKey))];
+    try {
+      const links = await api("/image-links",{}, {body:{gameId:state.gameId,keys}});
+      if (epoch !== routeEpoch) return;
+      for (const host of batch) if (links.images?.[host.dataset.imageKey]?.url && host.isConnected) {
+        const image = document.createElement("img"); image.alt = ""; image.src = links.images[host.dataset.imageKey].url;
+        image.onerror = () => {image.remove(); delete host.dataset.requested;}; host.append(image);
+      }
+    } catch { for (const host of batch) delete host.dataset.requested; }
   }
 }
 
@@ -715,8 +751,154 @@ function renderAppearanceDownloads() {
   }
 }
 
+async function loadCharacterFacts(gameId, characterId, epoch) {
+  const host = document.getElementById("character-facts");
+  const current = () => epoch === routeEpoch && gameId === state.gameId;
+  showLoading(host, "Fetching structured character information…");
+  try {
+    const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),30000);
+    let result;
+    try { result = await api("/character-details", {gameId, characterId}, {signal:controller.signal}); }
+    finally {clearTimeout(timer);}
+    if (!current()) return;
+    if (!result.character?.details || !result.character.revision) throw new Error("Structured character information is not ready. Refresh to retry.");
+    const record = result.character;
+    const render = () => {
+      host.replaceChildren();
+      const heading = document.createElement("div"); heading.className = "explorer-heading";
+      const title = document.createElement("h2"); title.textContent = "Character information";
+      const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button"; edit.textContent = "Edit character information";
+      heading.append(title, edit); host.append(heading);
+      const facts = document.createElement("dl"); facts.className = "character-fact-grid";
+      const membership = state.gameDetail.memberships.filter(m => m.characterIds?.includes(characterId));
+      const players = membership.map(m => state.gameDetail.players.find(p => p.id === m.playerId)?.name).filter(Boolean);
+      for (const [label, value] of [["Played by", players.join(", ")], ["Aliases", record.details.aliases.join(", ")],
+        ["Pronouns", record.details.pronouns], ["Role", record.details.role], ["Status", record.details.status]]) {
+        const row = document.createElement("div"), dt = document.createElement("dt"), dd = document.createElement("dd");
+        dt.textContent = label; dd.textContent = value || "Not recorded"; row.append(dt, dd); facts.append(row);
+      }
+      host.append(facts);
+      for (const [field, label] of [["overview","Overview"],["backstory","Backstory"],["notes","Notes"]]) if (record.details[field]) {
+        const h = document.createElement("h3"), p = document.createElement("p"); h.textContent = label; p.textContent = record.details[field]; p.className = "character-prose"; host.append(h,p);
+      }
+      if (record.details.statistics.length) {
+        const h = document.createElement("h3"); h.textContent = "Statistics"; host.append(h);
+        const list = document.createElement("dl"); list.className = "character-fact-grid";
+        for (const stat of record.details.statistics) { const row = document.createElement("div"), name = document.createElement("dt"), value = document.createElement("dd");
+          name.textContent = `${stat.group ? `${stat.group} · ` : ""}${stat.name}`; value.textContent = stat.value === null ? "Not recorded" : String(stat.value); row.append(name,value); list.append(row); }
+        host.append(list);
+      }
+      if (record.details.relationships.length) {
+        const h = document.createElement("h3"), list = document.createElement("ul"); h.textContent = "Connections";
+        for (const ref of record.details.relationships) {
+          const li = document.createElement("li"); li.append(document.createTextNode(`${ref.relation} · `));
+          const target = ref.entityType === "Character" ? state.gameDetail.characters.find(c => c.id === ref.id) : ref.entityType === "Player" ? state.gameDetail.players.find(p => p.id === ref.id) : null;
+          if (target && ref.entityType === "Character") { const a = document.createElement("a"); a.textContent = target.name; a.href = characterPath({...target, gameId}); li.append(a); }
+          else if (ref.entityType === "Asset" && sameGameKey(ref.id)) li.append(assetLink({key:ref.id,name:ref.id.split("/").pop()}));
+          else li.append(document.createTextNode(target?.name || "Unavailable connection"));
+          list.append(li);
+        }
+        host.append(h,list);
+      }
+      edit.onclick = () => editor();
+    };
+    const editor = () => {
+      host.replaceChildren();
+      const form = document.createElement("form"); form.className = "character-edit-form";
+      const h = document.createElement("h2"); h.textContent = "Edit character information"; form.append(h);
+      const note = document.createElement("p"); note.textContent = "Leave unknown facts blank. This edits recorded facts, not the official portrait or model. Previous facts are retained."; form.append(note);
+      const inputs = {};
+      for (const [field,label,max,multi] of [["aliases","Aliases (one per line)",2500,true],["pronouns","Pronouns",80,false],["role","Role",120,false],["status","Status",120,false],["subtitle","Card subtitle",160,false],["overview","Overview",1000,true],["backstory","Backstory",8000,true],["notes","Notes",4000,true]]) {
+        const wrapper = document.createElement("label"), input = document.createElement(multi ? "textarea" : "input");
+        wrapper.textContent = label; input.maxLength = max; input.value = field === "aliases" ? record.details.aliases.join("\n") : record.details[field] || "";
+        input.id = `character-edit-${field}`; wrapper.append(input); form.append(wrapper); inputs[field] = input;
+      }
+      const stats = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "Statistics"; stats.append(legend);
+      const rows = [];
+      const addStat = (stat = {group:null,name:"",value:null}) => {
+        const row = document.createElement("div"); row.className = "character-stat-editor";
+        const controls = {};
+        for (const label of ["Group","Name","Type","Value"]) { const wrap = document.createElement("label"); wrap.textContent = label; const input = document.createElement(label === "Type" ? "select" : "input");
+          if (label === "Type") for (const kind of ["Unknown","Text","Number","Boolean"]) { const option = document.createElement("option"); option.textContent = kind; input.append(option); }
+          else input.maxLength = label === "Group" ? 80 : label === "Name" ? 120 : 500;
+          wrap.append(input); row.append(wrap); controls[label] = input;
+        }
+        controls.Group.value = stat.group || ""; controls.Name.value = stat.name; controls.Value.value = stat.value === null ? "" : String(stat.value);
+        controls.Type.value = stat.value === null ? "Unknown" : typeof stat.value === "number" ? "Number" : typeof stat.value === "boolean" ? "Boolean" : "Text";
+        const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button"; remove.textContent = "Remove statistic"; remove.onclick = () => {row.remove();};
+        row.append(remove); stats.append(row); rows.push({row, ...controls});
+      };
+      record.details.statistics.forEach(addStat);
+      const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button"; add.textContent = "Add statistic"; add.onclick = () => {if (rows.filter(r => r.row.isConnected).length < 100) addStat();}; form.append(stats,add);
+      const relationshipsWrap = document.createElement("label"), relationships = document.createElement("textarea");
+      relationshipsWrap.textContent = "Connections (structured JSON)";
+      relationships.value = JSON.stringify(record.details.relationships,null,2); relationships.maxLength = 12000;
+      const connectionHelp = document.createElement("p"); connectionHelp.textContent = 'Each connection uses entityType (Character, Player or Asset), id, and relation. Only existing records in this game are accepted. Use the CLI for larger structured edits.';
+      relationshipsWrap.append(relationships); form.append(relationshipsWrap,connectionHelp);
+      const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Character-list thumbnail";
+      const none = document.createElement("option"); none.value = ""; none.textContent = "No thumbnail"; cover.append(none);
+      if (record.details.thumbnailAssetKey) {const selected = document.createElement("option"); selected.value = record.details.thumbnailAssetKey; selected.textContent = "Current selected thumbnail"; cover.append(selected);}
+      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); form.append(coverWrap);
+      void allAssets(gameId).then(assets=>{if (!current() || !cover.isConnected) return;
+        for (const asset of assets) if (asset.contentType?.startsWith("image/") && asset.metadata?.characterIds?.includes(characterId) && ![...cover.options].some(o=>o.value===asset.key)) {
+          const option = document.createElement("option"); option.value = asset.key; option.textContent = asset.metadata.title || asset.name; cover.append(option);
+        }
+      }).catch(()=>{if (cover.isConnected) connectionHelp.textContent += " Thumbnail inventory could not be loaded; existing selection remains available.";});
+      const reasonWrap = document.createElement("label"), reason = document.createElement("input"); reasonWrap.textContent = "Reason for change"; reason.required = true; reason.maxLength = 500; reasonWrap.append(reason); form.append(reasonWrap);
+      const buttons = document.createElement("div"), save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p");
+      buttons.className = "model-control-row"; save.type = "submit"; save.className = "primary-button"; save.textContent = "Save character information";
+      cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel edit"; status.setAttribute("role","status");
+      cancel.onclick = render; buttons.append(save,cancel); form.append(buttons,status); host.append(form);
+      let pending = null;
+      form.onsubmit = async event => {
+        event.preventDefault(); save.disabled = true;
+        try {
+          if (!pending) {
+            const details = structuredClone(record.details);
+            for (const [field,input] of Object.entries(inputs)) details[field] = field === "aliases" ? input.value.split("\n").map(s=>s.trim()).filter(Boolean) : input.value.trim() || null;
+            details.relationships = JSON.parse(relationships.value);
+            details.thumbnailAssetKey = cover.value || null;
+            details.statistics = rows.filter(r=>r.row.isConnected).map(r => {
+              let value = r.Value.value.trim();
+              if (r.Type.value === "Unknown") value = null;
+              else if (r.Type.value === "Number") { if (!value || !Number.isFinite(Number(value))) throw new Error("Enter a valid numeric statistic."); value = Number(value); }
+              else if (r.Type.value === "Boolean") { if (!["true","false"].includes(value)) throw new Error("Boolean statistics must be true or false."); value = value === "true"; }
+              return {group:r.Group.value.trim() || null,name:r.Name.value.trim(),value};
+            });
+            pending = {gameId,characterId,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,
+              operationId:crypto.randomUUID().replaceAll("-",""),reason:reason.value.trim(),dryRun:false};
+          }
+          for (const control of form.querySelectorAll("input,textarea,select,fieldset,button")) control.disabled = true;
+          showLoading(status,"Saving the guarded character revision…");
+          const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),30000);
+          let response;
+          try { response = await api("/character-details",{}, {body:pending,signal:controller.signal}); } finally {clearTimeout(timer);}
+          if (!current()) return;
+          Object.assign(record,response.character); render();
+          const message = document.createElement("p"); message.setAttribute("role","status"); message.textContent = "Character information saved. Previous facts retained."; host.append(message);
+        } catch (error) {
+          if (!current()) return;
+          status.textContent = error.status === 409 ? "Another update changed this character. Cancel and reload before editing again. Your edit was not substituted for that revision." : `${error.message}. Retry submits the exact same operation; cancel and reload before changing it.`;
+          save.disabled = error.status === 409;
+          save.textContent = "Retry exact save"; cancel.disabled = false;
+          cancel.onclick = () => {void loadCharacterFacts(gameId,characterId,epoch);};
+          if (!pending) {for (const c of form.querySelectorAll("input,textarea,select,fieldset,button")) c.disabled = false;}
+        }
+      };
+      inputs.aliases.focus();
+    };
+    render();
+  } catch (error) {
+    if (!current()) return;
+    host.textContent = `${error.message}. Structured facts require the character migration; artwork remains separate.`;
+    const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry character information"; retry.onclick = () => {void loadCharacterFacts(gameId,characterId,epoch);}; host.append(retry);
+  }
+}
+
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
+  document.getElementById("characters-more").hidden = true;
+  void loadCharacterFacts(gameId, characterId, epoch);
   document.getElementById("character-assets-list").replaceChildren();
   document.getElementById("appearance-history").hidden = true;
   state.appearanceVersions = null;
@@ -760,9 +942,14 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
     const matching = assets.filter(a => sameGameKey(a.key) && Array.isArray(a.metadata?.characterIds) && a.metadata.characterIds.includes(characterId));
     matching.sort((a,b) => b.lastModified.localeCompare(a.lastModified));
     list.replaceChildren();
+    let previousGroup = null;
+    matching.sort((a,b) => `${a.kind}:${a.metadata?.category || "Unclassified"}`.localeCompare(`${b.kind}:${b.metadata?.category || "Unclassified"}`) || b.lastModified.localeCompare(a.lastModified));
     for (const asset of matching) {
       const li = document.createElement("li");
-      li.append(assetLink(asset), document.createTextNode(` · ${asset.kind}`));
+      const purpose = asset.metadata?.category || "Unclassified";
+      const group = `${asset.kind} · ${purpose}`;
+      if (group !== previousGroup) {const header = document.createElement("li"), h = document.createElement("h3"); h.textContent = group; header.append(h); list.append(header); previousGroup = group;}
+      li.append(assetLink(asset), document.createTextNode(` · ${asset.kind} · ${purpose}`));
       list.append(li);
     }
     status.textContent = matching.length ? "Assets explicitly tagged with this character, across all media types and versions."

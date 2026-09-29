@@ -927,3 +927,18 @@ model-viewer,
 .account-settings-body input[type="checkbox"] { width:24px; height:24px; min-height:24px; }
 .account-avatar { width:64px; height:64px; border-radius:50%; }
 @media(max-width:600px) { .account-settings-heading {padding:16px;} .account-settings-body {padding:0 16px 20px;} .masthead .account {flex-wrap:wrap;} }
+.character-facts { margin: 2rem 0; padding: clamp(1rem, 3vw, 2rem); border: 1px solid var(--border, #444); border-radius: 1rem; }
+.character-monogram { position: relative; overflow: hidden; }
+.character-monogram img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.character-fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 1rem 2rem; }
+.character-fact-grid dt { color: var(--muted, #b7b5ad); font-size: .85rem; }
+.character-fact-grid dd { margin: .35rem 0 0; overflow-wrap: anywhere; }
+.character-prose { white-space: pre-wrap; line-height: 1.8; max-width: 72ch; }
+.character-edit-form { display: grid; gap: 1rem; max-width: 900px; }
+.character-edit-form label { display: grid; gap: .4rem; min-width: 0; }
+.character-edit-form input, .character-edit-form textarea, .character-edit-form select { width: 100%; min-width: 0; box-sizing: border-box; padding: .7rem; color: inherit; background: #171914; border: 1px solid #62675a; border-radius: .4rem; font: inherit; }
+.character-edit-form textarea { min-height: 7rem; resize: vertical; }
+.character-edit-form fieldset { min-width: 0; padding: 1rem; border: 1px solid #62675a; }
+.character-stat-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1.2rem; }
+.character-stat-editor button { grid-column: 1 / -1; justify-self: start; }
+@media (max-width: 450px) { .character-stat-editor { grid-template-columns: 1fr; } }
