@@ -1,4 +1,4 @@
-# Indexed asset browsing (v2)
+# Indexed asset browsing (v3)
 
 S3 stores immutable files and their location records. DynamoDB stores a regenerable browsing
 projection: titles, type, metadata, explicit source links, recording/playback summaries and warnings.
@@ -6,6 +6,11 @@ Version 2 also projects structured transcript summaries: observed player IDs/nam
 unassigned segments and source-reported review/publication status. A roster is not attendance;
 unknown names/statuses remain unknown. Unreadable/nonstructured documents report unavailable,
 not a fabricated empty transcript. The projection contains no speech text.
+Version 3 also projects observed novel titles, session/workflow identity and source review status,
+without manuscript text. `/novel` queries this bounded catalog and batch-checks the exact completed
+workflow outputs. It does not open every manuscript or scan all workflow runs. Reading an individual
+chapter still validates its source checksum and envelope. Source AI review acceptance is not an
+owner-approved book selection or a declaration of canon.
 Reading `/assets` never lists S3 or opens source documents. `/asset-document` still reads a single
 selected source; metadata and JSON reads use the same S3 version when available.
 
@@ -14,7 +19,7 @@ payload, then resolved/read the metadata and JSON again. Every section awaited a
 latency and S3 request count grew with the whole game, including hidden workflow artifacts.
 
 The new API uses retained, pay-per-request DynamoDB partitions for each game and section (`all`,
-`audio`, `transcripts`, `videos`). It queries at most 100 entries/1 MiB, returning a scoped cursor.
+`audio`, `transcripts`, `videos`, `novels`). It queries at most 100 entries/1 MiB, returning a scoped cursor.
 Audio/Transcripts/Videos render one page and load more only on request. Video plans are included
 in Videos. Standard lossless recording chunks and listening derivatives stay in the complete
 catalog and recording reader, not as separate Audio cards. Matching transcript Markdown exports
@@ -65,9 +70,9 @@ No user-facing deletion exists; future deletion support must explicitly update t
 
 Requests process 20 source reservations at a time with eight workers. A failed/interrupted run can
 be repeated with a fresh report: source data is untouched and writes are conditional/idempotent.
-Do not activate a partial migration manually. The projection schema is versioned (`v2` keys);
+Do not activate a partial migration manually. The projection schema is versioned (`v3` keys);
 future schema changes require another full migration. There is no old S3-scan read fallback.
-The v1 readiness/verification markers cannot authorize v2. Repeat the full dry-run/apply/verify
+The v1/v2 readiness/verification markers cannot authorize v3. Repeat the full dry-run/apply/verify
 sequence for this upgrade; old projection rows may remain as unused history, never a read fallback.
 
 At rest this adds index storage, not provisioned compute. DynamoDB, Lambda, events and the failure

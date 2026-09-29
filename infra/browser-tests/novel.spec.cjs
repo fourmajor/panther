@@ -40,6 +40,16 @@ async function fixture(page) {
   });
 }
 
+test('repeated chapter cursor fails without showing a partial library', async({page})=>{
+  await fixture(page);
+  let requests=0;
+  await page.route(`${api}/novel?*`,route=>{requests++;return route.fulfill({headers,json:{chapters:[chapters[0]],cursor:'stuck'}});});
+  await page.goto(`${origin}/games/campaign-a/novel`);
+  await expect(page.locator('#novel-status')).toContainText('No partial list is shown');
+  await expect(page.locator('#novel-list')).toBeEmpty();
+  expect(requests).toBe(2);
+});
+
 for (const width of [1280,390]) test(`chapter Details connects finished assets at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page);
   const prefix='games/campaign-a/assets/';

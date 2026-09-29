@@ -1702,12 +1702,17 @@ async function loadNovel(chapterId, epoch) {
   try {
     const chapters = [];
     let cursor;
+    const seenCursors = new Set();
     do {
       const page = await api("/novel", {gameId, cursor});
       if (!current()) return;
       chapters.push(...page.chapters);
       loading.update(`Found ${chapters.length} chapters · fetching remaining editions…`);
       cursor = page.cursor;
+      if (chapters.length > 5000 || seenCursors.size >= 200 || (cursor && seenCursors.has(cursor))) {
+        throw new Error("The chapter library could not be loaded completely. No partial list is shown; refresh to retry.");
+      }
+      if (cursor) seenCursors.add(cursor);
     } while (cursor);
     // A session can have multiple immutable editions; only the latest appears in the TOC.
     chapters.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));

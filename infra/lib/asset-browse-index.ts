@@ -14,12 +14,13 @@ import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { Construct } from "constructs";
 
 export class AssetBrowseIndex extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
     bucket: s3.IBucket; api: apigw.HttpApi; authorizer: apigw.IHttpRouteAuthorizer;
     reader: lambda.Function; migrators: string;
   }) {
     super(scope, id);
-    const table = new dynamodb.Table(this, "Catalog", {
+    const table = this.table = new dynamodb.Table(this, "Catalog", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, removalPolicy: RemovalPolicy.RETAIN,
@@ -35,7 +36,7 @@ export class AssetBrowseIndex extends Construct {
     }));
     props.reader.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:ConditionCheckItem"], resources: [table.tableArn],
-      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v2#*#transcripts", "v2#*#all"] } },
+      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v3#*#transcripts", "v3#*#all"] } },
     }));
     props.api.addRoutes({ path: "/transcript-selection", methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("TranscriptSelection", props.reader),

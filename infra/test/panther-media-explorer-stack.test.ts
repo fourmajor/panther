@@ -90,7 +90,7 @@ test("canonical transcript selections have JWT routes and partition-scoped trans
     "transcript-selection#*", "transcript-selection-ops#*", "transcript-selection-history#*",
     "video-collections#*", "video-collection-ops#*", "video-collection-history#*",
   ]);
-  const guard = statements.find(statement => JSON.stringify(statement.Condition || {}).includes("v2#*#transcripts"));
+  const guard = statements.find(statement => JSON.stringify(statement.Condition || {}).includes("v3#*#transcripts"));
   assert.deepEqual([guard.Action].flat(), ["dynamodb:ConditionCheckItem"]);
 });
 
@@ -102,7 +102,7 @@ test("private video collections reuse indexed on-demand storage and scoped write
   const policies=JSON.stringify(template.findResources("AWS::IAM::Policy"));
   assert.match(policies,/video-collection-history#\*/);
   assert.match(policies,/dynamodb:BatchGetItem/);
-  assert.match(policies,/v2#\*#all/);
+  assert.match(policies,/v3#\*#all/);
   const headers=JSON.stringify(template.findResources("AWS::CloudFront::ResponseHeadersPolicy"));
   assert.match(headers,/media-src 'self' blob:/);
   template.resourceCountIs("AWS::EC2::NatGateway",0);

@@ -1,4 +1,4 @@
-"""Version-2 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
+"""Version-3 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
 
 import base64
 import json
@@ -11,8 +11,8 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-SECTIONS = ("all", "audio", "transcripts", "videos")
-VERSION = 2
+SECTIONS = ("all", "audio", "transcripts", "videos", "novels")
+VERSION = 3
 
 
 class IndexNotReady(RuntimeError):
@@ -39,6 +39,8 @@ def sections(asset):
         result.add("transcripts")
     if mime.startswith("video/") or name.endswith((".mp4", ".webm", ".mov", ".m4v", ".ogv")) or kind == "movie-review-plan":
         result.add("videos")
+    if "novel" in asset:
+        result.add("novels")
     return result
 
 

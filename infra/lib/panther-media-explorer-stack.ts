@@ -349,7 +349,7 @@ export class PantherMediaExplorerStack extends Stack {
       "MediaIntegration",
       mediaApiFunction,
     );
-    new AssetBrowseIndex(this, "AssetBrowseIndex", { bucket: privateAssets, api: mediaApi,
+    const assetBrowse = new AssetBrowseIndex(this, "AssetBrowseIndex", { bucket: privateAssets, api: mediaApi,
       authorizer, reader: mediaApiFunction, migrators: accessEnvironment.ASSET_MIGRATORS });
     const shares = new dynamodb.Table(this, "AssetShares", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -437,7 +437,7 @@ export class PantherMediaExplorerStack extends Stack {
     }));
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
-    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table });
     new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/character", "/character-profile", "/character-versions"]) {

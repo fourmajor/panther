@@ -16,7 +16,7 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** Each editorial discipline is a durable callback stage, not a Lambda-hosted AI call. */
 export class EditorialProcessing extends Construct {
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable;
   }) {
     super(scope, id);
     const plan = JSON.parse(fs.readFileSync(path.join(__dirname,
@@ -98,11 +98,12 @@ export class EditorialProcessing extends Construct {
     // Reading a novel never needs the broker's write or workflow permissions.
     const reader = new lambda.Function(this, "NovelReader", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
-      handler: "novel.handler", code, environment,
+      handler: "novel.handler", code, environment:{...environment, ASSET_BROWSE_TABLE: props.browseTable.tableName},
       memorySize: 256, timeout: Duration.seconds(30),
       logGroup: new logs.LogGroup(this, "NovelReaderLogs", { retention: logs.RetentionDays.ONE_MONTH }),
     });
     table.grantReadData(reader);
+    props.browseTable.grant(reader, "dynamodb:Query", "dynamodb:GetItem", "dynamodb:BatchGetItem");
     props.bucket.grantRead(reader, "games/*");
     const novelIntegration = new integrations.HttpLambdaIntegration("NovelIntegration", reader);
     for (const route of ["/novel", "/novel-chapter"]) {
