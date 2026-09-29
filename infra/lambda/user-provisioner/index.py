@@ -79,7 +79,8 @@ def handler(event, _context):
             )
         # CONFIRMED and FORCE_CHANGE_PASSWORD accounts are never reset. Removal
         # preserves the account; no AdminDeleteUser permission exists.
-        _purge_legacy_copy(parameter_name)
+        if properties.get("CredentialPolicyVersion") in (2, "2"):
+            _purge_legacy_copy(parameter_name)
     except ClientError as error:
         raise RuntimeError(
             error.response.get("Error", {}).get("Code", "AWS service error")

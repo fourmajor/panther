@@ -6,6 +6,13 @@ and invitation addresses are private deployment data, never repository fixtures 
 
 ## Credential-policy version 2
 
+This is a **two-deployment** cutover. The first deployment (default `credentialCutover=prepare`)
+installs the non-resetting handler and narrowed permissions without invoking existing account
+resources or deleting copies. Only after that deployment reaches `UPDATE_COMPLETE` may a separate
+`credentialCutover=purge` deployment add the version trigger. Otherwise a failed one-step deployment
+could roll back to the old resetting handler after some copies were deleted. Never combine these
+deployments or roll back to pre-cutover application code after deletion.
+
 The existing `User-USERNAME` constructs and physical identities remain unchanged. The CDK
 custom-resource property `CredentialPolicyVersion: 2` forces each configured account through
 the safe migration, even if its private configuration has not changed. The handler:
@@ -48,8 +55,17 @@ Use the private configuration and CDK workflow in `private-account-configuration
 deployment diff and account inventory outside Git. Before deployment, confirm the target account
 and `us-west-2`, then inspect a private CDK diff: existing pool/client/user logical IDs must remain,
 there must be **no** account or pool replacement, no password reset, and no capability expansion.
-The deliberate changes are recovery/verification settings, retention policies, the policy-version
-trigger, removal of reset/read/write permissions and the obsolete password-location output.
+The preparation changes are recovery/verification settings, retention policies, the safe handler,
+removal of reset/read/write permissions and the obsolete password-location output. Keep the account
+roster/capabilities unchanged. Preparation deliberately omits invitation properties: do not add
+accounts during this first rollout. Existing custom-resource **properties must remain unchanged**.
+
+Use `--context credentialCutover=prepare` for the first CDK diff/deploy. Confirm stack completion
+and the safe deployed handler/permissions before continuing. Next, use `--context credentialCutover=purge`
+for a fresh diff/deploy. Its only account change should be the version-2 trigger (and any separately
+reviewed private invitation inputs); the handler/pool/client/IAM definitions must match the prepared
+deployment, so purge rollback cannot restore the old resetting handler. Missing copies stay deleted;
+rollback never reconstructs them. New accounts are added only after preparation, in purge mode.
 
 After deployment, privately verify every configured account's identity/status/access is unchanged
 and every corresponding legacy parameter is absent. Check removal by name/metadata only, never
@@ -58,6 +74,11 @@ the migration's CloudFormation/custom-resource result, not the deleted credentia
 credential copies are intentionally unrecoverable through Panther; the actual Cognito passwords
 are unchanged. Earlier private backups, exports and historical logs are outside this deletion's
 scope and must not be claimed erased.
+
+After successful full-inventory verification, remove the temporary preparation mode in a follow-up
+PR so version 2 becomes unconditional. Keep the issue open until that cleanup is deployed; preparation
+is a rollout checkpoint, not a permanent password-copy storage exception. Never use an old whole-stack
+template or pre-cutover handler as a recovery mechanism.
 
 ## Self-service web controls
 

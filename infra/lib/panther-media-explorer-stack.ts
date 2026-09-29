@@ -57,6 +57,12 @@ export class PantherMediaExplorerStack extends Stack {
   constructor(scope: Construct, id: string, props: PantherMediaExplorerStackProps) {
     super(scope, id, props);
     const identities = validateIdentities(props.identities);
+    // First deploy the non-resetting handler without invoking legacy resources.
+    // A separate purge deployment cannot roll back to the old resetting code.
+    const credentialCutover = this.node.tryGetContext("credentialCutover") ?? "prepare";
+    if (!["prepare", "purge"].includes(credentialCutover)) {
+      throw new Error("credentialCutover must be prepare or purge; follow docs/account-management.md");
+    }
     const accessEnvironment = {
       MODEL_PUBLISHERS: identities.publishers.join(","),
       MODEL_WORKERS: identities.workers.join(","),
@@ -545,8 +551,8 @@ export class PantherMediaExplorerStack extends Stack {
           UserPoolId: userPool.userPoolId,
           Username: username,
           PasswordParameterName: `${passwordParameterPrefix}/${username}/password`,
-          CredentialPolicyVersion: 2,
-          ...(identities.invitationEmails?.[username] ? {InvitationEmail: identities.invitationEmails[username]} : {}),
+          ...(credentialCutover === "purge" ? {CredentialPolicyVersion: 2} : {}),
+          ...(credentialCutover === "purge" && identities.invitationEmails?.[username] ? {InvitationEmail: identities.invitationEmails[username]} : {}),
         },
       });
       account.applyRemovalPolicy(RemovalPolicy.RETAIN);

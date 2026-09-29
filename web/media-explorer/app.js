@@ -2943,7 +2943,9 @@ async function openAccountSettings(recovery=false) {
   email=accountField(emailForm,"Email address","email",profile.email); email.required=true; email.autocomplete="email";
   let emailCode;
   const verifyForm=accountForm(emailSection,"Verify email",async()=>{
-    await accountRequest("verify-email",{code:emailCode.value.trim()}); return "Email verified. Reopen account settings to see the active address.";
+    await accountRequest("verify-email",{code:emailCode.value.trim()});
+    if(epoch===accountSettingsEpoch) emailSection.querySelector("p").textContent="Email verification completed. Reopen account settings to see the active address.";
+    return "Email verified. Reopen account settings to see the active address.";
   });
   emailCode=accountField(verifyForm,"Email verification code"); emailCode.required=true; emailCode.autocomplete="one-time-code";
   accountForm(emailSection,"Resend email code",async()=>{await accountRequest("resend-email");return "Verification requested. Check the pending or current address.";});
@@ -2961,7 +2963,7 @@ async function openAccountSettings(recovery=false) {
   const mfaSection=accountSection(host,"Authenticator security",`Authenticator MFA is ${profile.totpEnabled?"enabled":"not enabled"}. Keep a secure backup in your authenticator. Email password recovery does not remove MFA; losing the authenticator requires administrator help. Panther does not issue recovery codes.`);
   if(!profile.totpEnabled) {
     const enrollment=document.createElement("div");
-    accountForm(mfaSection,"Set up authenticator",async()=>{
+    const setupForm=accountForm(mfaSection,"Set up authenticator",async()=>{
       const result=await accountRequest("mfa-start"); if(epoch!==accountSettingsEpoch)return;
       enrollment.replaceChildren();
       const secretLabel=document.createElement("label"), secret=document.createElement("input"), label=document.createElement("span");
@@ -2972,6 +2974,9 @@ async function openAccountSettings(recovery=false) {
       const confirmMfa=accountForm(enrollment,"Enable authenticator",async()=>{
         const result=await accountRequest("mfa-confirm",{code:code.value.trim()});
         if(result.verified===false)throw new Error("Authenticator code was not verified. Try a fresh code.");
+        if(epoch!==accountSettingsEpoch)return;
+        setupForm.hidden=true;
+        mfaSection.querySelector("p").textContent="Authenticator MFA is enabled. Keep a secure authenticator backup. Email password recovery does not remove MFA; losing the authenticator requires administrator help.";
         const done=document.createElement("p"); done.textContent="Authenticator enabled. Reopen account settings to see the current status.";
         enrollment.replaceChildren(done); return "Authenticator enabled.";
       });
@@ -2983,7 +2988,9 @@ async function openAccountSettings(recovery=false) {
     let acknowledge;
     const disable=accountForm(mfaSection,"Disable authenticator",async()=>{
       if(!acknowledge.checked)throw new Error("Confirm that you want to remove authenticator protection.");
-      await accountRequest("mfa-disable"); return "Authenticator disabled. Reopen account settings for the current status.";
+      await accountRequest("mfa-disable");
+      if(epoch===accountSettingsEpoch) mfaSection.querySelector("p").textContent="Authenticator MFA is disabled. Reopen settings to enroll again.";
+      return "Authenticator disabled. Reopen account settings for the current status.";
     });
     acknowledge=accountField(disable,"I understand this removes authenticator protection","checkbox");
   }

@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(): Template {
-  const app = new App();
+function mediaExplorerTemplate(stage = "purge"): Template {
+  const app = new App({context:{credentialCutover:stage}});
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
       publishers:["example-operator","example-editor"], workers:["example-operator"], migrationAdmins:["example-operator"]},
@@ -453,6 +453,23 @@ test("media explorer provisions configured users without exposing passwords or e
   const policies=JSON.stringify(template.findResources("AWS::IAM::Policy"));
   assert.doesNotMatch(policies,/cognito-idp:AdminSetUserPassword|cognito-idp:AdminDeleteUser|ssm:GetParameter|ssm:PutParameter/);
   assert.equal(template.toJSON().Outputs.PasswordParameterPrefix,undefined);
+});
+
+test("credential-copy purge is a separate identity-preserving deployment after safe preparation", () => {
+  const prepare=mediaExplorerTemplate("prepare"), purge=mediaExplorerTemplate("purge");
+  const before=prepare.findResources("Custom::PantherMediaUser"), after=purge.findResources("Custom::PantherMediaUser");
+  assert.deepEqual(Object.keys(before),Object.keys(after));
+  for(const id of Object.keys(before)) {
+    assert.equal(before[id].Properties.CredentialPolicyVersion,undefined);
+    assert.equal(before[id].Properties.InvitationEmail,undefined);
+    const {CredentialPolicyVersion,...properties}=after[id].Properties;
+    assert.equal(CredentialPolicyVersion,2); assert.deepEqual(before[id].Properties,properties);
+    assert.ok(before[id].DependsOn.some((dependency:string)=>dependency.startsWith("UserProvisionerFunction")));
+  }
+  for(const type of ["AWS::Cognito::UserPool","AWS::Cognito::UserPoolClient","AWS::Lambda::Function","AWS::IAM::Policy"]) {
+    assert.deepEqual(prepare.findResources(type),purge.findResources(type));
+  }
+  assert.throws(()=>mediaExplorerTemplate("unsafe"),/credentialCutover/);
 });
 
 test("media API is JWT protected with limited conditional upload permissions", () => {

@@ -178,3 +178,35 @@ def test_aws_errors_do_not_expose_private_values(provisioner, monkeypatch):
     with pytest.raises(RuntimeError) as error:
         module.handler({"RequestType": "Delete", "ResourceProperties": properties}, None)
     assert str(error.value) == "AccessDeniedException"
+
+
+def test_prepare_and_purge_rollback_never_delete_or_reset_credentials(provisioner, monkeypatch):
+    module, properties = provisioner
+    module.cognito.admin_create_user(
+        UserPoolId=properties["UserPoolId"], Username=properties["Username"]
+    )
+    module.ssm.put_parameter(
+        Name=properties["PasswordParameterName"], Value="synthetic-legacy", Type="SecureString"
+    )
+
+    def forbidden(**_kwargs):
+        pytest.fail("Preparation/rollback must not read or reset credentials")
+
+    monkeypatch.setattr(module.cognito, "admin_set_user_password", forbidden)
+    monkeypatch.setattr(module.ssm, "get_parameter", forbidden)
+    prepared = {k: v for k, v in properties.items() if k != "CredentialPolicyVersion"}
+    module.handler({"RequestType": "Update", "ResourceProperties": prepared}, None)
+    assert module.ssm.parameters
+    module.handler(
+        {
+            "RequestType": "Update",
+            "ResourceProperties": {**properties, "CredentialPolicyVersion": "2"},
+        },
+        None,
+    )
+    assert not module.ssm.parameters
+    module.handler(
+        {"RequestType": "Update", "ResourceProperties": prepared}, None
+    )  # Purge rollback uses safe deployed code.
+    assert not module.ssm.parameters
+    assert module._user_exists(properties["UserPoolId"], properties["Username"])

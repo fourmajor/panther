@@ -77,6 +77,8 @@ for(const width of [1280,390]) {
     await dialog.getByRole('button',{name:'Enable authenticator',exact:true}).click();
     await expect(dialog).toContainText('Authenticator enabled.');
     await expect(dialog.getByLabel('Authenticator setup key')).toHaveCount(0);
+    await expect(dialog.getByRole('button',{name:'Set up authenticator',exact:true})).not.toBeVisible();
+    await expect(dialog).toContainText('Authenticator MFA is enabled.');
     await page.screenshot({path:testInfo.outputPath(`account-authenticator-${width}.png`)});
     await visibleControl(dialog.getByRole('button',{name:'Close account settings'}));
     await dialog.getByRole('button',{name:'Close account settings'}).click();
