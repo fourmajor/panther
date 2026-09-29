@@ -143,3 +143,47 @@ def test_score_cli_reads_captures_only_and_outputs_no_text(tmp_path, monkeypatch
     experiment.main()
     report = json.loads(capsys.readouterr().out)
     assert "requests" not in report and "answers" not in report
+
+
+def test_reporting_exposes_accepted_errors_calibration_and_latency_tails():
+    rows = captures()
+    # A simulated confidently wrong label must remain visible even when the gate accepts it.
+    decision = rows[0]['response']['answers']['decision']
+    decision['choice'] = 'table-chatter'
+    decision['probabilities'] = {label: int(label == 'table-chatter')
+                                 for label in experiment.CRITERIA['utterance']}
+    for row, latency in zip(rows[:4], [10, 20, 30, 1000]):
+        row['latencyMs'] = latency
+    report = experiment.evaluate(rows)
+    metrics = report['metrics']['utterance']
+    assert report['reportSchemaVersion'] == 2
+    assert metrics['acceptedErrors'] == 1
+    assert metrics['confusionMatrix']['in-character']['table-chatter'] == 1
+    assert sum(sum(counts.values()) for counts in metrics['confusionMatrix'].values()) == 4
+    assert metrics['p50LatencyMs'] == 25
+    assert metrics['p95LatencyMs'] == pytest.approx(854.5)
+    assert metrics['maxLatencyMs'] == 1000
+    assert metrics['calibration']['expectedCalibrationError'] == 0.25
+    assert metrics['calibration']['bins'][0]['samples'] == 4
+
+
+def test_calibration_uses_choice_probability_not_sharpness_confidence():
+    rows = captures()
+    decision = rows[0]['response']['answers']['decision']
+    decision['confidence'] = 0.4
+    decision['probabilities'] = {'in-character': 0.7, 'table-chatter': 0.1,
+                                 'rules': 0.1, 'uncertain': 0.1}
+    metrics = experiment.evaluate(rows)['metrics']['utterance']
+    assert metrics['calibration']['expectedCalibrationError'] == pytest.approx(0.075)
+    assert metrics['calibration']['bins'][0]['meanPredictedProbability'] == 0.7
+    assert metrics['acceptedErrors'] == 0
+
+
+def test_all_abstentions_keep_selective_accuracy_unknown():
+    rows = captures()
+    for row in rows:
+        row['response']['answers']['decision']['confidence'] = 0.1
+    report = experiment.evaluate(rows)
+    for metric in report['metrics'].values():
+        assert metric['coverage'] == 0 and metric['abstention'] == 1
+        assert metric['selectiveAccuracy'] is None and metric['acceptedErrors'] == 0
