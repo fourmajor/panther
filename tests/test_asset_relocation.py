@@ -9,7 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 from botocore.exceptions import ClientError
-from test_asset_storage import store, metadata, DATE
+import test_asset_storage
+from test_asset_storage import metadata, DATE
+
+store = test_asset_storage.store
 
 
 @pytest.fixture
