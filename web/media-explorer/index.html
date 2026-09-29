@@ -145,6 +145,12 @@
                 <button class="quiet-button" id="model-zoom-out" type="button" disabled>Zoom out</button>
               </div>
               <button class="quiet-button" id="model-reset" type="button" disabled>Reset view</button>
+              <div id="model-animation-controls" hidden>
+                <label>Character animation <select id="model-animation-clip" aria-label="Character animation"></select></label>
+                <button class="quiet-button" id="model-animation-toggle" type="button" aria-pressed="false">Play animation</button>
+                <p id="model-animation-status" role="status"></p>
+              </div>
+              <p id="model-animation-empty" hidden>This edition is a static model. No character animation is included.</p>
               <p class="model-help">
                 Drag to rotate; scroll or pinch to zoom. Use the buttons to pan or zoom precisely. Reset returns to the published view.
               </p>

@@ -608,6 +608,7 @@ async function loadCharacterThumbnails(epoch) {
 }
 
 function showModelFallback(message) {
+  resetModelAnimation();
   elements.characterModel.hidden = true;
   elements.modelFallback.hidden = false;
   elements.modelFallbackMessage.textContent = message;
@@ -623,6 +624,7 @@ function setModelControls(enabled) {
 }
 
 function configureCharacter(profile) {
+  resetModelAnimation();
   const { character, model, poster } = profile;
   state.selectedAppearance = profile;
   state.currentCharacter = { gameId: character.gameId, characterId: character.id };
@@ -649,6 +651,7 @@ function configureCharacter(profile) {
 }
 
 function configureModelView(model, poster, name, keepActive = false) {
+  resetModelAnimation();
   state.selectedModelKey = model.key || null;
   elements.characterPoster.src = poster.url;
   elements.characterPoster.alt = `Portrait of ${name}`;
@@ -1085,6 +1088,68 @@ function resetCharacterModel() {
   elements.characterModel.jumpCameraToGoal();
   elements.modelStatus.textContent = "Default view restored.";
 }
+
+const modelMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+let modelAnimationIntent = false, modelAnimationVisible = false, modelAnimationSource = null;
+function resetModelAnimation() {
+  modelAnimationSource = null;
+  modelAnimationIntent = false;
+  if (typeof elements.characterModel.pause === "function") elements.characterModel.pause();
+  document.getElementById("model-animation-controls").hidden = true;
+  document.getElementById("model-animation-empty").hidden = true;
+  document.getElementById("model-animation-clip").replaceChildren();
+}
+function syncModelAnimation() {
+  const viewer = elements.characterModel;
+  const clip = document.getElementById("model-animation-clip");
+  const button = document.getElementById("model-animation-toggle");
+  const status = document.getElementById("model-animation-status");
+  if (!clip.options.length || typeof viewer.pause !== "function") return;
+  const visible = modelAnimationVisible && !document.hidden && viewer.offsetParent !== null;
+  const playing = modelAnimationIntent && visible && viewer.loaded && !viewer.hidden;
+  if (playing) { if (viewer.paused) viewer.play({repetitions:Infinity}); } else viewer.pause();
+  button.textContent = modelAnimationIntent ? "Pause animation" : "Play animation";
+  button.setAttribute("aria-pressed", String(modelAnimationIntent));
+  status.textContent = playing ? "Character animation playing. Camera controls remain available."
+    : modelAnimationIntent ? "Animation paused while this model is out of view."
+    : modelMotionPreference.matches ? "Animation paused. Reduced motion is enabled; Play starts it only when you choose."
+    : "Animation paused. You can explore a static pose or play the selected clip.";
+}
+function configureModelAnimation() {
+  const viewer = elements.characterModel;
+  if (!viewer.loaded || !viewer.src || modelAnimationSource === viewer.src) return;
+  modelAnimationSource = viewer.src;
+  const names = viewer.availableAnimations || [];
+  const clip = document.getElementById("model-animation-clip");
+  clip.replaceChildren();
+  for (const name of names) clip.add(new Option(name,name));
+  document.getElementById("model-animation-controls").hidden = !names.length;
+  document.getElementById("model-animation-empty").hidden = Boolean(names.length);
+  if (!names.length) return;
+  // Only the explicitly authored idle clip starts automatically. Other clips remain opt-in.
+  clip.value = names.includes("Panther Idle") ? "Panther Idle" : names[0];
+  viewer.animationName = clip.value;
+  modelAnimationIntent = clip.value === "Panther Idle" && !modelMotionPreference.matches;
+  syncModelAnimation();
+}
+new IntersectionObserver(entries => {
+  modelAnimationVisible = entries[0]?.isIntersecting || false;
+  syncModelAnimation();
+}, {threshold:0.01}).observe(elements.characterModel);
+document.getElementById("model-animation-toggle").addEventListener("click", () => {
+  modelAnimationIntent = !modelAnimationIntent; syncModelAnimation();
+});
+document.getElementById("model-animation-clip").addEventListener("change", event => {
+  elements.characterModel.pause();
+  elements.characterModel.animationName = event.target.value;
+  elements.characterModel.currentTime = 0;
+  syncModelAnimation();
+});
+document.addEventListener("visibilitychange", syncModelAnimation);
+modelMotionPreference.addEventListener("change", () => {
+  if (modelMotionPreference.matches) modelAnimationIntent = false;
+  syncModelAnimation();
+});
 
 function zoomCharacterModel(factor) {
   const viewer = elements.characterModel;
@@ -3133,15 +3198,24 @@ document.getElementById("model-pan-right").addEventListener("click", () => panCh
 elements.characterModel.addEventListener("progress", (event) => {
   const progress = Math.max(0, Math.min(1, event.detail.totalProgress || 0));
   elements.modelProgressBar.style.transform = `scaleX(${progress})`;
-  elements.modelStatus.textContent = `Loading the 3D model… ${Math.round(progress * 100)}%`;
+  elements.modelStatus.textContent = elements.characterModel.loaded && progress === 1
+    ? "Model ready. Drag, zoom, or use the keyboard to explore."
+    : `Loading the 3D model… ${Math.round(progress * 100)}%`;
 });
-elements.characterModel.addEventListener("load", () => {
+function characterModelReady() {
+  if (!elements.characterModel.loaded || !state.selectedModelKey) return;
   elements.modelProgressBar.style.transform = "scaleX(1)";
   elements.modelStatus.textContent = "Model ready. Drag, zoom, or use the keyboard to explore.";
   elements.modelReset.disabled = false;
   setModelControls(true);
-});
+  configureModelAnimation();
+}
+// Geometry/environment are ready before the final load event's shader/rAF wait.
+// Initialize controls at that boundary, including on slow software-rendered devices.
+elements.characterModel.addEventListener("before-render", characterModelReady);
+elements.characterModel.addEventListener("load", characterModelReady);
 elements.characterModel.addEventListener("error", () => {
+  resetModelAnimation();
   showModelFallback("The 3D model could not be displayed. The portrait is shown instead.");
 });
 elements.primaryNav.addEventListener("click", (event) => {

@@ -179,6 +179,21 @@ automatic overwrite. Interrupted publication retries reconcile exact output keys
 
 ## Operations and cost
 
+### Character animation playback
+
+The character viewer discovers clips embedded in the selected immutable GLB. An explicitly
+authored `Panther Idle` clip loops automatically while visible unless reduced motion is enabled.
+Other embedded clips are opt-in, not assumed to be appropriate idle performances. Play/pause
+keeps camera controls available; hidden pages and offscreen models pause without losing the
+user's playback choice. Changing appearance/model resets that choice. Static models remain
+static and are labeled as such; camera rotation is not character animation.
+
+Creating an idle performance is separate Blender asset work: animate character parts or a rig,
+inspect deformation/equipment attachment and the loop seam, preserve editable source and exact
+input revisions, then export and verify the actual animated GLB. Publish a new asset version
+and artwork pair through Panther. Viewer capability does not prove existing models are rigged
+or animation-ready, and does not authorize a paid animation provider.
+
 No EC2, NAT, provisioned database, hosted runner, or always-on inference service is introduced.
 Costs are retained storage, API/queue activity, and state transitions. Laptop polling is usage,
 not literally zero; stop the worker to eliminate idle polls. Step Functions waiting itself does
