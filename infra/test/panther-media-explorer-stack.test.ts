@@ -7,8 +7,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(stage = "purge", context = {}): Template {
-  const app = new App({context:{credentialCutover:stage, ...context}});
+function mediaExplorerTemplate(context = {}): Template {
+  const app = new App({context});
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
       publishers:["example-operator","example-editor"], workers:["example-operator"], migrationAdmins:["example-operator"]},
@@ -30,7 +30,7 @@ test("indexed relocation is temporary, exact-plan scoped and cannot delete histo
   const file = path.join(directory, "hashes.json");
   try {
     fs.writeFileSync(file, JSON.stringify(["a".repeat(64)]));
-    const template = mediaExplorerTemplate("purge", {assetRelocationPlan:file});
+    const template = mediaExplorerTemplate({assetRelocationPlan:file});
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:"POST /asset-relocations-v1", AuthorizationType:"JWT"});
     template.hasResourceProperties("AWS::Lambda::Function", {Handler:"asset_relocation.handler",
       Environment:{Variables:Match.objectLike({ASSET_RELOCATION_IDS:JSON.stringify(["a".repeat(64)])})}});
@@ -48,7 +48,7 @@ test("indexed relocation is temporary, exact-plan scoped and cannot delete histo
     assert.doesNotMatch(JSON.stringify(statements),/s3:DeleteObjectVersion|s3:\*/);
     assert.doesNotMatch(JSON.stringify(mediaExplorerTemplate().findResources("AWS::ApiGatewayV2::Route")),/asset-relocations-v1/);
     fs.writeFileSync(file,"[]");
-    assert.throws(() => mediaExplorerTemplate("purge",{assetRelocationPlan:file}), /unique reviewed request/);
+    assert.throws(() => mediaExplorerTemplate({assetRelocationPlan:file}), /unique reviewed request/);
   } finally { fs.rmSync(directory,{recursive:true}); }
 });
 
@@ -555,21 +555,16 @@ test("media explorer provisions configured users without exposing passwords or e
   assert.equal(template.toJSON().Outputs.PasswordParameterPrefix,undefined);
 });
 
-test("credential-copy purge is a separate identity-preserving deployment after safe preparation", () => {
-  const prepare=mediaExplorerTemplate("prepare"), purge=mediaExplorerTemplate("purge");
-  const before=prepare.findResources("Custom::PantherMediaUser"), after=purge.findResources("Custom::PantherMediaUser");
-  assert.deepEqual(Object.keys(before),Object.keys(after));
-  for(const id of Object.keys(before)) {
-    assert.equal(before[id].Properties.CredentialPolicyVersion,undefined);
-    assert.equal(before[id].Properties.InvitationEmail,undefined);
-    const {CredentialPolicyVersion,...properties}=after[id].Properties;
-    assert.equal(CredentialPolicyVersion,2); assert.deepEqual(before[id].Properties,properties);
-    assert.ok(before[id].DependsOn.some((dependency:string)=>dependency.startsWith("UserProvisionerFunction")));
+test("credential policy is unconditional and retired rollout modes fail closed", () => {
+  const template=mediaExplorerTemplate();
+  for(const user of Object.values(template.findResources("Custom::PantherMediaUser"))) {
+    assert.equal(user.Properties.CredentialPolicyVersion,2);
+    assert.equal(user.DeletionPolicy,"Retain");
+    assert.ok(user.DependsOn.some((dependency:string)=>dependency.startsWith("UserProvisionerFunction")));
   }
-  for(const type of ["AWS::Cognito::UserPool","AWS::Cognito::UserPoolClient","AWS::Lambda::Function","AWS::IAM::Policy"]) {
-    assert.deepEqual(prepare.findResources(type),purge.findResources(type));
+  for(const mode of ["prepare","purge","unsafe"]) {
+    assert.throws(()=>mediaExplorerTemplate({credentialCutover:mode}),/credentialCutover was retired/);
   }
-  assert.throws(()=>mediaExplorerTemplate("unsafe"),/credentialCutover/);
 });
 
 test("media API is JWT protected with limited conditional upload permissions", () => {

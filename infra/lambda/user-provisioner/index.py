@@ -55,6 +55,8 @@ def handler(event, _context):
         raise ValueError("Unexpected legacy credential location")
     if event["RequestType"] not in {"Create", "Update", "Delete"}:
         raise ValueError("Invalid provisioning operation")
+    if properties.get("CredentialPolicyVersion") not in (2, "2"):
+        raise ValueError("Credential policy version 2 is required")
     if event["RequestType"] == "Update":
         old = event.get("OldResourceProperties", properties)
         if old.get("UserPoolId") != user_pool_id or old.get("Username") != username:
@@ -79,8 +81,7 @@ def handler(event, _context):
             )
         # CONFIRMED and FORCE_CHANGE_PASSWORD accounts are never reset. Removal
         # preserves the account; no AdminDeleteUser permission exists.
-        if properties.get("CredentialPolicyVersion") in (2, "2"):
-            _purge_legacy_copy(parameter_name)
+        _purge_legacy_copy(parameter_name)
     except ClientError as error:
         raise RuntimeError(
             error.response.get("Error", {}).get("Code", "AWS service error")
