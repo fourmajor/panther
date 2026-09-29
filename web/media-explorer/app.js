@@ -2859,7 +2859,7 @@ function accountSection(host, title, description) {
 function accountField(form, label, type="text", value="") {
   const wrapper=document.createElement("label"), input=document.createElement("input"), caption=document.createElement("span");
   caption.textContent=label; input.type=type; input.value=value; input.maxLength=type==="password"?256:254;
-  input.autocomplete=type==="password"?"new-password":"off"; wrapper.append(caption,input); form.append(wrapper); return input;
+  input.autocomplete=type==="password"?"new-password":"off"; wrapper.append(caption,input); form.insertBefore(wrapper,form.querySelector("button")); return input;
 }
 
 function accountForm(section, title, action) {
@@ -2933,7 +2933,7 @@ async function openAccountSettings(recovery=false) {
   avatar.value=profile.picture || "";
   avatarPreview.className="account-avatar"; avatarPreview.alt="Selected avatar";
   function showAvatar(){const permitted=["panther","moon","star"].some(name=>avatar.value===`${window.location.origin}/avatars/${name}.svg`);avatarPreview.hidden=!permitted;if(permitted)avatarPreview.src=avatar.value;else avatarPreview.removeAttribute("src");}
-  avatar.addEventListener("change",showAvatar); showAvatar(); avatarLabel.append(avatarTitle,avatar,avatarPreview); profileForm.append(avatarLabel);
+  avatar.addEventListener("change",showAvatar); showAvatar(); avatarLabel.append(avatarTitle,avatar,avatarPreview); profileForm.insertBefore(avatarLabel,profileForm.querySelector("button"));
 
   const emailSection=accountSection(host,"Email & recovery",`Current email: ${profile.email || "Not configured"} · ${profile.emailVerified?"Verified":"Not verified"}. A replacement address becomes active only after verification.`);
   let email;

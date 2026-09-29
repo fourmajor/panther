@@ -46,6 +46,9 @@ for(const width of [1280,390]) {
     await page.getByRole('button',{name:'Account',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'Account settings'});
     await expect(dialog.getByLabel('Display name')).toHaveValue('Example Member');
+    await dialog.getByLabel('Display name').focus(); await page.keyboard.press('Tab');
+    await expect(dialog.getByLabel('Avatar',{exact:true})).toBeFocused();
+    await page.keyboard.press('Tab'); await expect(dialog.getByRole('button',{name:'Save profile',exact:true})).toBeFocused();
     await dialog.getByLabel('Display name').fill('New Example Name');
     await dialog.getByLabel('Avatar',{exact:true}).selectOption('https://panther.place/avatars/moon.svg');
     await expect(dialog.getByAltText('Selected avatar')).toBeVisible();
