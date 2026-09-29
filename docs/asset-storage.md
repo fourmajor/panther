@@ -107,6 +107,7 @@ are retired, not supported alternatives. CDK rejects the old `assetStorageMode` 
 ## Future organization changes and recovery
 
 Use a new versioned Panther migration and reviewed CDK rollout for a future physical layout change.
+For role-based moves within the active layout, see [temporary indexed relocation v1](asset-relocation-v1.md).
 Keep dry runs, exact version pins, conflict guards, durable reports, complete all-game backfills,
 verified reader cutover and removal of temporary permissions. Do not restore the historical modes,
 rewrite immutable evidence, or edit a completed workflow's checksum references to make an audit pass.

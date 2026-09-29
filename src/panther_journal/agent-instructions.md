@@ -445,6 +445,11 @@ only metadata-update path; ordinary uploads stay create-only. For a content revi
 the previous object, and link it in `sourceKeys`. Moving existing storage requires a new reviewed
 versioned migration; it must never rewrite existing content. Metadata edits that imply a different
 folder require that migration, not a silent mismatch between metadata and organization.
+`panther assets relocate` is audited tooling for temporary indexed relocation v1, not a normally
+enabled write operation. It requires a CDK deployment allowing only exact reviewed plan hashes.
+Dry-run, copy, verify downloaded bytes and the all-game browse index, then retire old current
+entries recoverably. Remove its temporary deployment/permissions after verification. Stable asset
+references, semantic revisions and original versions remain unchanged; see `docs/asset-relocation-v1.md`.
 It cannot upload into `derived/web/`; import a locally optimized GLB under a new `original/` key.
 Use `panther character set-model` for the narrow, authorized model-selection operation below.
 Arbitrary profile editing is not supported. Do not work around limits with direct S3 mutations.
