@@ -142,6 +142,13 @@ def save_json(path, value):
     temporary.replace(path)
 
 
+def file_hash(path):
+    if path.is_symlink() or not path.is_file():
+        raise click.ClickException("Checkpoint evidence is missing or is a symbolic link.")
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
 def run_process(command, *, folder, log, heartbeat, timeout, stdin=None):
     # One process group per job. Stop only its children on lease loss, interruption, or timeout.
     start = time.monotonic()
@@ -312,6 +319,58 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
     )
     folder = base / f"candidate-{checkpoint['attempt']}"
     folder.mkdir(exist_ok=True, mode=0o700)
+    inputs = folder / "inputs.json"
+    if state_file.exists():
+        if not inputs.is_file() or inputs.is_symlink():
+            raise click.ClickException("Recovery is missing its original pinned inputs.")
+        saved_inputs = json.loads(inputs.read_text())
+        for field in (
+            "jobId",
+            "gameId",
+            "characterId",
+            "appearanceId",
+            "workflowVersion",
+            "appearanceSelection",
+            "views",
+        ):
+            if saved_inputs.get(field) != job.get(field):
+                raise click.ClickException(
+                    "Recovery inputs changed; refusing to reuse the checkpoint."
+                )
+    # Older checkpoints only pinned the two model files. Re-run trusted validation/review
+    # before accepting them, preserving the candidate and old reports rather than exempting it.
+    evidence_files = {
+        "model.glb",
+        "model.blend",
+        "validation.json",
+        *(f"renders/{view}.png" for view in VIEWS),
+    }
+    if (
+        checkpoint["phase"] in {"review", "publish"}
+        and set(checkpoint.get("validatedHashes", {})) != evidence_files
+    ):
+        for filename in ("model.glb", "model.blend"):
+            if file_hash(folder / filename) != checkpoint.get("validatedHashes", {}).get(filename):
+                raise click.ClickException(
+                    "Older checkpoint model changed; refusing evidence migration."
+                )
+        archive = folder / "checkpoint-evidence-v1"
+        archive.mkdir(exist_ok=True, mode=0o700)
+        for filename in sorted(evidence_files | {"review-result.json"}):
+            original = folder / filename
+            if not original.exists():
+                continue
+            destination = archive / filename
+            destination.parent.mkdir(exist_ok=True, mode=0o700)
+            if destination.exists():
+                if file_hash(destination) != file_hash(original):
+                    raise click.ClickException("Existing evidence archive conflicts with recovery.")
+            else:
+                file_hash(original)
+                shutil.copyfile(original, destination)
+        save_json(archive / "checkpoint.json", checkpoint)
+        checkpoint["phase"] = "validate"
+        save_json(state_file, checkpoint)
     last_heartbeat = [0.0]
 
     def heartbeat():
@@ -346,6 +405,15 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
             script = folder / "build.py"
             if script.is_symlink() or not script.is_file() or script.stat().st_size > 1024 * 1024:
                 raise click.ClickException("Missing or invalid bounded Blender build script.")
+            checkpoint["scriptSha256"] = file_hash(script)
+            checkpoint["phase"] = "blender"
+            save_json(state_file, checkpoint)
+        if checkpoint["phase"] == "blender":
+            script = folder / "build.py"
+            if file_hash(script) != checkpoint["scriptSha256"]:
+                raise click.ClickException(
+                    "Saved Blender script changed; refusing unchecked resume."
+                )
             code = run_process(
                 [
                     str(blender),
@@ -441,11 +509,13 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
                     "Self-hosted browser validation failed; model not published."
                 )
             checkpoint["validatedHashes"] = {}
-            for filename in ("model.glb", "model.blend"):
-                with (folder / filename).open("rb") as source:
-                    checkpoint["validatedHashes"][filename] = hashlib.file_digest(
-                        source, "sha256"
-                    ).hexdigest()
+            for filename in (
+                "model.glb",
+                "model.blend",
+                "validation.json",
+                *(f"renders/{view}.png" for view in VIEWS),
+            ):
+                checkpoint["validatedHashes"][filename] = file_hash(folder / filename)
             checkpoint["phase"] = "review"
             save_json(state_file, checkpoint)
         if checkpoint["phase"] == "review":
@@ -466,17 +536,17 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
             save_json(state_file, checkpoint)
         review = checkpoint["review"]
         for filename, expected in checkpoint["validatedHashes"].items():
-            with (folder / filename).open("rb") as source:
-                if hashlib.file_digest(source, "sha256").hexdigest() != expected:
-                    raise click.ClickException(
-                        "A validated model changed after inspection; refusing publication."
-                    )
+            if file_hash(folder / filename) != expected:
+                raise click.ClickException(
+                    "Validated model or inspection evidence changed; refusing publication."
+                )
         if not review["passed"] and checkpoint["attempt"] < 2:
             # Preserve this candidate; a fresh candidate gets the previous critique, not a new paid service.
             next_folder = base / "candidate-2"
             next_folder.mkdir(exist_ok=True)
             save_json(next_folder / "previous-critique.json", review)
             checkpoint = {"attempt": 2, "phase": "build"}
+            save_json(next_folder / "inputs.json", job)
             save_json(state_file, checkpoint)
             raise Deferred("Quality check requested one bounded refinement; candidate retained.")
         evidence = {
