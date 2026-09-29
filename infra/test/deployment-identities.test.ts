@@ -34,3 +34,12 @@ test("private file loads exact values, refuses broad permissions, and fails clos
     assert.throws(()=>loadIdentities("123456789012",path.join(dir,"missing.json")));
   } finally { fs.rmSync(dir,{recursive:true}); }
 });
+
+test("optional invitation addresses are private data and cannot grant access", () => {
+  const configured={...example,invitationEmails:{"sample-member":"member@example.invalid"}};
+  assert.deepEqual(validateIdentities(configured),configured);
+  for (const invitationEmails of [null,[],{"unknown":"member@example.invalid"},
+    {"sample-member":"not-an-email"},{"sample-member":"evil\n@example.invalid"}]) {
+    assert.throws(()=>validateIdentities({...example,invitationEmails}));
+  }
+});

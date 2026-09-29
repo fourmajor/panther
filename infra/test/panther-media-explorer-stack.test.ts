@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(): Template {
-  const app = new App();
+function mediaExplorerTemplate(stage = "purge"): Template {
+  const app = new App({context:{credentialCutover:stage}});
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
       publishers:["example-operator","example-editor"], workers:["example-operator"], migrationAdmins:["example-operator"]},
@@ -361,6 +361,11 @@ test("media explorer uses private static hosting and Cognito authentication", ()
   });
   template.hasResourceProperties("AWS::Cognito::UserPool", {
     AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
+    AccountRecoverySetting: {RecoveryMechanisms:[{Name:"verified_email",Priority:1}]},
+    AutoVerifiedAttributes: ["email"],
+    UserAttributeUpdateSettings: {AttributesRequireVerificationBeforeUpdate:["email"]},
+    UsernameAttributes: Match.absent(),
+    AliasAttributes: Match.absent(),
     MfaConfiguration: "OPTIONAL",
     Policies: {
       PasswordPolicy: Match.objectLike({
@@ -379,6 +384,8 @@ test("media explorer uses private static hosting and Cognito authentication", ()
     GenerateSecret: false,
     LogoutURLs: ["https://panther.place/"],
     PreventUserExistenceErrors: "ENABLED",
+    AllowedOAuthScopes: ["openid", "profile", "email", "aws.cognito.signin.user.admin"],
+    WriteAttributes: ["email", "name", "picture"],
   });
   template.hasResourceProperties("AWS::ApiGatewayV2::Api", {
     CorsConfiguration: Match.objectLike({
@@ -424,17 +431,45 @@ test("media explorer provisions configured users without exposing passwords or e
         Match.objectLike({
           Action: Match.arrayWith([
             "cognito-idp:AdminCreateUser",
-            "cognito-idp:AdminSetUserPassword",
+            "cognito-idp:AdminGetUser",
           ]),
           Effect: "Allow",
         }),
         Match.objectLike({
-          Action: Match.arrayWith(["ssm:GetParameter", "ssm:PutParameter"]),
+          Action: "ssm:DeleteParameter",
           Effect: "Allow",
         }),
       ]),
     }),
   });
+  for (const user of users) {
+    assert.equal(user.Properties.CredentialPolicyVersion,2);
+    assert.equal(user.DeletionPolicy,"Retain");
+  }
+  for (const pool of Object.values(template.findResources("AWS::Cognito::UserPool"))) {
+    assert.equal(pool.DeletionPolicy,"Retain");
+  }
+  // Policies cannot retain the previous credential reset/read/write authorities.
+  const policies=JSON.stringify(template.findResources("AWS::IAM::Policy"));
+  assert.doesNotMatch(policies,/cognito-idp:AdminSetUserPassword|cognito-idp:AdminDeleteUser|ssm:GetParameter|ssm:PutParameter/);
+  assert.equal(template.toJSON().Outputs.PasswordParameterPrefix,undefined);
+});
+
+test("credential-copy purge is a separate identity-preserving deployment after safe preparation", () => {
+  const prepare=mediaExplorerTemplate("prepare"), purge=mediaExplorerTemplate("purge");
+  const before=prepare.findResources("Custom::PantherMediaUser"), after=purge.findResources("Custom::PantherMediaUser");
+  assert.deepEqual(Object.keys(before),Object.keys(after));
+  for(const id of Object.keys(before)) {
+    assert.equal(before[id].Properties.CredentialPolicyVersion,undefined);
+    assert.equal(before[id].Properties.InvitationEmail,undefined);
+    const {CredentialPolicyVersion,...properties}=after[id].Properties;
+    assert.equal(CredentialPolicyVersion,2); assert.deepEqual(before[id].Properties,properties);
+    assert.ok(before[id].DependsOn.some((dependency:string)=>dependency.startsWith("UserProvisionerFunction")));
+  }
+  for(const type of ["AWS::Cognito::UserPool","AWS::Cognito::UserPoolClient","AWS::Lambda::Function","AWS::IAM::Policy"]) {
+    assert.deepEqual(prepare.findResources(type),purge.findResources(type));
+  }
+  assert.throws(()=>mediaExplorerTemplate("unsafe"),/credentialCutover/);
 });
 
 test("media API is JWT protected with limited conditional upload permissions", () => {
@@ -444,7 +479,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 62);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 64);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -454,7 +489,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
   for (const resource of Object.values(template.findResources("AWS::ApiGatewayV2::Route"))) {
     const route = resource.Properties.RouteKey;
     assert.equal(resource.Properties.AuthorizationType,
-      ["POST /auth/session", "POST /auth/refresh", "POST /auth/logout", "GET /s/{token}",
+      ["POST /auth/session", "POST /auth/refresh", "POST /auth/logout", "POST /auth/account", "POST /auth/recovery", "GET /s/{token}",
         "GET /s/{token}/watch", "GET /s/{token}/download", "GET /s/{token}/preview"].includes(route) ? "NONE" : "JWT");
   }
   template.hasResourceProperties("AWS::Lambda::Function", {
@@ -532,6 +567,6 @@ test("remembered sign-in uses maximum rotating refresh sessions and an uncached 
   });
   template.hasResourceProperties("AWS::Lambda::Function", {
     Environment: { Variables: Match.objectLike({ SITE_ORIGIN: "https://panther.place", WEB_CLIENT_ID: Match.anyValue() }) },
-    Timeout: 15, MemorySize: 128,
+    Timeout: 30, MemorySize: 128,
   });
 });

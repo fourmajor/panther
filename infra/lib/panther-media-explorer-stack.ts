@@ -57,6 +57,12 @@ export class PantherMediaExplorerStack extends Stack {
   constructor(scope: Construct, id: string, props: PantherMediaExplorerStackProps) {
     super(scope, id, props);
     const identities = validateIdentities(props.identities);
+    // First deploy the non-resetting handler without invoking legacy resources.
+    // A separate purge deployment cannot roll back to the old resetting code.
+    const credentialCutover = this.node.tryGetContext("credentialCutover") ?? "prepare";
+    if (!["prepare", "purge"].includes(credentialCutover)) {
+      throw new Error("credentialCutover must be prepare or purge; follow docs/account-management.md");
+    }
     const accessEnvironment = {
       MODEL_PUBLISHERS: identities.publishers.join(","),
       MODEL_WORKERS: identities.workers.join(","),
@@ -208,7 +214,9 @@ export class PantherMediaExplorerStack extends Stack {
       userPoolName: "panther-media-explorer",
       selfSignUpEnabled: false,
       signInAliases: { username: true, email: false },
-      accountRecovery: cognito.AccountRecovery.NONE,
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      autoVerify: { email: true },
+      keepOriginal: { email: true },
       mfa: cognito.Mfa.OPTIONAL,
       mfaSecondFactor: { otp: true, sms: false },
       passwordPolicy: {
@@ -219,7 +227,7 @@ export class PantherMediaExplorerStack extends Stack {
         requireUppercase: true,
         tempPasswordValidity: Duration.days(7),
       },
-      removalPolicy: RemovalPolicy.DESTROY,
+      removalPolicy: RemovalPolicy.RETAIN,
     });
 
     const userPoolDomain = userPool.addDomain("Domain", {
@@ -230,6 +238,7 @@ export class PantherMediaExplorerStack extends Stack {
 
     const userPoolClient = userPool.addClient("WebClient", {
       userPoolClientName: "panther-media-explorer-web",
+      writeAttributes: new cognito.ClientAttributes().withStandardAttributes({fullname:true, email:true, profilePicture:true}),
       generateSecret: false,
       authFlows: { userSrp: true },
       preventUserExistenceErrors: true,
@@ -241,7 +250,7 @@ export class PantherMediaExplorerStack extends Stack {
       refreshTokenRotationGracePeriod: Duration.seconds(60),
       oAuth: {
         flows: { authorizationCodeGrant: true },
-        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE],
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE, cognito.OAuthScope.EMAIL, cognito.OAuthScope.COGNITO_ADMIN],
         callbackUrls: [`${siteUrl}/`],
         logoutUrls: [`${siteUrl}/`],
       },
@@ -253,6 +262,7 @@ export class PantherMediaExplorerStack extends Stack {
     });
     const cliClient = userPool.addClient("CliClient", {
       userPoolClientName: "panther-cli",
+      writeAttributes: new cognito.ClientAttributes().withStandardAttributes({fullname:true, email:true, profilePicture:true}),
       generateSecret: false,
       disableOAuth: true,
       authFlows: { userPassword: true },
@@ -467,7 +477,7 @@ export class PantherMediaExplorerStack extends Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/web-session"), {
         exclude: ["**/__pycache__/**", "**/*.pyc"],
       }),
-      timeout: Duration.seconds(15),
+      timeout: Duration.seconds(30),
       memorySize: 128,
       logGroup: webSessionLogs,
       environment: {
@@ -477,7 +487,7 @@ export class PantherMediaExplorerStack extends Stack {
       },
     });
     const sessionIntegration = new apigwv2Integrations.HttpLambdaIntegration("WebSessionIntegration", webSession);
-    for (const route of ["/auth/session", "/auth/refresh", "/auth/logout"]) {
+    for (const route of ["/auth/session", "/auth/refresh", "/auth/logout", "/auth/account", "/auth/recovery"]) {
       mediaApi.addRoutes({ path: route, methods: [apigwv2.HttpMethod.POST], integration: sessionIntegration });
     }
     distribution.addBehavior("/auth/*", new origins.HttpOrigin(Fn.select(2, Fn.split("/", mediaApi.apiEndpoint))), {
@@ -506,21 +516,14 @@ export class PantherMediaExplorerStack extends Stack {
       new iam.PolicyStatement({
         actions: [
           "cognito-idp:AdminCreateUser",
-          "cognito-idp:AdminDeleteUser",
           "cognito-idp:AdminGetUser",
-          "cognito-idp:AdminSetUserPassword",
         ],
         resources: [userPool.userPoolArn],
       }),
     );
     provisionerFunction.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: [
-          "ssm:AddTagsToResource",
-          "ssm:DeleteParameter",
-          "ssm:GetParameter",
-          "ssm:PutParameter",
-        ],
+        actions: ["ssm:DeleteParameter"],
         resources: [
           this.formatArn({
             service: "ssm",
@@ -541,15 +544,19 @@ export class PantherMediaExplorerStack extends Stack {
     });
 
     for (const username of identities.users) {
-      new CustomResource(this, `User-${username}`, {
+      const account = new CustomResource(this, `User-${username}`, {
         serviceToken: userProvider.serviceToken,
         resourceType: "Custom::PantherMediaUser",
         properties: {
           UserPoolId: userPool.userPoolId,
           Username: username,
           PasswordParameterName: `${passwordParameterPrefix}/${username}/password`,
+          ...(credentialCutover === "purge" ? {CredentialPolicyVersion: 2} : {}),
+          ...(credentialCutover === "purge" && identities.invitationEmails?.[username] ? {InvitationEmail: identities.invitationEmails[username]} : {}),
         },
       });
+      account.applyRemovalPolicy(RemovalPolicy.RETAIN);
+      account.node.addDependency(provisionerFunction);
     }
 
     const siteDirectory = path.join(__dirname, "../../../web/media-explorer");
@@ -574,6 +581,8 @@ export class PantherMediaExplorerStack extends Stack {
       // Entry points must revalidate; publish only after immutable files exist.
       cacheControl: [s3deploy.CacheControl.noCache()],
       sources: [
+        ...["panther", "moon", "star"].map(name => s3deploy.Source.data(`avatars/${name}.svg`,
+          fs.readFileSync(path.join(siteDirectory, `avatars/${name}.svg`), "utf8"))),
         s3deploy.Source.data("index.html", release.html),
         s3deploy.Source.data("release.json", release.manifest),
         s3deploy.Source.data("cli-config.json", JSON.stringify({
@@ -613,10 +622,6 @@ export class PantherMediaExplorerStack extends Stack {
     new CfnOutput(this, "WebClientId", {
       value: userPoolClient.userPoolClientId,
       description: "Public OAuth client ID used by the media explorer",
-    });
-    new CfnOutput(this, "PasswordParameterPrefix", {
-      value: passwordParameterPrefix,
-      description: "SecureString parameters holding the generated user passwords",
     });
   }
 }

@@ -8,12 +8,14 @@ export interface DeploymentIdentities {
   publishers: string[];
   workers: string[];
   migrationAdmins: string[];
+  invitationEmails?: Record<string, string>;
 }
 
 export function validateIdentities(value: unknown): DeploymentIdentities {
   const v = value as DeploymentIdentities;
   const keys = ["schemaVersion", "users", "publishers", "workers", "migrationAdmins"];
-  if (!v || typeof v !== "object" || Object.keys(v).sort().join() !== keys.sort().join() || v.schemaVersion !== 1) {
+  if (!v || typeof v !== "object" || Array.isArray(v) || keys.some(key => !(key in v)) ||
+      Object.keys(v).some(key => ![...keys, "invitationEmails"].includes(key)) || v.schemaVersion !== 1) {
     throw new Error("Invalid private identity configuration schema");
   }
   for (const key of ["users", "publishers", "workers", "migrationAdmins"] as const) {
@@ -25,6 +27,12 @@ export function validateIdentities(value: unknown): DeploymentIdentities {
     if (key !== "users" && names.some(n => !v.users.includes(n))) {
       throw new Error(`Private identity capability refers to an unconfigured account: ${key}`);
     }
+  }
+  if (v.invitationEmails !== undefined && (!v.invitationEmails || typeof v.invitationEmails !== "object" ||
+      Array.isArray(v.invitationEmails) || Object.entries(v.invitationEmails).some(([name, email]) =>
+        !v.users.includes(name) || typeof email !== "string" || email.length > 254 ||
+        !/^[^\s@\x00-\x1f]+@[^\s@\x00-\x1f]+\.[^\s@\x00-\x1f]+$/.test(email)))) {
+    throw new Error("Invalid private invitation email configuration");
   }
   return v;
 }

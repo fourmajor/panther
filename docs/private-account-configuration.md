@@ -11,7 +11,9 @@ Use an owner-only directory (700) and file (600). Do not put passwords in it. Ke
 the existing AWS CloudFormation template also retains deployed provisioning values for recovery.
 
 The schema contains `schemaVersion: 1` and four explicit lists: `users`, `publishers`, `workers`,
-and `migrationAdmins`. Capability lists must reference configured users. A fictional example:
+and `migrationAdmins`. Optional `invitationEmails` maps configured usernames to private invitation
+addresses for **new** accounts. It grants no capability and does not update existing emails.
+Capability lists must reference configured users. A fictional example:
 
 ```json
 {
@@ -19,7 +21,8 @@ and `migrationAdmins`. Capability lists must reference configured users. A ficti
   "users": ["example-operator", "example-editor", "example-member"],
   "publishers": ["example-operator", "example-editor"],
   "workers": ["example-operator"],
-  "migrationAdmins": ["example-operator"]
+  "migrationAdmins": ["example-operator"],
+  "invitationEmails": {"example-member": "member@example.invalid"}
 }
 ```
 
@@ -38,7 +41,7 @@ keep it local and treat it as deployment data, not something to commit or attach
 
 ## Safe cutover and future updates
 
-The initial cutover copies the existing account list and exact capability assignments to the private
+The initial private-configuration cutover copies the existing account list and exact capability assignments to the private
 file. Preserve the `User-USERNAME` construct identities and generated-password parameter paths so
 CloudFormation neither recreates users nor resets their passwords. Review a private CDK diff before
 deploying: this cutover must not delete/replace account resources, change provisioning properties,
@@ -49,6 +52,12 @@ Adding an account changes this private file, not GitHub source. Adding it to `us
 grant publisher, worker or migration access, create a Player record, or infer an administrator role.
 Infrastructure definitions remain reviewed through PRs; private account inputs remain outside them.
 Missing configuration is an error, not an empty list or a reason to deploy default accounts.
+
+Credential-policy version 2 supersedes generated permanent passwords. Existing construct names and
+parameter-path properties stay stable solely to delete old copies safely; no password is read or
+created in SSM. See [account-management.md](account-management.md) for the migration, in-place
+email recovery settings, invitation requirements and production verification. Existing accounts
+and the pool are retained when removed from configuration; removal is not deactivation.
 
 Removing names from current source does **not** erase earlier commits, PR diffs/comments, issues,
 clones or caches. A historical-data cleanup requires a separately approved scope and cannot promise

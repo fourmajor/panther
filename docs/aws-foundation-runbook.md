@@ -195,27 +195,19 @@ in use. `--exclusively` prevents this focused deployment from also updating the 
 stack without its deployment-time budget email context.
 
 Accounts are supplied through private deployment configuration, never a list in application source.
-Their generated initial passwords are stored as standard SSM SecureString parameters under
-`/panther/media-explorer/users/USERNAME/password`.
+New accounts require a private `invitationEmails` entry and receive a Cognito email invitation with
+a temporary password that must be changed at first login. Existing accounts are not reset or
+recreated; supplying an invitation address does not overwrite their current email.
 Adding an account does not add it to management/publisher allowlists, create a Player record, or
-grant an application admin role. Formal member/admin roles are tracked in issue #83. Passwords
-must be handed off privately, never committed, placed in an issue, or exposed in deployment output.
+grant an application admin role. Formal member/admin roles are tracked in issue #83. Credentials
+must never be committed, placed in an issue, logged, or exposed in deployment output.
 
-Retrieve the initial account passwords with administrative access:
-
-```bash
-AWS_PROFILE=panther-sso-admin aws ssm get-parameter \
-  --region us-west-2 \
-  --name /panther/media-explorer/users/USERNAME/password \
-  --with-decryption \
-  --query Parameter.Value \
-  --output text
-```
-
-Password generation and user provisioning happen inside the CDK deployment. No password is passed
-through CDK context, committed to Git, or returned in a CloudFormation output. CloudFormation cannot
-natively set permanent Cognito passwords or create SSM SecureString values, so an on-demand custom
-resource performs those two operations and owns their lifecycle.
+Credential-policy version 2 removes the obsolete SSM copies through a guarded CDK custom-resource
+update. The handler cannot retrieve/decrypt them, create replacements, or reset existing passwords.
+See [account management](account-management.md) for the private diff, exact migration verification,
+retained account behavior and verified-email recovery. The old password retrieval procedure is
+obsolete and must not be used. Production deletion remains pending until the migration is deployed
+and the private inventory verifies absence of every managed copy.
 
 Read the explorer URL from the deployment output or later with:
 

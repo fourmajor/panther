@@ -910,3 +910,20 @@ model-viewer,
 /* In normal document flow: never cover navigation, reading, or editing controls. */
 .release-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .75rem; padding: .75rem 1rem; background: #292719; color: #f5eedc; border-bottom: 1px solid #c69d43; }
 .release-notice span { max-width: 55ch; }
+/* Self-service settings keep the close control outside their scrollable body. */
+.account-settings-dialog { padding:0; width:min(620px,calc(100vw - 24px)); max-height:calc(100dvh - 32px); color:var(--text,#eee); background:#191a15; border:1px solid #444638; border-radius:18px; }
+.account-settings-dialog::backdrop { background:rgba(0,0,0,.75); }
+.account-settings-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:20px 24px; border-bottom:1px solid #444638; }
+.account-settings-heading h2,.account-settings-heading p { margin:0; }
+.account-settings-body { overflow:auto; max-height:calc(100dvh - 150px); padding:0 24px 24px; }
+.account-settings-body section { padding:20px 0; border-bottom:1px solid #444638; }
+.account-settings-body h3 { margin:0 0 8px; }
+.account-settings-body p { overflow-wrap:anywhere; color:#cfcec5; line-height:1.5; }
+.account-settings-body form { display:flex; flex-direction:column; gap:12px; margin-top:16px; }
+.account-settings-body form button { order:2; align-self:flex-start; }
+.account-settings-body form p[role="status"] { order:3; margin:0; }
+.account-settings-body label { display:flex; flex-direction:column; gap:6px; }
+.account-settings-body input,.account-settings-body select { width:100%; box-sizing:border-box; min-height:44px; padding:8px 12px; background:#24261e; color:#f5f1e7; border:1px solid #666858; border-radius:6px; }
+.account-settings-body input[type="checkbox"] { width:24px; height:24px; min-height:24px; }
+.account-avatar { width:64px; height:64px; border-radius:50%; }
+@media(max-width:600px) { .account-settings-heading {padding:16px;} .account-settings-body {padding:0 16px 20px;} .masthead .account {flex-wrap:wrap;} }
