@@ -1090,8 +1090,9 @@ function resetCharacterModel() {
 }
 
 const modelMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
-let modelAnimationIntent = false, modelAnimationVisible = false;
+let modelAnimationIntent = false, modelAnimationVisible = false, modelAnimationSource = null;
 function resetModelAnimation() {
+  modelAnimationSource = null;
   modelAnimationIntent = false;
   if (typeof elements.characterModel.pause === "function") elements.characterModel.pause();
   document.getElementById("model-animation-controls").hidden = true;
@@ -1116,6 +1117,8 @@ function syncModelAnimation() {
 }
 function configureModelAnimation() {
   const viewer = elements.characterModel;
+  if (!viewer.loaded || !viewer.src || modelAnimationSource === viewer.src) return;
+  modelAnimationSource = viewer.src;
   const names = viewer.availableAnimations || [];
   const clip = document.getElementById("model-animation-clip");
   clip.replaceChildren();
@@ -3199,13 +3202,18 @@ elements.characterModel.addEventListener("progress", (event) => {
     ? "Model ready. Drag, zoom, or use the keyboard to explore."
     : `Loading the 3D model… ${Math.round(progress * 100)}%`;
 });
-elements.characterModel.addEventListener("load", () => {
+function characterModelReady() {
+  if (!elements.characterModel.loaded || !state.selectedModelKey) return;
   elements.modelProgressBar.style.transform = "scaleX(1)";
   elements.modelStatus.textContent = "Model ready. Drag, zoom, or use the keyboard to explore.";
   elements.modelReset.disabled = false;
   setModelControls(true);
   configureModelAnimation();
-});
+}
+// Geometry/environment are ready before the final load event's shader/rAF wait.
+// Initialize controls at that boundary, including on slow software-rendered devices.
+elements.characterModel.addEventListener("before-render", characterModelReady);
+elements.characterModel.addEventListener("load", characterModelReady);
 elements.characterModel.addEventListener("error", () => {
   resetModelAnimation();
   showModelFallback("The 3D model could not be displayed. The portrait is shown instead.");
