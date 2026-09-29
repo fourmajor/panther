@@ -1751,7 +1751,7 @@ function configureVideoPreview(asset, video, epoch) {
   if(index>=0) {
     const navigation=document.createElement("nav"); navigation.setAttribute("aria-label","Ordered collection playback");
     const label=document.createElement("p"); label.textContent=`${playlist.collection.name} · ${index+1} of ${playlist.assets.length} available videos. Order is explicit; no automatic playback.`;
-    const button=(name,position)=>{const node=document.createElement("button");node.type="button";node.className="quiet-button";node.textContent=name;node.disabled=position<0 || position>=playlist.assets.length;node.onclick=()=>{if(current())void previewFile(playlist.assets[position]);};return node;};
+    const button=(name,position)=>{const node=document.createElement("button");node.type="button";node.className="quiet-button";node.textContent=name;node.disabled=position<0 || position>=playlist.assets.length;node.onclick=()=>{if(current()){const entry=playlist.assets[position];void previewFile({...entry,name:entry.metadata?.title || entry.name});}};return node;};
     navigation.append(label,button("Previous collection video",index-1),button("Next collection video",index+1));host.append(navigation);
   }
   const captions=document.createElement("details"), heading=document.createElement("summary"), captionStatus=document.createElement("p");

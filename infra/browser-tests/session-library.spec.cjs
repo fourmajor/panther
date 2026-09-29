@@ -401,6 +401,9 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await page.route('https://audio.example/take.mp4',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
   const link=page.locator('#library-list').getByRole('link',{name:'video-comparison',exact:true});
   await expect(link).toBeVisible();
+  // New library filters/posters extend the page. Test normal document scrolling,
+  // then retain the hit-test so clipping/overlays cannot be hidden by click automation.
+  await link.scrollIntoViewIfNeeded();await expect(link).toBeInViewport();
   const box=await link.boundingBox(); expect(box.x+box.width).toBeLessThanOrEqual(width);
   expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await link.click();
