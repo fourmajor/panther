@@ -212,7 +212,7 @@ for (const width of [1280,390]) for (const reduced of [false,true]) {
     test.setTimeout(90000);
     await page.setViewportSize({width,height:900});
     await page.emulateMedia({reducedMotion:reduced?'reduce':'no-preference'});
-    const bytes=syntheticModel(1,undefined,true);
+    const bytes=localModel || syntheticModel(1,undefined,true);
     const character={gameId:'test-game',id:'test-character',name:'Synthetic animated fixture'};
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
       const url=new URL(route.request().url());
