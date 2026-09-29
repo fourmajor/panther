@@ -206,6 +206,12 @@
   explicit approval. Continue deploying from the laptop with short-lived AWS credentials.
 - Avoid always-on hosted compute solely to reduce build latency.
 - AWS infrastructure is defined with AWS CDK and committed alongside the application.
+- Owner-approved unattended laptop administration uses the CDK-managed IAM Roles Anywhere
+  setup in `docs/laptop-aws-access.md` and the `panther-laptop-admin` AWS profile. Prefer this
+  renewable, Keychain-backed profile for infrastructure operations once verified; preserve SSO
+  as recovery. Never create permanent IAM access keys, export the certificate key, put credentials
+  in runners, or weaken Keychain controls. This is administrator-equivalent access, not additional
+  authorization for deployments, spending, or bypassing the Panther CLI for game operations.
 
 ## AWS infrastructure changes
 

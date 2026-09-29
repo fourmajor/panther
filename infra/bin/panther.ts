@@ -7,6 +7,7 @@ import { PantherFoundationStack } from "../lib/panther-foundation-stack";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 import { PantherCostAnomaliesStack } from "../lib/panther-cost-anomalies-stack";
 import { loadIdentities } from "../lib/deployment-identities";
+import { loadMachineAccess, PantherMachineAccessStack } from "../lib/panther-machine-access-stack";
 
 const app = new cdk.App();
 
@@ -30,6 +31,16 @@ const mediaExplorerDomainPrefix =
 
 if (!account || !/^\d{12}$/.test(account)) {
   throw new Error("account CDK context must be the 12-digit Panther AWS account ID");
+}
+
+if (app.node.tryGetContext("machineAccess") === "true") {
+  new PantherMachineAccessStack(app, "PantherMachineAccess", {
+    env: { account, region },
+    configuration: loadMachineAccess(process.env.PANTHER_MACHINE_ACCESS_FILE, account),
+    description: "Certificate-backed unattended laptop AWS administration",
+  });
+} else if (process.env.PANTHER_MACHINE_ACCESS_FILE) {
+  throw new Error("Private machine configuration requires explicit --context machineAccess=true");
 }
 
 if (!Number.isFinite(monthlyBudgetUsd) || monthlyBudgetUsd <= 0) {

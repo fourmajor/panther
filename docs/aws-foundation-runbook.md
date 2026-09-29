@@ -279,6 +279,8 @@ Deploy `PantherAccess` with its existing `administratorEmail`, `identityCenterIn
 `identityStoreId` context values; inspect the diff to ensure that no user or assignment is recreated.
 Use the modern AWS CLI `sso_session` profile configuration so role credentials and SSO tokens can
 renew within the underlying interactive SSO session. Never create permanent access keys as a workaround.
+For owner-approved unattended laptop administration, use [renewable certificate-backed access](laptop-aws-access.md)
+and preserve SSO for recovery. This does not change Panther authentication for game operations.
 
 The underlying Identity Center **user interactive session** supports a maximum of **90 days**.
 This is a documented manual exception: AWS exposes that setting in the Identity Center console,
