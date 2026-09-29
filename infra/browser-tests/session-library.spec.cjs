@@ -133,16 +133,20 @@ for (const width of [1280,390]) for (const filename of ['portrait.png','take.mp4
       expect(query.get('key')).toBe(key);
       const downloading=query.get('download')==='true';
       if(downloading) signed++;
-      return route.fulfill({headers,json:{key,filename,size:14,contentType:'application/octet-stream',expiresIn:300,
+      const contentType=filename.endsWith('.png')?'image/png':filename.endsWith('.mp4')?'video/mp4':'application/octet-stream';
+      return route.fulfill({headers,json:{key,filename,size:14,contentType,expiresIn:300,
         url:downloading?`https://audio.example/download/${signed}`:'https://audio.example/preview'}});
     });
     await page.route('https://audio.example/download/**',route=>route.fulfill({contentType:'application/octet-stream',
       headers:{'content-disposition':`attachment; filename="${filename}"`},body:Buffer.from('original bytes')}));
+    await page.route('https://audio.example/preview',route=>route.fulfill({contentType:'image/svg+xml',
+      body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240"><rect width="400" height="240" fill="#334436"/></svg>'}));
     await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(key)}`);
     const button=page.getByRole('button',{name:'Download original',exact:true});
     await expect(button).toBeEnabled();
     await page.locator('#preview-dialog').evaluate(el=>el.scrollTop=el.scrollHeight);
     await expect(button).toBeInViewport();
+    await expect(page.getByRole('link',{name:'Open original',exact:true})).toBeInViewport();
     for(let i=0;i<2;i++) {
       const pending=page.waitForEvent('download'); await button.click();
       const downloaded=await pending;
