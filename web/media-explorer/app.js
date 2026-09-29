@@ -81,6 +81,7 @@ const state = {
   charactersLoaded: false,
   currentPrefix: "games/",
   currentCharacter: null,
+  currentCharacterFacts: null,
   appearanceVersions: null,
   mediaLoaded: false,
   nextCursor: null,
@@ -625,8 +626,9 @@ function configureCharacter(profile) {
   const { character, model, poster } = profile;
   state.currentCharacter = { gameId: character.gameId, characterId: character.id };
   elements.characterName.textContent = character.name;
-  elements.characterTitle.textContent = character.title;
-  elements.characterSummary.textContent = character.summary;
+  const facts = state.currentCharacterFacts;
+  elements.characterTitle.textContent = facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.subtitle || "" : "";
+  elements.characterSummary.textContent = "";
   document.querySelector("#character-model-area").hidden = !model;
   document.querySelector("#character-no-model").hidden = Boolean(model);
   const portraitOnly = document.querySelector("#character-portrait-only");
@@ -763,7 +765,9 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
     if (!current()) return;
     if (!result.character?.details || !result.character.revision) throw new Error("Structured character information is not ready. Refresh to retry.");
     const record = result.character;
+    state.currentCharacterFacts = record;
     const render = () => {
+      elements.characterTitle.textContent = record.details.subtitle || "";
       host.replaceChildren();
       const heading = document.createElement("div"); heading.className = "explorer-heading";
       const title = document.createElement("h2"); title.textContent = "Character information";
@@ -878,11 +882,17 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           const message = document.createElement("p"); message.setAttribute("role","status"); message.textContent = "Character information saved. Previous facts retained."; host.append(message);
         } catch (error) {
           if (!current()) return;
+          if (!pending || error.status === 400) {
+            pending = null;
+            for (const c of form.querySelectorAll("input,textarea,select,fieldset,button")) c.disabled = false;
+            save.textContent = "Save character information";
+            status.textContent = `${error.message}. Correct the fields and try again.`;
+            return;
+          }
           status.textContent = error.status === 409 ? "Another update changed this character. Cancel and reload before editing again. Your edit was not substituted for that revision." : `${error.message}. Retry submits the exact same operation; cancel and reload before changing it.`;
           save.disabled = error.status === 409;
           save.textContent = "Retry exact save"; cancel.disabled = false;
           cancel.onclick = () => {void loadCharacterFacts(gameId,characterId,epoch);};
-          if (!pending) {for (const c of form.querySelectorAll("input,textarea,select,fieldset,button")) c.disabled = false;}
         }
       };
       inputs.aliases.focus();
@@ -897,6 +907,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
 
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
+  state.currentCharacterFacts = null;
   document.getElementById("characters-more").hidden = true;
   void loadCharacterFacts(gameId, characterId, epoch);
   document.getElementById("character-assets-list").replaceChildren();
@@ -1491,13 +1502,10 @@ async function narrativePreviewData(target, gameId) {
   if (target.type === "character") {
     const character = characters.find(c => c.id === target.id);
     title = character?.name || "Character";
-    const result = await api("/character-profile", {gameId, characterId: target.id}).catch(error => {
-      if (/not found/i.test(error.message)) return null;
-      throw error;
-    });
-    const profile = result?.profile;
-    summary = previewText(profile?.summary) || previewText(profile?.title);
-    imageKey = profile?.model?.posterKey;
+    const result = await api("/character-details", {gameId, characterId: target.id});
+    const details = result?.character?.details;
+    summary = previewText(details?.overview) || previewText(details?.subtitle);
+    imageKey = details?.thumbnailAssetKey;
     imageLabel = `Portrait of ${title}`;
     if (!summary) { summary = `${title} is a character in this game. No description has been recorded yet.`; source = "metadata"; }
     if (!imageKey) {
