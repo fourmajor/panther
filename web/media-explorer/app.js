@@ -676,9 +676,11 @@ function showSelectedPortrait() {
   preview.hidden = !selected?.available;
   if (selected?.available) { preview.src = selected.url; preview.alt = `Selected portrait version of ${elements.characterName.textContent}`; }
   else preview.removeAttribute("src");
+  renderAppearanceDownloads();
 }
 
 function showSelectedModel() {
+  renderAppearanceDownloads();
   const selected = state.appearanceVersions?.models.find(entry => entry.key === document.getElementById("model-version").value);
   if (!selected?.available) return;
   const poster = state.appearanceVersions.portraits.find(entry => entry.key === selected.posterKey && entry.available)
@@ -693,6 +695,23 @@ function showSelectedModel() {
   if (selected.current) url.searchParams.delete("model"); else url.searchParams.set("model", selected.key);
   history.replaceState(null, "", url);
   if (wasActive) void loadCharacterModel();
+}
+
+function renderAppearanceDownloads() {
+  const host = document.getElementById("appearance-downloads");
+  host.replaceChildren();
+  for (const [entries, selector, label] of [
+    [state.appearanceVersions?.portraits, "portrait-version", "Download selected portrait"],
+    [state.appearanceVersions?.models, "model-version", "Download selected 3D model (GLB)"],
+  ]) {
+    const selected = entries?.find(entry => entry.key === document.getElementById(selector).value);
+    if (!selected?.available) continue;
+    const button = document.createElement("button"), status = document.createElement("span");
+    button.type = "button"; button.className = "quiet-button"; button.textContent = label;
+    status.setAttribute("role", "status");
+    button.onclick = () => downloadAsset(selected.key, button, status, () => button.isConnected);
+    host.append(button, status);
+  }
 }
 
 async function loadCharacter(gameId, characterId) {
@@ -986,6 +1005,9 @@ function previewElement(contentType, url, title) {
 async function previewFile(file) {
   for (const media of elements.previewBody.querySelectorAll("audio, video")) media.pause();
   const epoch = ++previewEpoch;
+  const download = document.getElementById("asset-download");
+  download.disabled = true; download.onclick = null;
+  document.getElementById("asset-download-status").textContent = "";
   elements.previewTitle.textContent = file.name;
   showLoading(elements.previewBody, "Preparing a secure asset preview…");
   document.getElementById("asset-generation").replaceChildren();
@@ -1001,6 +1023,8 @@ async function previewFile(file) {
     renderGeneration(document.getElementById("asset-generation"), result.metadata);
     // Physical folders may change; connections/readers use the API's stable asset identity.
     const assetRef = result.key || file.key;
+    download.disabled = false;
+    download.onclick = () => downloadAsset(assetRef, download, document.getElementById("asset-download-status"), () => epoch === previewEpoch);
     const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
     if (structured) showLoading(elements.previewBody, "Reading the document and its metadata…");
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
@@ -1020,6 +1044,23 @@ async function previewFile(file) {
     document.getElementById("asset-links").textContent = "Connections unavailable. Close and reopen the asset to retry.";
     document.getElementById("asset-versions").textContent = "Versions unavailable. Close and reopen the asset to retry.";
   }
+}
+
+async function downloadAsset(key, button, status, current = () => true) {
+  button.disabled = true;
+  status.textContent = "Preparing download…";
+  try {
+    // Obtain a fresh authenticated attachment URL on every click. Do not buffer
+    // potentially gigabyte-sized originals into browser memory.
+    const result = await api("/object-url", {key, download: "true"});
+    if (!current()) return;
+    const link = document.createElement("a");
+    link.href = result.url; link.download = result.filename || key.split("/").at(-1);
+    document.body.append(link); link.click(); link.remove();
+    status.textContent = "Download requested. Check your browser’s downloads. If it fails or expires, choose Download original again.";
+  } catch (error) {
+    if (current()) status.textContent = `Download unavailable: ${error.message}. Sign in if needed, then retry.`;
+  } finally { if (current()) button.disabled = false; }
 }
 
 function closePreview() {

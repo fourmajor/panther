@@ -745,7 +745,10 @@ model-viewer,
 
 .preview-footer {
   border-top: 1px solid var(--line);
+  flex-wrap: wrap;
 }
+
+#asset-download-status { flex-basis: 100%; overflow-wrap: anywhere; }
 
 .link-button {
   color: inherit;

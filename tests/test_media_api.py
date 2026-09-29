@@ -319,6 +319,30 @@ def test_info_returns_metadata_for_uploaded_and_legacy_assets(monkeypatch):
     assert result["metadata"]["title"] == "Example"
 
 
+@pytest.mark.parametrize("filename", ["poster.png", "movie.mp4", "model.blend", 'Café \"portrait\".png'])
+def test_download_signs_exact_revision_as_safe_attachment(monkeypatch, filename):
+    module, client = load_media_api(monkeypatch)
+    key = f"games/example-game/assets/revision-two/original/{filename}"
+    client.objects[key] = {"Body": b"original bytes", "ContentType": "application/octet-stream"}
+    result = response_body(module.handler(event("/object-url", key=key, download="true"), None))
+    assert result["key"] == key and result["filename"] == filename
+    operation, params, expiry = client.signed_requests[-1]
+    assert operation == "get_object" and params["Key"] == key and expiry == 300
+    disposition = params["ResponseContentDisposition"]
+    assert disposition.startswith('attachment; filename="')
+    assert "filename*=UTF-8''" in disposition
+    assert '\r' not in disposition and '\n' not in disposition
+    module.handler(event("/object-url", key=key), None)
+    assert client.signed_requests[-1][1]["ResponseContentDisposition"] == "inline"
+
+
+def test_download_missing_or_invalid_never_signs(monkeypatch):
+    module, client = load_media_api(monkeypatch)
+    assert module.handler(event("/object-url", key="games/example-game/missing", download="true"), None)["statusCode"] == 404
+    assert module.handler(event("/object-url", key="games/example-game/missing", download="false"), None)["statusCode"] == 400
+    assert not client.signed_requests
+
+
 def test_real_signer_binds_length_checksum_and_conditional_write(monkeypatch):
     import boto3
     from botocore.config import Config

@@ -8,6 +8,7 @@ import hashlib
 import struct
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 import boto3
 from botocore.config import Config
@@ -151,13 +152,18 @@ def _asset_metadata(key, *, maximum, expected_types):
     return {"size": size, "contentType": content_type}
 
 
-def _signed_asset(key):
+def _signed_asset(key, *, download=False):
+    filename = PurePosixPath(key).name
+    # ASCII fallback plus RFC 5987 UTF-8 filename; never interpolate raw header text.
+    fallback = re.sub(r'[^a-zA-Z0-9._ -]', '_', filename) or 'asset'
+    disposition = (f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+                   if download else 'inline')
     return s3.generate_presigned_url(
         "get_object",
         Params={
             "Bucket": BUCKET_NAME,
             "Key": key,
-            "ResponseContentDisposition": "inline",
+            "ResponseContentDisposition": disposition,
         },
         ExpiresIn=SIGNED_URL_TTL_SECONDS,
     )
@@ -569,6 +575,9 @@ def _publish_portrait(event):
 
 def _object_url(event):
     key = _query(event, "key")
+    download = _query(event, "download")
+    if download not in {None, "", "true"}:
+        return _response(400, {"error": "Invalid download option"})
     if not _valid_key(key) or key.endswith("/"):
         return _response(400, {"error": "Invalid object key"})
 
@@ -596,7 +605,8 @@ def _object_url(event):
             "etag": metadata.get("ETag"),
             "sha256": metadata.get("ChecksumSHA256"),
             "createdAt": _asset_created_at(metadata).isoformat() if metadata.get("LastModified") else None,
-            "url": _signed_asset(key),
+            "url": _signed_asset(key, download=download == "true"),
+            "filename": PurePosixPath(key).name,
             "expiresIn": SIGNED_URL_TTL_SECONDS,
             "kind": stored.get("kind"),
             "metadata": details,
