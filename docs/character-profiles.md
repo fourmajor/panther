@@ -62,6 +62,9 @@ every discovered game, registered character, and existing artwork-profile prefix
 source inventory is maintenance-only. Unregistered games/orphan profiles, conflicting facts,
 unsupported old stats, invalid references, and unavailable selected thumbnails are blockers,
 not legacy exceptions. Missing artwork can still yield a valid roster-only migration.
+A game header may retain `legacy: true` after a character is explicitly registered. The
+all-game inventory accepts that historical flag only when a nonempty structured roster exists
+and every artwork profile belongs to a registered character; it never infers a roster from files.
 
 Dry runs do not write. Plans pin serialized roster facts and artwork ETag/version/SHA-256;
 application rechecks observed sources and refuses changed plans. Transactions preserve the

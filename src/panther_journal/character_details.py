@@ -93,7 +93,11 @@ def inventory(config):
     for game in games:
         game_id = game["id"]
         profiles = pages(config, "/character-details/inventory", {"gameId": game_id}, "profiles")
-        if game.get("legacy"):
+        characters = pages(config, "/characters", {"gameId": game_id}, "characters")
+        # The legacy flag records how the game header was adopted. It remains true
+        # after characters are explicitly registered, so it is not itself proof
+        # that the current roster is absent.
+        if game.get("legacy") and not characters:
             blockers.append(
                 {
                     "gameId": game_id,
@@ -101,7 +105,7 @@ def inventory(config):
                 }
             )
             continue
-        records.extend(pages(config, "/characters", {"gameId": game_id}, "characters"))
+        records.extend(characters)
         blockers.extend(
             {
                 "gameId": game_id,

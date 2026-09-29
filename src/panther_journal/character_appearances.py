@@ -81,12 +81,14 @@ def inventory(config):
     registered, blockers = [], []
     for game in cloud.api(config, "GET", "/games")["games"]:
         gid = game["id"]
-        if game.get("legacy"):
+        characters = pages(config, "/characters", {"gameId": gid}, "characters")
+        # A game may retain its historical legacy flag after an explicit
+        # character registration. Still reject a legacy game with no roster.
+        if game.get("legacy") and not characters:
             blockers.append(
                 {"gameId": gid, "error": "Game must be explicitly registered before migration"}
             )
             continue
-        characters = pages(config, "/characters", {"gameId": gid}, "characters")
         known = {c["id"] for c in characters}
         legacy = pages(
             config, "/character-appearance-migration/game-inventory", {"gameId": gid}, "characters"

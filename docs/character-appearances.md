@@ -70,6 +70,8 @@ Historical workflow inputs and raw evidence must remain unchanged.
 2. Prepare private all-game plans covering every registered character, current profile and
    retained profile snapshot, with exact byte hashes and source revision evidence. Orphans,
    unreadable sources and unresolved associations are blockers, not exemptions.
+   A historical `legacy: true` game header is acceptable only after explicit character
+   registration; an empty roster or orphaned artwork still blocks the import.
 3. Import explicit selections into unknown-story-state records unless an existing source
    substantiates a named state. Preserve complete source bytes/evidence and old immutable
    assets. Do not infer transformations from appearance similarity, upload order or filenames.
