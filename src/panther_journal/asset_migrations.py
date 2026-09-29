@@ -4,6 +4,7 @@ import json
 import os
 import copy
 import hashlib
+import re
 from pathlib import Path
 
 import click
@@ -111,17 +112,35 @@ def version_plan(records, appearances):
     for record in records:
         details = copy.deepcopy(record["metadata"])
         extra = details.setdefault("extra", {})
+        if not isinstance(extra, dict):
+            raise click.ClickException(f"Invalid explicit asset metadata: {record['key']}")
         version = extra.get("version")
         if version is not None:
             if (
                 not isinstance(version, dict)
                 or set(version) - {"schemaVersion", "seriesId", "number", "previousKey"}
+                or type(version.get("schemaVersion")) is not int
                 or version.get("schemaVersion") != 1
                 or type(version.get("number")) is not int
-                or version["number"] < 1
+                or not 1 <= version["number"] <= 10000
                 or not isinstance(version.get("seriesId"), str)
-                or not version["seriesId"]
-                or (version["number"] > 1) != ("previousKey" in version)
+                or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", version["seriesId"])
+                or len(version["seriesId"]) > 96
+                or (version["number"] == 1 and version.get("previousKey") is not None)
+                or (
+                    version["number"] > 1
+                    and (
+                        not isinstance(version.get("previousKey"), str)
+                        or version["previousKey"] == record["key"]
+                        or not re.fullmatch(
+                            r"games/[a-z0-9-]+/assets/[a-z0-9-]+/(?:original|derived/[a-z0-9-]+|metadata)/[^/]+",
+                            version["previousKey"],
+                        )
+                        or not version["previousKey"].startswith(
+                            "/".join(record["key"].split("/")[:2]) + "/assets/"
+                        )
+                    )
+                )
             ):
                 raise click.ClickException(f"Invalid explicit asset version: {record['key']}")
             versions[record["key"]] = version
@@ -143,7 +162,7 @@ def version_plan(records, appearances):
             }
         )
     for key, version in versions.items():
-        if "previousKey" not in version:
+        if version.get("previousKey") is None:
             continue
         predecessor = version["previousKey"]
         prior = versions.get(predecessor)
