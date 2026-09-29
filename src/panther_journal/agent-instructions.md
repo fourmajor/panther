@@ -32,6 +32,9 @@ unknown, typed statistics extensible, and relationships same-game and explicit. 
 ownership is separate from login identity. List thumbnails do not replace official artwork.
 Use the all-game prepare/apply/verify character migration commands when upgrading old data;
 never add an S3-scan browsing fallback. Keep private edit files, plans, and reports outside Git.
+A game adopted from an asset-only catalog may retain `legacy: true` after explicit character
+registration. A nonempty registered roster is eligible for migration only when every existing
+artwork profile is matched; an empty roster or orphaned profile remains a blocker.
 
 Approved soundtrack revisions use `panther soundtrack`; read `docs/soundtrack-finishing.md`.
 Reconciliation closes old video/narration submissions for that project, retains their complete

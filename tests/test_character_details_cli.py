@@ -85,3 +85,33 @@ def test_prepare_flags_orphan_profiles_without_writes(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert len(json.loads(plan.read_text())["blockers"]) == 1
     assert all(method == "GET" for method, route in calls)
+
+
+def test_legacy_header_with_registered_character_is_not_a_roster_blocker(monkeypatch):
+    from panther_journal.character_details import inventory
+
+    monkeypatch.setattr(cloud, "api", lambda _config, _method, route, **_kwargs: {
+        "/games": {"games": [{"id": "fictional-game", "legacy": True}]},
+        "/character-details/inventory": {
+            "profiles": [{"characterId": "hero", "registered": True}], "cursor": None
+        },
+        "/characters": {
+            "characters": [{"gameId": "fictional-game", "id": "hero"}], "cursor": None
+        },
+    }[route])
+    records, blockers = inventory({})
+    assert [record["id"] for record in records] == ["hero"]
+    assert blockers == []
+
+
+def test_legacy_header_without_roster_still_blocks_details_migration(monkeypatch):
+    from panther_journal.character_details import inventory
+
+    monkeypatch.setattr(cloud, "api", lambda _config, _method, route, **_kwargs: {
+        "/games": {"games": [{"id": "fictional-game", "legacy": True}]},
+        "/character-details/inventory": {"profiles": [], "cursor": None},
+        "/characters": {"characters": [], "cursor": None},
+    }[route])
+    records, blockers = inventory({})
+    assert records == []
+    assert len(blockers) == 1

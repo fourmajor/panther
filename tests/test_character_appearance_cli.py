@@ -80,6 +80,33 @@ def test_prepare_checks_every_game_and_keeps_private_report_outside_git(tmp_path
     assert result.exit_code != 0 and not (checkout / "plan.json").exists()
 
 
+def test_legacy_header_with_registered_character_can_be_inventoried(monkeypatch):
+    from panther_journal.character_appearances import inventory
+
+    monkeypatch.setattr(cloud, "api", lambda _config, _method, endpoint, **_kwargs: {
+        "/games": {"games": [{"id": "fictional-game", "legacy": True}]},
+        "/characters": {"characters": [{"id": "hero"}], "cursor": None},
+        "/character-appearance-migration/game-inventory": {
+            "characters": ["hero"], "cursor": None
+        },
+    }[endpoint])
+    registered, blockers = inventory({})
+    assert registered == [{"gameId": "fictional-game", "characterId": "hero"}]
+    assert blockers == []
+
+
+def test_legacy_header_without_roster_still_blocks_appearance_migration(monkeypatch):
+    from panther_journal.character_appearances import inventory
+
+    monkeypatch.setattr(cloud, "api", lambda _config, _method, endpoint, **_kwargs: {
+        "/games": {"games": [{"id": "fictional-game", "legacy": True}]},
+        "/characters": {"characters": [], "cursor": None},
+    }[endpoint])
+    registered, blockers = inventory({})
+    assert registered == []
+    assert len(blockers) == 1
+
+
 def test_apply_rejects_cross_character_plan_before_any_request(tmp_path, monkeypatch):
     api = Mock()
     monkeypatch.setattr(cloud, "api", api)
