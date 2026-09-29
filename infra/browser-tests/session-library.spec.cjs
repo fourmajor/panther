@@ -73,7 +73,7 @@ for (const width of [1280,390]) test(`transcript search, versions, canonical cho
   await page.goto(`${origin}/games/test-game/transcripts`);
   await expect(page.locator('.transcript-session')).toHaveCount(1);
   await expect(page.locator('.transcript-session')).toContainText('Alex');
-  await page.goto(`${origin}/games/test-game/transcripts?asset=${encodeURIComponent(raw)}`);
+  await page.locator('.transcript-session').getByRole('link',{name:'raw-transcript',exact:true}).click();
   const body=page.locator('#preview-body');
   await expect(body).toContainText('No canonical reading version has been designated');
   await expect(body.locator('.transcript-segment')).toHaveCount(2);
@@ -113,7 +113,7 @@ test('canonical selection failure never claims success and retries the exact ope
     }
     return route.fulfill({headers,json:{selection:null}});
   });
-  await page.goto(`${origin}/games/test-game/transcripts?asset=${encodeURIComponent(raw)}`);
+  await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(raw)}`);
   const body=page.locator('#preview-body');
   await body.getByText('Choose this canonical reading version',{exact:true}).click();
   await body.getByLabel('Selection reason').fill('Reading preference');
