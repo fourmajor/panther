@@ -2,10 +2,13 @@ import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(stage = "purge"): Template {
-  const app = new App({context:{credentialCutover:stage}});
+function mediaExplorerTemplate(stage = "purge", context = {}): Template {
+  const app = new App({context:{credentialCutover:stage, ...context}});
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
       publishers:["example-operator","example-editor"], workers:["example-operator"], migrationAdmins:["example-operator"]},
@@ -21,6 +24,33 @@ function mediaExplorerTemplate(stage = "purge"): Template {
   });
   return Template.fromStack(stack);
 }
+
+test("indexed relocation is temporary, exact-plan scoped and cannot delete historical versions", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "panther-relocation-test-"));
+  const file = path.join(directory, "hashes.json");
+  try {
+    fs.writeFileSync(file, JSON.stringify(["a".repeat(64)]));
+    const template = mediaExplorerTemplate("purge", {assetRelocationPlan:file});
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:"POST /asset-relocations-v1", AuthorizationType:"JWT"});
+    template.hasResourceProperties("AWS::Lambda::Function", {Handler:"asset_relocation.handler",
+      Environment:{Variables:Match.objectLike({ASSET_RELOCATION_IDS:JSON.stringify(["a".repeat(64)])})}});
+    const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
+      .filter(([id]) => id.startsWith("AssetRelocationV1"));
+    assert.equal(policies.length,1);
+    const statements = policies[0][1].Properties.PolicyDocument.Statement;
+    const writes = statements.filter((s:any) => [s.Action].flat().includes("s3:PutObject"));
+    assert.equal(writes.length,2);
+    assert.ok(writes.some((s:any) => s.Condition.Null["s3:if-match"] === "false"));
+    assert.ok(writes.some((s:any) => s.Condition.Null["s3:if-none-match"] === "false"));
+    const deletes = statements.filter((s:any) => [s.Action].flat().includes("s3:DeleteObject"));
+    assert.equal(deletes.length,1);
+    assert.equal(deletes[0].Condition.Null["s3:if-match"],"false");
+    assert.doesNotMatch(JSON.stringify(statements),/s3:DeleteObjectVersion|s3:\*/);
+    assert.doesNotMatch(JSON.stringify(mediaExplorerTemplate().findResources("AWS::ApiGatewayV2::Route")),/asset-relocations-v1/);
+    fs.writeFileSync(file,"[]");
+    assert.throws(() => mediaExplorerTemplate("purge",{assetRelocationPlan:file}), /unique reviewed request/);
+  } finally { fs.rmSync(directory,{recursive:true}); }
+});
 
 test("character facts are catalog-owned, authenticated, and migration capability is explicit", () => {
   const template = mediaExplorerTemplate();

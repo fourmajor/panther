@@ -475,6 +475,20 @@ def migrate(plan, apply, report):
     run_migrations(plan, apply, report, "/asset-migrations")
 
 
+@assets.command("relocate")
+@click.argument("plan", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--action", type=click.Choice(["copy", "verify", "retire"]), default="copy")
+@click.option("--apply", is_flag=True)
+@click.option("--report", required=True, type=click.Path(path_type=Path))
+def relocate(plan, action, apply, report):
+    """Temporary exact-plan relocation v1; CDK must explicitly enable these request hashes.
+
+    Copy, verify through Panther, rebuild/verify all-game browsing, THEN retire old current
+    entries with recoverable delete markers. Remove the CDK capability after completion.
+    """
+    run_migrations(plan, apply, report, "/asset-relocations-v1", {"action": action})
+
+
 def run_migrations(plan, apply, report, endpoint, extra=None):
     try:
         document = json.loads(plan.read_text())

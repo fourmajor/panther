@@ -62,6 +62,22 @@ def test_completed_storage_rollout_has_no_mutating_command():
     assert "No such command" in result.output
 
 
+def test_exact_plan_relocation_uses_panther_and_defaults_to_dry_run(tmp_path, monkeypatch):
+    entry = {"key": "games/test/assets/example/original/frame.png", "expectedVersionId": "pinned"}
+    plan, report = tmp_path / "plan.json", tmp_path / "report.jsonl"
+    plan.write_text(json.dumps({"schemaVersion": 1, "migrations": [entry]}))
+    calls = []
+    monkeypatch.setattr(cloud, "configuration", lambda: {})
+    def api(config, method, route, **kwargs):
+        calls.append((method, route, kwargs["json"]))
+        return {"status": "ready-to-retire"}
+    monkeypatch.setattr(cloud, "api", api)
+    result = CliRunner().invoke(main, ["assets", "relocate", str(plan), "--action", "retire", "--report", str(report)])
+    assert result.exit_code == 0, result.output
+    assert calls == [("POST", "/asset-relocations-v1", {**entry, "action": "retire", "dryRun": True})]
+    assert report.stat().st_mode & 0o777 == 0o600
+
+
 def test_version_plan_follows_character_pages_without_inventing_roster_only_appearances(
     tmp_path, monkeypatch
 ):

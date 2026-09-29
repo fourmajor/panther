@@ -425,6 +425,47 @@ export class PantherMediaExplorerStack extends Stack {
       // 404 instead of 403. A prefix condition cannot match a HEAD request.
       actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn],
     }));
+    // One-off indexed relocation. Absent by default; remove the reviewed plan context
+    // and redeploy after all-game verification/retirement to remove every extra privilege.
+    const relocationPlanFile = this.node.tryGetContext("assetRelocationPlan");
+    if (relocationPlanFile !== undefined) {
+      const ids: unknown = JSON.parse(fs.readFileSync(relocationPlanFile, "utf8"));
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20 ||
+          new Set(ids).size !== ids.length || !ids.every(id => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))) {
+        throw new Error("assetRelocationPlan requires 1–20 unique reviewed request SHA-256 hashes");
+      }
+      const relocation = new lambda.Function(this, "AssetRelocationV1", {
+        runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+        handler: "asset_relocation.handler",
+        code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api"), {
+          exclude: ["**/__pycache__/**", "**/*.pyc"],
+        }), timeout: Duration.seconds(25), memorySize: 256, logGroup: migrationLogs,
+        environment: {ASSET_BUCKET_NAME: privateAssets.bucketName, MIGRATION_LOCK_TABLE: migrationLock.tableName,
+          ASSET_MIGRATORS: accessEnvironment.ASSET_MIGRATORS, ASSET_RELOCATION_IDS: JSON.stringify(ids)},
+      });
+      migrationLock.grant(relocation, "dynamodb:PutItem", "dynamodb:DeleteItem");
+      relocation.addToRolePolicy(new iam.PolicyStatement({
+        actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:GetObjectTagging", "s3:GetObjectVersionTagging"],
+        resources: [privateAssets.arnForObjects("games/*")],
+      }));
+      relocation.addToRolePolicy(new iam.PolicyStatement({actions: ["s3:PutObject", "s3:PutObjectTagging"],
+        resources: [privateAssets.arnForObjects("games/*/content/*")], conditions: {
+          StringLike: {"s3:x-amz-copy-source": [`${privateAssets.bucketName}/games/*/content/*`]},
+          StringEquals: {"s3:x-amz-metadata-directive": "REPLACE"},
+          Null: {"s3:if-none-match": "false"},
+        }}));
+      relocation.addToRolePolicy(new iam.PolicyStatement({actions: ["s3:PutObject"],
+        resources: [privateAssets.arnForObjects("games/*/catalog/assets/*")],
+        conditions: {Null: {"s3:if-match": "false"}},
+      }));
+      relocation.addToRolePolicy(new iam.PolicyStatement({actions: ["s3:DeleteObject"],
+        resources: [privateAssets.arnForObjects("games/*/content/*")],
+        conditions: {Null: {"s3:if-match": "false"}},
+      }));
+      relocation.addToRolePolicy(new iam.PolicyStatement({actions: ["s3:ListBucket"], resources: [privateAssets.bucketArn]}));
+      mediaApi.addRoutes({path: "/asset-relocations-v1", methods: [apigwv2.HttpMethod.POST], authorizer,
+        integration: new apigwv2Integrations.HttpLambdaIntegration("AssetRelocationV1Integration", relocation)});
+    }
     const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table });
     CharacterAppearances.grantProducer(mediaApiFunction,assetBrowse.table,gameCatalog.table);
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table,catalogTable:gameCatalog.table });

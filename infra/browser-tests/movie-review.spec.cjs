@@ -93,6 +93,26 @@ test('conflicts retain unsaved feedback and do not show success',async({page})=>
   await page.getByRole('button',{name:'Save change requests'}).click();await expect(page.locator('.movie-feedback-status')).toContainText('Refresh before saving');
   await expect(page.getByLabel('Request a change to this shot')).toHaveValue('Change this shot.');
 });
+test('stable storyboard references load after a physical catalog relocation',async({page})=>{
+  await fixture(page);
+  let moved=false;
+  const requests=[];
+  await page.route(`${api}/image-links`,route=>{
+    const keys=route.request().postDataJSON().keys;
+    requests.push(keys);
+    const url=moved?'https://images.example/content/workflows/job/image/frame.svg':'https://images.example/content/media/image/frame.svg';
+    return route.fulfill({headers,json:{images:Object.fromEntries(keys.map(k=>[k,{url}])),expiresIn:300}});
+  });
+  await open(page);
+  await expect.poll(()=>page.locator('.movie-frame img').evaluateAll(images=>images.every(img=>img.complete && img.naturalWidth>0))).toBe(true);
+  await expect(page.locator('.movie-frame img').first()).toHaveAttribute('src',/content\/media\/image/);
+  moved=true;
+  await page.reload();
+  await expect(page.locator('.movie-frame img').first()).toHaveAttribute('src',/content\/workflows\/job\/image/);
+  await expect.poll(()=>page.locator('.movie-frame img').evaluateAll(images=>images.length===2 && images.every(img=>img.complete && img.naturalWidth>0))).toBe(true);
+  expect(requests.flat().every(k=>k===frame)).toBe(true);
+  await expect(page.locator('.movie-frame')).not.toContainText('Image unavailable');
+});
 for(const width of [1440,390]) test(`campaign storyboard has readable narration and separate audition at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page,{campaign:true}); await open(page);
   await expect(page.locator('.movie-hero')).toContainText('Campaign-wide storyboard');
