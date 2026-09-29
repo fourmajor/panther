@@ -117,7 +117,7 @@ export class PantherMediaExplorerStack extends Stack {
               "frame-ancestors 'none'",
               "frame-src https://*.amazonaws.com",
               "img-src 'self' data: blob: https://*.amazonaws.com",
-              "media-src 'self' https://*.amazonaws.com",
+              "media-src 'self' blob: https://*.amazonaws.com",
               "object-src 'none'",
               // Model-viewer's bundled decoder initializes WebAssembly; this
               // permits WASM without enabling JavaScript eval.

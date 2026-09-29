@@ -25,19 +25,23 @@ export class AssetBrowseIndex extends Construct {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, removalPolicy: RemovalPolicy.RETAIN,
     });
     props.reader.addEnvironment("ASSET_BROWSE_TABLE", table.tableName);
-    table.grant(props.reader, "dynamodb:Query", "dynamodb:GetItem");
+    table.grant(props.reader, "dynamodb:Query", "dynamodb:GetItem", "dynamodb:BatchGetItem");
     props.reader.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:PutItem"], resources: [table.tableArn],
       conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": [
         "transcript-selection#*", "transcript-selection-ops#*", "transcript-selection-history#*",
+        "video-collections#*", "video-collection-ops#*", "video-collection-history#*",
       ] } },
     }));
     props.reader.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:ConditionCheckItem"], resources: [table.tableArn],
-      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v2#*#transcripts"] } },
+      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v2#*#transcripts", "v2#*#all"] } },
     }));
     props.api.addRoutes({ path: "/transcript-selection", methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("TranscriptSelection", props.reader),
+      authorizer: props.authorizer });
+    props.api.addRoutes({ path: "/video-collections", methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("VideoCollections", props.reader),
       authorizer: props.authorizer });
     const failures = new sqs.Queue(this, "Failures", {
       retentionPeriod: Duration.days(14), enforceSSL: true,

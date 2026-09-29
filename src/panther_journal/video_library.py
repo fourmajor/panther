@@ -1,0 +1,92 @@
+"""Private ordered video collections through Panther authentication."""
+
+import json
+from pathlib import Path
+import uuid
+
+import click
+
+from panther_journal import cloud
+
+
+@click.group()
+def videos():
+    """Browse/save private video collections; never start generation."""
+
+
+@videos.command("collections")
+@click.option("--game", required=True)
+@click.option("--id", "identity", help="Inspect one collection with its exact members.")
+def collections(game, identity):
+    config = cloud.configuration()
+    if identity:
+        click.echo(
+            json.dumps(
+                cloud.api(
+                    config,
+                    "GET",
+                    "/video-collections",
+                    params={"gameId": cloud.slug(game), "id": cloud.slug(identity)},
+                ),
+                indent=2,
+            )
+        )
+        return
+    records, cursor, seen = [], None, set()
+    while True:
+        page = cloud.api(
+            config,
+            "GET",
+            "/video-collections",
+            params={"gameId": cloud.slug(game), "cursor": cursor},
+        )
+        records.extend(page["collections"])
+        cursor = page.get("cursor")
+        if not cursor:
+            break
+        if cursor in seen:
+            raise click.ClickException(
+                "Repeated collection cursor; incomplete results are not presented"
+            )
+        seen.add(cursor)
+    click.echo(json.dumps({"collections": records}, indent=2))
+
+
+@videos.command("save-collection")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--operation-id",
+    default=lambda: uuid.uuid4().hex,
+    help="Retain for an exact retry after an uncertain response.",
+)
+def save_collection(file, operation_id):
+    """Save a version-guarded ordered collection from a private JSON file."""
+    try:
+        if file.stat().st_size > 64 * 1024:
+            raise ValueError()
+        body = json.loads(file.read_text())
+        if not isinstance(body, dict) or set(body) != {
+            "gameId",
+            "id",
+            "name",
+            "description",
+            "assetKeys",
+            "expectedRevision",
+        }:
+            raise ValueError()
+    except (OSError, ValueError):
+        raise click.ClickException(
+            "Use a bounded JSON collection with gameId, id, name, description, ordered assetKeys and expectedRevision"
+        ) from None
+    click.echo(f"Collection operation ID: {operation_id} (retain for an exact retry)", err=True)
+    click.echo(
+        json.dumps(
+            cloud.api(
+                cloud.configuration(),
+                "POST",
+                "/video-collections",
+                json={**body, "operationId": operation_id},
+            ),
+            indent=2,
+        )
+    )

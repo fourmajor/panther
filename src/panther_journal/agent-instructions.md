@@ -494,6 +494,17 @@ separate future work; a model upload alone does not make it official.
 
 ## Kinds and categories
 
+Private ordered video collections use `panther videos collections` and `panther videos
+save-collection PRIVATE_JSON --operation-id 32_HEX`; see `docs/video-library.md`. Reference exact
+same-game immutable video keys in their deliberate order, with current `expectedRevision` (null
+only for a new collection). Retain the operation identity and arguments for exact retries. A
+collection never reclassifies its members, establishes canon or changes source provenance.
+Video cards use existing descriptions/tags/category/character IDs and optional selected
+`extra.preview.imageKey`. Never choose a poster from filename similarity or invent creator identity.
+Publish separate captions as `video-captions` WebVTT exports under the same asset identity as the
+video or with a direct same-game source link; the reader must not guess captions from unrelated
+files. Unknown caption language/review remains unknown. No paid generation happens when browsing.
+
 `--kind` is an open-ended lowercase slug describing the media: `portrait`, `map`, `document`,
 `recording`, `transcript`, `music`, `story`, `tv-episode`, `silly-video`, `model-3d`, etc. These examples
 are not an exhaustive whitelist. Reuse established kinds where possible; introduce a clear new
