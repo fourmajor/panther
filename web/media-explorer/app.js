@@ -434,6 +434,7 @@ async function selectGame(requested, epoch) {
     elements.playerRoster.replaceChildren();
     elements.gameRuleset.textContent = "";
     document.getElementById("game-style").hidden = true;
+    elements.characterModel.src = null;
     elements.characterModel.removeAttribute("src");
     closePreview();
   }
@@ -642,6 +643,7 @@ function configureCharacter(profile) {
     : "No portrait or 3D model has been added yet.";
   if (!model && poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
   if (!model) {
+    elements.characterModel.src = null;
     elements.characterModel.removeAttribute("src");
     state.selectedModelKey=null;
     setModelControls(false);
@@ -663,6 +665,7 @@ function configureModelView(model, poster, name, keepActive = false) {
   elements.characterModel.dataset.defaultCameraOrbit = model.cameraOrbit;
   elements.characterModel.dataset.defaultFieldOfView = model.fieldOfView;
   if (!keepActive) {
+    elements.characterModel.src = null;
     elements.characterModel.removeAttribute("src");
     if (typeof elements.characterModel.showPoster === "function") elements.characterModel.showPoster();
   }
@@ -691,6 +694,17 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
     if (epoch !== routeEpoch) return;
     if (result.schemaVersion !== 2 || !Array.isArray(result.appearances) || !Array.isArray(result.selections) || !Array.isArray(result.activations))
       throw new Error("Appearance history is not ready");
+    // Official history excludes unactivated candidates. Preserve an exact,
+    // server-resolved deep-link preview in the controls without inventing an
+    // activation event or silently pointing the menu at the current edition.
+    const pinned=state.selectedAppearance;
+    if (pinned?.character?.gameId===gameId && pinned.character.id===characterId &&
+        pinned.selection && pinned.appearance?.id===pinned.selection.appearanceId &&
+        !result.selections.some(s=>s.id===pinned.selection.id)) {
+      result.selections=[...result.selections,{...pinned.selection,previewOnly:true}];
+      if (!result.appearances.some(a=>a.id===pinned.appearance.id))
+        result.appearances=[...result.appearances,pinned.appearance];
+    }
     state.appearanceVersions = result;
     const states = document.getElementById("appearance-state");
     states.replaceChildren();
@@ -720,7 +734,9 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
       states.value=matches[0].appearanceId;populateArtworkEditions(matches[0].id);
       await showSelectedArtwork();
     } else {
-      status.textContent=result.selections.length ? `${result.appearances.length} recorded physical states · ${result.selections.length} retained artwork pairs. Viewing never changes the current selection.` : "No official artwork has been selected.";
+      status.textContent=result.selections.find(s=>s.id===selected?.id)?.previewOnly
+        ? "Previewing an unselected edition. The current official selection is unchanged."
+        : result.selections.length ? `${result.appearances.length} recorded physical states · ${result.selections.length} retained artwork pairs. Viewing never changes the current selection.` : "No official artwork has been selected.";
       renderAppearanceDownloads();
       updateAppearanceStory();
     }
@@ -736,7 +752,12 @@ function populateArtworkEditions(preferred) {
   const aid=document.getElementById("appearance-state").value;
   const pairs=(data?.selections||[]).filter(s=>s.appearanceId===aid);
   menu.replaceChildren();
-  pairs.forEach((pair,index)=>menu.add(new Option(`${pair.id===data.current?"Current edition":`Retained edition ${index+1}`}${pair.modelKey?" · portrait + model":" · portrait only"}`,pair.id)));
+  pairs.forEach((pair,index)=>{
+    let label=`Retained edition ${index+1}`;
+    if(pair.previewOnly) label="Unselected preview edition";
+    if(pair.id===data.current) label="Current edition";
+    menu.add(new Option(`${label}${pair.modelKey?" · portrait + model":" · portrait only"}`,pair.id));
+  });
   if (!pairs.length) menu.add(new Option("No official editions",""));
   menu.value=pairs.some(s=>s.id===preferred) ? preferred : pairs.find(s=>s.id===data?.current)?.id || pairs[0]?.id || "";
   menu.disabled=pairs.length<2 || Boolean(state.pendingAppearanceRestore);
@@ -760,7 +781,8 @@ async function showSelectedArtwork() {
   const selectionId=document.getElementById("model-version").value;
   if (!appearanceId || !selectionId) return;
   const status=document.getElementById("appearance-status");
-  const wasActive=elements.characterModel.loaded && !elements.characterModel.hidden;
+  const wasActive=(elements.characterModel.loaded || elements.modelLoad.disabled) &&
+    !elements.characterModel.hidden && Boolean(state.selectedModelKey);
   showLoading(status,"Fetching this exact portrait/model pair…");
   document.getElementById("appearance-restore").disabled=true;
   try {
@@ -772,7 +794,11 @@ async function showSelectedArtwork() {
     const url=new URL(location.href);url.searchParams.delete("model");
     url.searchParams.set("appearance",appearanceId);url.searchParams.set("selection",selectionId);
     history.replaceState(null,"",url);
-    status.textContent=selected.warnings?.length ? "A pinned asset is unavailable. No other edition has been substituted." : selectionId===state.appearanceVersions?.current ? "Viewing the current official artwork pair." : "Viewing a retained edition. The current official selection is unchanged.";
+    if(selected.warnings?.length) status.textContent="A pinned asset is unavailable. No other edition has been substituted.";
+    else if(selectionId===state.appearanceVersions?.current) status.textContent="Viewing the current official artwork pair.";
+    else if(state.appearanceVersions?.selections.find(s=>s.id===selectionId)?.previewOnly)
+      status.textContent="Previewing an unselected edition. The current official selection is unchanged.";
+    else status.textContent="Viewing a retained edition. The current official selection is unchanged.";
     renderAppearanceDownloads();updateAppearanceStory();
   } catch(error) {
     if(request!==appearanceRequest || epoch!==routeEpoch) return;
@@ -1048,6 +1074,7 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
 
 async function loadCharacterModel() {
   const epoch = routeEpoch;
+  const pair = state.selectedAppearance?.selection;
   if (!state.currentCharacter) return;
   if (!webGlAvailable()) {
     showModelFallback("This device cannot display WebGL, so the portrait is shown instead.");
@@ -1057,7 +1084,6 @@ async function loadCharacterModel() {
   elements.modelLoad.textContent = "Loading…";
   showLoading(elements.modelStatus, "Preparing a secure link to the 3D model…");
   try {
-    const pair = state.selectedAppearance?.selection;
     if (!pair) throw new Error("No exact artwork pair is selected");
     const fresh = await api("/character", {...state.currentCharacter,appearanceId:pair.appearanceId,selectionId:pair.id});
     const selected = fresh.model;
@@ -1072,7 +1098,7 @@ async function loadCharacterModel() {
     elements.characterModel.src = selected.url;
     showLoading(elements.modelStatus, "Downloading the 3D model…");
   } catch (error) {
-    if (epoch !== routeEpoch) return;
+    if (epoch !== routeEpoch || state.selectedAppearance?.selection?.id!==pair?.id) return;
     showModelFallback(
       error.message === "Session expired"
         ? "Your session has expired."

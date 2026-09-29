@@ -5,8 +5,12 @@ const syntheticModel = require('./synthetic-model.cjs');
 // Optional local-only QA inside the owned Docker test environment. Never commit
 // a game model or upload this run's screenshots to GitHub.
 const localModel = process.env.PANTHER_TEST_MODEL_PATH && fs.readFileSync(process.env.PANTHER_TEST_MODEL_PATH);
+const localAnimation = process.env.PANTHER_TEST_ANIMATION_MODEL_PATH && fs.readFileSync(process.env.PANTHER_TEST_ANIMATION_MODEL_PATH);
 if (localModel && (localModel.length > 5 * 1024 * 1024 || localModel.toString('ascii', 0, 4) !== 'glTF')) {
   throw new Error('Private workflow candidate must be a GLB within the viewer size budget');
+}
+if (localAnimation && (localAnimation.length > 5 * 1024 * 1024 || localAnimation.toString('ascii', 0, 4) !== 'glTF')) {
+  throw new Error('Private animation study must be a GLB within the viewer size budget');
 }
 const { App } = require('aws-cdk-lib');
 const { Template } = require('aws-cdk-lib/assertions');
@@ -33,6 +37,57 @@ function appearanceView(character,version,withModel,url,size=1024) {
   return {character,selection,appearance:history.appearances[0],poster:{key:portraitKey,url:`https://test.s3.amazonaws.com/portrait.svg${withModel?'':`?v=${version}`}`},
     model:withModel?{key:selection.modelKey,url:`https://test.s3.amazonaws.com/model-${selection.id==='older'?'older':version}.glb`,size,cameraOrbit:'0deg 75deg auto',fieldOfView:'30deg'}:null};
 }
+
+for(const width of [1280,390]) test(`unselected animated model deep link and edition switching at ${width}px`,async({page},testInfo)=>{
+  test.setTimeout(180000);await page.setViewportSize({width,height:900});
+  const bytes=localAnimation||syntheticModel(1,undefined,true),currentBytes=syntheticModel(1);
+  const character={gameId:'test-game',id:'test-character',name:'Synthetic preview character'};
+  const history=appearanceHistory(1,true);
+  const preview={...history.selections[0],id:'preview',modelKey:'games/test-game/assets/preview/original/model.glb'};
+  const posts=[];
+  let releaseCurrent,currentRequested=false;
+  const currentGate=new Promise(resolve=>{releaseCurrent=resolve;});
+  await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
+    const url=new URL(route.request().url());if(route.request().method()==='POST')posts.push(url.pathname);
+    if(url.pathname==='/character-versions')return route.fulfill({json:history,headers:{'access-control-allow-origin':'https://panther.place'}});
+    const isPreview=url.searchParams.get('selectionId')==='preview';
+    const view=appearanceView(character,1,true,url,currentBytes.length);
+    if(isPreview){view.selection=preview;view.model={...view.model,key:preview.modelKey,url:'https://test.s3.amazonaws.com/model-preview.glb',size:bytes.length};}
+    return route.fulfill({json:{games:[{id:'test-game',name:'Test Game',purpose:'test'}],game:{id:'test-game',name:'Test Game',purpose:'test'},players:[],memberships:[],characters:[],assets:[],cursor:null,...view},headers:{'access-control-allow-origin':'https://panther.place'}});
+  });
+  await page.route('https://test.s3.amazonaws.com/model-*.glb',async route=>{
+    if(route.request().url().endsWith('model-1.glb')){currentRequested=true;await currentGate;}
+    return route.fulfill({contentType:'model/gltf-binary',body:route.request().url().endsWith('model-preview.glb')?bytes:currentBytes,headers:{'access-control-allow-origin':'https://panther.place'}});
+  });
+  await page.route('https://test.s3.amazonaws.com/portrait.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60"><rect width="40" height="60" fill="tan"/></svg>'}));
+  await page.route('https://panther.place/**',route=>{
+    const pathname=new URL(route.request().url()).pathname;
+    if(pathname==='/config.js')return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
+    const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+    return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html',headers:{'content-security-policy':policy}});
+  });
+  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'synthetic'}))+'.test'})));
+  await page.goto('https://panther.place/games/test-game/characters/test-character?appearance=ordinary&selection=preview');
+  const menu=page.locator('#model-version'),viewer=page.locator('#character-model');
+  await expect(menu).toHaveValue('preview');await expect(page.locator('#appearance-status')).toContainText('unselected edition');
+  await viewer.scrollIntoViewIfNeeded();await page.locator('#model-load').click();
+  await expect.poll(()=>viewer.evaluate(el=>el.loaded),{timeout:30000}).toBe(true);
+  await expect.poll(()=>viewer.evaluate(el=>el.src),{timeout:30000}).toBe('https://test.s3.amazonaws.com/model-preview.glb');
+  await expect(page.locator('#model-animation-clip')).toHaveValue('Panther Idle');
+  await viewer.scrollIntoViewIfNeeded();await expect.poll(()=>viewer.evaluate(el=>el.paused),{timeout:30000}).toBe(false);const start=await viewer.evaluate(el=>el.currentTime);
+  await expect.poll(()=>viewer.evaluate(el=>el.currentTime),{timeout:30000}).not.toBe(start);
+  const screenshot=testInfo.outputPath('unselected-animated-model.png');await page.screenshot({path:screenshot,fullPage:true});
+  await menu.selectOption('edition-1');await expect(menu).toHaveValue('edition-1');
+  await expect.poll(()=>viewer.evaluate(el=>el.src),{timeout:30000}).toBe('https://test.s3.amazonaws.com/model-1.glb');
+  await expect.poll(()=>currentRequested).toBe(true);
+  await expect.poll(()=>viewer.evaluate(el=>el.loaded)).toBe(false);
+  await menu.selectOption('preview');await expect.poll(()=>viewer.evaluate(el=>el.src),{timeout:30000}).toBe('https://test.s3.amazonaws.com/model-preview.glb');
+  releaseCurrent();
+  await expect.poll(()=>viewer.evaluate(el=>el.loaded),{timeout:30000}).toBe(true);
+  await expect(page.locator('#model-animation-clip')).toHaveValue('Panther Idle');
+  await expect(menu).toHaveValue('preview');await expect(page.locator('#appearance-status')).toContainText('unselected edition');
+  expect(posts).toEqual([]);
+});
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
   test(`portrait-only character remains usable at ${viewport.width}px`, async ({ page }, testInfo) => {
