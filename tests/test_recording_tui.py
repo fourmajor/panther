@@ -103,11 +103,13 @@ def test_tui_stop_resize_errors_history_and_finalization(size, tmp_path):
             await pilot.resize_terminal(size[0] + 10, size[1] + 5)
             await pilot.press("ctrl+c")
             assert backend.stopped
-            await app.refresh_status()
+            await settled(lambda: "FINALIZING" in str(app.query_one("#health", Static).content))
             assert "FINALIZING" in str(app.query_one("#health", Static).content)
             assert app.is_running  # stopping does not quit before finalization
             backend.status.update(running=False, capture="Saved and finalized", unsynced=1)
-            await app.refresh_status()
+            await settled(
+                lambda: "1 not yet confirmed" in str(app.query_one("#summary", Static).content)
+            )
             assert "1 not yet confirmed" in str(app.query_one("#summary", Static).content)
             # The smallest view can scroll the overall body to all controls.
             if size[1] < 24:
