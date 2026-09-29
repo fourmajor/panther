@@ -111,7 +111,7 @@ test('stable storyboard references load after a physical catalog relocation',asy
   await expect(page.locator('.movie-frame img').first()).toHaveAttribute('src',/content\/workflows\/job\/image/);
   await expect.poll(()=>page.locator('.movie-frame img').evaluateAll(images=>images.length===2 && images.every(img=>img.complete && img.naturalWidth>0))).toBe(true);
   expect(requests.flat().every(k=>k===frame)).toBe(true);
-  await expect(page.locator('.movie-frame')).not.toContainText('Image unavailable');
+  await expect(page.locator('.movie-frame').filter({hasText:'Image unavailable'})).toHaveCount(0);
 });
 for(const width of [1440,390]) test(`campaign storyboard has readable narration and separate audition at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page,{campaign:true}); await open(page);
