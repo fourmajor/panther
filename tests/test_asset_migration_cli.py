@@ -13,18 +13,31 @@ def test_migration_defaults_to_dry_run_and_keeps_create_only_reports(tmp_path, m
     plan.write_text(json.dumps({"schemaVersion": 1, "migrations": [entry]}))
     calls = []
     monkeypatch.setattr(cloud, "configuration", lambda: {})
-    monkeypatch.setattr(cloud, "api", lambda *args, **kwargs: calls.append(kwargs["json"]) or {"status": "ready"})
+    monkeypatch.setattr(
+        cloud, "api", lambda *args, **kwargs: calls.append(kwargs["json"]) or {"status": "ready"}
+    )
     runner = CliRunner()
-    assert runner.invoke(main, ["assets", "migrate", str(plan), "--report", str(report)]).exit_code == 0
+    assert (
+        runner.invoke(main, ["assets", "migrate", str(plan), "--report", str(report)]).exit_code
+        == 0
+    )
     assert calls == [{**entry, "dryRun": True}]
     assert json.loads(report.read_text())["request"] == entry
     assert report.stat().st_mode & 0o777 == 0o600
-    assert runner.invoke(main, ["assets", "migrate", str(plan), "--apply", "--report", str(report)]).exit_code != 0
+    assert (
+        runner.invoke(
+            main, ["assets", "migrate", str(plan), "--apply", "--report", str(report)]
+        ).exit_code
+        != 0
+    )
     assert len(calls) == 1
 
 
 def test_batch_stops_on_conflict_without_rewriting_expected_version(tmp_path, monkeypatch):
-    entries = [{"key": f"games/test/assets/a/original/{i}.png", "expectedVersionId": "pinned"} for i in range(2)]
+    entries = [
+        {"key": f"games/test/assets/a/original/{i}.png", "expectedVersionId": "pinned"}
+        for i in range(2)
+    ]
     plan, report = tmp_path / "plan.json", tmp_path / "report.jsonl"
     plan.write_text(json.dumps({"schemaVersion": 1, "migrations": entries}))
     calls = []
@@ -35,7 +48,9 @@ def test_batch_stops_on_conflict_without_rewriting_expected_version(tmp_path, mo
         raise click.ClickException("Asset changed")
 
     monkeypatch.setattr(cloud, "api", conflict)
-    result = CliRunner().invoke(main, ["assets", "migrate", str(plan), "--apply", "--report", str(report)])
+    result = CliRunner().invoke(
+        main, ["assets", "migrate", str(plan), "--apply", "--report", str(report)]
+    )
     assert result.exit_code != 0 and len(calls) == 1
     assert calls[0]["expectedVersionId"] == "pinned" and calls[0]["dryRun"] is False
     assert json.loads(report.read_text())["status"] == "interrupted-inspect-before-retry"
@@ -45,3 +60,38 @@ def test_completed_storage_rollout_has_no_mutating_command():
     result = CliRunner().invoke(main, ["assets", "reorganize", "--help"])
     assert result.exit_code != 0
     assert "No such command" in result.output
+
+
+def test_version_plan_follows_character_pages_without_inventing_roster_only_appearances(
+    tmp_path, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(cloud, "configuration", lambda: {})
+
+    def api(config, method, route, **kwargs):
+        params = kwargs.get("params", {})
+        calls.append((route, params))
+        if route == "/games":
+            return {"games": [{"id": "example"}]}
+        if route == "/assets":
+            return {"assets": [], "cursor": None}
+        if route == "/characters":
+            return {
+                "characters": [{"id": "published" if params.get("cursor") else "roster-only"}],
+                "cursor": None if params.get("cursor") else "second",
+            }
+        if route == "/character-details/inventory":
+            return {"profiles": [{"characterId": "published", "registered": True}], "cursor": None}
+        if route == "/character-versions":
+            return {"models": [], "portraits": []}
+        raise AssertionError(route)
+
+    monkeypatch.setattr(cloud, "api", api)
+    output = tmp_path / "plan.json"
+    result = CliRunner().invoke(main, ["assets", "version-plan", "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    assert [
+        (route, params["characterId"]) for route, params in calls if route == "/character-versions"
+    ] == [("/character-versions", "published")]
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert json.loads(output.read_text()) == {"schemaVersion": 1, "migrations": []}
