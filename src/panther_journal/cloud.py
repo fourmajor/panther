@@ -463,6 +463,8 @@ def character_set_portrait(game, character_id, portrait_key, expected_revision, 
 
 
 def register(group):
+    from panther_journal.transcript_selection import transcripts
+    group.add_command(transcripts)
     from panther_journal.shares import share
     from panther_journal.asset_migrations import assets
     from panther_journal.model_workflow import model

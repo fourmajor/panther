@@ -26,6 +26,19 @@ export class AssetBrowseIndex extends Construct {
     });
     props.reader.addEnvironment("ASSET_BROWSE_TABLE", table.tableName);
     table.grant(props.reader, "dynamodb:Query", "dynamodb:GetItem");
+    props.reader.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["dynamodb:PutItem"], resources: [table.tableArn],
+      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": [
+        "transcript-selection#*", "transcript-selection-ops#*", "transcript-selection-history#*",
+      ] } },
+    }));
+    props.reader.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["dynamodb:ConditionCheckItem"], resources: [table.tableArn],
+      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v2#*#transcripts"] } },
+    }));
+    props.api.addRoutes({ path: "/transcript-selection", methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration("TranscriptSelection", props.reader),
+      authorizer: props.authorizer });
     const failures = new sqs.Queue(this, "Failures", {
       retentionPeriod: Duration.days(14), enforceSSL: true,
     });

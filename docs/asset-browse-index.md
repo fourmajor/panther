@@ -1,7 +1,11 @@
-# Indexed asset browsing (v1)
+# Indexed asset browsing (v2)
 
 S3 stores immutable files and their location records. DynamoDB stores a regenerable browsing
 projection: titles, type, metadata, explicit source links, recording/playback summaries and warnings.
+Version 2 also projects structured transcript summaries: observed player IDs/names, segment counts,
+unassigned segments and source-reported review/publication status. A roster is not attendance;
+unknown names/statuses remain unknown. Unreadable/nonstructured documents report unavailable,
+not a fabricated empty transcript. The projection contains no speech text.
 Reading `/assets` never lists S3 or opens source documents. `/asset-document` still reads a single
 selected source; metadata and JSON reads use the same S3 version when available.
 
@@ -61,8 +65,10 @@ No user-facing deletion exists; future deletion support must explicitly update t
 
 Requests process 20 source reservations at a time with eight workers. A failed/interrupted run can
 be repeated with a fresh report: source data is untouched and writes are conditional/idempotent.
-Do not activate a partial migration manually. The projection schema is versioned (`v1` keys);
+Do not activate a partial migration manually. The projection schema is versioned (`v2` keys);
 future schema changes require another full migration. There is no old S3-scan read fallback.
+The v1 readiness/verification markers cannot authorize v2. Repeat the full dry-run/apply/verify
+sequence for this upgrade; old projection rows may remain as unused history, never a read fallback.
 
 At rest this adds index storage, not provisioned compute. DynamoDB, Lambda, events and the failure
 queue are usage-based; no EC2, NAT gateway, VPC, provisioned concurrency or idle polling was added.

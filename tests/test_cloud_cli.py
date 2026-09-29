@@ -48,6 +48,9 @@ def test_instructions_ship_with_cli():
     assert "character set-portrait" in result.output
     assert "Inputs and outputs for every asset" in result.output
     assert "inputArtifacts" in result.output
+    assert "Session transcript reading selections are explicit pointers, not approvals" in result.output
+
+
     assert "extra.relationshipRole" in result.output
     assert "do not delete intermediate provenance" in result.output
     assert "Standards evolve by migration" in result.output
@@ -92,6 +95,22 @@ def test_instructions_ship_with_cli():
     assert "or authorize spending, reference sharing" in result.output
     assert "never create a fresh plan as a retry" in result.output
     assert "administrator key is used only for GET billing checks" in result.output
+
+
+def test_transcript_selection_cli_preserves_guard_and_retry_identity(setup, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cloud, "api", lambda *args, **kwargs: calls.append((args, kwargs)) or {"selection": None})
+    runner = CliRunner()
+    assert runner.invoke(main, ["transcripts", "selection", "--game", "example", "--session", "session-a"]).exit_code == 0
+    assert calls[-1][1]["params"] == {"gameId": "example", "sessionId": "session-a"}
+    key = "games/example/assets/raw-a/original/raw.json"
+    result = runner.invoke(main, ["transcripts", "select", "--game", "example", "--session", "session-a",
+        "--key", key, "--reason", "Prefer raw evidence", "--operation-id", "a" * 32,
+        "--expected-revision", "b" * 32])
+    assert result.exit_code == 0 and "Selection operation ID: " + "a" * 32 in result.output
+    assert calls[-1][0][1:3] == ("POST", "/transcript-selection")
+    assert calls[-1][1]["json"] == {"gameId": "example", "sessionId": "session-a", "key": key,
+        "reason": "Prefer raw evidence", "expectedRevision": "b" * 32, "operationId": "a" * 32}
 
 
 def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypatch):

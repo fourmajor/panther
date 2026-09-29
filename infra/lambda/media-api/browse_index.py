@@ -1,4 +1,4 @@
-"""Version-1 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
+"""Version-2 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
 
 import base64
 import json
@@ -12,6 +12,7 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 SECTIONS = ("all", "audio", "transcripts", "videos")
+VERSION = 2
 
 
 class IndexNotReady(RuntimeError):
@@ -23,7 +24,7 @@ def table():
 
 
 def partition(game, section):
-    return f"v1#{game}#{section}"
+    return f"v{VERSION}#{game}#{section}"
 
 
 def sections(asset):
@@ -88,7 +89,7 @@ def refresh(media, reference, *, write=True):
 def page(game, section, cursor=None):
     if section not in SECTIONS:
         raise ValueError("Invalid asset section")
-    if not table().get_item(Key={"pk": "v1#catalog", "sk": "ready"}, ConsistentRead=True).get("Item"):
+    if not table().get_item(Key={"pk": f"v{VERSION}#catalog", "sk": "ready"}, ConsistentRead=True).get("Item"):
         raise IndexNotReady("The catalog upgrade is being prepared. No assets have been removed; please retry shortly.")
     pk = partition(game, section)
     args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": 100, "ConsistentRead": True}
@@ -113,7 +114,7 @@ def page(game, section, cursor=None):
         assets = [asset for asset in assets if unpaired(asset)]
     return {"assets": assets,
             "cursor": base64.urlsafe_b64encode(json.dumps(next_key).encode()).decode() if next_key else None,
-            "catalogVersion": 1}
+            "catalogVersion": VERSION}
 
 
 def event_handler(event, _context):
@@ -146,16 +147,16 @@ def rebuild_handler(event, _context):
             for result in pages:
                 for item in result.get("CommonPrefixes", []):
                     found = item["Prefix"].split("/")[1]
-                    if not table().get_item(Key={"pk": "v1#verified", "sk": found}, ConsistentRead=True).get("Item"):
+                    if not table().get_item(Key={"pk": f"v{VERSION}#verified", "sk": found}, ConsistentRead=True).get("Item"):
                         raise ValueError("All games must complete index verification before activation")
-            table().put_item(Item={"pk": "v1#catalog", "sk": "ready", "activatedAt": time.time_ns()})
+            table().put_item(Item={"pk": f"v{VERSION}#catalog", "sk": "ready", "activatedAt": time.time_ns()})
             return media._response(200, {"schemaVersion": 1, "status": "active"})
         if not media._valid_slug(game) or len(game) > 96 or mode not in {"dry-run", "apply", "verify"}:
             raise ValueError("Invalid index maintenance request")
         args = {"Bucket": media.BUCKET_NAME, "Prefix": f"games/{game}/catalog/assets/", "MaxKeys": 20}
         mismatches = 0
         if mode == "verify" and not body.get("cursor"):
-            table().delete_item(Key={"pk": "v1#verified", "sk": game})
+            table().delete_item(Key={"pk": f"v{VERSION}#verified", "sk": game})
         if body.get("cursor"):
             token = json.loads(base64.urlsafe_b64decode(body["cursor"]))
             if token["gameId"] != game or token["mode"] != mode:
@@ -193,7 +194,7 @@ def rebuild_handler(event, _context):
         cursor = base64.urlsafe_b64encode(json.dumps({"gameId": game, "mode": mode, "token": token,
             "mismatches": mismatches}).encode()).decode() if token else None
         if mode == "verify" and not token and not mismatches:
-            table().put_item(Item={"pk": "v1#verified", "sk": game, "verifiedAt": time.time_ns()})
+            table().put_item(Item={"pk": f"v{VERSION}#verified", "sk": game, "verifiedAt": time.time_ns()})
         return media._response(200, {"schemaVersion": 1, "gameId": game, "mode": mode, "records": records, "cursor": cursor})
     except (ValueError, KeyError, TypeError) as error:
         return media._response(400, {"error": str(error)})

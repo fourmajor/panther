@@ -7,6 +7,49 @@ import math
 import re
 
 MAX_DOCUMENT = 2 * 1024**2
+TRANSCRIPT_KINDS = {"transcript", "raw-transcript", "corrected-transcript", "edited-transcript"}
+
+
+def transcript_summary(doc):
+    """Index observed speaker IDs, never infer attendance from the full game roster."""
+    summary = {"schemaVersion": 1, "state": "unavailable", "participants": [],
+               "segmentCount": None, "unassignedSegments": None,
+               "reviewStatus": "unknown", "publicationStatus": "unknown"}
+    if not isinstance(doc, dict):
+        return summary
+    transcript = doc if doc.get("entityType") == "PlayerTranscript" else (
+        doc.get("payload", {}).get("transcript") if doc.get("stage") in
+        {"corrected-transcript", "edited-transcript"} and isinstance(doc.get("payload"), dict) else None)
+    if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
+        return summary
+    names, ambiguous = {}, set()
+    for player in transcript.get("players", []) if isinstance(transcript.get("players"), list) else []:
+        if not isinstance(player, dict):
+            continue
+        identity, name = player.get("id"), player.get("name")
+        if not isinstance(identity, str) or not isinstance(name, str) or not 1 <= len(name) <= 120:
+            continue
+        if identity in names and names[identity] != name:
+            ambiguous.add(identity)
+        names[identity] = name
+    counts, unassigned = {}, 0
+    for segment in transcript["segments"]:
+        player = segment.get("playerId") if isinstance(segment, dict) else None
+        if not isinstance(player, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", player) or len(player) > 96:
+            unassigned += 1
+        else:
+            counts[player] = counts.get(player, 0) + 1
+    summary.update(state="available", segmentCount=len(transcript["segments"]),
+                   unassignedSegments=unassigned,
+                   participants=[{"id": player, "name": None if player in ambiguous else names.get(player),
+                                  "segmentCount": count} for player, count in sorted(counts.items())])
+    for field in ("reviewStatus", "publicationStatus"):
+        value = doc.get(field, transcript.get(field))
+        if isinstance(value, str) and 1 <= len(value) <= 120:
+            summary[field] = value
+    if doc.get("entityType") == "PlayerTranscript" and summary["reviewStatus"] == "unknown":
+        summary["reviewStatus"] = "unreviewed"
+    return summary
 
 
 def valid_key(media, game, key):
@@ -88,6 +131,8 @@ def describe(media, game, key, *, include_document=False):
                 if media._valid_slug(recording):
                     sources.append(f"games/{game}/assets/{recording}/original/recording.json")
     result["sourceKeys"] = sorted({s for s in sources if valid_key(media, game, s) and s != key})
+    if result["kind"] in TRANSCRIPT_KINDS:
+        result["transcript"] = transcript_summary(doc)
     if include_document:
         result["document"] = doc
     return result
