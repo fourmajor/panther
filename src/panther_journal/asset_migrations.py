@@ -120,6 +120,7 @@ def version_plan(records, appearances):
 @click.option("--output", required=True, type=click.Path(path_type=Path))
 def plan_versions(output):
     """Inventory ALL games and prepare a private, version-pinned appearance backfill."""
+    from panther_journal.character_details import pages, private_file
     config = cloud.configuration()
     records, appearances = [], {}
     for game in cloud.api(config, "GET", "/games")["games"]:
@@ -133,7 +134,14 @@ def plan_versions(output):
             cursor = page.get("cursor")
             if not cursor:
                 break
-        for character in cloud.api(config, "GET", "/characters", params={"gameId": game_id})["characters"]:
+        characters = pages(config, "/characters", {"gameId": game_id}, "characters")
+        profiles = pages(config, "/character-details/inventory", {"gameId": game_id}, "profiles")
+        if any(not p["registered"] for p in profiles):
+            raise click.ClickException("Unregistered artwork profile; reconcile the all-game character inventory first.")
+        profile_ids = {p["characterId"] for p in profiles}
+        for character in characters:
+            if character["id"] not in profile_ids:
+                continue  # A roster-only character has no published appearance history.
             history = cloud.api(config, "GET", "/character-versions", params={"gameId": game_id, "characterId": character["id"]})
             for kind, field in (("model", "models"), ("portrait", "portraits")):
                 keys = [item["key"] for item in reversed(history[field])]
@@ -141,11 +149,7 @@ def plan_versions(output):
                     appearances[(game_id, character["id"], kind)] = keys
     try:
         plan = version_plan(records, appearances)
-        with output.open("x") as stream:
-            output.chmod(0o600)
-            json.dump(plan, stream, indent=2, allow_nan=False)
-            stream.flush()
-            os.fsync(stream.fileno())
+        private_file(output, plan)
     except (OSError, ValueError):
         raise click.ClickException("Could not create a new private plan; never overwrite a prior plan") from None
     click.echo(f"Inventoried {len(records)} assets in all games; planned {len(plan['migrations'])} version records. Dry-run with assets migrate.")

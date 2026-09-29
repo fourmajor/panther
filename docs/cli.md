@@ -141,7 +141,7 @@ Object metadata is committed with the file, avoiding partially uploaded sidecar 
 
 ## Publish a replacement character model
 
-`panther character list` discovers character IDs. Inspect a character and its revision:
+`panther character list --game GAME_ID` discovers character IDs. Inspect a character and its revision:
 
 ```sh
 panther character show --game example-game --character captain
