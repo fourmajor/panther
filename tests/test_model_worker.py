@@ -22,6 +22,10 @@ def test_upload_new_model_edition_uses_exact_pinned_semantic_predecessor(tmp_pat
         "characterId": "hero",
         "appearanceId": "ordinary",
         "appearanceSelection": {"modelKey": prior, "sourceKey": None, "provenanceKey": None},
+        "views": {
+            view: {"key": f"games/example-game/assets/refs/original/{view}.png"}
+            for view in worker.VIEWS
+        },
     }
     monkeypatch.setattr(
         worker.cloud, "api", Mock(side_effect=click.ClickException("Object not found"))
@@ -33,6 +37,32 @@ def test_upload_new_model_edition_uses_exact_pinned_semantic_predecessor(tmp_pat
     assert upload.call_args.kwargs["kind"] == "model-3d"
     metadata = json.loads((tmp_path / "model.glb.metadata.json").read_text())
     assert metadata["characterIds"] == ["hero"] and metadata["extra"]["appearanceId"] == "ordinary"
+    assert metadata["sourceKeys"] == [
+        f"games/example-game/assets/model-job-{'0' * 32}-1/original/provenance.json"
+    ]
+
+
+def test_provenance_revision_preserves_its_registered_kind(tmp_path, monkeypatch):
+    file = tmp_path / "provenance.json"
+    file.write_text("{}")
+    prior = "games/example-game/assets/prior/original/provenance.json"
+    job = {
+        "jobId": "0" * 64,
+        "gameId": "example-game",
+        "characterId": "hero",
+        "appearanceId": "ordinary",
+        "appearanceSelection": {"provenanceKey": prior},
+        "views": {view: {"key": f"{view}.png"} for view in worker.VIEWS},
+    }
+    monkeypatch.setattr(
+        worker.cloud, "api", Mock(side_effect=click.ClickException("Object not found"))
+    )
+    upload = Mock()
+    monkeypatch.setattr(worker.cloud.upload, "callback", upload)
+    worker.upload_file({}, file, job, 2)
+    assert upload.call_args.kwargs["kind"] == "model-provenance"
+    assert upload.call_args.kwargs["new_version_of"] == prior
+    assert json.loads((tmp_path / "provenance.json.metadata.json").read_text())["sourceKeys"] == []
 
 
 def test_qa_image_includes_runtime_plan_and_discovers_tests_before_jobs():
@@ -249,6 +279,47 @@ def test_native_interruption_resumes_script_without_repeating_inference(tmp_path
     worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
     assert stages == ["build", "review"]
     assert api.call_args.args[2] == "/model-jobs/complete"
+    provenance = json.loads(
+        (tmp_path / job["jobId"] / "candidate-1" / "provenance.json").read_text()
+    )
+    assert provenance["sourceKeys"] == [job["views"][view]["key"] for view in worker.VIEWS]
+
+
+def test_final_rejected_candidate_completes_without_uploading_artwork(tmp_path, monkeypatch):
+    repo, job, api, upload, stages, process = synthetic_job_runtime(tmp_path, monkeypatch)
+    original_agent = worker.agent
+
+    def reject_review(folder, images, prompt, heartbeat, stage):
+        result = original_agent(folder, images, prompt, heartbeat, stage)
+        if stage == "review":
+            return {
+                "passed": False,
+                "assessment": "Synthetic quality rejection",
+                "issues": ["poor likeness"],
+            }
+        return result
+
+    monkeypatch.setattr(worker, "agent", reject_review)
+    claim = {"job": job, "lease": "lease"}
+    with pytest.raises(worker.Deferred, match="bounded refinement"):
+        worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert not upload.called
+    result = api.call_args.kwargs["json"]["result"]
+    assert result == {
+        "passed": False,
+        "webKey": None,
+        "sourceKey": None,
+        "provenanceKey": None,
+        "evidenceKey": None,
+    }
+    candidate = tmp_path / job["jobId"] / "candidate-2"
+    assert json.loads((candidate / "evidence.json").read_text())["visualReview"]["passed"] is False
+    assert (candidate / "model.blend").is_file() and (candidate / "model.glb").is_file()
+    # Recovery submits the same rejected result without new inference or uploads.
+    before = list(stages)
+    worker.process_job(repo, tmp_path, Path("blender"), {}, claim)
+    assert stages == before and not upload.called
 
 
 def test_changed_saved_script_stops_before_native_execution(tmp_path, monkeypatch):

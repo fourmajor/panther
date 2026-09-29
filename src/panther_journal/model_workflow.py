@@ -234,11 +234,17 @@ def upload_file(config, file, job, attempt):
         "title": file.name,
         "category": "reference",
         "characterIds": [job["characterId"]],
+        # The full eight-image lineage lives in the provenance JSON. Compact S3
+        # metadata links that document, avoiding the S3 user-metadata size limit.
+        "sourceKeys": []
+        if file.name == "provenance.json"
+        else [f"games/{job['gameId']}/assets/{asset_id}/original/provenance.json"],
         "extra": {
             "jobId": job["jobId"],
             "sha256": checksum,
             "appearanceId": job["appearanceId"],
             "generation": generation.subscription("Codex CLI + Blender"),
+            "relationshipRole": "finished" if file.suffix in {".blend", ".glb"} else "intermediate",
         },
     }
     # Remote existence is checked without treating permission/network errors as absence.
@@ -267,7 +273,9 @@ def upload_file(config, file, job, attempt):
         file=file,
         game=job["gameId"],
         asset=asset_id,
-        kind="model-3d"
+        kind="model-provenance"
+        if file.name == "provenance.json"
+        else "model-3d"
         if file.suffix in {".blend", ".glb"}
         else "document"
         if file.suffix == ".json"
@@ -563,6 +571,7 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
             {
                 "jobId": job["jobId"],
                 "inputs": job["views"],
+                "sourceKeys": [job["views"][view]["key"] for view in VIEWS],
                 "appearanceId": job["appearanceId"],
                 "workflowVersion": job["workflowVersion"],
                 "appearanceSelection": job["appearanceSelection"],
@@ -572,11 +581,31 @@ def process_job(repo, root, blender, config, claim_result, qa_image="panther-mod
                 "inferredDetails": "See saved modeling report; multi-view images are not calibrated photogrammetry.",
             },
         )
+        if not review["passed"]:
+            # The broker accepts a failed review without output keys. Preserve all
+            # evidence locally; rejected geometry must not become ordinary artwork
+            # or consume a semantic revision of the selected model.
+            return cloud.api(
+                config,
+                "POST",
+                "/model-jobs/complete",
+                json={
+                    "jobId": job["jobId"],
+                    "lease": lease,
+                    "result": {
+                        "passed": False,
+                        "webKey": None,
+                        "sourceKey": None,
+                        "provenanceKey": None,
+                        "evidenceKey": None,
+                    },
+                },
+            )
         outputs = {}
         for name, filename in {
+            "provenanceKey": "provenance.json",
             "webKey": "model.glb",
             "sourceKey": "model.blend",
-            "provenanceKey": "provenance.json",
             "evidenceKey": "evidence.json",
         }.items():
             heartbeat()

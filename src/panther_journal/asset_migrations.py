@@ -98,6 +98,184 @@ def generation_plan(records, facts):
     return {"schemaVersion": 1, "migrations": migrations}
 
 
+def model_output_plan(records, jobs, input_keys):
+    """Backfill exact model-job inputs and distinguish rejected candidates from artwork."""
+    from panther_journal.model_workflow import VIEWS
+
+    known = {record["key"] for record in records}
+    by_id = {job["jobId"]: job for job in jobs}
+    migrations = []
+    for record in records:
+        metadata = copy.deepcopy(record["metadata"])
+        extra = metadata.setdefault("extra", {})
+        if extra.get("modelInputManifest") is True:
+            continue
+        job_id = extra.get("jobId")
+        if job_id is None:
+            if "/assets/model-job-" in record["key"]:
+                raise click.ClickException(
+                    "Model output has no explicit job identity; migration blocked"
+                )
+            continue
+        job = by_id.get(job_id)
+        if job is None and "/assets/model-job-" not in record["key"]:
+            continue  # Other workflow types can also record a jobId.
+        if job is None or set(job.get("views", {})) != set(VIEWS):
+            raise click.ClickException(
+                "Model output lacks its complete recorded job; migration blocked"
+            )
+        inputs = [job["views"][view]["key"] for view in VIEWS]
+        prefix = f"games/{job['gameId']}/assets/"
+        if not record["key"].startswith(prefix) or any(
+            key not in known or not key.startswith(prefix) for key in inputs
+        ):
+            raise click.ClickException("Model job input inventory is incomplete or crosses games")
+        input_key = input_keys.get(job_id)
+        if (
+            not isinstance(input_key, str)
+            or input_key not in known
+            or not input_key.startswith(prefix)
+        ):
+            raise click.ClickException(
+                "Verified model input manifest is missing; migration blocked"
+            )
+        metadata["sourceKeys"] = list(dict.fromkeys([*metadata.get("sourceKeys", []), input_key]))
+        extra["relationshipRole"] = (
+            "finished"
+            if job["status"] == "PUBLISHED" and record["kind"] == "model-3d"
+            else "intermediate"
+        )
+        if metadata == record["metadata"]:
+            continue
+        migrations.append(
+            {
+                "schemaVersion": 1,
+                "key": record["key"],
+                "expectedVersionId": record["versionId"],
+                "kind": record["kind"],
+                "metadata": metadata,
+                "reason": "Model output v1: exact pinned references; unpublished candidates and inspection evidence are intermediate",
+            }
+        )
+    return {"schemaVersion": 1, "migrations": migrations}
+
+
+def model_output_inventory(config):
+    from panther_journal.character_details import pages
+
+    records = []
+    for game in cloud.api(config, "GET", "/games")["games"]:
+        for asset in pages(config, "/assets", {"gameId": game["id"]}, "assets"):
+            if (
+                asset.get("metadata", {}).get("extra", {}).get("jobId")
+                or "/assets/model-job-" in asset["key"]
+            ):
+                info = cloud.api(config, "GET", "/object-url", params={"key": asset["key"]})
+                records.append({k: info[k] for k in ("key", "versionId", "kind", "metadata")})
+            else:
+                records.append({"key": asset["key"], "metadata": asset.get("metadata", {})})
+    jobs, cursor, seen = [], None, set()
+    while True:
+        page = cloud.api(config, "GET", "/model-jobs", params={"cursor": cursor})
+        jobs.extend(page["jobs"])
+        cursor = page.get("nextCursor")
+        if not cursor:
+            break
+        if cursor in seen:
+            raise click.ClickException("Repeated job cursor; inventory is incomplete")
+        seen.add(cursor)
+    return records, jobs
+
+
+@assets.command("model-output-inputs")
+@click.option("--directory", required=True, type=click.Path(path_type=Path))
+def prepare_model_inputs(directory):
+    """Prepare private input manifests for explicit CLI upload; no cloud writes."""
+    from panther_journal.character_details import private_file
+    from panther_journal.model_workflow import VIEWS
+
+    records, jobs = model_output_inventory(cloud.configuration())
+    wanted = {
+        r.get("metadata", {}).get("extra", {}).get("jobId")
+        for r in records
+        if "/assets/model-job-" in r["key"]
+    }
+    by_id = {j["jobId"]: j for j in jobs}
+    if None in wanted or wanted - set(by_id):
+        raise click.ClickException("Missing recorded model job; cannot prepare lineage")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    mapping = {}
+    for job_id in sorted(wanted):
+        job = by_id[job_id]
+        if set(job.get("views", {})) != set(VIEWS):
+            raise click.ClickException("Incomplete job references")
+        asset_id = f"model-inputs-{job_id[:32]}"
+        file = directory / f"{job_id}.json"
+        private_file(
+            file,
+            {
+                "schemaVersion": 1,
+                "jobId": job_id,
+                "sourceKeys": [job["views"][v]["key"] for v in VIEWS],
+                "views": job["views"],
+            },
+        )
+        private_file(
+            directory / f"{job_id}.metadata.json",
+            {
+                "title": "Recorded model workflow inputs",
+                "category": "reference",
+                "characterIds": [job["characterId"]],
+                "sourceKeys": [],
+                "extra": {
+                    "jobId": job_id,
+                    "modelInputManifest": True,
+                    "relationshipRole": "intermediate",
+                    "appearanceId": job["appearanceId"],
+                    "generation": generation.local("Panther metadata migration"),
+                },
+            },
+        )
+        mapping[job_id] = f"games/{job['gameId']}/assets/{asset_id}/original/{file.name}"
+    private_file(directory / "input-map.json", mapping)
+    click.echo(
+        f"Prepared {len(mapping)} private manifests. Upload each using its metadata, model-provenance kind and input-map asset ID."
+    )
+
+
+@assets.command("model-output-plan")
+@click.option("--input-map", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--output", required=True, type=click.Path(path_type=Path))
+def plan_model_outputs(input_map, output):
+    """Verify uploaded lineage and prepare an all-game guarded metadata plan."""
+    import tempfile
+    from panther_journal.character_details import private_file
+    from panther_journal.model_workflow import VIEWS, download
+
+    config = cloud.configuration()
+    records, jobs = model_output_inventory(config)
+    mapping = json.loads(input_map.read_text())
+    by_id = {j["jobId"]: j for j in jobs}
+    with tempfile.TemporaryDirectory(prefix="panther-model-input-verify-") as folder:
+        for job_id, key in mapping.items():
+            if job_id not in by_id:
+                raise click.ClickException("Input map references an unknown model job")
+            info = cloud.api(config, "GET", "/object-url", params={"key": key})
+            if info.get("size", 0) > 64000:
+                raise click.ClickException("Input manifest is too large")
+            path = Path(folder) / f"{job_id}.json"
+            download(config, info, path)
+            document = json.loads(path.read_text())
+            expected = [by_id[job_id]["views"][v]["key"] for v in VIEWS]
+            if document.get("jobId") != job_id or document.get("sourceKeys") != expected:
+                raise click.ClickException("Uploaded model inputs do not match the pinned job")
+    plan = model_output_plan(records, jobs, mapping)
+    private_file(output, plan)
+    click.echo(
+        f"Inventoried {len(records)} assets in all games; {len(plan['migrations'])} model metadata repairs."
+    )
+
+
 def version_plan(records, appearances):
     """Preserve explicit version families; appearance membership is not revision order."""
     known = {record["key"]: record for record in records}

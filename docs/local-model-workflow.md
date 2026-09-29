@@ -162,10 +162,30 @@ Old releases and logs are retained for explicit cleanup, not silently deleted.
    pinned before review. A changed or missing evidence file blocks publication on recovery.
    Older two-file evidence checkpoints are archived locally and revalidated/reviewed under
    this complete evidence contract; they are not a permanent weaker publication path.
+   A final rejected candidate completes the cloud job as failed without uploading candidate
+   artwork or advancing semantic asset versions. Its source, renders and review remain in the
+   private checkpoint directory for diagnosis. Keep this directory when cleaning temporary files.
 6. Upload candidate files, inspection renders, evidence, and provenance through Panther. The broker
    verifies the evidence matches the candidate, locks reference advancement briefly, checks that
    this is still the latest job and the original activation revision, then publishes a new
    immutable artwork pair. It preserves the portrait, earlier selections, and source assets.
+
+### Repair earlier model output metadata
+
+Run `panther assets model-output-inputs --directory /private/path/model-inputs` to prepare
+small private JSON input manifests from explicit recorded jobs across all games. Upload each
+with `panther upload`, its paired metadata JSON, kind `model-provenance`, and the game/asset ID
+in the generated `input-map.json`. The manifest keeps the full eight-reference lineage outside
+S3's limited metadata headers. Verify existing objects after an interrupted upload rather than
+overwriting them.
+
+Run `panther assets model-output-plan --input-map /private/path/model-inputs/input-map.json
+--output /private/path/model-output-v1.json` to checksum-verify those uploaded inputs and join
+explicit output job IDs to the recorded immutable reference sets. Dry-run and
+apply it with `panther assets migrate`, then prepare another plan to verify zero remaining changes.
+This adds exact reference lineage and marks unpublished candidates and inspection evidence as
+intermediate; it preserves bytes and existing version records. Missing job identities or reference
+assets block the migration rather than being inferred from filenames. Retain private audit reports.
 
 Before deploying the appearance cutover, inspect the complete model-job inventory through
 Panther authentication and stop old workers. Unpinned nonterminal jobs are explicit rollout
