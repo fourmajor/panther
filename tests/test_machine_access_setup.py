@@ -121,3 +121,33 @@ def test_prepare_scopes_keychain_access_and_always_removes_ephemeral_keys(tmp_pa
     assert "-x" in imports[1] and "-T" in imports[1]
     assert imports[1][imports[1].index("-T") + 1] == str(tmp_path / "aws_signing_helper")
     assert all("-A" not in args and "-P" not in args for args in imports)
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_keychain_check_pins_vendor_and_binary_and_explicit_repair_mode(tmp_path, monkeypatch, repair):
+    tmp_path.chmod(0o700)
+    binary = b"fictional pinned helper"
+    (tmp_path / "aws_signing_helper").write_bytes(binary)
+    (tmp_path / "certificate.pem").write_text("fictional certificate")
+    (tmp_path / "machine-access.json").write_text('{"certificate":"fictional certificate"}')
+    monkeypatch.setattr(setup.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(setup.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(setup, "BINARIES", {"arm64": ("Aarch64", hashlib.sha256(binary).hexdigest())})
+    calls = []
+    monkeypatch.setattr(setup, "run", lambda *args: calls.append(args) or "verified")
+    setup.keychain_access(tmp_path, repair=repair)
+    assert len(calls) == 2
+    assert calls[0][0] == "/usr/bin/codesign"
+    assert calls[0][calls[0].index("-R") + 1].startswith('=identifier "com.amazon.aws.rolesanywhere"')
+    assert "94KV3E626L" in calls[0][calls[0].index("-R") + 1]
+    assert calls[1][0] == "/usr/bin/swift"
+    assert calls[1][-1] == ("repair" if repair else "check")
+    (tmp_path / "aws_signing_helper").write_bytes(b"changed helper")
+    with pytest.raises(ValueError, match="pinned official"):
+        setup.keychain_access(tmp_path, repair=repair)
+    assert len(calls) == 2
+    (tmp_path / "aws_signing_helper").write_bytes(binary)
+    (tmp_path / "certificate.pem").write_text("other certificate")
+    with pytest.raises(ValueError, match="private deployment"):
+        setup.keychain_access(tmp_path, repair=repair)
+    assert len(calls) == 2

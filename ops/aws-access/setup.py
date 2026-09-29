@@ -104,6 +104,7 @@ def prepare(directory, account, approved):
         write_new(directory / "certificate.pem", cert.read_text())
     finally:
         shutil.rmtree(temporary)
+    keychain_access(directory, repair=True)
     print("Certificate imported as non-extractable with helper-only access. Ephemeral issuer/key files removed.")
     print("Private CDK configuration prepared; no AWS resource has been created. Certificate valid for one year.")
 
@@ -125,8 +126,25 @@ def credential_command(directory, account, outputs, serial):
                        "--trust-anchor-arn", outputs["TrustAnchorArn"]])
 
 
+def keychain_access(directory, repair=False):
+    directory = private_directory(directory)
+    helper = directory / "aws_signing_helper"
+    if platform.system() != "Darwin" or platform.machine() not in BINARIES:
+        raise ValueError("Keychain verification requires macOS")
+    if hashlib.sha256(helper.read_bytes()).hexdigest() != BINARIES[platform.machine()][1]:
+        raise ValueError("Installed helper does not match the pinned official binary")
+    configuration = json.loads((directory / "machine-access.json").read_text())
+    if (directory / "certificate.pem").read_text() != configuration.get("certificate"):
+        raise ValueError("Certificate does not match private deployment configuration")
+    run("/usr/bin/codesign", "--verify", "--strict", "-R",
+        '=identifier "com.amazon.aws.rolesanywhere" and anchor apple generic and certificate leaf[subject.OU] = "94KV3E626L"', str(helper))
+    print(run("/usr/bin/swift", str(Path(__file__).with_name("keychain-access.swift")),
+              str(directory / "certificate.pem"), str(helper), "repair" if repair else "check"))
+
+
 def configure(directory, outputs_file):
     directory = private_directory(directory)
+    keychain_access(directory)
     configuration = json.loads((directory / "machine-access.json").read_text())
     if configuration.get("administratorAccessApproved") is not True or configuration.get("enabled") is not True:
         raise ValueError("Enabled, owner-approved private configuration is required")
@@ -168,12 +186,17 @@ def main():
     configuration = subparsers.add_parser("configure")
     configuration.add_argument("--directory", required=True)
     configuration.add_argument("--outputs", required=True)
+    keychain = subparsers.add_parser("keychain")
+    keychain.add_argument("--directory", required=True)
+    keychain.add_argument("--repair", action="store_true")
     args = parser.parse_args()
     try:
         if args.action == "prepare":
             prepare(args.directory, args.account, args.approve_unattended_administrator)
-        else:
+        elif args.action == "configure":
             configure(args.directory, args.outputs)
+        else:
+            keychain_access(args.directory, args.repair)
     except (ValueError, RuntimeError, OSError, KeyError) as error:
         parser.exit(1, str(error) + "\n")
 
