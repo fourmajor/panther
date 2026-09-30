@@ -228,8 +228,8 @@ editable scene and delivery candidate. Do not silently replace geometry or promo
 because it has an animation clip. Motion direction is an adaptation choice, not new character canon.
 
 Review the fresh-imported exported GLB, not just the authored scene. Read its sampler input
-accessor time bounds and map those seconds to the review scene's actual frame rate; glTF export
-may normalize the first authored Blender frame to time zero. Comparing the authored frame numbers
+accessor time bounds and map those seconds to the review scene's actual frame rate; do not assume
+that every export begins at time zero. Comparing the authored frame numbers
 after import can falsely report a seam mismatch. Configure the desired review frame rate **before**
 import: the importer converts seconds to keyframe positions using the scene's frame rate. Changing
 FPS afterward does not rescale those keys and can sample the wrong phase or endpoint. Check finite
