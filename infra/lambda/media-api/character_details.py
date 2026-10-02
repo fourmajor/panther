@@ -240,11 +240,15 @@ def save(catalog, body, actor, migration_admin, source_evidence=None):
     }
     if (
         not isinstance(body, dict)
-        or set(body) != fields
+        or set(body) not in (fields, fields | {"name"})
         or body["mode"] not in ("edit", "migrate")
         or type(body["dryRun"]) is not bool
     ):
         raise ValueError("Invalid character edit envelope")
+    if "name" in body and body["mode"] != "edit":
+        raise ValueError("Migration cannot rename a character")
+    if "name" in body:
+        catalog.name(body["name"])
     game, character = catalog.identifier(body["gameId"]), catalog.identifier(body["characterId"])
     text(body["reason"], 500)
     operation = body["operationId"]
@@ -323,6 +327,7 @@ def save(catalog, body, actor, migration_admin, source_evidence=None):
     updated = {
         **old,
         "schemaVersion": 2,
+        "name": body.get("name", old["name"]),
         "detailsRevision": revision,
         "detailsJson": json.dumps(details, allow_nan=False, separators=(",", ":")),
         "detailsSubtitle": details["subtitle"],
@@ -332,6 +337,8 @@ def save(catalog, body, actor, migration_admin, source_evidence=None):
         "pk": f"CHARACTER_DETAILS_HISTORY#{game}#{character}",
         "sk": revision,
         "revision": revision,
+        "name": updated["name"],
+        "previousName": old["name"],
         "detailsJson": updated["detailsJson"],
         "recordedAt": now,
         "actor": actor,
@@ -399,6 +406,42 @@ def save(catalog, body, actor, migration_admin, source_evidence=None):
     )
 
 
+def read_history(catalog, event, record):
+    """Follow the actual predecessor chain; random revision IDs do not order time."""
+    game, character = record["gameId"], record["id"]
+    revision = catalog.media._query(event, "cursor") or record.get("detailsRevision")
+    if revision and (not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{32}", revision)):
+        raise ValueError("Invalid character history cursor")
+    entries, seen = [], set()
+    while revision and len(entries) < 25:
+        if revision in seen:
+            raise ValueError("Invalid character revision chain")
+        seen.add(revision)
+        item = catalog.read(f"CHARACTER_DETAILS_HISTORY#{game}#{character}", revision)
+        if not item:
+            # The creation revision predates history tracking. Do not invent a snapshot.
+            revision = None
+            break
+        entry = {
+            key: item.get(key)
+            for key in (
+                "revision",
+                "previousRevision",
+                "recordedAt",
+                "reason",
+                "name",
+                "previousName",
+            )
+        }
+        entry["details"] = json.loads(item["detailsJson"])
+        entry["previousDetails"] = (
+            json.loads(item["previousDetailsJson"]) if item.get("previousDetailsJson") else None
+        )
+        entries.append(entry)
+        revision = item.get("previousRevision")
+    return catalog.media._response(200, {"history": entries, "cursor": revision})
+
+
 def handle(catalog, event, claims):
     if event["routeKey"] in {"POST /character-details", "POST /character-details/migrate"}:
         raw = event.get("body") or "{}"
@@ -416,6 +459,8 @@ def handle(catalog, event, claims):
     record = catalog.read(f"GAME#{game}", f"CHARACTER#{character}")
     if not record:
         return catalog.media._response(404, {"error": "Character not found"})
+    if event["routeKey"] == "GET /character-details/history":
+        return read_history(catalog, event, record)
     if event["routeKey"] == "GET /character-details/verify":
         value = decode(record)
         validate(value["details"], catalog, game, character)

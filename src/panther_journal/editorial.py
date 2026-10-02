@@ -116,6 +116,9 @@ def agent(folder, stage, inputs, heartbeat):
         "Return the required JSON; use empty arrays for unused fields. Set passed=false on a substantive unresolved "
         "quality failure instead of calling weak output finished. AI review is not human approval. "
         "No video provider/model/budget is approved; no video generation is possible in this workflow.\n"
+        "creation is the user-selected adaptation title and brief. Use it to direct the requested adaptation, "
+        "never to override source integrity, invent speech, assign an unknown speaker or authorize generation. "
+        "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
         "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
         "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
@@ -358,6 +361,40 @@ def storyboard(shots):
     return f'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="{len(shots) * 310}" viewBox="0 0 640 {len(shots) * 310}"><rect width="100%" height="100%" fill="white"/>{"".join(panels)}</svg>'
 
 
+def transcript_bundle(documents, references, job):
+    """Read-time projection preserves every source's original timing and speaker identity."""
+    if len(documents) == 1:
+        return copy.deepcopy(documents[0])
+    return {
+        "schemaVersion": 1,
+        "entityType": "EditorialTranscriptBundle",
+        "gameId": job["gameId"],
+        "sessionId": job["sessionId"],
+        "recordingId": "collection-" + job["jobId"][:16],
+        "artifactType": "raw-transcript",
+        "timestampPrecision": "source-local; no common timeline asserted",
+        "sourceKeys": [ref["key"] for ref in references],
+        "sourceTranscripts": [
+            {"reference": ref, "transcript": copy.deepcopy(doc)}
+            for ref, doc in zip(references, documents, strict=True)
+        ],
+        "players": list({p["id"]: p for doc in documents for p in doc.get("players", [])}.values()),
+        "captureIntegrity": {
+            "status": "unverified",
+            "warnings": [
+                warning
+                for doc in documents
+                for warning in doc.get("captureIntegrity", {}).get("warnings", [])
+            ],
+        },
+        "segments": [
+            {**copy.deepcopy(segment), "sourceKey": ref["key"], "sourceSegmentIndex": index}
+            for ref, doc in zip(references, documents, strict=True)
+            for index, segment in enumerate(doc["segments"])
+        ],
+    }
+
+
 def process(config, root, claim):
     job, task = claim["job"], claim["task"]
     if task["stage"] not in STAGES or job["workflowVersion"] != PLAN["version"]:
@@ -375,13 +412,17 @@ def process(config, root, claim):
             last_heartbeat = time.monotonic()
 
     heartbeat()
-    raw = fetch(config, job["raw"], folder, "raw.json")
+    raw_references = job.get("rawSources", [job["raw"]])
+    raw_documents = [
+        fetch(config, ref, folder, f"raw-{index}.json") for index, ref in enumerate(raw_references)
+    ]
+    raw = transcript_bundle(raw_documents, raw_references, job)
     previous = {
         stage: fetch(config, ref, folder, f"input-{stage}.json")
         for stage, ref in claim["artifacts"].items()
     }
     stage = task["stage"]
-    sources = [job["raw"]["key"]]
+    sources = [ref["key"] for ref in raw_references]
     if stage == "context":
         catalog = cloud.api(config, "GET", "/game", params={"gameId": job["gameId"]})
         catalog["officialArtwork"] = {}
@@ -409,8 +450,8 @@ def process(config, root, claim):
                     if selected.get(field)
                 )
         sources = list(dict.fromkeys(sources))
-        candidates, cursor = [], None
-        while True:
+        candidates, cursor = list(job.get("selectedContext", [])), None
+        while not job.get("creation"):
             page = cloud.api(
                 config,
                 "GET",
@@ -427,9 +468,21 @@ def process(config, root, claim):
             if not cursor:
                 break
         report, _, history, publication = autonomous_stage(
-            folder, stage, {"raw": raw, "catalog": catalog, "candidates": candidates}, heartbeat
+            folder,
+            stage,
+            {
+                "raw": raw,
+                "catalog": catalog,
+                "candidates": candidates,
+                "creation": job.get("creation"),
+            },
+            heartbeat,
         )
-        selected = report["selectedKeys"]
+        selected = list(
+            dict.fromkeys(
+                [*[ref["key"] for ref in job.get("selectedContext", [])], *report["selectedKeys"]]
+            )
+        )
         allowed = {c["key"]: c for c in candidates}
         if (
             len(selected) > 12
@@ -437,6 +490,7 @@ def process(config, root, claim):
             or not set(selected) <= set(allowed)
         ):
             raise ValueError("AI selected an unavailable context source")
+        sources.extend(selected)
         context = {"catalog": catalog}
         for i, key in enumerate(selected):
             context[key] = {
@@ -466,7 +520,13 @@ def process(config, root, claim):
         report, candidate, history, publication = autonomous_stage(
             folder,
             stage,
-            {"raw": raw, "context": evidence, "priorStages": prior, "candidate": candidate},
+            {
+                "raw": raw,
+                "context": evidence,
+                "priorStages": prior,
+                "candidate": candidate,
+                "creation": job.get("creation"),
+            },
             heartbeat,
         )
         if not set(report["evidenceIds"]) <= {"raw", "catalog", *evidence, *prior}:
@@ -526,6 +586,8 @@ def process(config, root, claim):
         "sourceKeys": sources,
         "inputArtifacts": claim["artifacts"],
         "rawReference": job["raw"],
+        "rawReferences": raw_references,
+        "creation": job.get("creation"),
         "engine": "codex-cli-chatgpt",
         "reviewStatus": "ai-reviewed-unverified",
         "payload": payload,

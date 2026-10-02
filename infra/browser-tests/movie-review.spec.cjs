@@ -27,7 +27,7 @@ async function fixture(page,{blocked=false,conflict=false,campaign=false,crowded
   await page.route(`${origin}/**`,route=>{
     const p=new URL(route.request().url()).pathname;
     if(p==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
-    const file=p==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css'].includes(p)?p.slice(1):'index.html');
+    const file=p==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(p)?p.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   await page.route('https://images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><defs><radialGradient id="a"><stop stop-color="#c29554"/><stop offset="1" stop-color="#263b40"/></radialGradient></defs><rect width="960" height="540" fill="#17252b"/><path d="M300 500V120Q480 -70 660 120V500" fill="url(#a)"/><path d="M350 500V170Q480 35 610 170V500" fill="#101e23"/><circle cx="460" cy="275" r="22" fill="#e2bf77"/><path d="M465 500V330L505 305L530 500" fill="#344c51"/><path d="M0 500H960" stroke="#9b9271" stroke-width="4"/></svg>'}));
@@ -76,7 +76,7 @@ for(const width of [1440,390]) test(`professional review layout, screenplay and 
   await expect(page.locator('.movie-feedback-status')).toContainText('Review saved');
   expect(writes).toHaveLength(1); expect(writes[0].action).toBe('approved'); expect(writes[0].capUsd).toBe('10.00'); expect(writes[0].reviewedShotIds).toEqual(['gate','answer']);
   await page.reload(); await expect(page.locator('.movie-budget')).toContainText('This revision was approved');
-  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game'); await expect(page.locator('#movie-workspace')).not.toContainText('The House Beneath the Tide');
+  await selectGame(page,'other-game'); await expect(page.locator('#movie-workspace')).not.toContainText('The House Beneath the Tide');
   expect(errors).toEqual([]);
 });
 test('blocked plan saves shot feedback, never pretends missing prices are zero',async({page})=>{
@@ -167,3 +167,10 @@ for(const width of [1440,390]) test(`gallery batch recovers failures and loads s
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`image-recovery-${width}.png`)});
 });
+
+// Exercise the visible Radix Select, including the portal and keyboard focus.
+async function selectGame(page,id) {
+  const name=await page.locator(`#game-selector option[value="${id}"]`).textContent();
+  await page.getByRole('combobox',{name:'Current game'}).click();
+  await page.getByRole('option',{name,exact:true}).click();
+}

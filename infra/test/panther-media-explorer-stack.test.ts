@@ -348,8 +348,18 @@ test("editorial workflow has separate review stages, parallel adaptations, and n
   assert.match(definition, /Parallel/);
   assert.match(definition, /lambda:invoke.waitForTaskToken/);
   assert.doesNotMatch(definition, /bedrock:|sagemaker:|ecs:|GenerateVideo/);
+  assert.match(definition, /NovelRequested/);
+  assert.match(definition, /VideoRequested/);
+  assert.match(definition, /SkipNovel/);
+  assert.match(definition, /SkipVideo/);
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler: "editorial_jobs.handler", Environment: { Variables: Match.objectLike({
+      CATALOG_READERS: "example-operator,example-editor,example-member",
+      EDITORIAL_PLAN: Match.serializedJson(Match.objectLike({version:3})),
+    }) },
+  });
   const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))
-    .filter(([id]) => id.startsWith("EditorialProcessing")));
+    .filter(([id]) => id.startsWith("EditorialProcessing") && !id.startsWith("EditorialProcessingChapterWriter")));
   assert.doesNotMatch(policies, /s3:PutObject|bedrock:|sagemaker:/);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "POST /editorial-jobs", AuthorizationType: "JWT",
@@ -574,7 +584,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 95);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 102);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -654,4 +664,56 @@ test("remembered sign-in uses maximum rotating refresh sessions and an uncached 
     Environment: { Variables: Match.objectLike({ SITE_ORIGIN: "https://panther.place", WEB_CLIENT_ID: Match.anyValue() }) },
     Timeout: 30, MemorySize: 128,
   });
+});
+
+
+test("browser audio gates API transcription on an optional server secret", () => {
+  const secretArn="arn:aws:secretsmanager:us-west-2:123456789012:secret:browser-asr-ABCDEF";
+  const template=mediaExplorerTemplate({browserTranscriptionSecretArn:secretArn});
+  for(const RouteKey of ["GET /browser-recording/capabilities","POST /browser-recording/complete","GET /browser-transcriptions","POST /browser-transcriptions"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey,AuthorizationType:"JWT"});
+  const policies=Object.entries(template.findResources("AWS::IAM::Policy"));
+  const secretPolicies=policies.filter(([,resource])=>JSON.stringify(resource.Properties.PolicyDocument).includes("secretsmanager:GetSecretValue"));
+  assert.equal(secretPolicies.length,1);
+  assert.match(secretPolicies[0][0],/BrowserRecordingsWorker/);
+  template.hasResourceProperties("AWS::Lambda::Function",{Handler:"browser_transcription.work",Timeout:300,Environment:{Variables:Match.objectLike({OPENAI_TRANSCRIPTION_SECRET_ARN:secretArn})}});
+  mediaExplorerTemplate().hasResourceProperties("AWS::Lambda::Function",{Handler:"browser_transcription.work",Environment:{Variables:Match.objectLike({OPENAI_TRANSCRIPTION_SECRET_ARN:""})}});
+  assert.throws(()=>mediaExplorerTemplate({browserTranscriptionSecretArn:"client-visible-key"}),/Secrets Manager ARN/);
+  assert.match(JSON.stringify(template.findResources("AWS::CloudFront::ResponseHeadersPolicy")),/microphone=\(self\)/);
+});
+
+
+test("manual chapter writer creates only its immutable manuscript assets and scoped commit records", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"manual_chapters.handler"});
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey:"POST /novel-chapters",AuthorizationType:"JWT"});
+  const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id])=>id.startsWith("EditorialProcessingChapterWriter"));
+  const statements = policies.flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
+  const writes = statements.filter(s=>[s.Action].flat().includes("s3:PutObject"));
+  assert.equal(writes.length,1);
+  assert.deepEqual(writes[0].Condition,{Null:{"s3:if-none-match":"false"}});
+  const resources = JSON.stringify(writes[0].Resource);
+  assert.match(resources,/catalog\/assets\/authored-chapter-/);
+  assert.match(resources,/content\/\*\/authored-chapter-/);
+  const records = statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  assert.equal(records.length,1);
+  assert.deepEqual(records[0].Condition,{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#chapter#*"]}});
+  assert.doesNotMatch(JSON.stringify(policies), /states:|bedrock:|sagemaker:|secretsmanager:|DeleteObject|UpdateItem|DeleteItem/);
+});
+
+test("dashboard recent reuses the catalog reader and metadata permissions", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "GET /dashboard-recent", AuthorizationType: "JWT",
+  });
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler: "catalog.handler", Environment: { Variables: Match.objectLike({
+      CATALOG_READERS: "example-operator,example-editor,example-member",
+      ASSET_BROWSE_TABLE: Match.anyValue(),
+    }) },
+  });
+  const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("GameCatalog")));
+  assert.match(policies, /dynamodb:BatchGetItem/);
+  assert.match(policies, /dynamodb:Query/);
 });

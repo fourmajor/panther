@@ -510,11 +510,13 @@ def handler(event, _context):
         "GET /character-details/verify",
     }
     read_routes = {
+        "GET /dashboard-recent",
         "GET /games",
         "GET /game",
         "GET /players",
         "GET /characters",
         "GET /character-details",
+        "GET /character-details/history",
     }
     if migration:
         allowed = set(filter(None, os.environ.get("ASSET_MIGRATORS", "").split(",")))
@@ -553,11 +555,19 @@ def handler(event, _context):
             )
         if route in {
             "GET /character-details",
+            "GET /character-details/history",
             "GET /character-details/verify",
             "POST /character-details",
             "POST /character-details/migrate",
         }:
             return character_details.handle(sys.modules[__name__], event, claims)
+        if route == "GET /dashboard-recent":
+            game = identifier(media._query(event, "gameId"))
+            if not read("GAMES", game):
+                return media._response(404, {"error": "Game not found"})
+            import dashboard_recent
+
+            return media._response(200, dashboard_recent.recent(sys.modules[__name__], game))
         if route == "GET /characters":
             game = identifier(media._query(event, "gameId"))
             if not read("GAMES", game):
@@ -635,7 +645,9 @@ def handler(event, _context):
         return media._response(
             409, {"error": "Catalog changed or storage unavailable; inspect before retrying"}
         )
-    except RuntimeError:
+    except RuntimeError as error:
+        if route == "GET /dashboard-recent":
+            return media._response(503, {"error": str(error)})
         return media._response(
             503, {"error": "Appearance migration or storage is not ready; retry the exact request"}
         )

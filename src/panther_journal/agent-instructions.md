@@ -697,3 +697,34 @@ applying the selected style. Record the selected style in the preparation docume
 Missing style is a catalog setup problem, not permission to guess. Preserve uploaded
 originals and previous revisions; changing style does not regenerate assets or authorize
 paid requests. See `docs/game-visual-style.md` for the setting and migration contract.
+
+# Browser room capture
+
+The web Audio and Transcripts pages can capture schema-1 `BrowserRecording` WAV originals,
+with explicit capture warnings and immutable parts in the shared location catalog. The native
+CLI `Recording` FLAC contract remains distinct. Keep the originals; playback is produced only
+by the separate completed-set laptop worker, which now advertises protocol 2. Upgrade that
+worker before enabling browser recording; protocol-1 workers skip browser sets.
+
+When the server has an explicitly configured OpenAI secret, browser capture can request optional
+provisional live `gpt-transcribe` output and an independent final pass after stopping. A final
+`BrowserTranscript` has unassigned speakers and window-boundary timestamps. Do not invent
+player identity, convert it to verified player attribution, or use it to automatically trigger
+editorial processing. Exact inputs and original provider responses remain immutable evidence.
+This paid integration is limited to the user-authorized browser feature, not a fallback for
+local ASR or subscription-backed workflows. See `docs/browser-recording.md` for configuration,
+recovery, timing limits and uncertain provider outcomes.
+
+Manually authored chapters use `UserChapter` schema 1, separate from reviewed
+`EditorialArtifact` outputs. The web Novel editor preserves immutable editions,
+semantic versions and explicit input keys; manual writing must not be labeled
+AI-reviewed or substituted for raw transcription. See `docs/authored-chapters.md`
+for the application operation and read-time catalog contract.
+
+Browser editorial creation uses workflow version 3. A creation request pins one to eight completed
+same-game raw PlayerTranscript/final BrowserTranscript inputs, optional eligible text context,
+a title and direction. The source-local timestamps and unassigned speakers stay unchanged;
+the worker's bundle records each segment's exact source asset and index. Each adaptation links
+all raw inputs. Update the subscription worker before processing version 3 jobs; preserve
+older executions and outputs under their original version. Video creation plans scripts,
+shots and schematic storyboards only; it never authorizes or submits paid generation.

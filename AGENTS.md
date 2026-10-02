@@ -254,6 +254,12 @@
   the separate read-only-use admin billing key remain in the OS credential store, never prompts,
   Git, AWS, browser code or the CI runner. This local guard cannot govern dashboard/other-device spend.
 
+- User-authorized browser room transcription is a narrow exception: use `gpt-transcribe` only
+  through an explicitly configured server-side OpenAI secret. Preserve audio and provider
+  responses, keep uncertain billed outcomes unknown, and never automatically repeat paid requests.
+  This does not authorize API inference as a fallback for any other workflow. See
+  `docs/browser-recording.md`.
+
 - Model-workflow AI runs through Codex CLI on the owner's laptop using ChatGPT subscription
   authentication. Never introduce API-key inference, paid generation providers, automatic credit
   purchases, or usage-reset redemption as a fallback. Pause/checkpoint on limits. AWS coordinates

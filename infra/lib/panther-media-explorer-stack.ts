@@ -37,6 +37,7 @@ import { TVLibrary } from "./tv-library";
 import { CharacterAppearances } from "./character-appearances";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
+import { BrowserRecordings } from "./browser-recordings";
 
 import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
 
@@ -131,6 +132,10 @@ export class PantherMediaExplorerStack extends Stack {
               "script-src 'self' 'wasm-unsafe-eval'",
               // Exact hash of model-viewer 4.3.1's injected style element.
               "style-src 'self' 'sha256-F7kvx28zBT3UUQL/hTOYst+55RSmqyCY3muSCYmt6A4='",
+              // Radix's portalled Select injects scrollbar-dependent scroll-lock
+              // styles. Permit those style elements without relaxing scripts or
+              // style attributes; their runtime bytes cannot use a fixed hash.
+              "style-src-elem 'self' 'unsafe-inline'",
               "worker-src 'self' blob:",
             ].join("; "),
             override: true,
@@ -154,7 +159,7 @@ export class PantherMediaExplorerStack extends Stack {
           customHeaders: [
             {
               header: "Permissions-Policy",
-              value: "camera=(), geolocation=(), microphone=()",
+              value: "camera=(), geolocation=(), microphone=(self)",
               override: true,
             },
           ],
@@ -473,7 +478,8 @@ export class PantherMediaExplorerStack extends Stack {
     new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
       catalogTable:gameCatalog.table,publishers:accessEnvironment.MODEL_PUBLISHERS});
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
-    new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
     new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/character", "/character-profile", "/character-versions"]) {
       mediaApi.addRoutes({
@@ -599,7 +605,7 @@ export class PantherMediaExplorerStack extends Stack {
       fs.readFileSync(path.join(siteDirectory, "index.html"), "utf8")
         .replace("</head>", '<script src="/release.js" defer></script>\n  </head>'),
       Object.fromEntries([
-        ...["app.js", "styles.css", "release.js"].map(name =>
+        ...["app.js", "styles.css", "release.js", "pcm-capture-v1.js", "ui-runtime.js", "ui-system.css"].map(name =>
           [name, fs.readFileSync(path.join(siteDirectory, name), "utf8")]),
         ["vendor/model-viewer.min.js", fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8")],
       ]),

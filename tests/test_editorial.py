@@ -18,6 +18,7 @@ from test_model_jobs import broker, put, request, unpack  # noqa: F401
 @pytest.fixture
 def editorial(broker, monkeypatch):  # noqa: F811
     monkeypatch.setenv("EDITORIAL_TABLE", "test-jobs")
+    monkeypatch.setenv("CATALOG_READERS", "example-operator,example-editor,example-reader")
     monkeypatch.setenv("EDITORIAL_PLAN", json.dumps(PLAN))
     monkeypatch.delitem(__import__("sys").modules, "editorial_jobs", raising=False)
     return importlib.import_module("editorial_jobs")
@@ -138,6 +139,31 @@ def test_context_excludes_holdouts_adaptations_and_other_games(editorial):
                 "panther": base64.b64encode(json.dumps({"category": category}).encode()).decode(),
             },
         )
+    import browse_index
+
+    db = browse_index.table()
+    db.delete_item(
+        Key={
+            "pk": browse_index.partition("test-game", "all"),
+            "sk": "games/other-game/assets/game-context/original/context.json",
+        }
+    )
+    db.put_item(Item={"pk": f"v{browse_index.VERSION}#catalog", "sk": "ready"})
+    for kind, category in [
+        ("game-context", "reference"),
+        ("test-script", "reference"),
+        ("novel-chapter", "grounded-adaptation"),
+    ]:
+        key = f"games/test-game/assets/{kind}/original/context.json"
+        db.put_item(
+            Item={
+                "pk": browse_index.partition("test-game", "all"),
+                "sk": key,
+                "payload": json.dumps(
+                    {"key": key, "kind": kind, "size": 2, "metadata": {"category": category}}
+                ),
+            }
+        )
     result = m.context_page("test-game", None, 9999999999)
     assert [c["kind"] for c in result["items"]] == ["game-context"]
 
@@ -250,7 +276,8 @@ def test_negation_and_spoken_numbers_are_protected():
             apply_corrections(original, {"edits": [{**edit, "after": replacement}]}, {"catalog"})
 
 
-def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
+@pytest.mark.parametrize("multi_source", [False, True])
+def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch, multi_source):
     original = raw()
     storage = {"raw": original}
     completed = []
@@ -339,6 +366,21 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
         "contextCutoff": 1,
         "raw": {"key": "raw"},
     }
+    if multi_source:
+        second = copy.deepcopy(original)
+        second["segments"][0]["playerId"] = None
+        storage["second.json"] = second
+        storage["selected-context.json"] = {"lore": "Synthetic source fact."}
+        job.update(
+            rawSources=[{"key": "raw"}, {"key": "second.json"}],
+            selectedContext=[{"key": "selected-context.json"}],
+            creation={
+                "schemaVersion": 1,
+                "target": "video",
+                "title": "River crossing",
+                "brief": "A dramatic scene.",
+            },
+        )
     artifacts = {}
     for stage in STAGES:
         worker.process(
@@ -362,10 +404,19 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch):
     assert "Separate synthetic editorial note" not in storage["novel-chapter.md"]
     assert storage["novel-chapter.json"]["payload"]["review"]["uncertainties"]
     assert storage["raw"] == original
-    assert (
-        storage["corrected-transcript.json"]["payload"]["transcript"]["segments"]
-        == original["segments"]
-    )
+    corrected = storage["corrected-transcript.json"]["payload"]["transcript"]
+    if multi_source:
+        assert corrected["sourceTranscripts"][0]["transcript"] == original
+        assert corrected["segments"][1]["playerId"] is None
+        assert (
+            storage["context.json"]["payload"]["evidence"]["selected-context.json"]["content"]
+            == storage["selected-context.json"]
+        )
+        assert "selected-context.json" in storage["context.json"]["sourceKeys"]
+        assert all("second.json" in storage[f"{stage}.json"]["sourceKeys"] for stage in STAGES)
+        assert seen_inputs["video-treatment"]["creation"]["title"] == "River crossing"
+    else:
+        assert corrected["segments"] == original["segments"]
     assert "novel-chapter" not in seen_inputs["video-treatment"]["priorStages"]
     assert storage["video-storyboards.json"]["payload"]["animaticTimeline"][0]["duration"] == 5
     assert (
@@ -561,3 +612,135 @@ def test_cloud_accepts_notes_without_falsifying_review(editorial):
     put(editorial, key, json.dumps(envelope).encode(), "application/json")
     assert unpack(request(editorial, "POST /editorial-jobs/complete", body))["ok"]
     assert editorial.read("TASKS", f"{job['jobId']}:context")["status"] == "DONE"
+
+
+def test_creation_pins_multiple_sources_and_context_idempotently(editorial):
+    m = editorial
+    keys = []
+    for number in range(2):
+        key = f"games/test-game/assets/source-{number}/original/raw.json"
+        value = raw()
+        if number:
+            value.update(entityType="BrowserTranscript", mode="final", sourceKeys=["audio-source"])
+            value["segments"][0]["playerId"] = None
+        put(m, key, json.dumps(value).encode(), "application/json")
+        keys.append(key)
+    context = "games/test-game/assets/context/original/context.json"
+    put(m, context, b"{}", "application/json")
+    import base64
+
+    m.media.s3.put_object(
+        Bucket=m.media.BUCKET_NAME,
+        Key=context,
+        Body=b"{}",
+        ChecksumAlgorithm="SHA256",
+        Metadata={
+            "kind": "game-context",
+            "panther": base64.b64encode(json.dumps({"category": "reference"}).encode()).decode(),
+        },
+    )
+    creation = {
+        "schemaVersion": 1,
+        "target": "novel",
+        "title": "The crossing",
+        "brief": "An intimate point of view.",
+        "sourceKeys": keys,
+        "contextKeys": [context],
+    }
+    first = unpack(
+        request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    second = unpack(
+        request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert first["jobId"] == second["jobId"]
+    assert first["workflowVersion"] == 3
+    assert [ref["key"] for ref in first["rawSources"]] == keys
+    assert first["selectedContext"][0]["key"] == context
+    assert first["videoGenerationAuthorized"] is False
+    creation["brief"] = "A different direction."
+    revised = unpack(
+        request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert revised["jobId"] != first["jobId"]
+    m.internal({"operation": "finish", "jobId": first["jobId"]})
+    assert m.read("RUNS", first["jobId"])["status"] == "NOVEL_READY"
+
+
+def test_creation_rejects_repeated_foreign_or_unfinished_inputs(editorial):
+    m = editorial
+    body, job = submitted(m)
+    creation = {
+        "schemaVersion": 1,
+        "target": "video",
+        "title": "Project",
+        "brief": "",
+        "sourceKeys": [body["rawKey"], body["rawKey"]],
+        "contextKeys": [],
+    }
+    assert (
+        request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})[
+            "statusCode"
+        ]
+        == 400
+    )
+    creation["sourceKeys"] = ["games/other-game/assets/source/original/raw.json"]
+    assert (
+        request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})[
+            "statusCode"
+        ]
+        == 400
+    )
+    value = raw()
+    value.update(entityType="BrowserTranscript", mode="live", sourceKeys=["audio"])
+    key = "games/test-game/assets/source/original/browser.json"
+    put(m, key, json.dumps(value).encode(), "application/json")
+    creation["sourceKeys"] = [key]
+    assert (
+        request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})[
+            "statusCode"
+        ]
+        == 400
+    )
+    assert (
+        request(
+            m,
+            "POST /editorial-jobs",
+            {"gameId": "test-game", "creation": creation},
+            username="unknown-reader",
+        )["statusCode"]
+        == 403
+    )
+
+
+def test_source_bundle_preserves_local_time_unknown_speakers_and_raw_bytes():
+    first = raw()
+    second = raw()
+    second["segments"][0]["playerId"] = None
+    originals = copy.deepcopy([first, second])
+    refs = [{"key": "first"}, {"key": "second"}]
+    bundle = worker.transcript_bundle(
+        [first, second], refs, {"jobId": "a" * 64, "gameId": "test-game", "sessionId": "collection"}
+    )
+    assert [segment["start"] for segment in bundle["segments"]] == [1, 1]
+    assert bundle["segments"][1]["playerId"] is None
+    assert bundle["segments"][1]["sourceKey"] == "second"
+    assert bundle["segments"][1]["sourceSegmentIndex"] == 0
+    assert [first, second] == originals
+    corrected = apply_corrections(bundle, {"edits": [], "uncertainties": []}, {})
+    assert corrected["sourceTranscripts"][1]["transcript"] == second
+
+
+def test_catalog_reader_can_follow_progress_but_cannot_create(editorial):
+    m = editorial
+    body, job = submitted(m)
+    result = unpack(
+        request(m, "GET /editorial-jobs", username="example-reader", query={"jobId": job["jobId"]})
+    )
+    assert result["job"]["jobId"] == job["jobId"]
+    assert "taskToken" not in json.dumps(result)
+    assert request(m, "POST /editorial-jobs", body, username="example-reader")["statusCode"] == 403
+    listed = unpack(
+        request(m, "GET /editorial-jobs", username="example-reader", query={"gameId": "test-game"})
+    )
+    assert [value["jobId"] for value in listed["jobs"]] == [job["jobId"]]

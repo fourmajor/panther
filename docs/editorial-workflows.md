@@ -40,7 +40,7 @@ readable image-and-text review, with a separate audition, not a narrated slidesh
 
 The versioned plan is bundled in the CLI and used by CDK. Every row below is one or more named
 Step Functions callback states, not one giant prompt. Each stage gets a fresh AI session and saves
-JSON provenance plus a readable Markdown artifact. Version 2 resolves routine editorial uncertainty
+JSON provenance plus a readable Markdown artifact. Version 3 retains version 2’s bounded autonomous review and resolves routine editorial uncertainty
 autonomously. Rejection triggers actual revision and fresh review, not a human approval request.
 The corrected transcript then unlocks the two independent adaptation branches.
 
@@ -262,3 +262,40 @@ The user LaunchAgent `place.panther.editorial-worker` processes one stage per mi
 It never mounts/copies AWS or Codex credentials. Inspect with `launchctl print gui/$(id -u)/place.panther.editorial-worker`;
 stop with `launchctl bootout gui/$(id -u)/place.panther.editorial-worker`. Upgrades refuse to silently
 replace a loaded service or existing release. Preserve prior releases/logs when explicitly upgrading.
+
+Browser room transcription produces an unreviewed `BrowserTranscript`, with unassigned speakers
+and window-boundary timestamps. It does not automatically enter the player-attributed editorial
+pipeline. Preserve its raw evidence and capture warnings; establish player identities in a
+separate annotated version before adapting it. See [browser recording](browser-recording.md).
+
+## Browser creation requests (workflow 3)
+
+Novel’s **Generate chapter** and Videos’ **Create video project** select one to eight completed
+raw PlayerTranscript or final BrowserTranscript assets, optional same-game text context, a title
+and an editorial direction. Requests pin every input checksum and size in the immutable job.
+Changing the direction or selected source order creates a separate execution; retrying the exact
+request returns the same execution. The broker rejects provisional/live transcripts, foreign-game
+assets, duplicate selections, excluded hold-out material and adaptation artifacts as context.
+A selected bundle is bounded to 512 KiB so it fits the subscription worker’s prompt limits.
+
+The worker’s read-time multi-source bundle preserves source-local times, player IDs (including
+unassigned speakers), capture warnings, original documents and each segment’s source key/index.
+It does not assert a shared clock or rewrite any raw asset. Every output links all selected raw
+inputs; structured references retain exact immutable pins. Context-selection still obtains an
+independent review, and explicitly selected eligible context remains included in later stages.
+
+Creation requests run correction followed by only the requested novel or screen-planning branch.
+Legacy CLI submissions retain both branches. Screen planning produces story, screenplay, shot
+list, schematic storyboards, generation packets and preflight; it never submits paid clips.
+The browser shows real leased stage progress and completed storyboard output. A new version 3
+worker must be installed before these jobs progress. Existing version 2 jobs and assets remain
+unchanged and retain their original worker protocol; never relabel old artifacts as version 3.
+
+Editorial context browsing queries the versioned materialized catalog in bounded pages. An
+unprepared catalog fails explicitly; there is no source-storage scan fallback. This change
+creates a new execution protocol, not a new asset kind or a rewrite of historical manuscripts.
+
+`GET /editorial-jobs?gameId=...` returns a bounded page of same-game executions with an opaque,
+game-scoped cursor; the browser keeps earlier creation projects accessible after reload. Catalog
+readers can follow jobs and read completed chapters. Creating a job still requires the configured
+publisher capability, and claiming stages still requires the configured worker capability.

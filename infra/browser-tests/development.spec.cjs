@@ -1,0 +1,57 @@
+const {test,expect}=require('@playwright/test');
+const {spawn}=require('node:child_process');
+const fs=require('node:fs');
+const os=require('node:os');
+const path=require('node:path');
+let server,origin,directory;
+test.beforeEach(async()=>{
+  directory=fs.mkdtempSync(path.join(os.tmpdir(),'panther-development-browser-'));
+  server=spawn('python3',[path.resolve(__dirname,'../../tools/dev_server.py'),'--port','0','--database',path.join(directory,'development.sqlite')],{stdio:['ignore','pipe','pipe']});
+  origin=await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(new Error('Development server did not start')),10000);
+    server.once('exit',code=>{clearTimeout(timer);reject(new Error(`Development server exited ${code}`));});
+    server.stdout.on('data',chunk=>{const match=chunk.toString().match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0]);}});
+  });
+});
+test.afterEach(async()=>{if(server && server.exitCode===null) await new Promise(resolve=>{server.once('exit',resolve);server.kill();});if(directory)fs.rmSync(directory,{recursive:true,force:true});});
+
+for(const width of [1280,390]) test(`development data comes from the database and edits survive a reload at ${width}px`,async({page},testInfo)=>{
+  await page.setViewportSize({width,height:900});
+  await page.goto(origin+'/account');
+  await page.getByRole('button',{name:'Regenerate demo data'}).click();
+  await expect(page.getByText('Demo data regenerated.',{exact:true})).toBeVisible();
+  await page.goto(origin+'/games/preview-campaign/settings');
+  await expect(page.locator('#game-name')).toHaveValue('The Lantern Campaign');
+  await page.locator('#game-name').fill('Lantern adventures');
+  await page.getByRole('button',{name:'Save game details'}).click();
+  await expect(page.locator('#game-settings-status')).toContainText('saved');
+  await page.reload();
+  await expect(page.locator('#game-name')).toHaveValue('Lantern adventures');
+  await page.screenshot({path:testInfo.outputPath(`development-settings-${width}.png`),fullPage:true});
+  await expect(page.locator('#game-ruleset')).toBeHidden();
+  await expect(page.locator('#game-purpose')).toBeHidden();
+  await expect(page.locator('#username')).toBeHidden();
+  await expect(page.getByText(/sample data|Example Fantasy System|Your game, your world/i)).toHaveCount(0);
+  await page.goto(origin+'/games/preview-campaign/characters');
+  await page.getByRole('button',{name:'Add character',exact:true}).click();
+  await page.locator('#character-create-form').getByLabel('Character name').fill('Ash Meadow');
+  await page.getByRole('button',{name:'Create character',exact:true}).click();
+  await expect(page.locator('#character-name')).toHaveText('Ash Meadow');
+  await page.reload();
+  await expect(page.locator('#character-name')).toHaveText('Ash Meadow');
+  await page.screenshot({path:testInfo.outputPath(`development-character-${width}.png`),fullPage:true});
+  await page.goto(origin+'/games/preview-campaign/novel');
+  await page.getByRole('button',{name:'Add chapter',exact:true}).click();
+  await page.locator('#manual-chapter-form').getByLabel('Chapter title').fill('The northern gate');
+  await page.locator('#manual-chapter-form').getByLabel('Chapter text').fill('A lantern burned beside the northern gate.');
+  await page.locator('#manual-chapter-form').getByRole('button',{name:'Add chapter',exact:true}).click();
+  await expect(page.locator('#novel-title')).toHaveText('The northern gate');
+  await page.reload();
+  await expect(page.locator('#novel-prose')).toContainText('A lantern burned');
+  await page.screenshot({path:testInfo.outputPath(`development-chapter-${width}.png`),fullPage:true});
+  await page.goto(origin+'/games/preview-campaign/dashboard');
+  await expect(page.locator('#dashboard-recent').getByRole('link',{name:'The northern gate'})).toBeVisible();
+  await expect(page.locator('#dashboard-recent').getByRole('link',{name:'Ash Meadow'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  await page.screenshot({path:testInfo.outputPath(`development-dashboard-${width}.png`),fullPage:true});
+});
