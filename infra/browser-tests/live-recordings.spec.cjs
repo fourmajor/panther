@@ -209,7 +209,7 @@ for (const width of [1280,390]) test(`recording badge stays in recording pages a
   await expect(badge).toBeHidden();
   await page.getByRole('link',{name:'Sessions',exact:true}).click();
   await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
-  for (const section of ['Dashboard','Settings','Characters','Videos','Media']) {
+  for (const section of ['Dashboard','Settings','Characters','Videos','Assets']) {
     await page.getByRole('link',{name:section,exact:true}).click();
     await expect(badge).toBeHidden();
   }

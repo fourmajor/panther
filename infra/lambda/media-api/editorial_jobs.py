@@ -251,6 +251,15 @@ def submit(body):
         creation = body["creation"]
         version = creation.get("schemaVersion") if isinstance(creation, dict) else None
         fields = {"schemaVersion", "target", "title", "brief", "sourceKeys", "contextKeys"}
+        if version == 3:
+            required = {"schemaVersion", "target", "brief", "sourceKeys", "contextKeys"}
+            if not required <= set(creation) <= required | {"title"} or creation["target"] != "novel":
+                raise ValueError("Expected a prompt-led novel request")
+            prompt = creation["brief"]
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError("Choose a chapter prompt")
+            # This is a transparent request label, not a claimed generated title.
+            creation = {**creation, "title": creation.get("title", prompt.strip()[:160])}
         if version == 2:
             required = {
                 "schemaVersion",
@@ -288,7 +297,7 @@ def submit(body):
             not isinstance(creation, dict)
             or set(creation) != fields
             or type(version) is not int
-            or version not in {1, 2}
+            or version not in {1, 2, 3}
             or creation["target"] not in {"novel", "video"}
             or version == 2
             and creation["target"] != "video"
@@ -311,7 +320,7 @@ def submit(body):
                 raise ValueError("Invalid selected characters")
         source_keys, context_keys = creation["sourceKeys"], creation["contextKeys"]
         for keys, minimum, maximum in [
-            (source_keys, 0 if version == 2 else 1, 8),
+            (source_keys, 0 if version in {2, 3} else 1, 8),
             (context_keys, 0, 12),
         ]:
             if (

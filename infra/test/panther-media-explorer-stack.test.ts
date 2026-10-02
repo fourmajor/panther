@@ -582,7 +582,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 113);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 119);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -758,4 +758,13 @@ test("asset generation stores bounded subscription-worker jobs without hosted in
   assert.equal(worker.Properties.Environment.Variables.FAL_KEY,undefined);
   template.resourceCountIs("AWS::EC2::Instance",0);
   template.resourceCountIs("AWS::EC2::NatGateway",0);
+});
+
+test("transcript summaries use authenticated source-pinned subscription worker routes", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"transcript_summaries.handler", Environment:{Variables:Match.objectLike({TRANSCRIPT_SUMMARY_TABLE:Match.anyValue(),MODEL_WORKERS:"example-operator"})}});
+  for (const action of ["GET /transcript-summaries", "POST /transcript-summaries", ...["claim","heartbeat","defer","complete"].map(action=>`POST /transcript-summaries/${action}`)])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:action,AuthorizationType:"JWT"});
+  const fn = (Object.values(template.findResources("AWS::Lambda::Function")) as any[]).find(fn=>fn.Properties.Handler==="transcript_summaries.handler");
+  assert.equal(fn.Properties.Environment.Variables.OPENAI_API_KEY,undefined);
 });

@@ -79,6 +79,7 @@ for(const width of [1280,390]) {
   test(`appearance pairs, portrait-only states and guarded restore at ${width}px`,async({page},testInfo)=>{
     await page.setViewportSize({width,height:900});const control=await fixture(page,{lostResponse:true});
     await page.goto('https://panther.place/games/example-game/characters/hero');
+    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
     await expect(page.locator('#model-version option')).toHaveCount(2);
     await expect(page.locator('#appearance-restore')).toBeDisabled();
     await page.locator('#model-version').selectOption('earlier');

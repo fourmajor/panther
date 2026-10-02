@@ -137,3 +137,9 @@ BRIEFS["video-generation-packets"] += (
     " Preserve map labels/geography/style and identify ambiguous locations as planning uncertainty."
     " This is image-to-video planning, not a landscape shot or authorization for paid execution."
 )
+
+BRIEFS["novel-brief"] += (
+    " For prompt-led novel requests, creation.title is merely the original prompt excerpt until a manuscript title is chosen."
+    " Choose a concise original chapter title from the actual user direction and source-backed chapter content."
+    " Optional absent transcripts stay absent; never invent source speech or factual session history."
+)

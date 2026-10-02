@@ -348,3 +348,76 @@ def test_local_browser_upload_verifies_bytes_and_remains_create_only(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_local_recording_reports_unavailable_services_and_existing_queued_audio(tmp_path):
+    import json
+    import threading
+    from urllib.request import Request, urlopen
+    store = dev.Store(tmp_path / "recording.sqlite")
+    store.seed()
+    store.put("playback", "retained-audio", {"status": "SUBMITTED"}, "preview-campaign")
+    server = dev.Server(("127.0.0.1", 0), store)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_port}"
+    try:
+        def get(path):
+            return json.load(urlopen(Request(origin + path, headers={"Authorization": "Bearer local"})))
+        capability = get("/browser-recording/capabilities")
+        assert capability["canRecord"] and not capability["transcriptionAvailable"] and not capability["playbackAvailable"]
+        assert "not configured" in capability["transcriptionUnavailableReason"]
+        result = get("/browser-transcriptions?gameId=preview-campaign&playbackJobId=retained-audio")
+        assert result["playback"]["status"] == "BLOCKED" and "local development" in result["playback"]["message"]
+        assert result["jobs"] == [] and result["transcriptKey"] is None
+        assert store.get("playback", "retained-audio")["status"] == "SUBMITTED"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_local_transcript_summaries_pin_real_evidence_and_report_missing_worker(tmp_path):
+    import base64
+    import hashlib
+    import json
+    store = dev.Store(tmp_path / "summaries.sqlite")
+    store.seed()
+    key = "games/preview-campaign/assets/speech/original/transcript.json"
+    document = {"schemaVersion": 1, "entityType": "PlayerTranscript", "gameId": "preview-campaign", "recordedAt": "2026-10-01T09:00:00Z", "players": [{"id": "player-1", "name": "Example Player"}], "segments": [{"text": "We reached the gate.", "playerId": "player-1"}, {"text": "It was closed.", "playerId": "player-2", "uncertainty": "quiet"}]}
+    raw = json.dumps(document).encode()
+    with store.connect() as db:
+        db.execute("INSERT INTO objects VALUES (?,?,?,?,?)", (key, "preview-campaign", '{"kind":"raw-transcript"}', raw, "now"))
+    assert store.transcript_summary_view("preview-campaign", key)["status"] == "MISSING"
+    body = {"gameId": "preview-campaign", "key": key}
+    first = store.submit_transcript_summary(body)
+    assert first["status"] == "ATTENTION" and "not configured" in first["message"]
+    assert first["source"] == {"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)}
+    assert first["participants"] == [{"id": "player-1", "name": "Example Player"}, {"id": "player-2"}]
+    assert first["recordedAt"] == document["recordedAt"] and first["summary"] is None
+    second = store.submit_transcript_summary({**body, "operationId": "1" * 32})
+    assert second["jobId"] != first["jobId"]
+    assert store.submit_transcript_summary(body) == second
+    assert store.get("transcript-summary", first["jobId"]) == first
+    assert dev.Store(store.path).transcript_summary_view("preview-campaign", key) == second
+    assert store.object(key)[1] == raw
+    with pytest.raises(ValueError):
+        store.submit_transcript_summary({**body, "gameId": "preview-sandbox"})
+    with pytest.raises(ValueError):
+        store.submit_transcript_summary({**body, "operationId": "bad"})
+
+
+def test_local_novel_accepts_prompt_without_sources_or_title(tmp_path):
+    from types import SimpleNamespace
+    store = dev.Store(tmp_path / "novel.sqlite")
+    store.seed()
+    handler = dev.Handler.__new__(dev.Handler)
+    handler.server = SimpleNamespace(store=store)
+    handler.send = lambda response: response
+    creation = {"schemaVersion": 3, "target": "novel", "brief": "A traveler discovers a lost gate", "sourceKeys": [], "contextKeys": []}
+    body = {"gameId": "preview-campaign", "creation": creation}
+    job = handler.post("/editorial-jobs", body)
+    assert job["creation"]["title"] == creation["brief"]
+    assert handler.post("/editorial-jobs", body) == job
+    with pytest.raises(ValueError, match="prompt"):
+        handler.post("/editorial-jobs", {**body, "creation": {**creation, "brief": ""}})

@@ -177,6 +177,7 @@ def handler(event, _context):
                 {
                     "canRecord": can_record,
                     "transcriptionAvailable": bool(SECRET) and can_record,
+                    "transcriptionUnavailableReason": None if SECRET else "Server transcription is not configured.",
                     "model": MODEL,
                     "chunkSeconds": 15,
                     "maxParts": 1000,

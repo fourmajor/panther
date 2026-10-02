@@ -11,19 +11,21 @@ const characters=[{id:'lantern-guide',characterId:'lantern-guide',name:'Lantern 
 const contextAsset={key:'games/test-game/assets/context/original/lore.json',name:'lore.json',kind:'game-context',metadata:{title:'Campaign lore',category:'reference'}};
 const mapAsset={key:'games/test-game/assets/atlas/original/map.png',name:'map.png',kind:'map',contentType:'image/png',metadata:{title:'Riverlands atlas',category:'reference'}};
 const secondMap={...mapAsset,key:'games/test-game/assets/coast/original/map.png',metadata:{title:'Coastal atlas',category:'reference'}};
-async function fixture(context,{mapScene=false}={}){
+async function fixture(context,{mapScene=false,technicalSources=false}={}){
  const submissions=[],reads=[],sceneWrites=[];
  let sceneRecord={id:sceneRef.sceneId,episodeId:sceneRef.episodeId,name:'A moonlit crossing',description:'',revision:sceneRef.revision,position:0,type:mapScene?'map':'general',mapAssetKey:null};
  await context.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
   const fulfill=value=>route.fulfill({...value,headers:{"access-control-allow-origin":"https://panther.place"}});
   const url=new URL(route.request().url());reads.push(url.pathname);
+  if(url.pathname==='/transcript-summaries')return fulfill({json:{status:'READY',recordedAt:'2026-01-02T18:30:00Z',participants:[{id:'fictional-speaker',name:'Morgan'}],summary:{...(technicalSources?{title:'The river crossing'}:{}),summary:'The companions discuss crossing the river.'}}});
+  if(url.pathname==='/asset-document')return fulfill({json:{document:{players:[{id:'fictional-speaker',name:'Morgan'}],segments:[{playerId:'fictional-speaker',text:'We should cross before sunset.'}]}}});
   if(url.pathname==='/episodes')return fulfill({json:{records:[{id:sceneRef.episodeId,name:'First episode',description:'',revision:'episode-revision',sceneIds:[sceneRef.sceneId]}],cursor:null}});
   if(url.pathname==='/scenes'){if(route.request().method()==='POST'){const body=route.request().postDataJSON();sceneWrites.push(body);sceneRecord={...sceneRecord,...body,revision:'map-scene-revision'};return fulfill({json:{record:sceneRecord}});}return fulfill({json:{records:[sceneRecord],cursor:null}});}
   if(url.pathname==='/video-collections')return fulfill({json:{collections:[],cursor:null}});
   if(url.pathname==='/characters')return fulfill({json:{characters,cursor:null}});
   if(url.pathname==='/object-url')return fulfill({json:{url:'https://maps.example/atlas.png',contentType:'image/png',metadata:url.searchParams.get('key')===secondMap.key?secondMap.metadata:mapAsset.metadata}});
   if(url.pathname==='/assets'&&mapScene&&url.searchParams.get('section')==='all')return fulfill({json:url.searchParams.has('cursor')?{assets:[secondMap],cursor:null}:{assets:[mapAsset,{...mapAsset,key:'games/other-game/assets/foreign/original/map.png',metadata:{title:'Foreign map'}},{...mapAsset,key:'games/test-game/assets/audit/original/image.png',metadata:{title:'Internal audit image',extra:{relationshipRole:'internal'}}},{...mapAsset,key:'games/test-game/assets/svg/original/map.svg',contentType:'image/svg+xml',metadata:{title:'Unsupported SVG'}}],cursor:'map-page-two'}});
-  if(url.pathname==='/assets')return fulfill({json:{assets:url.searchParams.get('section')==='transcripts'?transcripts:url.searchParams.get('section')==='all'?[contextAsset,internalAsset]:[],cursor:null}});
+  if(url.pathname==='/assets')return fulfill({json:{assets:url.searchParams.get('section')==='transcripts'?(technicalSources?transcripts.map(asset=>({...asset,name:'089c592c-47bd-49ad-abcc-447755aa11ff.json',metadata:{title:'089c592c-47bd-49ad-abcc-447755aa11ff.json'},lastModified:'2026-02-01T12:00:00Z'})):transcripts):url.searchParams.get('section')==='all'?[contextAsset,internalAsset]:[],cursor:null}});
   if(url.pathname==='/editorial-jobs'){
    if(route.request().method()==='POST'){submissions.push(route.request().postDataJSON());return fulfill({json:{jobId:'a'.repeat(64),status:'SUBMITTED'}});}
    if(!url.searchParams.has('jobId'))return fulfill({json:{jobs:submissions.map(submission=>({jobId:'a'.repeat(64),creation:{...submission.creation,title:'A moonlit crossing'},createdAt:1,status:'READY_FOR_VIDEO_DISCUSSION'})),cursor:null}});
@@ -47,22 +49,30 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await page.setViewportSize({width,height:900});const{submissions,reads}=await fixture(context);
  await page.goto(`https://panther.place/games/test-game/${target==='novel'?'novel':'videos'}`);
  const composer=page.locator(`#editorial-${target}-composer`);
- await expect(composer).toBeVisible();
  const before=reads.filter(p=>p==='/assets').length;
- await composer.getByRole('button',{name:target==='novel'?'Generate chapter':'Create video project',exact:true}).click();
- await composer.getByLabel('Title',{exact:true}).fill('The crossing');
- await composer.getByLabel('Direction',{exact:true}).fill('Follow the companions across the river.');
+ await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await expect(composer).toBeVisible();
+ await expect(composer.getByLabel('Title',{exact:true})).toHaveCount(0);
+ await expect(composer.getByLabel('Direction',{exact:true})).toHaveCount(0);
+ await composer.getByLabel('Prompt',{exact:true}).fill('Follow the companions across the river.');
+ await expect(composer.getByText('The companions discuss crossing the river.').first()).toBeVisible();
+ await composer.getByRole('button',{name:'Review First session',exact:true}).click();
+ const review=page.getByRole('dialog');await expect(review).toContainText('We should cross before sunset.');await expect(review).toContainText('Morgan');
+ await review.getByRole('button',{name:'Regenerate summary',exact:true}).click();
+ await review.getByRole('button',{name:'Close',exact:true}).click();
  await composer.getByLabel('First session',{exact:true}).check();
  await composer.getByLabel('Second session',{exact:true}).check();
  await composer.getByText('Add context',{exact:true}).click();
  await composer.getByLabel('Campaign lore',{exact:true}).check();
  await expect(composer.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
  const submit=composer.locator('form').getByRole('button',{name:target==='novel'?'Generate chapter':'Create project',exact:true});
- await submit.scrollIntoViewIfNeeded();await expect(submit).toBeInViewport();
+ await expect(submit).toBeInViewport();
+ expect(await submit.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+ await page.screenshot({path:testInfo.outputPath(`editorial-form-${width}.png`),fullPage:true});
  await submit.click();
  await expect(composer).toContainText(target==='novel'?'Chapter ready':'Planning ready');
  expect(submissions).toHaveLength(1);
- expect(submissions[0]).toEqual({gameId:'test-game',creation:{schemaVersion:1,target,title:'The crossing',brief:'Follow the companions across the river.',sourceKeys:transcripts.map(a=>a.key),contextKeys:[contextAsset.key]}});
+ expect(submissions[0]).toEqual({gameId:'test-game',creation:{schemaVersion:3,target,brief:'Follow the companions across the river.',sourceKeys:transcripts.map(a=>a.key),contextKeys:[contextAsset.key]}});
  expect(reads.filter(p=>p==='/assets').length).toBeGreaterThan(before);
  await page.screenshot({path:testInfo.outputPath(`editorial-${target}-${width}.png`)});
 });
@@ -133,4 +143,39 @@ test('A failed map save retains the image and prompt and retries the same operat
  let failedBody;await page.route('https://test.execute-api.us-west-2.amazonaws.com/scenes',route=>{if(route.request().method()==='POST'&&!failedBody){failedBody=route.request().postDataJSON();return route.fulfill({status:503,headers:{'access-control-allow-origin':'https://panther.place'},json:{error:'Map save temporarily unavailable'}});}return route.fallback();});
  await composer.getByRole('button',{name:'Generate',exact:true}).click();await expect(composer).toContainText('Map save temporarily unavailable');expect(submissions).toHaveLength(0);await expect(composer.getByLabel('Prompt',{exact:true})).toHaveValue('Travel from Harbor to Hills');await expect(composer.getByRole('combobox',{name:'Map image',exact:true})).toHaveText('Riverlands atlas');
  await composer.getByRole('button',{name:'Generate',exact:true}).click();await expect(composer).toContainText('Video plan ready');expect(sceneWrites).toEqual([failedBody]);expect(submissions).toHaveLength(1);
+});
+
+for(const width of [1280,390])test(`Novel has one prompt action and supports a chapter without transcripts at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});const {submissions}=await fixture(context);
+ await page.goto('https://panther.place/games/test-game/novel');
+ const action=page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true});
+ await expect(action).toBeVisible();await expect(action).toBeInViewport();
+ expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+ await expect(page.getByRole('button',{name:'Write chapter',exact:true})).toBeHidden();
+ await action.click();const composer=page.locator('#editorial-novel-composer');
+ await expect(composer.locator('textarea')).toHaveCount(1);await expect(composer.getByLabel('Title',{exact:true})).toHaveCount(0);
+ await composer.getByLabel('Prompt',{exact:true}).fill('Describe a fictional sunrise over the harbor.');
+ const generate=composer.locator('form').getByRole('button',{name:'Generate chapter',exact:true});await expect(generate).toBeEnabled();await generate.click();
+ await expect(composer).toContainText('Chapter ready');
+ expect(submissions[0].creation).toEqual({schemaVersion:3,target:'novel',brief:'Describe a fictional sunrise over the harbor.',sourceKeys:[],contextKeys:[]});
+});
+
+for(const width of [1280,390])test(`Transcript picker replaces technical names with reviewed summary titles at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});await fixture(context,{technicalSources:true});
+ await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter'}).click();
+ const composer=page.locator('#editorial-novel-composer');await expect(composer.getByRole('checkbox',{name:'The river crossing'})).toHaveCount(2);
+ await expect(composer).not.toContainText('089c592c');await expect(composer).toContainText('Recorded');await expect(composer).toContainText('Morgan');
+ await composer.getByRole('button',{name:'Review The river crossing'}).first().click();await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('The river crossing');
+});
+
+test('An uncertain summary regeneration retries the same operation',async({page,context})=>{
+ await fixture(context);const operations=[];
+ await context.route('https://test.execute-api.us-west-2.amazonaws.com/transcript-summaries**',route=>{
+  if(route.request().method()==='POST'){operations.push(route.request().postDataJSON().operationId);if(operations.length===1)return route.fulfill({status:503,json:{error:'Connection interrupted'},headers:{'access-control-allow-origin':'https://panther.place'}});}
+  return route.fulfill({json:{status:'READY',participants:[],summary:{summary:'The river crossing.'}},headers:{'access-control-allow-origin':'https://panther.place'}});
+ });
+ await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter'}).click();
+ await page.getByRole('button',{name:'Review First session',exact:true}).click();const dialog=page.getByRole('dialog');
+ await dialog.getByRole('button',{name:'Regenerate summary',exact:true}).click();await dialog.getByRole('button',{name:'Retry summary',exact:true}).click();
+ expect(operations).toHaveLength(2);expect(operations[0]).toMatch(/^[a-f0-9]{32}$/);expect(operations[1]).toBe(operations[0]);
 });

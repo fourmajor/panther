@@ -382,15 +382,16 @@ async function apiRequest(path, parameters = {}, options = {}) {
   for (const [key, value] of Object.entries(parameters)) {
     if (value) url.searchParams.set(key, value);
   }
+  const requestSignal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000);
   let response = await fetch(url, {
-    signal: options.signal,
+    signal: requestSignal,
     method: options.body ? "POST" : "GET",
     body: options.body ? JSON.stringify(options.body) : undefined,
     headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) },
   });
   if (response.status === 401) {
     await ensureSession({ force: true });
-    response = await fetch(url, { signal: options.signal, method: options.body ? "POST" : "GET",
+    response = await fetch(url, { signal: requestSignal, method: options.body ? "POST" : "GET",
       body: options.body ? JSON.stringify(options.body) : undefined,
       headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) } });
   }
@@ -433,7 +434,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|jobs|asset-generation|object-url|image-links)/.test(path);
+  const sensitive = /(?:live|transcriptions|transcript-summaries|jobs|asset-generation|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -558,11 +559,12 @@ function renderBreadcrumbs(prefix) {
     accumulated += `${segment}/`;
     if (accumulated === "games/") continue;
     const destination = accumulated;
-    const button = document.createElement("button");
+    const current = accumulated === prefix;
+    const button = document.createElement(current ? "span" : "button");
     button.className = "crumb";
-    button.type = "button";
+    if(current)button.setAttribute("aria-current","page");else button.type = "button";
     button.textContent = accumulated === `games/${state.gameId}/` ? state.gameDetail?.game.name || segment : segment;
-    button.addEventListener("click", () => loadPrefix(destination));
+    if(!current)button.addEventListener("click", () => loadPrefix(destination));
     elements.breadcrumbs.append(button);
   }
 }
@@ -665,64 +667,40 @@ function navigationArrow() {
 }
 
 function renderDashboard() {
-  const {game, players, memberships, characters} = state.gameDetail;
+  const {game} = state.gameDetail;
   document.getElementById("dashboard-name").textContent = game.name;
-  document.getElementById("dashboard-purpose").textContent = game.purpose === "test" ? "Test game" : "Your campaign";
   document.getElementById("dashboard-description").textContent = state.gameDetail.gameSettings?.description || "";
-  const facts = document.getElementById("dashboard-facts"); facts.replaceChildren();
-  for (const text of [`${players.length} ${players.length === 1 ? "player" : "players"} in the roster`, `${characters.length} ${characters.length === 1 ? "character" : "characters"}`]) {
-    const fact = document.createElement("span"); fact.textContent = text; facts.append(fact);
+  for (const selector of ['#dashboard-purpose','#dashboard-facts','.dashboard-open','#dashboard .dashboard-section-heading','#dashboard .dashboard-bottom','#dashboard-recent']) {
+    document.querySelector(selector)?.setAttribute('hidden','');
   }
-  const sections = [
-    ["characters", "Characters", "Meet the characters and explore their portraits, appearances and stories."],
-    ["sessions", "Sessions", "Record, listen and read your sessions."],
-    ["novel", "Novel", "Explore narrative retellings, chapters and books from your game."],
-    ["videos", "Videos", "Watch episodes, trailers and other creative reimaginings."],
-    ["assets", "Assets", "Maps, blueprints, locations and other assets."],
-  ];
   const cards = document.getElementById("dashboard-sections"); cards.replaceChildren();
-  for (const [index, [section, label, description]] of sections.entries()) {
-    const card = document.createElement("a"); card.className = "dashboard-card"; gameLink(card, section);
-    const top = document.createElement("span"); top.className = "dashboard-card-top";
-    const number = document.createElement("span"); number.className = "dashboard-card-number"; number.textContent = String(index + 1).padStart(2,"0"); number.setAttribute("aria-hidden","true");
-    const arrow = document.createElement("span"); arrow.className = "dashboard-card-arrow"; arrow.append(navigationArrow()); arrow.setAttribute("aria-hidden","true"); top.append(number, arrow);
-    const copy = document.createElement("div"), title = document.createElement("h3"); title.textContent = label; copy.append(title); card.append(top, copy); cards.append(card);
+  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Videos"],["assets","Assets"]]) {
+    const card=document.createElement('section');card.className='dashboard-card';card.dataset.section=section;
+    const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;title.append(link);
+    const list=document.createElement('ul');list.className='dashboard-recent-links';list.setAttribute('aria-label',`Recent ${label.toLowerCase()}`);card.append(title,list);cards.append(card);
   }
-  elements.playerRoster.replaceChildren();
-  for (const player of players) {
-    const member = memberships.find(m => m.playerId === player.id);
-    const row = document.createElement("li"), initial = document.createElement("span"), copy = document.createElement("span"), title = document.createElement("strong"), role = document.createElement("small");
-    initial.className = "crew-initial"; initial.textContent = player.name.split(/\s+/).map(v=>v[0]).join("").slice(0,2); initial.setAttribute("aria-hidden","true");
-    copy.className = "crew-copy"; title.textContent = player.name;
-    role.textContent = member?.role === "dungeon-master" ? "Dungeon Master" : member?.role === "player" ? "Player" : "";
-    copy.append(title, role); row.append(initial, copy); elements.playerRoster.append(row);
-  }
-  if (!players.length) { const row = document.createElement("li"); row.textContent = "No players yet."; elements.playerRoster.append(row); }
-  for (const link of document.querySelectorAll("[data-game-section]")) gameLink(link, link.dataset.gameSection);
 }
 
 async function loadDashboardRecent(epoch) {
-  const host = document.getElementById("dashboard-recent"), gameId = state.gameId;
-  host.replaceChildren(); showLoading(host, "Loading recent activity");
+  const gameId=state.gameId;
   try {
-    const result=await api("/dashboard-recent",{gameId});
-    if(epoch!==routeEpoch || gameId!==state.gameId)return;
-    if(result.complete!==true || !result.groups)throw new Error("Recent activity unavailable");
-    host.replaceChildren();
-    for(const [label,section,key] of [["Characters","characters","characters"],["Transcripts","sessions","transcripts"],["Videos","videos","videos"],["Chapters","novel","chapters"]]) {
-      const panel=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ul");
-      heading.textContent=`Recent ${label.toLowerCase()}`;panel.append(heading,list);host.append(panel);
-      for(const item of result.groups[key]) {
-        const row=document.createElement("li");let link;
-        if(section==="characters"){link=document.createElement("a");link.href=characterPath({...item,gameId});link.textContent=item.name;link.addEventListener("click",event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname);});}
-        else if(section==="novel")link=novelLink(item.title,item.id);
-        else link=assetLink(item,item.title||item.name);
+    const result=await api('/dashboard-recent',{gameId});
+    if(epoch!==routeEpoch||gameId!==state.gameId)return;
+    if(result.complete!==true||!result.groups)throw new Error('Recent activity unavailable');
+    for(const [section,key] of [['characters','characters'],['sessions','transcripts'],['novel','chapters'],['videos','videos'],['assets','assets']]) {
+      const card=document.querySelector(`#dashboard-sections [data-section="${section}"]`),list=card.querySelector('ul');list.replaceChildren();
+      const items=Array.isArray(result.groups[key])?result.groups[key]:[];
+      for(const item of items.slice(0,5)) {
+        const row=document.createElement('li');let link;
+        if(section==='characters'){link=document.createElement('a');link.href=characterPath({...item,gameId});link.textContent=item.name;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname);};}
+        else if(section==='novel')link=novelLink(item.title,item.id);
+        else link=assetLink(item,item.metadata?.title||item.title||item.name);
         row.append(link);list.append(row);
       }
-      if(!list.children.length){const note=document.createElement("li");note.className="recent-empty";note.textContent=`No ${label.toLowerCase()} yet`;list.append(note);}
-      const all=document.createElement("a");gameLink(all,section);all.textContent=`View ${label.toLowerCase()}`;panel.append(all);
+      const count=result.counts?.[key];
+      if(Number.isInteger(count)&&count>items.slice(0,5).length){const row=document.createElement('li'),link=document.createElement('a');gameLink(link,section);link.textContent=`+ ${count-items.slice(0,5).length} more`;row.append(link);list.append(row);}
     }
-  }catch(error){if(epoch===routeEpoch && gameId===state.gameId){host.replaceChildren();const message=document.createElement("p");message.setAttribute("role","status");message.textContent=error.message;host.append(message);}}
+  }catch(error){if(epoch===routeEpoch&&gameId===state.gameId){const host=document.getElementById('dashboard-recent');host.hidden=false;host.textContent=error.message;}}
 }
 
 function applyGameDetail(detail) {
@@ -990,6 +968,17 @@ function setModelControls(enabled) {
   }
 }
 
+function loadProfilePortrait(record,epoch=routeEpoch) {
+  if(!record?.details?.thumbnailAssetKey||new URLSearchParams(location.search).has("appearance")||new URLSearchParams(location.search).has("selection"))return;
+  const key=record.details.thumbnailAssetKey,gameId=record.gameId,characterId=record.characterId;
+  void api("/image-links",{},{body:{gameId,keys:[key]}}).then(result=>{
+    if(epoch!==routeEpoch||state.gameId!==gameId||state.currentCharacter?.characterId!==characterId)return;
+    const url=result.images?.[key]?.url;
+    if(!url)return;
+    const portrait=document.getElementById("character-portrait-only");portrait.src=url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;
+  }).catch(()=>{});
+}
+
 function configureCharacter(profile) {
   resetModelAnimation();
   const { character, model, poster } = profile;
@@ -997,17 +986,16 @@ function configureCharacter(profile) {
   state.currentCharacter = { gameId: character.gameId, characterId: character.id };
   elements.characterName.textContent = character.name;
   const facts = state.currentCharacterFacts;
-  elements.characterTitle.textContent = facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.subtitle || "" : "";
+  elements.characterTitle.textContent = facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.role || "" : "";
   elements.characterSummary.textContent = "";
   document.querySelector("#character-model-area").hidden = !model;
-  document.querySelector("#character-no-model").hidden = Boolean(model);
+  document.querySelector("#character-no-model").hidden = true;
   const portraitOnly = document.querySelector("#character-portrait-only");
-  portraitOnly.hidden = Boolean(model) || !poster;
+  portraitOnly.hidden = !poster;
+  document.getElementById("character-portrait-empty").hidden = Boolean(poster);
   portraitOnly.removeAttribute("src");
-  document.querySelector("#character-no-model").textContent = poster
-    ? "Portrait ready. No 3D model has been published yet."
-    : "No portrait or 3D model has been added yet.";
-  if (!model && poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
+  if (poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
+  if(facts?.gameId===character.gameId&&facts.characterId===character.id)loadProfilePortrait(facts);
   if (!model) {
     elements.characterModel.src = null;
     elements.characterModel.removeAttribute("src");
@@ -1245,36 +1233,37 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
     if (!result.character?.details || !result.character.revision) throw new Error("Character profile is unavailable.");
     const record = result.character;
     state.currentCharacterFacts = record;
+    loadProfilePortrait(record,epoch);
     const render = () => {
       if(record.name)elements.characterName.textContent=record.name;
-      elements.characterTitle.textContent = record.details.subtitle || "";
+      elements.characterTitle.textContent = record.details.role || "";
+      for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
       host.replaceChildren();
       const heading = document.createElement("div"); heading.className = "explorer-heading";
-      const title = document.createElement("h2"); title.textContent = "Character information";
+
       const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button"; edit.textContent = "Edit character information";
-      heading.append(title, edit); host.append(heading);
+      heading.className="profile-edit-action";document.querySelector(".character-bio-heading .profile-edit-action")?.remove();heading.append(edit);document.querySelector(".character-bio-heading").append(heading);
       const facts = document.createElement("dl"); facts.className = "character-fact-grid";
       const membership = state.gameDetail.memberships.filter(m => m.characterIds?.includes(characterId));
       const players = membership.map(m => state.gameDetail.players.find(p => p.id === m.playerId)?.name).filter(Boolean);
-      for (const [label, value] of [["Played by", players.join(", ")], ["Aliases", record.details.aliases.join(", ")],
-        ["Pronouns", record.details.pronouns], ["Role", record.details.role], ["Status", record.details.status]]) {
+      for (const [label, value] of [["Played by", players.join(", ")], ["Status", record.details.status]]) {
         if (!value) continue;
         const row = document.createElement("div"), dt = document.createElement("dt"), dd = document.createElement("dd");
         dt.textContent = label; dd.textContent = value; row.append(dt, dd); facts.append(row);
       }
       host.append(facts);
-      for (const [field, label] of [["overview","Overview"],["backstory","Backstory"],["notes","Notes"]]) if (record.details[field]) {
+      for (const [field, label] of [["backstory","Backstory"]]) if (record.details[field]) {
         const h = document.createElement("h3"), p = document.createElement("p"); h.textContent = label; p.textContent = record.details[field]; p.className = "character-prose"; host.append(h,p);
       }
       if (record.details.statistics.length) {
         const h = document.createElement("h3"); h.textContent = "Statistics"; host.append(h);
         const list = document.createElement("dl"); list.className = "character-fact-grid";
         for (const stat of record.details.statistics) { const row = document.createElement("div"), name = document.createElement("dt"), value = document.createElement("dd");
-          name.textContent = `${stat.group ? `${stat.group} · ` : ""}${stat.name}`; value.textContent = stat.value === null ? "Not recorded" : String(stat.value); row.append(name,value); list.append(row); }
+          name.textContent = stat.name; value.textContent = stat.value === null ? "—" : String(stat.value); row.append(name,value); list.append(row); }
         host.append(list);
       }
       if (record.details.relationships.length) {
-        const h = document.createElement("h3"), list = document.createElement("ul"); h.textContent = "Connections";
+        const h = document.createElement("h3"), list = document.createElement("ul"),panel=document.createElement("section"),toggle=document.createElement("button"); h.textContent = "Connections";panel.hidden=true;toggle.type="button";toggle.className="quiet-button";toggle.textContent="Connections";toggle.setAttribute("aria-expanded","false");toggle.onclick=()=>{panel.hidden=!panel.hidden;toggle.setAttribute("aria-expanded",String(!panel.hidden));};
         for (const ref of record.details.relationships) {
           const li = document.createElement("li"); li.append(document.createTextNode(`${ref.relation} · `));
           const target = ref.entityType === "Character" ? state.gameDetail.characters.find(c => c.id === ref.id) : ref.entityType === "Player" ? state.gameDetail.players.find(p => p.id === ref.id) : null;
@@ -1283,51 +1272,60 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           else li.append(document.createTextNode(target?.name || "Unavailable connection"));
           list.append(li);
         }
-        host.append(h,list);
+        panel.append(h,list);host.append(toggle,panel);
       }
       const history = document.createElement("section"); history.className = "character-change-history";
       const historyHeading = document.createElement("h3"), changes = document.createElement("ol"), more = document.createElement("button");
       historyHeading.textContent = "Change history"; more.textContent = "Load earlier changes"; more.type = "button"; more.className = "quiet-button"; more.hidden = true;
-      history.append(historyHeading,changes,more); host.append(history);
-      void loadCharacterHistory(gameId,characterId,history,epoch);
+      history.hidden = true;
+      const historyToggle = document.createElement("button"); historyToggle.type="button"; historyToggle.className="quiet-button"; historyToggle.textContent="History"; historyToggle.setAttribute("aria-expanded","false"); let historyLoaded=false;historyToggle.onclick=()=>{history.hidden=!history.hidden;historyToggle.setAttribute("aria-expanded",String(!history.hidden));if(!history.hidden&&!historyLoaded){historyLoaded=true;void loadCharacterHistory(gameId,characterId,history,epoch);}};
+      history.append(historyHeading,changes,more); host.append(historyToggle,history);
       edit.onclick = () => editor();
     };
     const editor = () => {
+      document.querySelector(".character-bio-heading .profile-edit-action")?.remove();
+      for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
       host.replaceChildren();
       const form = document.createElement("form"); form.className = "character-edit-form";
-      const h = document.createElement("h2"); h.textContent = "Edit character information"; form.append(h);
+
       const nameLabel = document.createElement("label"), nameInput = document.createElement("input");
       nameLabel.textContent = "Character name"; nameInput.value = record.name; nameInput.required = true; nameInput.maxLength = 120; nameLabel.append(nameInput); form.append(nameLabel);
       const inputs = {};
-      for (const [field,label,max,multi] of [["aliases","Aliases (one per line)",2500,true],["pronouns","Pronouns",80,false],["role","Role",120,false],["status","Status",120,false],["subtitle","Card subtitle",160,false],["overview","Overview",1000,true],["backstory","Backstory",8000,true],["notes","Notes",4000,true]]) {
-        const wrapper = document.createElement("label"), input = document.createElement(multi ? "textarea" : "input");
+      for (const [field,label,max,multi] of [["role","Class / role",120,false],["status","Status",120,false],["backstory","Backstory",8000,true]]) {
+        const wrapper = document.createElement("label"), input = document.createElement(multi ? "textarea" : "select");
         wrapper.textContent = label; input.maxLength = max; input.value = field === "aliases" ? record.details.aliases.join("\n") : record.details[field] || "";
-        input.id = `character-edit-${field}`; wrapper.append(input); form.append(wrapper); inputs[field] = input;
+        if (!multi) {
+          const options=field==="role"?["", "Adventurer", "Fighter", "Rogue", "Ranger", "Wizard", "Cleric", "Bard", "Druid", "Paladin", "NPC"]:["", "Active", "Missing", "Retired", "Deceased"];
+          if(input.value&&!options.includes(input.value))options.push(input.value);
+          const selected=record.details[field]||"";if(selected&&!options.includes(selected))options.push(selected);
+          for(const value of options)input.add(new Option(value||"Not set",value));input.value=selected;
+        }
+        input.id = `character-edit-${field}`; input.setAttribute("aria-label",label); wrapper.append(input); form.append(wrapper); inputs[field] = input;
       }
       const stats = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "Statistics"; stats.append(legend);
       const rows = [];
       const addStat = (stat = {group:null,name:"",value:null}) => {
         const row = document.createElement("div"); row.className = "character-stat-editor";
         const controls = {};
-        for (const label of ["Group","Name","Type","Value"]) { const wrap = document.createElement("label"); wrap.textContent = label; const input = document.createElement(label === "Type" ? "select" : "input");
+        for (const label of ["Name","Value"]) { const wrap = document.createElement("label"); wrap.textContent = label; const input = document.createElement(label === "Type" ? "select" : "input");
           input.setAttribute("aria-label",label);
           if (label === "Type") for (const kind of ["Unknown","Text","Number","Boolean"]) { const option = document.createElement("option"); option.textContent = kind; input.append(option); }
-          else input.maxLength = label === "Group" ? 80 : label === "Name" ? 120 : 500;
+          else input.maxLength = label === "Name" ? 120 : 500;
           wrap.append(input); row.append(wrap); controls[label] = input;
         }
-        controls.Group.value = stat.group || ""; controls.Name.value = stat.name; controls.Value.value = stat.value === null ? "" : String(stat.value);
-        controls.Type.value = stat.value === null ? "Unknown" : typeof stat.value === "number" ? "Number" : typeof stat.value === "boolean" ? "Boolean" : "Text";
+        controls.Name.value = stat.name; controls.Value.value = stat.value === null ? "" : String(stat.value);
+        controls.original=stat;
         const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button"; remove.textContent = "Remove statistic"; remove.onclick = () => {row.remove();};
         row.append(remove); stats.append(row); rows.push({row, ...controls});
       };
       record.details.statistics.forEach(addStat);
       const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button"; add.textContent = "Add statistic"; add.onclick = () => {if (rows.filter(r => r.row.isConnected).length < 100) addStat();}; form.append(stats,add);
-      const relationships = document.createElement("fieldset"), connectionsLegend = document.createElement("legend"); connectionsLegend.textContent = "Connections"; relationships.append(connectionsLegend);
+      const relationships = document.createElement("fieldset"), connectionsLegend = document.createElement("legend"); connectionsLegend.textContent = "Relationships"; relationships.append(connectionsLegend);
       const connectionRows = [], connectionHelp = document.createElement("p");
       let connectionAssets = [];
       const populateTargets = (row, chosen = row.target.value) => {
         row.target.replaceChildren();
-        const none = document.createElement("option"); none.value = ""; none.textContent = "Choose a reference"; row.target.append(none);
+        const none = document.createElement("option"); none.value = ""; none.textContent = "Choose player"; row.target.append(none);
         const targets = row.type.value === "Character" ? state.gameDetail.characters.map(c=>({id:c.id,name:c.name}))
           : row.type.value === "Player" ? state.gameDetail.players.map(p=>({id:p.id,name:p.name}))
           : connectionAssets.map(a=>({id:a.key,name:a.metadata?.title || a.name}));
@@ -1335,23 +1333,23 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         for (const target of targets) {const option = document.createElement("option"); option.value = target.id; option.textContent = target.name; row.target.append(option);}
         row.target.value = chosen;
       };
-      const addConnection = (ref = {entityType:"Character",id:"",relation:""}) => {
+      const addConnection = (ref = {entityType:"Player",id:"",relation:""}) => {
         const element = document.createElement("div"); element.className = "character-connection-editor";
-        const type = document.createElement("select"), target = document.createElement("select"), relation = document.createElement("input");
-        for(const kind of ["Character","Player","Asset"]) {const option = document.createElement("option");option.value=kind;option.textContent=kind;type.append(option);}
-        type.value=ref.entityType; relation.value=ref.relation; relation.maxLength=120; relation.placeholder="e.g. Ally, Portrait reference";
-        for(const [label,input] of [["Reference type",type],["Reference",target],["Relationship",relation]]) {const wrap=document.createElement("label");wrap.textContent=label;wrap.append(input);element.append(wrap);}
+        const type = document.createElement("select"), target = document.createElement("select"), relation = document.createElement("select");
+        for(const kind of (ref.id ? [ref.entityType] : ["Player"])) {const option = document.createElement("option");option.value=kind;option.textContent=kind;type.append(option);}
+        type.value=ref.entityType;type.hidden=true;for(const value of ["","Ally","Sibling of","Enemy of","Parent of","Child of",...(ref.relation?[ref.relation]:[])].filter((value,index,all)=>all.indexOf(value)===index))relation.add(new Option(value||"Choose relationship",value));relation.value=ref.relation;
+        for(const [label,input] of [["Reference type",type],["Player",target],["Relationship",relation]]) {const wrap=document.createElement("label");wrap.textContent=label;input.setAttribute("aria-label",label);wrap.append(input);if(input===type)wrap.hidden=true;element.append(wrap);}
         const row={element,type,target,relation}; populateTargets(row,ref.id); type.onchange=()=>populateTargets(row,"");
-        const remove=document.createElement("button");remove.type="button";remove.className="quiet-button";remove.textContent="Remove connection";remove.onclick=()=>element.remove();element.append(remove);
-        connectionRows.push(row);relationships.append(element);
+        const remove=document.createElement("button");remove.type="button";remove.className="quiet-button";remove.textContent="Remove relationship";remove.onclick=()=>element.remove();element.append(remove);
+        connectionRows.push(row);relationships.append(element);window.PantherUI.enhanceSelect(target,"Player");window.PantherUI.enhanceSelect(relation,"Relationship");
       };
-      record.details.relationships.forEach(addConnection);
-      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add connection";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
+      record.details.relationships.filter(ref=>ref.entityType==="Player").forEach(addConnection);
+      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add relationship";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
       form.append(relationships,addConnectionButton,connectionHelp);
-      const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Character-list thumbnail";
+      const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Profile portrait";
       const none = document.createElement("option"); none.value = ""; none.textContent = "No thumbnail"; cover.append(none);
       if (record.details.thumbnailAssetKey) {const selected = document.createElement("option"); selected.value = record.details.thumbnailAssetKey; selected.textContent = "Current selected thumbnail"; cover.append(selected);}
-      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); form.append(coverWrap);
+      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); const uploadPortrait=document.createElement("button");uploadPortrait.type="button";uploadPortrait.className="quiet-button";uploadPortrait.textContent="Upload portrait";uploadPortrait.onclick=()=>document.getElementById("character-portrait-file").click();form.append(coverWrap,uploadPortrait);
       void allAssets(gameId).then(assets=>{if (!current() || !cover.isConnected) return;
         connectionAssets = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" || a.metadata?.category === "reference");
         for(const row of connectionRows) if(row.type.value === "Asset")populateTargets(row);
@@ -1359,11 +1357,11 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           const option = document.createElement("option"); option.value = asset.key; option.textContent = asset.metadata.title || asset.name; cover.append(option);
         }
       }).catch(()=>{if (cover.isConnected) connectionHelp.textContent += " Thumbnail inventory could not be loaded; existing selection remains available.";});
-      const reasonWrap = document.createElement("label"), reason = document.createElement("input"); reasonWrap.textContent = "Reason for change"; reason.required = true; reason.maxLength = 500; reasonWrap.append(reason); form.append(reasonWrap);
+
       const buttons = document.createElement("div"), save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p");
       buttons.className = "model-control-row"; save.type = "submit"; save.className = "primary-button"; save.textContent = "Save character information";
       cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel edit"; status.setAttribute("role","status");
-      cancel.onclick = render; buttons.append(save,cancel); form.append(buttons,status); host.append(form);
+      cancel.onclick = render; buttons.append(save,cancel); form.append(buttons,status); host.append(form);for(const select of form.querySelectorAll("select:not([hidden])"))window.PantherUI.enhanceSelect(select,select.getAttribute("aria-label")||"Profile portrait");
       let pending = null;
       form.onsubmit = async event => {
         event.preventDefault(); save.disabled = true;
@@ -1371,20 +1369,23 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           if (!pending) {
             const details = structuredClone(record.details);
             for (const [field,input] of Object.entries(inputs)) details[field] = field === "aliases" ? input.value.split("\n").map(s=>s.trim()).filter(Boolean) : input.value.trim() || null;
-            details.relationships = connectionRows.filter(r=>r.element.isConnected).map(row=>{
-              if (!row.target.value || !row.relation.value.trim()) throw new Error("Choose a reference and describe its relationship.");
+            details.relationships = [...record.details.relationships.filter(ref=>ref.entityType!=="Player"), ...connectionRows.filter(r=>r.element.isConnected && (r.target.value || r.relation.value.trim())).map(row=>{
+              if (!row.target.value || !row.relation.value.trim()) throw new Error("Choose a player and relationship, or remove this row.");
               return {entityType:row.type.value,id:row.target.value,relation:row.relation.value.trim()};
-            });
+            })];
             details.thumbnailAssetKey = cover.value || null;
-            details.statistics = rows.filter(r=>r.row.isConnected).map(r => {
-              let value = r.Value.value.trim();
-              if (r.Type.value === "Unknown") value = null;
-              else if (r.Type.value === "Number") { if (!value || !Number.isFinite(Number(value))) throw new Error("Enter a valid numeric statistic."); value = Number(value); }
-              else if (r.Type.value === "Boolean") { if (!["true","false"].includes(value)) throw new Error("Boolean statistics must be true or false."); value = value === "true"; }
-              return {group:r.Group.value.trim() || null,name:r.Name.value.trim(),value};
+            details.statistics = rows.filter(r=>r.row.isConnected && (r.Name.value.trim() || r.Value.value.trim())).map(r => {
+              const text=r.Value.value.trim(),original=r.original;
+              if(!r.Name.value.trim())throw new Error("Name this statistic or remove it.");
+              let value=text||null;
+              if(text&&typeof original.value==="number"&&Number.isFinite(Number(text)))value=Number(text);
+              else if(text&&typeof original.value==="boolean"&&["true","false"].includes(text))value=text==="true";
+              else if(text&&original.value===null&&/^-?\d+(\.\d+)?$/.test(text))value=Number(text);
+              else if(original.value===null&&["true","false"].includes(text))value=text==="true";
+              return {group:original.group||null,name:r.Name.value.trim(),value};
             });
             pending = {gameId,characterId,name:nameInput.value.trim(),mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,
-              operationId:crypto.randomUUID().replaceAll("-",""),reason:reason.value.trim(),dryRun:false};
+              operationId:crypto.randomUUID().replaceAll("-",""),reason:`Updated ${Object.keys(details).filter(key=>JSON.stringify(details[key])!==JSON.stringify(record.details[key])).join(", ") || "profile"}${nameInput.value.trim()!==record.name?" and name":""}`,dryRun:false};
           }
           for (const control of form.querySelectorAll("input,textarea,select,fieldset,button")) control.disabled = true;
           showLoading(status,"Saving the guarded character revision…");
@@ -1403,7 +1404,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
             pending = null;
             for (const c of form.querySelectorAll("input,textarea,select,fieldset,button")) c.disabled = false;
             save.textContent = "Save character information";
-            status.textContent = `${error.message}. Correct the fields and try again.`;
+            status.textContent = error.message;
             return;
           }
           status.textContent = error.status === 409 ? "Another update changed this character. Cancel to review the latest version." : `${error.message}. Retry saves the same revision.`;
@@ -1421,9 +1422,67 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
   }
 }
 
+function generateCharacterPortrait(gameId,characterId,epoch) {
+  const record=state.currentCharacterFacts,status=document.getElementById("character-portrait-status");
+  if(!record){status.textContent="Wait for the profile to load.";return;}
+  let form=document.getElementById("character-portrait-generation");if(form){form.hidden=!form.hidden;return;}
+  form=document.createElement("form");form.id="character-portrait-generation";form.className="character-edit-form";
+  const label=document.createElement("label"),prompt=document.createElement("textarea");label.textContent="Portrait direction";prompt.required=true;prompt.maxLength=4000;prompt.placeholder="Appearance, clothing, pose…";label.append(prompt);
+  const submit=document.createElement("button");submit.className="primary-button";submit.textContent="Generate portrait";submit.type="submit";form.append(label,submit);document.querySelector(".character-heading").append(form);
+  let request=null,job=null,saveBody=null;
+  const current=()=>epoch===routeEpoch&&state.currentCharacter?.characterId===characterId;
+  const poll=async()=>{
+    if(!current())return;
+    try {
+      job=await api("/asset-generation",{gameId,jobId:job.jobId});
+      if(!current())return;
+      if(job.status==="PUBLISHED"){
+        const asset=await api("/object-url",{key:job.assetKey});
+        if(!sameGameKey(job.assetKey)||!asset.metadata?.characterIds?.includes(characterId))throw new Error("Generated portrait does not match this character.");
+        saveBody ||= {gameId,characterId,name:record.name,mode:"edit",details:{...record.details,thumbnailAssetKey:job.assetKey},expectedRevision:record.revision,expectedSourceHash:null,operationId:crypto.randomUUID().replaceAll("-",""),reason:"Selected generated profile portrait",dryRun:false};
+        await api("/character-details",{},{body:saveBody});
+        if(!current())return;assetIndex=null;await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);form.remove();status.textContent="";return;
+      }
+      if(job.status==="ATTENTION"){status.textContent=job.message||"Portrait generation needs attention.";return;}
+      status.textContent=job.status==="QUEUED"?"Portrait queued":"Generating portrait…";setTimeout(()=>void poll(),4000);
+    }catch(error){if(current()){status.textContent=error.message;submit.textContent="Continue portrait";submit.disabled=false;}}
+  };
+  form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{if(!job){request ||= {gameId,type:"portrait",characterId,name:`${record.name} portrait`,prompt:prompt.value.trim(),operationId:crypto.randomUUID().replaceAll("-","")};job=await api("/asset-generation",{},{body:request});prompt.disabled=true;}void poll();}catch(error){if(current()){status.textContent=error.message;submit.disabled=false;submit.textContent="Retry portrait request";}}};prompt.focus();
+}
+
+async function uploadCharacterPortrait(gameId,characterId,file,epoch) {
+  if(!file)return;
+  const status=document.getElementById("character-portrait-status"),button=document.getElementById("character-portrait-upload"),record=state.currentCharacterFacts;
+  if(!record || record.characterId!==characterId){status.textContent="Wait for the profile to load.";return;}
+  button.disabled=true;
+  try {
+    if(!["image/png","image/jpeg","image/webp"].includes(file.type)||file.size>20*1024**2||!file.size)throw new Error("Choose a PNG, JPEG or WebP under 20 MiB.");
+    const bytes=await file.arrayBuffer(),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)))),operationId=crypto.randomUUID().replaceAll("-","");
+    status.textContent="Uploading portrait…";
+    const signed=await api("/uploads",{},{body:{gameId,assetId:`portrait-${operationId}`,kind:"portrait",filename:file.name,size:file.size,contentType:file.type,sha256,metadata:{title:`${record.name} portrait`,category:"reference",characterIds:[characterId],extra:{relationshipRole:"finished",generation:{schemaVersion:1,method:"unknown",cost:{status:"unknown"}}}}}});
+    const headers={...signed.headers};delete headers["Content-Length"];delete headers["content-length"];
+    const uploaded=await fetch(signed.url,{method:"PUT",headers,body:bytes,signal:AbortSignal.timeout(45000)});if(!uploaded.ok)throw new Error("Portrait upload failed.");
+    const verified=await api("/object-url",{key:signed.key});if(verified.sha256!==sha256||verified.size!==file.size)throw new Error("Portrait verification failed.");
+    const details={...record.details,thumbnailAssetKey:signed.key};
+    await api("/character-details",{},{body:{gameId,characterId,name:record.name,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,operationId,reason:"Uploaded profile portrait",dryRun:false}});
+    if(epoch!==routeEpoch)return;
+    const portrait=document.getElementById("character-portrait-only");portrait.src=verified.url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;
+    assetIndex=null;await window.PantherUI.invalidate(apiScope(),["/assets","/characters","/character-details","/character-details/history","/dashboard-recent"],gameId);
+    await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);status.textContent="";
+  }catch(error){if(epoch===routeEpoch)status.textContent=error.message;}
+  finally{if(epoch===routeEpoch)button.disabled=false;}
+}
+
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   state.currentCharacterFacts = null;
+  for(const button of document.querySelectorAll("[data-character-panel]")){const panel=document.getElementById(button.dataset.characterPanel);panel.hidden=true;button.setAttribute("aria-expanded","false");button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute("aria-expanded",String(!panel.hidden));if(!panel.hidden&&panel.id==="character-assets")void loadCharacterAssets(gameId,characterId,epoch);if(!panel.hidden&&panel.id==="character-appearance-panel"&&!state.appearanceVersions)void loadAppearanceVersions(gameId,characterId,epoch);};}
+  const portraitStatus=document.getElementById("character-portrait-status");portraitStatus.textContent="";
+  document.getElementById("character-portrait-upload").onclick=()=>document.getElementById("character-portrait-file").click();
+  document.getElementById("character-portrait-file").value="";
+  document.getElementById("character-portrait-file").onchange=event=>void uploadCharacterPortrait(gameId,characterId,event.target.files?.[0],epoch);
+  document.getElementById("character-portrait-generation")?.remove();
+  document.getElementById("character-portrait-generate").onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
   document.getElementById("characters-more").hidden = true;
   document.getElementById("character-create").hidden = true;
   document.getElementById("character-create-form").hidden = true;
@@ -1441,7 +1500,6 @@ async function loadCharacter(gameId, characterId) {
   elements.characterProfile.hidden = false;
   elements.charactersStatus.hidden = false;
   showLoading(elements.charactersStatus, "Fetching portrait…");
-  void loadCharacterAssets(gameId,characterId,epoch);
   try {
     const params=new URLSearchParams(location.search);
     const profile = await api("/character", { gameId, characterId,
@@ -1450,8 +1508,7 @@ async function loadCharacter(gameId, characterId) {
     configureCharacter(profile);
     elements.characterProfile.hidden = false;
     elements.charactersStatus.hidden = true;
-    void loadAppearanceVersions(gameId, characterId, epoch);
-    void loadCharacterAssets(gameId, characterId, epoch);
+    if(params.has("appearance")||params.has("selection")||params.has("model")){document.getElementById("character-appearance-panel").hidden=false;document.querySelector('[data-character-panel="character-appearance-panel"]').setAttribute("aria-expanded","true");void loadAppearanceVersions(gameId,characterId,epoch);}
   } catch (error) {
     if (epoch !== routeEpoch) return;
     if (error.message !== "Session expired") {
@@ -2667,7 +2724,7 @@ async function loadNovel(chapterId, epoch) {
         const section=document.createElement("section"), heading=document.createElement("h2"), synopsis=document.createElement("p");heading.textContent=story.title;synopsis.textContent=story.synopsis;section.append(heading,synopsis);
         for(const book of books)section.append(bookCard(book,story,byKey,current));if(!books.length){const empty=document.createElement("p");empty.textContent="No books organized yet.";section.append(empty);}novel.list.append(section);}
       if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
-      const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters · source editions";novel.list.append(sourceHeading);
+      if(ordered.length&&organization.stories.length){const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters";novel.list.append(sourceHeading);}
       novel.status.hidden = Boolean(ordered.length || organization.stories.length);
       novel.status.textContent = "No chapters yet.";
       for (const [index, chapter] of ordered.entries()) {
@@ -2825,7 +2882,7 @@ function renderEpisodeWorkspace(epoch) {
   const episodes=[],scenes=[];let selectedEpisode=null,selectedScene=null,sceneGeneration=0;
   const toolbar=document.createElement('div'),heading=document.createElement('h2'),episodeCards=document.createElement('div'),episodeStatus=document.createElement('p'),editor=document.createElement('div'),detail=document.createElement('section');
   toolbar.className='episode-toolbar';heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');detail.className='episode-detail';detail.hidden=true;
-  const create=button('Create episode',()=>edit('episode'),true);toolbar.append(heading,create);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
+  const create=button('Create episode',()=>edit('episode'),true);create.id='episode-create-action';parent.querySelector('#episode-create-action')?.remove();parent.querySelector('.explorer-heading').append(create);toolbar.append(heading);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
   const params=()=>new URLSearchParams(location.search);
   const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);for(const [name,value] of Object.entries({episode:episodeId,scene:sceneId,view:null,series:null,episodeRevision:null})){if(value)url.searchParams.set(name,value);else url.searchParams.delete(name);}history.replaceState(null,'',url);};
   const clearEditor=()=>{for(const native of editor.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);editor.replaceChildren();};
@@ -3969,8 +4026,8 @@ class RoomRecorder {
         const held=await navigator.locks?.query();
         if(held?.held.some(lock=>lock.name==='panther-room-capture')) {this.say('Another tab is using the room recorder.',true);this.el.start.disabled=true;return;}
         const drafts=await this.store('drafts','getAll');
-        this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived').sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
-        if(this.draft) {if(this.draft.status==='recording'){this.draft.status='interrupted';this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');}await this.persist();this.showResult('Not saved','error');this.el.recovery.hidden=false;this.say('Audio is saved in this browser. Retry saving or download it.',true);}
+        this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner()).sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
+        if(this.draft) {if(this.draft.status==='archived'){this.processingStarted=this.draft.processingStarted || Date.now();this.showResult('Audio saved','ready');this.el.resume.hidden=true;this.el.recovery.hidden=false;this.el.download.hidden=false;this.transcriptionAvailability();this.schedulePoll();}else {if(this.draft.status==='recording'){this.draft.status='interrupted';this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');}await this.persist();this.showResult('Not saved','error');this.el.recovery.hidden=false;this.say('Audio is saved in this browser. Retry saving or download it.',true);}}
         await this.listRetained();
         this.liveEnabled=!!this.capabilities.transcriptionAvailable;
       }
@@ -4090,14 +4147,15 @@ class RoomRecorder {
     this.draft.manifestDoc=doc;await this.persist();
     const manifest=await this.put(new Blob([JSON.stringify(doc)],{type:'application/json'}),'recording.json','recording-manifest',{recordingId:this.draft.id});
     const completed=await api('/browser-recording/complete',{}, {body:{gameId:this.draft.gameId,recordingKey:manifest.key,manifestSha256:manifest.hex,status:'COMPLETE'}});
-    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;await this.persist();this.buttons();this.say('Audio saved.');this.showResult('Preparing audio…');
+    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;this.draft.processingStarted=Date.now();this.processingStarted=this.draft.processingStarted;await this.persist();this.buttons();this.say('Audio saved.');this.showResult(this.capabilities?.playbackAvailable===false?'Audio saved':'Preparing audio…',this.capabilities?.playbackAvailable===false?'ready':'processing');this.transcriptionAvailability();
     this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;this.schedulePoll();
     if(this.capabilities?.transcriptionAvailable) {
       this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='processing';this.el['final-status'].textContent='Transcribing…';
       try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'final',playbackJobId:completed.jobId}});this.draft.finalRequested=true;await this.persist();this.schedulePoll();}
-      catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say('Audio saved. Retry to finish transcription.',true);this.buttons();}
+      catch(error) {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say(`Audio saved. ${error.message || 'Transcription request failed.'} Retry to finish transcription.`,true);this.buttons();}
     }
   }
+  transcriptionAvailability() {if(!this.capabilities?.transcriptionAvailable){this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='unavailable';this.el['final-status'].textContent=config.development?'Transcription unavailable locally':'Transcription not configured';this.el['final-status'].title=this.capabilities?.transcriptionUnavailableReason || 'Server transcription is not configured.';}}
   showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=true;this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
   schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
   async poll() {
@@ -4108,9 +4166,11 @@ class RoomRecorder {
       for(const mode of ['live',...(this.draft.finalRequested?['final']:[])]) {
         const result=await api('/browser-transcriptions',{gameId:draft.gameId,recordingId:draft.id,mode,...(draft.playbackJobId?{playbackJobId:draft.playbackJobId}:{})});
         if(this.draft!==draft || state.gameId!==draft.gameId || !state.tokens) return;
+        if(this.pollError){this.pollError=false;this.say('');}
         if(result.playback) {
-          const playback=result.playback;pending ||= !['DONE','FAILED'].includes(playback.status);
-          this.showResult(playback.status==='DONE'?'Audio ready':playback.status==='FAILED'?'Audio processing failed':'Preparing audio…',playback.status==='DONE'?'ready':playback.status==='FAILED'?'error':'processing');
+          const playback=result.playback, blocked=['FAILED','BLOCKED','DEFERRED'].includes(playback.status), queued=['SUBMITTED','QUEUED'].includes(playback.status), delayed=Date.now()-(this.processingStarted || Date.now())>600000;pending ||= !['DONE','FAILED','BLOCKED','DEFERRED'].includes(playback.status);
+          this.showResult(playback.status==='DONE'?'Audio ready':blocked?'Audio saved':queued?'Audio saved · Waiting for processing':delayed?'Audio saved · Processing delayed':'Preparing audio…',playback.status==='DONE'||blocked?'ready':queued||delayed?'waiting':'processing');
+          if(blocked){this.say(playback.message || 'Audio processing failed. Original audio is saved and can be downloaded.',true);this.el.recovery.hidden=false;this.el.resume.hidden=true;this.el.download.hidden=false;}
           if(playback.audioKey && this.audioKey!==playback.audioKey) {const link=await api('/object-url',{key:playback.audioKey});if(this.draft!==draft || state.gameId!==draft.gameId) return;this.audioKey=playback.audioKey;this.el.audio.src=link.url;this.el.audio.hidden=false;this.el.result.insertBefore(this.el.audio,this.el['final-link']);}
         }
         pending ||= result.jobs.some(job=>['SUBMITTED','RUNNING'].includes(job.status));
@@ -4120,14 +4180,14 @@ class RoomRecorder {
           }
           if(result.jobs.some(job=>job.status==='UNKNOWN')) this.say('Some live transcription outcomes are unknown. Audio is retained; paid requests will not be repeated automatically.',true);
         } else {
-          const blocked=result.playback?.status==='FAILED' || result.jobs.some(job=>['UNKNOWN','FAILED'].includes(job.status));
+          const blocked=['FAILED','BLOCKED','DEFERRED'].includes(result.playback?.status) || result.jobs.some(job=>['UNKNOWN','FAILED'].includes(job.status));
           pending ||= !result.transcriptKey && !blocked;
-          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':blocked?'error':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':blocked?'Transcription unavailable':'Transcribing…';
+          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':blocked?'error':Date.now()-(this.processingStarted || Date.now())>120000?'waiting':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':blocked?'Transcription unavailable':Date.now()-(this.processingStarted || Date.now())>120000?'Audio saved · Transcription delayed':'Transcribing…';
           if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}
         }
       }
       if(this.recording || pending) this.pollTimer=setTimeout(()=>void this.poll(),5000);
-    } catch {if(this.draft===draft && state.tokens) this.pollTimer=setTimeout(()=>void this.poll(),15000);}
+    } catch(error) {if(this.draft===draft && state.tokens){if(draft.playbackJobId){this.pollError=true;this.showResult('Audio saved · Status unavailable','waiting');this.say(`Unable to check processing. ${error.message || 'Service unavailable.'} Checking again automatically.`,true);}else if(this.recording)this.say('Live transcription is temporarily unavailable. Recording continues.',true);this.pollTimer=setTimeout(()=>void this.poll(),15000);}}
   }
   async download() {
     if(!this.draft) return;
@@ -4406,6 +4466,32 @@ async function restoreSceneVideoProgress(scene,host,gameId,epoch) {
 function openSceneVideoComposer(scene, epoch, onSceneSaved) {
   renderEditorialComposer('video', epoch, scene, onSceneSaved);
 }
+function transcriptSourceChoice(asset,destination,selected,updateSubmit,gameId,current) {
+  const row=document.createElement('div');row.className='editorial-source-choice';
+  const label=document.createElement('label'),input=document.createElement('input'),copy=document.createElement('span'),title=document.createElement('strong'),meta=document.createElement('span'),summary=document.createElement('span');
+  let name='Session';input.type='checkbox';input.value=asset.key;input.setAttribute('aria-label',name);title.textContent=name;copy.className='editorial-source-copy';meta.className='editorial-source-meta';copy.append(title,meta,summary);label.append(input,copy);row.append(label);
+  input.onchange=()=>{input.checked?selected.add(asset.key):selected.delete(asset.key);updateSubmit();};
+  let record=null,reviewSummary=null,reviewCaption=null,review=null,observedSessionName=null,summaryError='';
+  const humanTitle=value=>typeof value==='string'&&value.trim()&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
+  const render=()=>{
+    const recordedAt=record?.recordedAt||asset.metadata?.recordedAt,date=recordedAt||asset.lastModified,timestamp=date?new Date(date):null;
+    const formatted=timestamp&&!Number.isNaN(timestamp.valueOf())?timestamp.toLocaleString():null;
+    name=humanTitle(record?.summary?.title)||humanTitle(observedSessionName)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
+    title.textContent=name;input.setAttribute('aria-label',name);review?.setAttribute('aria-label',`Review ${name}`);if(reviewCaption?.isConnected)reviewCaption.textContent=name;
+    const participants=record?.participants||asset.transcript?.participants||[],characters=record?.characters||[];
+    meta.textContent=[formatted?`${recordedAt?'Recorded':'Uploaded'} ${formatted}`:null,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    summary.textContent=record?.summary?.summary||summaryError||(['QUEUED','GENERATING'].includes(record?.status)?'Preparing summary…':record?.status==='ATTENTION'?'Summary needs attention':'');if(reviewSummary?.isConnected)reviewSummary.textContent=summary.textContent;
+  };render();
+  review=document.createElement('button');review.type='button';review.className='quiet-button editorial-source-review';review.textContent='Review';review.setAttribute('aria-label',`Review ${name}`);row.append(review);destination.append(row);
+  const load=async()=>{if(!current()||!row.isConnected||row.closest('form')?.hidden)return;try{const result=await api('/transcript-summaries',{gameId,key:asset.key});if(!current()||!row.isConnected)return;record=result;summaryError='';render();if(result.status==='MISSING'){record=await api('/transcript-summaries',{},{body:{gameId,key:asset.key}});if(current())render();}if(['QUEUED','GENERATING'].includes(record?.status))window.setTimeout(load,4000);}catch{summaryError='Summary unavailable';render();}};void load();
+  review.onclick=async()=>{
+    const dialog=document.createElement('dialog');dialog.className='transcript-source-review';const heading=document.createElement('header'),caption=document.createElement('h2'),close=document.createElement('button'),description=document.createElement('p'),regenerate=document.createElement('button'),speech=document.createElement('div'),status=document.createElement('p');caption.textContent=name;reviewCaption=caption;close.type='button';close.className='quiet-button';close.textContent='Close';close.onclick=()=>dialog.close();heading.append(caption,close);description.textContent=record?.summary?.summary||'';reviewSummary=description;regenerate.type='button';regenerate.className='quiet-button';regenerate.textContent='Regenerate summary';speech.className='source-utterances';status.setAttribute('role','status');dialog.append(heading,description,regenerate,status,speech);document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.showModal();
+    let pendingRegeneration=null;
+    regenerate.onclick=async()=>{regenerate.disabled=true;pendingRegeneration||={gameId,key:asset.key,operationId:crypto.randomUUID().replaceAll('-','')};try{record=await api('/transcript-summaries',{},{body:pendingRegeneration});pendingRegeneration=null;regenerate.textContent='Regenerate summary';if(!current()||!dialog.isConnected)return;render();description.textContent=record.summary?.summary||'';status.textContent=record.status==='READY'?'':'Summary queued';if(['QUEUED','GENERATING'].includes(record.status))window.setTimeout(load,4000);}catch(error){if(error.status===400)pendingRegeneration=null;status.textContent=error.message;regenerate.textContent='Retry summary';}finally{regenerate.disabled=false;}};
+    try{const detail=await api('/asset-document',{gameId,key:asset.key});if(!current()||!dialog.isConnected){dialog.close();return;}const doc=detail.document,transcript=doc?.payload?.transcript||doc;observedSessionName=transcript?.sessionName||doc?.sessionName;render();const players=new Map((transcript?.players||[]).map(person=>[person.id,person.name]));for(const segment of transcript?.segments||[]){const p=document.createElement('p'),speaker=document.createElement('strong');speaker.textContent=players.get(segment.playerId)||segment.playerId||'';if(speaker.textContent)p.append(speaker,document.createTextNode(': '));p.append(document.createTextNode(segment.text||''));speech.append(p);}if(!speech.children.length)status.textContent='Transcript text unavailable';}catch(error){status.textContent=error.message;}
+  };
+}
+
 function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () => {}) {
   if(target==='video'&&!scene){const old=document.getElementById('editorial-video-composer');if(old)old.hidden=true;return;}
   const gameId=state.gameId, key=`${gameId}:${target}:${scene?.sceneId||scene?.id||''}`;
@@ -4420,9 +4506,10 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     if(existing)void showEditorialProgress(existing.jobId,existing.progress,gameId,target);
     return;
   }
+  if(target==='novel')parent.querySelector('.explorer-heading > button[data-generation-action]')?.remove();
   host.dataset.key=key;host.replaceChildren();
   const current=()=>state.gameId===gameId&&host.dataset.key===key&&host.isConnected;
-  const open=document.createElement('button');open.type='button';open.className='primary-button';open.textContent=target==='novel'?'Generate chapter':'Generate video';host.append(open);
+  const open=document.createElement('button');open.type='button';open.className='primary-button';open.dataset.generationAction='true';open.textContent=target==='novel'?'Generate chapter':'Generate video';host.append(open);if(target==='novel')parent.querySelector('.explorer-heading').append(open);
   const panel=document.createElement('div');panel.className='editorial-creation-panel';panel.hidden=true;host.append(panel);
   const projects=document.createElement('div');projects.className='editorial-existing-projects';host.append(projects);
   const loadProjects=async(cursor)=>{
@@ -4438,14 +4525,14 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
   open.onclick=async()=>{
     if(panel.dataset.project==='true'){panel.replaceChildren();panel.dataset.project='false';panel.hidden=true;}
     panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
+    if(target==='novel')open.hidden=!panel.hidden;
     if(panel.hidden||panel.childNodes.length)return;
     const form=document.createElement('form'), fields=document.createElement('div'), status=document.createElement('p');status.setAttribute('role','status');
     const field=(label,multiline=false)=>{const wrapper=document.createElement('label'), caption=document.createElement('span'), input=document.createElement(multiline?'textarea':'input');caption.textContent=label;wrapper.append(caption,input);fields.append(wrapper);return input;};
     const isVideo=target==='video';
-    const title=isVideo?null:field('Title');if(title){title.required=true;title.maxLength=160;}
-    const brief=field(isVideo?'Prompt':'Direction',true);brief.maxLength=4000;brief.required=isVideo;
+        const brief=field('Prompt',true);brief.maxLength=4000;brief.required=true;
     const isMap=isVideo&&scene.type==='map';
-    brief.placeholder=isMap?'The travelers move from the city to the badlands…':isVideo?'Describe the scene you want to create…':'Tone, point of view, and what to focus on';
+    brief.placeholder=isMap?'The travelers move from the city to the badlands…':isVideo?'Describe the scene you want to create…':'Describe the chapter you want to create…';
     if(isVideo)brief.value=[scene.name||scene.title,scene.description].filter(Boolean).join('\n\n');
     const selected=new Set(), selectedContext=new Set(), selectedCharacters=new Set();
     const cast=document.createElement('fieldset'),castLegend=document.createElement('legend'),castOptions=document.createElement('div'),castPreview=document.createElement('p');
@@ -4456,10 +4543,10 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
     const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
     if(isMap)references.insertBefore(cast,sources);
-    if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else form.append(fields,sources,references,submit,status);
+    if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
     panel.append(form);
-    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!selected.size;};brief.addEventListener('input',updateSubmit);if(map)map.start();
-    const choices=(assets,destination,set)=>{for(const asset of assets){const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
+    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
+    const choices=(assets,destination,set)=>{for(const asset of assets){if(!isVideo&&destination===sources){transcriptSourceChoice(asset,destination,set,updateSubmit,gameId,current);continue;}const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
       showLoading(status,'Loading sources…');
       try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
@@ -4486,7 +4573,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     }
     let pendingMap=null;
     form.onsubmit=async event=>{
-      event.preventDefault();if(isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!selected.size)return;
+      event.preventDefault();if(isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim())return;
       if(selected.size>8||selectedContext.size>12||selectedCharacters.size>12){status.textContent='Choose up to 8 transcripts and 12 characters.';return;}
       const controls=[...form.querySelectorAll('input,textarea,select,button')];for(const control of controls)control.disabled=true;status.textContent=isVideo?'Preparing video…':'Starting chapter…';
       try {
@@ -4494,7 +4581,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
           pendingMap||={gameId,id:scene.id,episodeId:scene.episodeId,name:scene.name,description:scene.description||'',type:'map',mapAssetKey:map.value(),selectedOutputKey:scene.selectedOutputKey||null,expectedRevision:scene.revision,operationId:crypto.randomUUID().replaceAll('-','')};
           const saved=await api('/scenes',{},{body:pendingMap});if(!current())return;scene=saved.record;pendingMap=null;onSceneSaved(scene);
         }
-        const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
+        const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:3,target,brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
         const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
         if(!current())return;form.hidden=true;open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
         const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);

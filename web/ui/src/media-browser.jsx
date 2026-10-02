@@ -17,7 +17,7 @@ export function MediaBrowser({prefix, gameName, gameId, folders=[], files=[], lo
   const table=useReactTable({data,columns,state:{globalFilter:search,sorting},onGlobalFilterChange:setSearch,onSortingChange:setSorting,getCoreRowModel:getCoreRowModel(),getFilteredRowModel:getFilteredRowModel(),getSortedRowModel:getSortedRowModel()});
   const parts=prefix.split('/').filter(Boolean), crumbs=parts.slice(1).map((part,i)=>({name:i===0?gameName:part,key:parts.slice(0,i+2).join('/')+'/'}));
   return <div className="media-browser">
-    <nav aria-label="Current folder" className="media-path">{crumbs.map((c,i)=><React.Fragment key={c.key}>{i>0&&<span aria-hidden="true">/</span>}<Button variant="ghost" type="button" onClick={()=>onFolder(c.key)} aria-current={i===crumbs.length-1?'location':undefined}>{c.name}</Button></React.Fragment>)}</nav>
+    <nav aria-label="Current folder" className="media-path">{crumbs.map((c,i)=><React.Fragment key={c.key}>{i>0&&<span aria-hidden="true">/</span>}<>{i===crumbs.length-1?<span className="media-current-folder" aria-current="location">{c.name}</span>:<Button variant="ghost" type="button" onClick={()=>onFolder(c.key)}>{c.name}</Button>}</></React.Fragment>)}</nav>
     <div className="media-toolbar"><label><span className="sr-only">Search this folder</span><Input type="search" placeholder="Search this folder" value={search} onChange={e=>setSearch(e.target.value)}/></label><span role="status">{table.getRowModel().rows.length} items</span></div>
     {error&&<p role="alert">{error}</p>}
     <div className="media-table-scroll" aria-busy={loading}>

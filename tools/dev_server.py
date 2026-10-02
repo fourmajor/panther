@@ -307,18 +307,92 @@ class Store:
             rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? ORDER BY created DESC", (game,)).fetchall()
         return [{"key": key, "name": key.rsplit("/", 1)[-1], "metadata": json.loads(meta), "contentType": json.loads(meta).get("contentType", "application/octet-stream"), "kind": json.loads(meta).get("kind", "other"), "size": size, "lastModified": created} for key, meta, size, created in rows]
 
+    def transcript_summary_source(self, game, key):
+        self.game(game)
+        if not isinstance(key, str) or not re.fullmatch(rf"games/{re.escape(game)}/assets/[a-z0-9-]+/original/[^/\\]+\.json", key):
+            raise ValueError("Choose a structured same-game transcript")
+        with self.connect() as db:
+            row = db.execute("SELECT data FROM objects WHERE key=? AND game=?", (key, game)).fetchone()
+        if not row:
+            raise LookupError("Transcript not found")
+        raw = row[0]
+        if not 0 < len(raw) <= 2 * 1024**2:
+            raise ValueError("Transcript exceeds the summary source limit")
+        doc = json.loads(raw)
+        if not isinstance(doc, dict):
+            raise ValueError("Choose a structured transcript object")
+        if doc.get("entityType") == "EditorialArtifact" and doc.get("stage") == "corrected-transcript":
+            doc = doc.get("payload", {}).get("transcript", {}) if isinstance(doc.get("payload"), dict) else {}
+        if not isinstance(doc, dict) or doc.get("entityType") not in {"PlayerTranscript", "BrowserTranscript"} or doc.get("gameId") != game or not isinstance(doc.get("segments"), list) or not doc["segments"] or any(not isinstance(segment, dict) or not isinstance(segment.get("text"), str) for segment in doc["segments"]):
+            raise ValueError("Choose completed structured speech")
+        if doc.get("entityType") == "BrowserTranscript" and doc.get("mode") != "final":
+            raise ValueError("Live speech is not completed transcript evidence")
+        return {"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)}, doc
+
+    def transcript_summary_view(self, game, key):
+        reference, doc = self.transcript_summary_source(game, key)
+        pointer_id = game + ":" + hashlib.sha256(key.encode()).hexdigest()
+        pointer = self.get("summary-source", pointer_id) or {}
+        job = self.get("transcript-summary", pointer.get("jobId", ""))
+        if not job or job["source"] != reference:
+            return {"schemaVersion": 1, "gameId": game, "key": key, "jobId": None, "status": "MISSING", "source": reference, "summary": None, "participants": [], "recordedAt": None, "assetKey": None}
+        previous = self.get("transcript-summary", pointer.get("readyJobId", ""))
+        if not job.get("summary") and previous and previous["source"] == reference:
+            job = {**job, **{field: previous.get(field) for field in ("summary", "assetKey", "participants", "recordedAt")}}
+        return job
+
+    def submit_transcript_summary(self, body):
+        if not isinstance(body, dict) or not {"gameId", "key"} <= set(body) <= {"gameId", "key", "operationId"}:
+            raise ValueError("Choose a transcript")
+        game, key = body["gameId"], body["key"]
+        reference, doc = self.transcript_summary_source(game, key)
+        operation = body.get("operationId", "initial")
+        if operation != "initial" and (not isinstance(operation, str) or not re.fullmatch(r"[a-f0-9]{32}", operation)):
+            raise ValueError("Invalid regeneration operation")
+        identity = hashlib.sha256(json.dumps({"schemaVersion": 1, "source": reference, "operationId": operation}, sort_keys=True).encode()).hexdigest()
+        pointer_id = game + ":" + hashlib.sha256(key.encode()).hexdigest()
+        participants = []
+        for player in doc.get("players", []) if isinstance(doc.get("players"), list) else []:
+            if isinstance(player, dict) and isinstance(player.get("id", player.get("playerId")), str):
+                participants.append({"id": player.get("id", player.get("playerId")), **({"name": player["name"]} if isinstance(player.get("name"), str) else {})})
+        declared = {player["id"] for player in participants}
+        for segment in doc["segments"]:
+            player = segment.get("playerId")
+            if isinstance(player, str) and player not in declared:
+                participants.append({"id": player})
+                declared.add(player)
+        with self.connect() as db:
+            existing = db.execute("SELECT payload FROM records WHERE kind='transcript-summary' AND id=?", (identity,)).fetchone()
+            if not existing:
+                pointer_row = db.execute("SELECT payload FROM records WHERE kind='summary-source' AND id=?", (pointer_id,)).fetchone()
+                pointer = json.loads(pointer_row[0]) if pointer_row else {}
+                previous = self.get("transcript-summary", pointer.get("readyJobId", ""))
+                job = {"schemaVersion": 1, "gameId": game, "key": key, "jobId": identity, "source": reference, "operationId": operation, "status": "ATTENTION", "message": "Summary generation is not configured in local development.", "createdAt": int(time.time()), "participants": participants, "recordedAt": next((doc[field] for field in ("recordedAt", "startedAt", "capturedAt") if isinstance(doc.get(field), str)), None), "summary": None, "assetKey": None, "previousSummaryKey": previous.get("assetKey") if previous and previous["source"] == reference else None}
+                inserted = db.execute("INSERT OR IGNORE INTO records VALUES ('transcript-summary',?,?,?)", (identity, game, json.dumps(job)))
+                if inserted.rowcount:
+                    db.execute("INSERT OR REPLACE INTO records VALUES ('summary-source',?,?,?)", (pointer_id, game, json.dumps({**pointer, "jobId": identity})))
+        return self.transcript_summary_view(game, key)
+
     def submit_asset_generation(self, body):
-        if not isinstance(body, dict) or set(body) != {"gameId", "type", "name", "prompt", "operationId"}:
+        if not isinstance(body, dict) or set(body) != {"gameId", "type", "name", "prompt", "operationId"} | ({"characterId"} if body.get("type") == "portrait" else set()):
             raise ValueError("Choose an asset type, name and prompt")
         game = self.game(body["gameId"])
-        if body["type"] not in {"map", "blueprint", "location"} or not isinstance(body["operationId"], str) or not re.fullmatch(r"[a-f0-9]{32}", body["operationId"]):
+        if body["type"] not in {"map", "blueprint", "location", "portrait"} or not isinstance(body["operationId"], str) or not re.fullmatch(r"[a-f0-9]{32}", body["operationId"]):
             raise ValueError("Invalid generation operation or asset type")
         for field, maximum in (("name", 160), ("prompt", 4000)):
             if not isinstance(body[field], str) or not 1 <= len(body[field].strip()) <= maximum:
                 raise ValueError("Choose an asset name and prompt")
+        character_reference = None
+        if body["type"] == "portrait":
+            record = self.get("character", body["gameId"] + ":" + str(body.get("characterId")))
+            if not record:
+                raise ValueError("Choose an initialized same-game character")
+            character_reference = {"characterId": record["characterId"], "name": record["name"], "revision": record["revision"], "details": record["details"]}
+            if len(json.dumps(character_reference).encode()) > 64000:
+                raise ValueError("Character details exceed the portrait request limit")
         request = {**body, "schemaVersion": 1}
         identity = hashlib.sha256(json.dumps({"gameId": body["gameId"], "operationId": body["operationId"]}, sort_keys=True).encode()).hexdigest()
-        job = {**request, "jobId": identity, "status": "QUEUED", "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True}
+        job = {**request, "jobId": identity, "status": "QUEUED", "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True, **({"characterReference": character_reference} if character_reference else {})}
         with self.connect() as db:
             db.execute("INSERT OR IGNORE INTO records VALUES ('asset-generation',?,?,?)", (identity, body["gameId"], json.dumps(job)))
         saved = self.get("asset-generation", identity)
@@ -448,8 +522,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/game":
                 result = store.game(game)
             elif path == "/dashboard-recent":
+                production_asset_views()
+                import asset_metadata
                 assets = store.objects(game)
-                groups = {"characters": store.list("character", game), "transcripts": [a for a in assets if "transcript" in a["kind"]], "videos": [a for a in assets if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game)}
+                groups = {"characters": store.list("character", game), "transcripts": [a for a in assets if "transcript" in a["kind"]], "videos": [a for a in assets if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game), "assets": [a for a in assets if a["contentType"].startswith("image/") and not asset_metadata.internal(a["kind"]) and not a.get("lineageWarning") and a["metadata"].get("extra", {}).get("relationshipRole") not in {"processing", "intermediate", "internal"}]}
                 for values in groups.values():
                     values.sort(key=lambda value: str(value.get("updatedAt", value.get("publishedAt", value.get("lastModified", "")))), reverse=True)
                 result = {"complete": True, "groups": {k: v[:5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
@@ -499,6 +575,8 @@ class Handler(BaseHTTPRequestHandler):
                 game = prefix.split("/")[1]
                 assets = [a for a in store.objects(game) if a["key"].startswith(prefix)]
                 result = {"objects": [a for a in assets if "/" not in a["key"][len(prefix):]], "prefixes": sorted({prefix + a["key"][len(prefix):].split("/")[0] + "/" for a in assets if "/" in a["key"][len(prefix):]}), "nextCursor": None}
+            elif path == "/transcript-summaries":
+                result = store.transcript_summary_view(game, q["key"])
             elif path == "/asset-generation":
                 if q.get("jobId"):
                     result = store.get("asset-generation", q["jobId"])
@@ -512,9 +590,11 @@ class Handler(BaseHTTPRequestHandler):
                 meta, raw = store.object(q["key"])
                 result = {"key": q["key"], "kind": meta.get("kind", "unclassified"), "filename": q["key"].rsplit("/", 1)[-1], "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "url": self.origin + "/development/object?key=" + q["key"], "size": len(raw), "metadata": meta, "expiresIn": None, "contentType": meta.get("contentType", "application/octet-stream")}
             elif path == "/browser-recording/capabilities":
-                result = {"canRecord": True, "transcriptionAvailable": False, "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
+                result = {"canRecord": True, "transcriptionAvailable": False, "transcriptionUnavailableReason": "Transcription is not configured in local development.", "playbackAvailable": False, "playbackUnavailableReason": "Playback processing is not configured in local development.", "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
             elif path == "/browser-transcriptions":
                 job = store.get("playback", q.get("playbackJobId", ""))
+                if job and job.get("status") == "SUBMITTED":
+                    job = {**job, "status": "BLOCKED", "message": "Playback processing is not configured in local development."}
                 result = {"jobs": [], "transcriptKey": None, **({"playback": job} if job else {})}
             elif path == "/novel":
                 result = {"chapters": store.list("chapter", game), "cursor": None}
@@ -620,7 +700,12 @@ class Handler(BaseHTTPRequestHandler):
             game, creation = body["gameId"], body["creation"]
             store.game(game)
             video = creation.get("schemaVersion") == 2 and creation.get("target") == "video"
-            if not video and (creation.get("schemaVersion") != 1 or creation.get("target") != "novel" or not 1 <= len(creation["sourceKeys"]) <= 8):
+            prompt_novel = creation.get("schemaVersion") == 3 and creation.get("target") == "novel"
+            if prompt_novel:
+                if not isinstance(creation.get("brief"), str) or not 1 <= len(creation["brief"].strip()) <= 4000 or any(not isinstance(creation.get(field), list) or len(creation[field]) > maximum or any(not isinstance(value, str) for value in creation[field]) or len(set(creation[field])) != len(creation[field]) for field, maximum in (("sourceKeys", 8), ("contextKeys", 12))):
+                    raise ValueError("Enter a prompt and choose valid optional sources")
+                creation = {**creation, "title": creation["brief"].strip()[:160]}
+            if not video and not prompt_novel and (creation.get("schemaVersion") != 1 or creation.get("target") != "novel" or not 1 <= len(creation["sourceKeys"]) <= 8):
                 raise ValueError("Choose completed transcripts")
             if video:
                 if not isinstance(creation.get("brief", ""), str) or len(creation.get("brief", "")) > 4000 or any(not isinstance(creation.get(field), list) or len(creation[field]) > limit or any(not isinstance(value, str) for value in creation[field]) or len(set(creation[field])) != len(creation[field]) for field, limit in (("sourceKeys", 8), ("characterIds", 12), ("contextKeys", 12))):
@@ -678,6 +763,10 @@ class Handler(BaseHTTPRequestHandler):
                 db.execute("INSERT INTO records VALUES ('chapter',?,?,?)", (identity, game, json.dumps(chapter)))
                 db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, json.dumps(body), json.dumps(response)))
             return self.send(response, status=201)
+        if path == "/transcript-summaries":
+            return self.send(store.submit_transcript_summary(body))
+        if path.startswith("/transcript-summaries/"):
+            return self.send({"error": "Summary workers are not configured in local development; source speech is preserved."}, status=501)
         if path == "/asset-generation":
             return self.send(store.submit_asset_generation(body))
         if path.startswith("/asset-generation/"):
@@ -696,7 +785,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Audio checksum mismatch")
             identity = hashlib.sha256(raw).hexdigest()
             # Source recording is durable. Real derivatives need the laptop playback worker.
-            store.put("playback", identity, {"status": "SUBMITTED"}, body["gameId"])
+            store.put("playback", identity, {"status": "BLOCKED", "message": "Playback processing is not configured in local development."}, body["gameId"])
             return self.send({"jobId": identity, "workflowVersion": 2})
         return self.send({"error": "This operation requires the live Panther service."}, status=501)
 

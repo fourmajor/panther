@@ -300,9 +300,10 @@ def test_publication_verifies_uploaded_image_and_worker_only_resume(generation):
     )
 
 
+@pytest.mark.parametrize("asset_type", ["map", "portrait"])
 @pytest.mark.parametrize("reported_model", [None, "Synthetic Tool Image v1"])
 def test_publication_uses_supported_upload_and_hidden_request_lineage(
-    tmp_path, monkeypatch, reported_model
+    tmp_path, monkeypatch, reported_model, asset_type
 ):
     import click
 
@@ -329,9 +330,26 @@ def test_publication_uses_supported_upload_and_hidden_request_lineage(
         "name": "Harbor",
         "prompt": "A map",
     }
+    if asset_type == "portrait":
+        job.update(
+            type="portrait",
+            characterId="hero",
+            characterReference={
+                "characterId": "hero",
+                "name": "River Scout",
+                "revision": "a" * 32,
+                "details": {"backstory": "Fictional scout"},
+            },
+        )
     key = worker.publish({}, job, tmp_path, file)
     assert len(records) == 2
     spec, image = records
+    assert image["metadata"]["characterIds"] == (["hero"] if asset_type == "portrait" else [])
+    if asset_type == "portrait":
+        assert (
+            json.loads((tmp_path / "generation.json").read_text())["characterReference"]
+            == job["characterReference"]
+        )
     assert spec["kind"] == "generation-provenance"
     assert spec["metadata"]["extra"]["relationshipRole"] == "intermediate"
     assert image["metadata"]["sourceKeys"] == [key.replace("image.png", "generation.json")]
@@ -386,3 +404,52 @@ def test_worker_process_uses_lock_and_reports_verified_publication(tmp_path, mon
     worker.process({}, tmp_path, {"job": {"jobId": "a" * 64}, "lease": "fictional-lease"})
     assert calls[-1][0][2] == "/asset-generation/complete"
     assert calls[-1][1]["json"]["assetKey"].endswith("image.png")
+
+
+def test_portrait_request_pins_registered_character_and_rejects_other_game(generation):
+    catalog = boto3.resource("dynamodb").Table("narrative-games")
+    details = {"backstory": "A fictional river scout", "statistics": []}
+    catalog.put_item(
+        Item={
+            "pk": "GAME#test-game",
+            "sk": "CHARACTER#hero",
+            "gameId": "test-game",
+            "id": "hero",
+            "name": "River Scout",
+            "detailsRevision": "a" * 32,
+            "detailsJson": json.dumps(details),
+        }
+    )
+    body = request(type="portrait", characterId="hero", prompt="A river scout portrait")
+    job = unpack(call(generation, body=body))
+    assert job["characterReference"] == {
+        "characterId": "hero",
+        "name": "River Scout",
+        "revision": "a" * 32,
+        "details": details,
+    }
+    catalog.update_item(
+        Key={"pk": "GAME#test-game", "sk": "CHARACTER#hero"},
+        UpdateExpression="SET detailsRevision=:r",
+        ExpressionAttributeValues={":r": "b" * 32},
+    )
+    assert unpack(call(generation, body=body))["characterReference"] == job["characterReference"]
+    assert (
+        call(generation, body=request(type="portrait", characterId="missing"))["statusCode"] == 400
+    )
+    assert call(generation, body=request(characterId="hero"))["statusCode"] == 400
+
+
+def test_asset_worker_rejects_git_and_home_before_authentication(tmp_path, monkeypatch):
+    import click
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / ".git").write_text("gitdir: elsewhere")
+    monkeypatch.setattr(
+        worker.cloud, "configuration", lambda: pytest.fail("Must reject before authentication")
+    )
+    for root in [checkout / "private-jobs", Path.home(), Path("/")]:
+        with pytest.raises(click.ClickException, match="outside a Git checkout"):
+            worker.run_worker(root, True)
+    assert not (checkout / "private-jobs").exists()

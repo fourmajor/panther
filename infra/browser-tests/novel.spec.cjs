@@ -430,13 +430,14 @@ for (const width of [1280,390]) test(`typed narrative links and character appear
   await prose.getByRole('link',{name:'The navigator',exact:true}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-name')).toHaveText('Mira Vale');
+  await page.getByRole('button',{name:'Media & references',exact:true}).click();
   const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
   await appearance.scrollIntoViewIfNeeded();
   await accessibleInViewport(appearance,width);
   await page.screenshot({path:test.info().outputPath(`character-assets-${width}.png`),fullPage:true});
   await appearance.click(); await expect(page.locator('#preview-body img')).toBeVisible();
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.reload(); await expect(appearance).toBeVisible();
+  await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click(); await expect(appearance).toBeVisible();
 });
 
 test('ambiguous titles, explicit disambiguation, missing and hostile targets are safe',async({page})=>{
@@ -484,14 +485,14 @@ test('character assets use tags across kinds, not names or provenance; refresh e
     {...base,key:'games/campaign-a/assets/c/original/video.mp4',metadata:{title:'Untagged derived video'},sourceKeys:['games/campaign-a/assets/a/original/video.mp4']},
   ];
   await page.route(`${api}/assets*`,route=>broken?route.fulfill({headers,status:503,json:{error:'Unavailable'}}):route.fulfill({headers,json:{assets,cursor:null}}));
-  await page.goto(`${origin}/games/campaign-a/characters/mira`);
+  await page.goto(`${origin}/games/campaign-a/characters/mira`);await page.getByRole("button",{name:"Media & references",exact:true}).click();
   await expect(page.locator('#character-assets-status')).toContainText('Unavailable');
-  broken=false; await page.reload();
+  broken=false; await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click();
   await expect(page.locator('#character-assets-list a')).toHaveCount(1);
   await expect(page.locator('#character-assets-list')).toContainText('Tagged video');
   let release, arrived; const waiting=new Promise(r=>{arrived=r;});
   await page.route(`${api}/assets*`,async route=>{arrived(); await new Promise(r=>{release=r;}); await route.fulfill({headers,json:{assets,cursor:null}});});
-  await page.reload(); await waiting;
+  await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click(); await waiting;
   await selectGame(page,'test-b'); release();
   await expect(page).toHaveURL(`${origin}/games/test-b/characters`);
   await expect(page.locator('#character-profile')).not.toBeVisible();
@@ -505,9 +506,9 @@ test('migrated metadata refreshes character associations without changing the fi
     key, name:'map.png', contentType:'image/png', kind:'map', sourceKeys:[], lastModified:'2026-01-01T00:00:00Z',
     metadata:{schemaVersion:1,title:'Harbor chart',category:'reference',characterIds:migrated?['mira']:[],tags:[],sourceKeys:[],extra:{relationshipRole:'finished'}}
   }],cursor:null}}));
-  await page.goto(`${origin}/games/campaign-a/characters/mira`);
+  await page.goto(`${origin}/games/campaign-a/characters/mira`);await page.getByRole("button",{name:"Media & references",exact:true}).click();
   await expect(page.locator('#character-assets-list a')).toHaveCount(0);
-  migrated=true; await page.reload();
+  migrated=true; await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click();
   const link=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute('href',`/games/campaign-a/media?asset=${encodeURIComponent(key)}`);
@@ -537,7 +538,8 @@ for(const width of [1280,390]) test(`manually add a chapter and preserve its ear
     return record?route.fulfill({headers,json:record}):route.fallback();
   });
   await page.goto(`${origin}/games/campaign-a/novel`);
-  await page.getByRole('button',{name:'Add chapter',exact:true}).click();
+  await page.locator('#novel .chapter-secondary-actions summary').click();
+  await page.getByRole('button',{name:'Write chapter',exact:true}).click();
   const form=page.locator('#manual-chapter-form');
   await form.getByLabel('Chapter title').fill('The River');
   await form.getByLabel('Chapter text').fill('An explicitly authored story.');

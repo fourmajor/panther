@@ -41,7 +41,8 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.locator('#character-name')).toHaveText('Ash Meadow');
   await page.screenshot({path:testInfo.outputPath(`development-character-${width}.png`),fullPage:true});
   await page.goto(origin+'/games/preview-campaign/novel');
-  await page.getByRole('button',{name:'Add chapter',exact:true}).click();
+  await page.locator('#novel .chapter-secondary-actions summary').click();
+  await page.getByRole('button',{name:'Write chapter',exact:true}).click();
   await page.locator('#manual-chapter-form').getByLabel('Chapter title').fill('The northern gate');
   await page.locator('#manual-chapter-form').getByLabel('Chapter text').fill('A lantern burned beside the northern gate.');
   await page.locator('#manual-chapter-form').getByRole('button',{name:'Add chapter',exact:true}).click();
@@ -66,8 +67,8 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.getByText('The northern gate',{exact:true}).first()).toBeVisible();
   await expect(page.locator('#scene-work-progress')).toContainText('Processing');
   await page.goto(origin+'/games/preview-campaign/dashboard');
-  await expect(page.locator('#dashboard-recent').getByRole('link',{name:'The northern gate'})).toBeVisible();
-  await expect(page.locator('#dashboard-recent').getByRole('link',{name:'Ash Meadow'})).toBeVisible();
+  await expect(page.locator('#dashboard-sections').getByRole('link',{name:'The northern gate'})).toBeVisible();
+  await expect(page.locator('#dashboard-sections').getByRole('link',{name:'Ash Meadow'})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   await page.screenshot({path:testInfo.outputPath(`development-dashboard-${width}.png`),fullPage:true});
 });

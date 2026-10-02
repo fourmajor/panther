@@ -109,11 +109,12 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     });
     await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'test'}))+'.test'})));
     await page.goto('https://panther.place/characters/test-game/test-character');
+    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
     const portrait = page.locator('#character-portrait-only');
     await expect(portrait).toBeVisible();
     await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);
     await expect(page.locator('#model-load')).toBeHidden();
-    await expect(page.getByText('Portrait ready. No 3D model has been published yet.', {exact:true})).toBeVisible();
+    await expect(page.locator('#character-no-model')).toBeHidden();
     const bounds = await portrait.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x+bounds.width).toBeLessThanOrEqual(viewport.width);
@@ -122,7 +123,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await page.screenshot({path:screenshot,fullPage:true});
     await testInfo.attach('portrait-only-page',{path:screenshot,contentType:'image/png'});
     portraitVersion = 2;
-    await page.reload();
+    await page.reload();await openAppearances(page);
     await expect(portrait).toBeVisible();
     await expect(portrait).toHaveAttribute('src', /v=2$/);
     await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);
@@ -172,7 +173,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     });
     await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({ id_token: 'test.' + btoa(JSON.stringify({ exp: Date.now() / 1000 + 3600, 'cognito:username': 'test' })) + '.test' })));
     await page.goto('https://panther.place/characters/test-game/test-character');
-    await page.waitForFunction(() => customElements.get('model-viewer') && document.querySelector('#character-poster').naturalHeight > 0);
+    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
+    await expect.poll(()=>page.evaluate(()=>Boolean(customElements.get("model-viewer")))).toBe(true);
+    await expect.poll(()=>page.locator("#character-poster").evaluate(image=>image.naturalHeight)).toBeGreaterThan(0);
     await expect(page).toHaveTitle('Panther');
     await expect(page.getByRole('link', { name: 'Panther home' })).toBeVisible();
     await expect(page.getByText('Media archive', { exact: true })).toHaveCount(0);
@@ -228,8 +231,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await expect(page.locator('#model-fallback')).toBeHidden();
     // A new profile selection must request the new immutable URL after refresh.
     version = 2;
-    await page.reload();
-    await page.waitForFunction(() => customElements.get('model-viewer') && document.querySelector('#character-poster').naturalHeight > 0);
+    await page.reload();await openAppearances(page);
+    await expect.poll(()=>page.evaluate(()=>Boolean(customElements.get("model-viewer")))).toBe(true);
+    await expect.poll(()=>page.locator("#character-poster").evaluate(image=>image.naturalHeight)).toBeGreaterThan(0);
     await page.locator('#character-model').scrollIntoViewIfNeeded();
     await page.locator('#model-load').click();
     // Confirm the fresh URL before checking render completion. Software WebGL in the
@@ -254,7 +258,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await expect.poll(() => viewer.evaluate(el => el.src), { timeout: 30000 }).toMatch(/model-older\.glb$/);
     await expect.poll(() => viewer.evaluate(el => el.loaded), { timeout: 30000 }).toBe(true);
     broken = true; version = 3;
-    await page.reload();
+    await page.reload();await openAppearances(page);
     await page.locator('#model-load').click();
     await expect(page.locator('#model-fallback')).toBeVisible();
     await expect(page.locator('#fallback-poster')).toBeVisible();
@@ -289,6 +293,7 @@ for (const width of [1280,390]) for (const reduced of [false,true]) {
     });
     await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'synthetic'}))+'.test'})));
     await page.goto('https://panther.place/characters/test-game/test-character');
+    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
     await page.locator('#character-model').scrollIntoViewIfNeeded();
     await page.locator('#model-load').click();
     const viewer=page.locator('#character-model'),button=page.locator('#model-animation-toggle');
@@ -320,3 +325,5 @@ for (const width of [1280,390]) for (const reduced of [false,true]) {
     await page.screenshot({path:testInfo.outputPath('animated-controls.png'),fullPage:true});
   });
 }
+
+async function openAppearances(page){const button=page.getByRole('button',{name:'Appearances & 3D',exact:true});await expect(button).toBeVisible();if(await button.getAttribute('aria-expanded')!=='true')await button.click();}

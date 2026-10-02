@@ -252,3 +252,41 @@ test('a temporary browser storage failure can retry the preserved audio',async({
   await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
   expect(await page.evaluate(()=>roomCapture.draft.status)).toBe('archived');
 });
+
+for(const width of [1280,390]) test(`Unavailable local processors show a terminal state and retained audio at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});await fixture(page,false);
+  await page.route('**/browser-transcriptions*',route=>route.fulfill({headers,json:{jobs:[],transcriptKey:null,playback:{status:'BLOCKED',message:'Playback processing is not configured in local development.'}}}));
+  await page.locator('#room-start').click();await expect(page.locator('#room-state')).toBeVisible();
+  await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);
+  await page.locator('#room-stop').click();await expect(page.locator('#room-audio-status')).toHaveText('Audio saved');
+  await expect(page.locator('#room-final-status')).toContainText('Transcription not configured');
+  await expect(page.locator('#room-status')).toHaveText('Playback processing is not configured in local development.');
+  await expect(page.locator('#room-download')).toBeVisible();await expect(page.locator('#room-resume')).toBeHidden();
+  await expect(page.locator('#room-start')).toBeEnabled();
+  await page.reload();await expect(page.locator('#room-audio-status')).toHaveText('Audio saved');await expect(page.locator('#room-status')).toContainText('not configured');
+  await page.screenshot({path:test.info().outputPath(`unavailable-local-recording-${width}.png`),fullPage:true});
+});
+
+test('Polling failure is visible and automatically recovers without another transcription request',async({page})=>{
+  const{posts}=await fixture(page,false);let failed=true;
+  await page.route('**/browser-transcriptions*',route=>route.fulfill({headers,status:failed?503:200,json:failed?{error:'Processing service unavailable'}:{jobs:[],playback:{status:'DONE',audioKey:'games/test-game/assets/copy/original/playback.mp3'}}}));
+  await page.locator('#room-start').click();await expect(page.locator('#room-state')).toBeVisible();await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);await page.locator('#room-stop').click();
+  await expect(page.locator('#room-audio-status')).toHaveText('Audio saved · Status unavailable');await expect(page.locator('#room-status')).toContainText('Processing service unavailable');await expect(page.locator('#room-start')).toBeEnabled();
+  failed=false;await expect(page.locator('#room-audio-status')).toHaveText('Audio ready',{timeout:20000});expect(posts.filter(post=>post.name==='/browser-transcriptions')).toHaveLength(0);
+});
+
+test('Queued playback stays honest and delayed transcription does not spin indefinitely',async({page})=>{
+  await fixture(page);await page.route('**/browser-transcriptions*',async route=>{if(route.request().method()==='POST')return route.fallback();return route.fulfill({headers,json:{jobs:[],transcriptKey:null,playback:{status:'QUEUED'}}});});
+  await page.locator('#room-start').click();await expect(page.locator('#room-state')).toBeVisible();await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);await page.locator('#room-stop').click();await expect(page.locator('#room-audio-status')).toHaveText('Audio saved · Waiting for processing');
+  await page.evaluate(async()=>{roomCapture.processingStarted=Date.now()-180000;await roomCapture.poll();});await expect(page.locator('#room-final-status')).toHaveText('Audio saved · Transcription delayed');await expect(page.locator('#room-audio-status')).toHaveAttribute('data-state','waiting');
+});
+
+test('A stalled processing request times out visibly without trapping Record',async({page})=>{
+  test.setTimeout(50000);await fixture(page,false);let release;
+  const held=new Promise(resolve=>{release=resolve;});
+  await page.route('**/browser-transcriptions*',async route=>{await held;await route.fulfill({headers,json:{jobs:[],playback:{status:'DONE'}}}).catch(()=>{});});
+  try {
+    await page.locator('#room-start').click();await expect(page.locator('#room-state')).toBeVisible();await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);await page.locator('#room-stop').click();
+    await expect(page.locator('#room-audio-status')).toHaveText('Audio saved · Status unavailable',{timeout:36000});await expect(page.locator('#room-status')).toContainText('Unable to check processing');await expect(page.locator('#room-start')).toBeEnabled();
+  } finally {release();}
+});

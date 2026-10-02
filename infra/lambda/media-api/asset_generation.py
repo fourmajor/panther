@@ -16,7 +16,7 @@ from botocore.exceptions import ClientError
 from access_policy import authorized
 import index as media
 
-TYPES = {"map", "blueprint", "location"}
+TYPES = {"map", "blueprint", "location", "portrait"}
 
 
 def table():
@@ -51,7 +51,7 @@ def submit(body):
         "name",
         "prompt",
         "operationId",
-    }:
+    } | ({"characterId"} if body.get("type") == "portrait" else set()):
         raise ValueError("Choose an asset type, name and prompt")
     game = body["gameId"]
     if not media._valid_slug(game) or body["type"] not in TYPES:
@@ -69,6 +69,34 @@ def submit(body):
     )
     if not game_record:
         raise ValueError("Game not found")
+    character_reference = None
+    if body["type"] == "portrait":
+        character = body.get("characterId")
+        if not media._valid_slug(character):
+            raise ValueError("Choose a registered character")
+        record = (
+            boto3.resource("dynamodb")
+            .Table(os.environ["CATALOG_TABLE"])
+            .get_item(
+                Key={"pk": f"GAME#{game}", "sk": f"CHARACTER#{character}"}, ConsistentRead=True
+            )
+            .get("Item")
+        )
+        if (
+            not record
+            or record.get("gameId") != game
+            or record.get("id") != character
+            or not record.get("detailsRevision")
+        ):
+            raise ValueError("Choose an initialized same-game character")
+        character_reference = {
+            "characterId": character,
+            "name": record["name"],
+            "revision": record["detailsRevision"],
+            "details": json.loads(record["detailsJson"]),
+        }
+        if len(json.dumps(character_reference).encode()) > 64000:
+            raise ValueError("Character details exceed the portrait request limit")
     request = {**body, "schemaVersion": 1}
     job_id = hashlib.sha256(
         json.dumps({"gameId": game, "operationId": body["operationId"]}, sort_keys=True).encode()
@@ -83,6 +111,7 @@ def submit(body):
         "assetKey": None,
         "visualStyle": game_record.get("visualStyle"),
         "generationAuthorized": True,
+        **({"characterReference": character_reference} if character_reference else {}),
     }
     try:
         table().put_item(Item=record, ConditionExpression="attribute_not_exists(pk)")
@@ -241,6 +270,8 @@ def worker_update(body, claims, operation):
             or extra.get("assetType") != job["type"]
         ):
             raise ValueError("Output does not belong to this generation job")
+        if job.get("characterId") and job["characterId"] not in metadata.get("characterIds", []):
+            raise ValueError("Portrait must explicitly depict the requested character")
         generation = extra.get("generation")
         cost = generation.get("cost") if isinstance(generation, dict) else None
         if (

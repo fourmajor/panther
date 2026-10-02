@@ -1,7 +1,7 @@
 # Map, blueprint and location images
 
 The Assets workspace offers upload and generation for three explicit image types:
-`map`, `blueprint` and `location`. A map is a top-down illustrated geographic map;
+`map`, `blueprint`, `location` and character-bound `portrait`. A map is a top-down illustrated geographic map;
 a blueprint is a floor plan; a location is an environment illustration. The worker
 never substitutes a procedural diagram for a requested illustration.
 
@@ -57,3 +57,12 @@ No asset-storage scan or static sample asset is used to populate the workspace.
 The production API/routes require a CDK deployment. Actual production generation
 also needs a running, authenticated laptop worker. An offline worker leaves the
 request queued honestly; no hosted compute or API inference is started as a fallback.
+
+Character profiles submit portrait requests with an additional required `characterId`.
+The broker validates an initialized same-game character and pins its exact structured revision
+and facts in `characterReference`. Repeating an operation preserves that snapshot even if the
+profile subsequently changes. Generated images explicitly carry the character ID; publication
+rejects an image without that association. The hidden generation provenance retains the pinned
+profile snapshot and exact request. Choosing the completed portrait as a thumbnail creates a
+separate guarded character revision; image generation never replaces official appearance pairs
+or changes character facts. Existing asset jobs retain their original contract and inputs.

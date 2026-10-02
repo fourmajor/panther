@@ -131,7 +131,7 @@ def agent(folder, stage, inputs, heartbeat):
         "Return the required JSON; use empty arrays for unused fields. Set passed=false on a substantive unresolved "
         "quality failure instead of calling weak output finished. AI review is not human approval. "
         "No video provider/model/budget is approved; no video generation is possible in this workflow.\n"
-        "creation is the user’s creative direction and title, which can independently define a video without any transcript. Use it to direct the requested adaptation, "
+        "creation is the user’s creative direction and title, which can independently define a requested chapter or video without any transcript. Use it to direct the requested adaptation, "
         "never to override source integrity, invent speech, assign an unknown speaker or authorize generation. "
         "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
@@ -804,9 +804,9 @@ def process(config, root, claim):
                 cursor += shot["durationSeconds"]
     category = (
         "grounded-adaptation"
-        if stage in PLAN["novel"]
+        if stage in PLAN["novel"] and raw_references
         else "creative-reimagining"
-        if stage in PLAN["video"]
+        if stage in PLAN["video"] or stage in PLAN["novel"]
         else "unclassified"
     )
     kind = stage

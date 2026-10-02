@@ -796,3 +796,18 @@ Finished images pin their full immutable generation-provenance document with
 and record actual tool/provider/subscription provenance. Unreported model identity
 stays unknown. Maps remain top-down maps, blueprints remain floor plans, and locations
 remain environment illustrations rather than deceptively relabeled diagrams.
+
+Character profile portrait generation uses the same subscription asset worker with type
+`portrait` and a required same-game `characterId`. Its immutable request pins structured
+character facts; its finished image must explicitly list that character. A generated profile
+thumbnail is separate from official portrait/model appearance selection. Unknown physical
+features remain creative interpretation, not new character facts.
+
+Transcript reading summaries use the separate version 1 source-pinned projection. Use
+`panther transcripts summary-worker --work-dir /private/work/summaries` for fresh
+subscription-backed candidate/review stages. Source speech, player identities and uncertainty
+remain immutable; summaries are AI-reviewed/unverified, not corrected raw transcripts.
+Regeneration creates a new revision with exact `sourceKeys` and preserves the old result.
+For existing/new records across all games use `panther transcripts summaries-rebuild`
+with a private `--report`, inventory first, `--apply`, then `--verify` after workers finish.
+Never invent capture timestamps, speakers or character associations to satisfy a projection.

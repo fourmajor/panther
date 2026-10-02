@@ -34,6 +34,7 @@ import { Construct } from "constructs";
 import { ModelProcessing } from "./model-processing";
 import { GameCatalog } from "./game-catalog";
 import { TVLibrary } from "./tv-library";
+import { TranscriptSummaries } from "./transcript-summaries";
 import { AssetGeneration } from "./asset-generation";
 import { VideoScenes } from "./video-scenes";
 import { CharacterAppearances } from "./character-appearances";
@@ -481,6 +482,7 @@ export class PantherMediaExplorerStack extends Stack {
       catalogTable:gameCatalog.table,publishers:accessEnvironment.MODEL_PUBLISHERS});
     new VideoScenes(this,"VideoScenes",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
       catalogTable:gameCatalog.table,accessEnvironment});
+    new TranscriptSummaries(this,"TranscriptSummaries",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
     new AssetGeneration(this,"AssetGeneration",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });

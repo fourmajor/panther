@@ -413,3 +413,42 @@ All derived planning assets include the map in immutable `sourceKeys`; private r
 and image bytes remain outside Git. Provider/model/rights/budget authorization is still
 required before actual paid image-to-video submission. Map selection or completed planning
 alone never triggers a paid request.
+
+### Prompt-only novel chapters and transcript reading summaries
+
+Novel creation version 3 accepts one `brief` with optional `sourceKeys` (up to eight)
+plus `contextKeys` (up to twelve). The initial job label is visibly derived from that
+prompt; the fresh novel-brief stage chooses the manuscript's title. Chapters without
+transcript evidence are creative reimaginings, never grounded adaptations. Existing
+version 1/2 submissions and their immutable job identities remain unchanged.
+
+TranscriptSummary version 1 is a separate source-pinned reading projection. It never
+modifies raw speech, canonical transcript selection or manuscript text. The summary
+contains a title, concise prose, actual supporting segment indexes and uncertainties.
+Player identities/names and capture timestamps come directly from structured source
+fields; character identities and missing dates are never inferred. A fresh subscription
+Codex candidate followed by an independent fresh review preserves both actual revisions.
+The result is explicitly AI-reviewed/unverified. Generation metadata records subscription
+inference honestly; unknown model versions remain unknown.
+
+Authenticated GET `/transcript-summaries?gameId=…&key=…` returns the projection and status.
+POST `{gameId,key}` idempotently ensures a summary for that exact key/checksum; adding a
+fresh 32-hex `operationId` explicitly regenerates it. Earlier READY projections remain
+usable during regeneration, with immutable assets retained through semantic revisions.
+Publication verifies the source checksum again and validates citation indexes. Late jobs
+cannot replace a newer selected revision. No paid API fallback or implicit retry occurs.
+
+Run `panther transcripts summary-worker --work-dir /private/work/summaries` on the
+subscription-authenticated laptop. While running, it discovers missing completed structured
+speech through bounded all-game materialized catalog pages at startup and every five minutes,
+with a persistent checkpoint. QUEUED jobs are leased; expired or failed jobs require attention.
+The local development SQLite service persists requests and honest source details, but reports
+that summary generation is not configured rather than inventing outputs or waiting forever.
+
+For rollout, run `panther transcripts summaries-rebuild --report /private/summary-inventory.json`
+then repeat with `--apply` and a new report path. After workers finish, run `--verify` with
+another private report. Verification requires every discovered source's READY projection and
+exact source checksum; blockers fail verification and remain in the report. This versioned,
+repeatable all-game backfill preserves every source and previous summary. Private reports
+stay outside Git. Deployment/backfill is incomplete until authenticated production verification
+succeeds; local synthetic checks do not assert production migration completion.

@@ -160,8 +160,9 @@ for (const width of [1280, 390]) {
     await expect(page.locator('#game-ruleset')).not.toBeVisible();
     await expect(page.locator('#breadcrumbs')).not.toContainText('Campaign A');
     await page.locator('#primary-nav').getByRole('link',{name:'Dashboard',exact:true}).click();
-    await expect(page.locator('#player-roster')).toContainText('Test Person');
-    await expect(page.locator('#player-roster')).not.toContainText('Lantern Guide');
+    await expect(page.locator('#player-roster')).toBeHidden();
+    await expect(page.locator('#dashboard-sections').getByRole('link',{name:'Lantern Guide',exact:true})).toBeVisible();
+    await expect(page.locator('#dashboard .dashboard-open')).toBeHidden();
     await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
     await expect(page.locator('#character-list')).toContainText('Played by Test Person');
     await expect(page.locator('#characters #player-roster')).toHaveCount(0);
@@ -171,7 +172,7 @@ for (const width of [1280, 390]) {
     await page.goBack();
     await page.getByRole('button',{name:/Test Hero/}).click();
     await expect(page).toHaveURL('https://panther.place/games/test-b/characters/hero');
-    await expect(page.locator('#character-no-model')).toBeVisible();
+    await expect(page.locator('#character-portrait-empty')).toBeVisible();await expect(page.locator('#character-portrait-upload')).toBeVisible();await expect(page.locator('#character-portrait-generate')).toBeVisible();
     await page.reload();
     await expect(page.locator('#game-selector')).toHaveValue('test-b');
     await expect(page.locator('#character-name')).toHaveText('Test Hero');

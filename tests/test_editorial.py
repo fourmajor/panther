@@ -1360,3 +1360,35 @@ def test_map_agent_attaches_verified_image_to_codex(tmp_path, monkeypatch):
     missing_attempt.mkdir()
     with pytest.raises(ValueError, match="Pinned map image is missing"):
         worker.agent(missing_attempt, "video-treatment", inputs, lambda: None)
+
+
+def test_prompt_led_novel_has_optional_sources_and_no_required_title(editorial):
+    creation = {
+        "schemaVersion": 3,
+        "target": "novel",
+        "brief": "Write a tense chapter about the harbor crossing.",
+        "sourceKeys": [],
+        "contextKeys": [],
+    }
+    job = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert job["creation"]["title"] == creation["brief"]
+    assert job["raw"] is None and job["sourceMode"] == "prompt"
+    assert (
+        unpack(
+            request(
+                editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation}
+            )
+        )["jobId"]
+        == job["jobId"]
+    )
+    for change in [{"brief": ""}, {"target": "video"}, {"title": ""}]:
+        assert (
+            request(
+                editorial,
+                "POST /editorial-jobs",
+                {"gameId": "test-game", "creation": {**creation, **change}},
+            )["statusCode"]
+            == 400
+        )

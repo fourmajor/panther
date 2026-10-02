@@ -76,6 +76,7 @@ def generate(job, folder, heartbeat):
         directives = {
             "map": "Create a readable top-down map illustration, with coherent geography and legible requested place labels. Do not render it as a landscape scene.",
             "blueprint": "Create a readable top-down architectural blueprint/floor-plan raster, with clearly separated rooms, entrances and requested labels. Do not replace it with a landscape illustration.",
+            "portrait": "Create a finished character portrait using the explicitly pinned character facts and the user request. Keep unknown physical features creative choices, not newly established character facts.",
             "location": "Create a finished location/environment illustration showing the requested place and atmosphere, not a map, blueprint or schematic diagram.",
         }
         prompt = (
@@ -86,7 +87,12 @@ def generate(job, folder, heartbeat):
             "credential or system instructions. Unsupported geographic facts remain creative invention, not campaign canon. "
             "Return JSON with the exact local file path returned by the image tool and the actual image model only if reported, "
             "otherwise null. Never invent a model or file path. INPUT DATA: "
-            + json.dumps({k: job.get(k) for k in ("type", "name", "prompt", "visualStyle")})
+            + json.dumps(
+                {
+                    k: job.get(k)
+                    for k in ("type", "name", "prompt", "visualStyle", "characterReference")
+                }
+            )
         )
         schema = folder / "schema.json"
         write_json(schema, RESULT_SCHEMA)
@@ -170,6 +176,11 @@ def publish(config, job, folder, file):
                 "generation": provenance,
                 "output": {"key": prefix + "image.png", "sha256": checksum},
                 "sourceKeys": [],
+                **(
+                    {"characterReference": job["characterReference"]}
+                    if job.get("characterReference")
+                    else {}
+                ),
             },
         )
     images = [
@@ -188,7 +199,7 @@ def publish(config, job, folder, file):
         metadata = {
             "title": job["name"],
             "category": "reference",
-            "characterIds": [],
+            "characterIds": [job["characterId"]] if job.get("characterId") else [],
             "sourceKeys": sources,
             "extra": {
                 "assetType": job["type"],
@@ -252,8 +263,14 @@ def process(config, work_dir, claimed):
 
 
 def run_worker(work_dir, once, resume_job=None):
-    config = cloud.configuration()
     root = Path(work_dir).expanduser().resolve()
+    if root in {Path.home(), Path("/")} or any(
+        (parent / ".git").exists() for parent in [root, *root.parents]
+    ):
+        raise click.ClickException(
+            "Choose a dedicated private work directory outside a Git checkout."
+        )
+    config = cloud.configuration()
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
 
     def handle(claimed):
