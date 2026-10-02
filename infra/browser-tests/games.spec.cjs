@@ -73,7 +73,7 @@ async function fixture(page) {
   const requests = [];
   const styles = new Map(games.map(g => [g.id, 'photorealistic']));
   const visualStyles = ['photorealistic','anime','illustrated-fantasy','comic-book','watercolor','oil-painting','stylized-3d','pixel-art'].map(id=>({id,label:id === 'photorealistic' ? 'Photorealistic' : id === 'anime' ? 'Anime' : id}));
-  await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({ id_token: 'test.' + btoa(JSON.stringify({ exp: Date.now()/1000+3600, 'cognito:username': 'test' })) + '.test' })));
+  await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({ id_token: 'test.' + btoa(JSON.stringify({ exp: Date.now()/1000+3600, 'cognito:username': 'example-member' })) + '.test' })));
   await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
     const url = new URL(route.request().url());
     requests.push(url);
@@ -130,7 +130,7 @@ for (const width of [1280, 390]) {
     await page.getByRole('button',{name:'Save style'}).click();
     await expect(page.locator('#style-status')).toContainText('Could not save');
   });
-  test(`game selector scopes media, roster, character links and reload at ${width}px`, async ({page})=>{
+  test(`ordinary member game selector scopes media, roster, character links and reload at ${width}px`, async ({page})=>{
     await page.setViewportSize({width,height:900});
     const requests = await fixture(page);
     const errors=[]; page.on('pageerror', e=>errors.push(e.message));

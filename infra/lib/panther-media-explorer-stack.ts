@@ -64,6 +64,7 @@ export class PantherMediaExplorerStack extends Stack {
       throw new Error("credentialCutover was retired; credential policy version 2 is unconditional");
     }
     const accessEnvironment = {
+      CATALOG_READERS: identities.users.join(","),
       MODEL_PUBLISHERS: identities.publishers.join(","),
       MODEL_WORKERS: identities.workers.join(","),
       ASSET_MIGRATORS: identities.migrationAdmins.join(","),

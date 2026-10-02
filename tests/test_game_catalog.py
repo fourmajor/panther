@@ -72,6 +72,24 @@ def setup(game="test-game"):
     }
 
 
+def test_member_reads_catalog_without_editor_or_migration_rights(catalog):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    for route in ("GET /games", "GET /game", "GET /players", "GET /characters"):
+        assert request(catalog, route, username="example-member")["statusCode"] == 200
+        assert request(catalog, route, username="outsider")["statusCode"] == 403
+    for route in (
+        "POST /games",
+        "POST /game/style",
+        "POST /character-details",
+        "GET /character-details/inventory",
+        "GET /character-details/verify",
+        "POST /character-details/migrate",
+    ):
+        assert request(catalog, route, setup(), username="example-member")["statusCode"] == 403
+    catalog.READERS = set()
+    assert request(catalog, "GET /games", username="example-member")["statusCode"] == 403
+
+
 def test_add_character_preserves_people_memberships_and_prior_identity(catalog):
     assert request(catalog, "POST /games", setup())["statusCode"] == 200
     before = json.loads(request(catalog, "GET /game")["body"])
