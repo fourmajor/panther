@@ -76,3 +76,8 @@ Writing prompts use a versioned reading projection retaining every utterance, ti
 player label and capture warning, while detailed per-word analysis stays in the exact pinned
 raw asset. Raw inputs up to 16 MiB are supported; prompt/result size limits still fail visibly.
 There is no silent truncation and no rewrite of previous transcript or chapter editions.
+Independent review receives one complete raw transcript plus a verified correction overlay,
+not two duplicate copies of its speech. The overlay is emitted only when its edits exactly
+reconstruct the candidate and all non-text speech fields are unchanged. Full corrected assets
+remain stored unchanged. Prompts stay below the observed one-Mi-character CLI transport limit;
+oversized evidence fails visibly rather than being truncated or treated as a subscription limit.
