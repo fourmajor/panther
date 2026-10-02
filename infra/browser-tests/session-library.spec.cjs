@@ -312,7 +312,7 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   await page.emulateMedia({reducedMotion:'reduce'});
   expect(await status.locator('.loading-skeleton').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   releaseSecond();
-  await expect(status).toContainText('Episodes, experiments');
+  await expect(status).toBeEmpty();
   await expect(status.locator('.loading-state')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Load more videos'})).toHaveCount(0);
   await expect(page.locator('.session-card')).toHaveCount(1);

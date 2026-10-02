@@ -5,9 +5,9 @@ const loadingStates = new WeakMap();
 function showLoading(host, message) {
   loadingStates.get(host)?.stop();
   if (host.matches("#characters-status, #novel-status, #library-status, #status")) {
-    // Keep existing summaries in their slot during refresh/pagination. New pages
-    // have no slot to reserve; their activity indicator stays outside the flow.
-    const previousHeight = host.textContent.trim() && host.textContent.trim() !== "Loading…"
+    // Reserve the existing status geometry during refresh/pagination, including
+    // empty padded slots. The activity indicator itself stays outside the flow.
+    const previousHeight = host.textContent.trim() !== "Loading…"
       ? host.getBoundingClientRect().height : 0;
     host.style.setProperty("--loading-slot-height", `${previousHeight}px`);
   }
