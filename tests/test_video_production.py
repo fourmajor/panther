@@ -403,7 +403,10 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         for r in p.references(media)
     }
 
-    def api(config, method, route, *, params):
+    def api(config, method, route, *, params=None, json=None):
+        if route == "/workflow-progress":
+            assert method == "POST" and json["kind"] == "video-production"
+            return {"workflow": {"revision": "synthetic-revision"}}
         assert method == "GET" and route == "/object-url"
         if params["key"] not in assets:
             raise click.ClickException("Object not found")

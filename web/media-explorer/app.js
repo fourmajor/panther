@@ -431,7 +431,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|jobs|object-url|image-links)/.test(path);
+  const sensitive = /(?:live|transcriptions|jobs|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -513,6 +513,8 @@ function showWelcome(message = "") {
   elements.novel.hidden = true;
   document.getElementById("dashboard").hidden = true;
   document.getElementById("game-settings").hidden = true;
+  workshop.stop();
+  document.getElementById("workshop").hidden = true;
   document.getElementById("game-context").hidden = true;
   elements.account.hidden = true;
   elements.primaryNav.hidden = true;
@@ -1622,6 +1624,8 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  workshop.stop();
+  document.getElementById("workshop").hidden = true;
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
     const epoch = ++routeEpoch;
     await roomCapture?.render("account", epoch);
@@ -1642,7 +1646,7 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|audio|transcripts|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|audio|transcripts|videos|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1664,6 +1668,10 @@ async function renderRoute() {
   const section = gameRoute?.[2] || window.location.pathname.slice(1);
   await roomCapture.render(section, epoch);
   if (epoch !== routeEpoch) return;
+  if(section === "workflows") {
+    setActiveNavigation("workflows"); elements.characters.hidden = true; elements.explorer.hidden = true;
+    await workshop.open(epoch); return;
+  }
   if (section === "dashboard" || location.pathname === "/") {
     setActiveNavigation("dashboard"); elements.characters.hidden = true; elements.explorer.hidden = true;
     document.getElementById("dashboard").hidden = false; renderDashboard(); void loadDashboardRecent(epoch); return;
@@ -4635,5 +4643,114 @@ async function openAccountSettings(recovery=false) {
 document.getElementById("account-settings-button").addEventListener("click",()=>visitAccount());
 document.getElementById("password-recovery-button").addEventListener("click",()=>visitAccount(true));
 document.getElementById("account-settings-back").addEventListener("click",leaveAccount);
+
+// A single bounded projection feeds both overview and detail; no source-storage
+// enumeration or worker invocation happens while browsing the Workshop.
+const workshop = (() => {
+  const host=document.getElementById("workshop"), list=document.getElementById("workshop-list"), detail=document.getElementById("workshop-detail");
+  const health=document.getElementById("workshop-health"), more=document.getElementById("workshop-more"), filters=document.getElementById("workshop-filters");
+  const labels={editorial:"Story & screen planning",model:"3D modeling",playback:"Audio assembly",transcription:"Transcription","video-production":"Video finishing","video-generation":"Video generation"};
+  let timer=null, controller=null, rows=[], cursor=null, filter="all", epoch=0, game=null, busy=false, selected=null, loadedCursors=[], generation=0;
+  function node(tag,text,className) {const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element;}
+  function observation(job,stage) {
+    const now=Date.now()/1000;
+    if(job.status==="failed") return {status:"failed",label:"Needs attention",live:false};
+    if(stage?.notBefore>now) return {status:"paused",label:`Deferred until ${new Date(stage.notBefore*1000).toLocaleString()}`,live:false};
+    if(stage?.status==="running" && stage.leaseUntil && stage.leaseUntil<=now) return {status:"paused",label:"Worker check-in overdue",live:false};
+    if(job.source==="local-worker" && job.status==="running" && now-job.reportedAt>180) return {status:"paused",label:"Local worker signal lost",live:false};
+    const state=stage?.status || job.status;
+    const live=state==="running" && (stage?.leaseUntil>now || now-(job.reportedAt || job.observedAt)<180);
+    return {status:state,label:({queued:"Waiting for a worker",pending:"Not started",running:live?"Working now":"Running · activity unconfirmed",done:"Complete",paused:"Paused",failed:"Needs attention",unknown:"Status uncertain"})[state] || "Status uncertain",live};
+  }
+  function lead(job) {return (job.activeStages || []).find(s=>s.status==="running") || (job.activeStages || [])[0];}
+  function worker(kind,live) {
+    const scene=node("div",undefined,`pixel-scene ${live?"is-working":"is-resting"}`);scene.setAttribute("aria-hidden","true");scene.dataset.kind=kind;
+    scene.append(node("span",undefined,"pixel-star"),node("span",undefined,"pixel-cat"),node("span",undefined,"pixel-tool"),node("span",undefined,"pixel-desk"));return scene;
+  }
+  function badge(view) {const span=node("span",view.label,"workshop-badge");span.dataset.state=view.status;return span;}
+  function meter(job) {
+    const block=node("div",undefined,"workshop-progress"), count=node("span",`${job.completedStages} of ${job.totalStages} stages complete`);
+    const progress=document.createElement("progress");progress.max=Math.max(1,job.totalStages);progress.value=job.completedStages;progress.setAttribute("aria-label",`${job.title}: completed stages`);block.append(progress,count);return block;
+  }
+  function matches(job) {const state=observation(job,lead(job)).status;return filter==="all" || (filter==="working"?state==="running":filter==="waiting"?["queued","paused","pending"].includes(state):filter==="done"?state==="done":["failed","unknown"].includes(state));}
+  function row(job) {
+    const stage=lead(job), view=observation(job,stage), link=node("a",undefined,"workshop-card");
+    link.href=gamePath("workflows")+"?workflow="+encodeURIComponent(job.id);
+    link.addEventListener("click",event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname+link.search);});
+    const text=node("div",undefined,"workshop-card-copy");text.append(node("p",labels[job.kind] || "Workflow","workshop-kind"),node("h2",job.title),badge(view),node("p",stage?.label || (job.status==="done"?"All reported stages finished":"Awaiting the first stage"),"workshop-current"),meter(job));
+    link.append(worker(job.kind,view.live),text,node("span","↗","workshop-go"));return link;
+  }
+  function drawList() {
+    list.replaceChildren();const visible=[...rows].sort((a,b)=>b.createdAt-a.createdAt).filter(matches);
+    if(!visible.length)list.append(node("div",rows.length?"No loaded workflows match this filter.":"The workshop is quiet. New reported work will appear here.","workshop-empty"));
+    else list.append(...visible.map(row));
+    const summary=document.getElementById("workshop-summary");summary.replaceChildren();
+    for(const [title,states] of [["Working",["running"]],["Waiting",["queued","pending","paused"]],["Finished",["done"]],["Needs attention",["failed","unknown"]]]) {
+      const panel=node("div");panel.append(node("strong",String(rows.filter(j=>states.includes(observation(j,lead(j)).status)).length)),node("span",title));summary.append(panel);
+    }
+    document.getElementById("workshop-intro").textContent=`${rows.length} loaded workflows${cursor?" · more history available":""}. Click a workbench to follow its stages.`;
+    more.hidden=!cursor;more.disabled=busy;
+  }
+  function drawDetail(job) {
+    document.getElementById("workshop-intro").textContent="Follow this workflow’s reported stages.";
+    detail.replaceChildren();const back=node("a","← All workflows","workshop-back");back.href=gamePath("workflows");back.addEventListener("click",event=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(back.pathname);});
+    const stage=lead(job), view=observation(job,stage), hero=node("div",undefined,"workshop-detail-hero");
+    const text=node("div");text.append(node("p",labels[job.kind],"workshop-kind"),node("h2",job.title),badge(view),meter(job),node("p",job.note,"workshop-note"));hero.append(worker(job.kind,view.live),text);
+    const facts=node("dl",undefined,"workshop-facts");
+    for(const [name,value] of [["Source",job.source==="local-worker"?"Local laptop worker":"Durable Panther job"],["Workflow version",job.workflowVersion || "Not reported"],["Session",job.sessionId || "Not reported"],["Last observed",new Date((job.reportedAt || job.observedAt)*1000).toLocaleString()],["Source status",job.sourceStatus || job.status]]) {facts.append(node("dt",name),node("dd",String(value)));}
+    const stages=node("ol",undefined,"workshop-stages");
+    for(const [index,part] of job.stages.entries()) {
+      const state=part.status==="done"?{status:"done",label:"Complete",live:false}:part.status==="pending"?{status:"pending",label:"Not started",live:false}:observation(job,part);
+      const item=node("li");item.dataset.state=state.status;const copy=node("div");copy.append(node("h3",part.label),badge(state));
+      if(part.attempts) copy.append(node("p",`Attempt ${part.attempts}`));
+      if(part.outputKey && sameGameKey(part.outputKey)) {const output=node("button","View stage artifact","quiet-button");output.type="button";output.addEventListener("click",()=>previewFile({key:part.outputKey,name:part.outputKey.split("/").at(-1)}));copy.append(output);}
+      item.append(node("span",part.status==="done"?"✓":String(index+1).padStart(2,"0"),"workshop-step-number"),copy);
+      if(state.live)item.append(worker(job.kind,true));stages.append(item);
+    }
+    detail.append(back,hero,facts,node("h2","Stage trail","workshop-trail-heading"),stages,node("p",`Run ${job.id}`,"workshop-run-id"));
+  }
+  async function refresh(append=false) {
+    if(busy || document.hidden || host.hidden || epoch!==routeEpoch || state.gameId!==game)return;
+    busy=true;document.getElementById("workshop-refresh").disabled=true;more.disabled=true;
+    controller=new AbortController();const request=controller, version=generation;
+    const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]);
+    const focused=document.activeElement?.closest(".workshop-card")?.getAttribute("href");
+    try {
+      if(selected) {
+        const result=await api("/workflows",{gameId:game,id:selected},{signal});
+        if(version!==generation || epoch!==routeEpoch || host.hidden)return;drawDetail(result.workflow);
+      } else {
+        const starts=append?[cursor]:loadedCursors.length?loadedCursors:[null];const collected=append?[...rows]:[];
+        let next=null;
+        for(const start of starts) {
+          const result=await api("/workflows",{gameId:game,cursor:start},{signal});
+          if(version!==generation || epoch!==routeEpoch || host.hidden)return;
+          collected.push(...result.workflows);next=result.cursor;
+        }
+        if(append)loadedCursors.push(cursor);else if(!loadedCursors.length)loadedCursors=[null];
+        rows=[...new Map(collected.map(job=>[job.id,job])).values()];cursor=next;drawList();
+        if(focused)Array.from(list.querySelectorAll("a")).find(a=>a.getAttribute("href")===focused)?.focus({preventScroll:true});
+      }
+      health.textContent=`Checked ${new Date().toLocaleTimeString()} · checks every 15 seconds while this page is visible.`;
+      health.dataset.state="ok";
+    } catch(error) {
+      if(request.signal.aborted || version!==generation || epoch!==routeEpoch)return;
+      health.textContent=`Could not update progress: ${error.message}. Displayed information may be out of date. Use Check progress to retry.`;health.dataset.state="error";
+    } finally {if(version===generation){busy=false;document.getElementById("workshop-refresh").disabled=false;more.disabled=false;}}
+  }
+  for(const [id,label] of [["all","All"],["working","Working"],["waiting","Waiting"],["done","Finished"],["attention","Needs attention"]]) {
+    const button=node("button",label);button.type="button";button.dataset.filter=id;button.setAttribute("aria-pressed",String(id===filter));
+    button.addEventListener("click",()=>{filter=id;for(const b of filters.children)b.setAttribute("aria-pressed",String(b===button));drawList();});filters.append(button);
+  }
+  more.addEventListener("click",()=>refresh(true));document.getElementById("workshop-refresh").addEventListener("click",()=>refresh());
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)void refresh();});
+  return {
+    stop(){generation++;clearInterval(timer);controller?.abort();},
+    async open(route){epoch=route;game=state.gameId;selected=new URLSearchParams(location.search).get("workflow");rows=[];cursor=null;loadedCursors=[];busy=false;host.hidden=false;
+      list.replaceChildren();detail.replaceChildren();list.hidden=Boolean(selected);detail.hidden=!selected;filters.hidden=Boolean(selected);document.getElementById("workshop-summary").hidden=Boolean(selected);more.hidden=true;
+      health.textContent="Checking the workshop’s reported progress…";await refresh();if(epoch===routeEpoch)timer=setInterval(()=>void refresh(),15000);
+    },
+  };
+})();
 
 start();

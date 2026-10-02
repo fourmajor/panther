@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from panther_journal import cloud, generation_metadata as generation, model_workflow as local
 from panther_journal import video
+from panther_journal import workflows as workshop
 from panther_journal.audio_storage import flush_file, lock, write_json
 from panther_journal.editorial import obj, array, TEXT
 
@@ -289,10 +290,20 @@ def stage(folder, name, identity, build):
                     or digest(file) != checksum
                 ):
                     raise click.ClickException("A completed production checkpoint changed")
+            if workshop.CURRENT.get():
+                workshop.CURRENT.get().stage(name, "done")
             return target / value["attempt"], value["result"]
         attempt = target / uuid.uuid4().hex
         attempt.mkdir(mode=0o700)
-        result = build(attempt)
+        reporter = workshop.CURRENT.get()
+        if reporter:
+            reporter.stage(name, "running")
+        try:
+            result = build(attempt)
+        except Exception:
+            if reporter:
+                reporter.stage(name, "failed")
+            raise
         files = {str(p.relative_to(target)): digest(p) for p in attempt.rglob("*") if p.is_file()}
         for file in files:
             flush_file(target / file)
@@ -300,6 +311,8 @@ def stage(folder, name, identity, build):
             receipt,
             {"identity": identity, "attempt": attempt.name, "files": files, "result": result},
         )
+        if reporter:
+            reporter.stage(name, "done")
         return attempt, result
 
 
@@ -909,6 +922,27 @@ def deliver(plan, edits, sound, folder):
 
 
 def execute(plan, root, *, mode="finish", verify_cloud=True, reviewer=review):
+    # Synthetic tests never contact Panther or load user credentials. Real jobs
+    # report from their existing immutable private run folder, not a second worker.
+    reporter = None
+    def observe(folder, identity):
+        nonlocal reporter
+        if verify_cloud:
+            names = ["inputs", "preparation"] if mode == "prepare" else ["inputs", *["shot-" + shot.id for shot in plan.shots], "sound", "delivery", "final-review"]
+            reporter = workshop.Reporter(folder, identity, plan.gameId, plan.title, names)
+            reporter.enter()
+    try:
+        result = execute_observed(plan, root, mode=mode, verify_cloud=verify_cloud, reviewer=reviewer, observe=observe)
+        if reporter:
+            reporter.close("done")
+        return result
+    except Exception as exc:
+        if reporter:
+            reporter.close("paused" if isinstance(exc, local.Deferred) else "failed")
+        raise
+
+
+def execute_observed(plan, root, *, mode="finish", verify_cloud=True, reviewer=review, observe=None):
     if mode == "finish" and not plan.complete:
         raise click.ClickException(
             "Production is not explicitly complete; waiting for selected inputs"
@@ -930,6 +964,8 @@ def execute(plan, root, *, mode="finish", verify_cloud=True, reviewer=review):
     with lock(folder, "job.lock"):
         if not (folder / "manifest.json").exists():
             write_json(folder / "manifest.json", plan.model_dump())
+        if observe:
+            observe(folder, identity)
         _, refs = stage(
             folder, "inputs", identity, lambda d: snapshot(plan, d, verify_cloud=verify_cloud)
         )

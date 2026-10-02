@@ -52,6 +52,7 @@
         <a href="/novel">Novel</a>
         <a href="/videos">Videos</a>
         <a href="/media">Media</a>
+        <a href="/workflows">Workflows</a>
         <a href="/settings">Settings</a>
       </nav>
       <div class="account" id="account" hidden>
@@ -63,6 +64,16 @@
 
     <main>
       <div id="page-loading" hidden></div>
+      <section id="workshop" class="workshop" aria-label="Workflow workshop" hidden>
+        <header class="workshop-heading"><div><p class="workshop-eyebrow">A tiny crew. Real progress.</p><h1>The Workshop</h1><p id="workshop-intro">Follow the work behind your world.</p></div><button id="workshop-refresh" class="quiet-button" type="button">Check progress</button></header>
+        <p id="workshop-health" role="status"></p>
+        <div id="workshop-summary" class="workshop-summary"></div>
+        <div id="workshop-filters" class="workshop-filters" aria-label="Filter workflows"></div>
+        <div id="workshop-list" class="workshop-list"></div>
+        <button id="workshop-more" class="quiet-button" type="button" hidden>Load more workflows</button>
+        <div id="workshop-detail" hidden></div>
+        <p class="workshop-footnote">Progress counts completed stages, not time remaining. Pixel workers illustrate reported activity—not proof of quality. Local-only work appears after its worker reports to Panther.</p>
+      </section>
       <div class="game-context" id="game-context" hidden>
         <span id="game-purpose" class="game-purpose" hidden></span>
         <span id="game-ruleset" class="game-ruleset" hidden></span>

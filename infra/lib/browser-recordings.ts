@@ -14,6 +14,7 @@ import * as secrets from "aws-cdk-lib/aws-secretsmanager";
 
 /** Optional, explicitly configured API transcription; no key or provider token reaches browsers. */
 export class BrowserRecordings extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
     bucket:s3.IBucket; api:api.HttpApi; authorizer:api.IHttpRouteAuthorizer;
     accessEnvironment:Record<string,string>; playbackTable:dynamodb.ITable;
@@ -21,7 +22,7 @@ export class BrowserRecordings extends Construct {
   }) {
     super(scope,id);
     if (props.secretArn && !/^arn:aws:secretsmanager:us-west-2:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$/.test(props.secretArn)) throw new Error("Browser transcription requires a us-west-2 Secrets Manager ARN");
-    const table = new dynamodb.Table(this,"Jobs",{
+    const table = this.table = new dynamodb.Table(this,"Jobs",{
       partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},sortKey:{name:"sk",type:dynamodb.AttributeType.STRING},
       billingMode:dynamodb.BillingMode.PAY_PER_REQUEST,stream:dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
       encryption:dynamodb.TableEncryption.AWS_MANAGED,removalPolicy:RemovalPolicy.RETAIN,

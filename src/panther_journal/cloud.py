@@ -485,6 +485,8 @@ def character_set_portrait(game, character_id, portrait_key, expected_revision, 
 
 
 def register(group):
+    from panther_journal.workflows import workflows
+    group.add_command(workflows)
     from panther_journal.novel_library import novels
 
     group.add_command(novels)
