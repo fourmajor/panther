@@ -126,6 +126,9 @@ test('missing exact deep link never falls back to the current selection',async({
   const control=await fixture(page);
   await page.goto('https://panther.place/games/example-game/characters/hero?appearance=ordinary&selection=missing');
   await expect(page.locator('#characters-status')).toContainText('Exact appearance selection not found');
-  await expect(page.locator('#character-profile')).toBeHidden();
+  await expect(page.locator('#character-profile')).toBeVisible();
+  await expect(page.locator('#character-portrait-only')).toBeHidden();
+  await expect(page.locator('#character-model-area')).toBeHidden();
+  await expect(page.locator('#appearance-history')).toBeHidden();
   expect(control.requests.filter(r=>r.path==='/character').map(r=>r.selection)).toEqual(['missing']);
 });

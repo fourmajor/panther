@@ -96,7 +96,9 @@ test('additional configured account uses the same authenticated browser session'
   await page.goto('https://panther.place/transcripts');
   await expect(page.locator('#account')).toBeVisible();
   await expect(page.locator('#username')).toHaveText('example-member');
-  await expect(page.locator('#live-status')).toContainText('No live recording reported');
+  await expect(page.locator('#library-title')).toHaveText('Sessions');
+  await expect.poll(()=>state.apiPaths.includes('/recordings/live')).toBe(true);
+  await expect(page.locator('#recording-badge')).toBeHidden();
   expect(state.refreshes).toBe(1);
   expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);
 });
