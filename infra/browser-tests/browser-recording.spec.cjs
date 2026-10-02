@@ -1,20 +1,29 @@
 const {test,expect}=require('@playwright/test');
 const fs=require('node:fs');
 const path=require('node:path');
+const http=require('node:http');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 
 test.use({launchOptions:{args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']}});
-const headers={'access-control-allow-origin':'https://panther.place','access-control-allow-methods':'GET,POST,PUT,OPTIONS','access-control-allow-headers':'*'};
+let server,origin;
+const headers={'access-control-allow-origin':'','access-control-allow-methods':'GET,POST,PUT,OPTIONS','access-control-allow-headers':'*'};
+
+// AudioWorklet module requests bypass DevTools routing. Serve the real module on
+// an isolated localhost origin rather than mocking capture or replacing its processor.
+test.beforeAll(async()=>{
+  server=http.createServer((request,response)=>{
+    const name=new URL(request.url,origin || 'http://localhost').pathname;
+    if(name==='/config.js') {response.setHeader('Content-Type','application/javascript');response.end(`window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"${origin}/"};`);return;}
+    const file=name==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/pcm-capture-v1.js'].includes(name)?name.slice(1):'index.html');
+    response.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html');response.end(fs.readFileSync(file));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${server.address().port}`;headers['access-control-allow-origin']=origin;
+});
+test.afterAll(async()=>{await new Promise(resolve=>server.close(resolve));});
 async function fixture(page,transcriptionAvailable=true,failFinal=false) {
   const posts=[],files=new Map(),signed=new Map();let live=null,final=null,finalAttempts=0;
-  await page.context().grantPermissions(['microphone'],{origin:'https://panther.place'});
+  await page.context().grantPermissions(['microphone'],{origin});
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-member'}))+'.test'})));
-  await page.context().route('https://panther.place/**',route=>{
-    const name=new URL(route.request().url()).pathname;
-    if(name==='/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
-    const file=name==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/pcm-capture-v1.js'].includes(name)?name.slice(1):'index.html');
-    return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
-  });
   await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',async route=>{
     const request=route.request(),url=new URL(request.url()),name=url.pathname;
     const respond=(json,status=200)=>route.fulfill({json,status,headers});
@@ -52,7 +61,7 @@ async function fixture(page,transcriptionAvailable=true,failFinal=false) {
     }
     return respond({});
   });
-  await page.goto('https://panther.place/games/test-game/audio');
+  await page.goto(origin+'/games/test-game/audio');
   await expect(page.locator('#room-recorder')).toBeVisible();
   await expect(page.locator('#room-recorder').getByRole('button')).toHaveCount(1);
   await expect(page.locator('#room-result')).not.toBeVisible();
