@@ -126,6 +126,22 @@ def local_recording(job, config, root):
     return folder
 
 
+def uncertain_timing(attempt, part):
+    """Preserve recognizable text, never invent precise timings for bad output."""
+    raw = live.read_json(attempt / "recognizer.json", 8 * 1024**2)
+    segments = raw.get("transcription")
+    if not isinstance(segments, list) or not segments or any(
+        not isinstance(segment, dict) or not isinstance(segment.get("text"), str)
+        for segment in segments
+    ):
+        raise click.ClickException("Recognizer text is unavailable; original output retained")
+    return [{"start": part.start, "end": part.start + part.duration,
+             "text": "".join(segment["text"] for segment in segments),
+             "playerId": None, "attribution": "unassigned",
+             "timingMethod": "verified-chunk-boundaries",
+             "timingNote": "Recognizer timestamps were invalid. Text is preserved in order; this interval is the audio chunk, not precise speech timing. Player attribution remains unknown."}]
+
+
 def transcript(folder, job, options, target, report):
     """Reuse verified live ASR; recognize only absent or gapped chunks. Never use context."""
     from panther_journal import speaker_profiles as speakers
@@ -173,7 +189,10 @@ def transcript(folder, job, options, target, report):
                         pins = {"preview": str(preview.parent), "checkpointSha256": audio.digest(preview.parent / f"part-{index:04d}.json"), "recognizerSha256": saved["recognizerSha256"]}
                         break
                 if lines is None:
-                    lines = live.transcribe_part(folder, part, model, attempt, use_gpu=True)
+                    try:
+                        lines = live.transcribe_part(folder, part, model, attempt, use_gpu=True)
+                    except live.PreviewOutputError:
+                        lines = uncertain_timing(attempt, part)
                     pins = {"recognizerSha256": audio.digest(attempt / "recognizer.json")}
                 clean = [{**line, "playerId": None, "attribution": "unassigned"} for line in lines]
                 for line in clean:
@@ -192,6 +211,9 @@ def transcript(folder, job, options, target, report):
                 if any(turn["start"] < 0 or turn["end"] < turn["start"] or turn["end"] > part.duration + 0.1 for turn in result["turns"]):
                     raise click.ClickException("Speaker timestamps exceed verified source chunk")
                 assigned = speakers.label_lines(clean, result, profiles["profiles"], part.start)
+                for line in assigned:
+                    if line.get("timingMethod") == "verified-chunk-boundaries":
+                        line.update(playerId=None, attribution="unassigned")
                 value = {"part": part.model_dump(), "modelSha256": model_hash, "profilesSha256": profiles_hash, "raw": clean, "attributed": assigned, "evidence": pins, "speakerResultPath": str(result_file.relative_to(target)), "speakerResultSha256": audio.digest(result_file)}
                 checkpoint_write(checkpoint, value)
             # Do not silently trust modified local speaker evidence after a restart.
