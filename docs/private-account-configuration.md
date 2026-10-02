@@ -50,6 +50,10 @@ the roster, credentials or private content. No game asset schema changes are inv
 
 Adding an account changes this private file, not GitHub source. Adding it to `users` alone does not
 grant publisher, worker or migration access, create a Player record, or infer an administrator role.
+The catalog's `CATALOG_READERS` is derived from `users`: configured members can browse games,
+players and character details. Catalog writes still require a publisher; migration inventory,
+verification and writes still require a migration administrator. Deploy the CDK stack to update
+these lists; a Cognito invitation alone does not update a running Lambda's configuration.
 Infrastructure definitions remain reviewed through PRs; private account inputs remain outside them.
 Missing configuration is an error, not an empty list or a reason to deploy default accounts.
 
