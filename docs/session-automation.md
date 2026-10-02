@@ -27,6 +27,10 @@ and recognizes only missing/gapped intervals. Original ASR output remains unchan
 an unassigned raw transcript and a separate enrolled-voice annotated version; uncertain voices
 remain unknown. Chunk-level recognition and timestamp limitations remain visible. There is no
 automatic enrollment or inference of identity from character dialogue.
+An all-zero runtime speaker embedding is unavailable identity evidence, not permission to
+choose the nearest player or discard speech. Preserve that analyzer result and mark affected
+utterances unassigned with an attribution warning. Malformed evidence and invalid enrolled
+profiles still fail closed.
 
 Per-chunk checkpoints, speaker evidence and measured chunk counters survive interruptions.
 Changed inputs/checkpoints stop the run. A process lock prevents competing local workers.

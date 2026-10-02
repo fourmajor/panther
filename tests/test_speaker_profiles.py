@@ -42,6 +42,27 @@ def test_mixed_and_overlapping_speech_never_force_a_player():
     assert all('playerId' not in line for line in lines)
 
 
+def test_empty_runtime_evidence_preserves_unknown_speech_without_weakening_enrollment():
+    result = {'embeddings': {'SPEAKER_00': embedding(), 'SPEAKER_01': [0] * 16},
+              'turns': [{'start': 0, 'end': 2, 'speaker': 'SPEAKER_00'},
+                        {'start': 3, 'end': 5, 'speaker': 'SPEAKER_01'}]}
+    profiles = [{'playerId': 'alex', 'embedding': embedding()}]
+    lines = [{'start': 0, 'end': 2, 'text': 'Identified.'},
+             {'start': 3, 'end': 5, 'text': 'Keep this speech.'}]
+    labeled = speakers.label_lines(lines, result, profiles, 0)
+    assert labeled[0]['playerId'] == 'alex'
+    assert labeled[1]['playerId'] is None and labeled[1]['text'] == lines[1]['text']
+    assert labeled[1]['attributionWarnings']
+    assert 'attributionWarnings' not in lines[1]
+    with pytest.raises(speakers.EmptySpeakerEmbedding):
+        speakers.match([0] * 16, profiles)
+    for invalid in [[math.nan] * 16, [1], [True] * 16]:
+        with pytest.raises(click.ClickException):
+            speakers.label_lines(lines, {**result, 'embeddings': {'SPEAKER_01': invalid}}, profiles, 0)
+    from panther_journal.editorial import reading_transcript
+    assert reading_transcript({'segments': labeled})['segments'][1]['attributionWarnings']
+
+
 def test_profile_mismatch_and_duplicate_ids(tmp_path):
     import json
     model = tmp_path / 'model'
