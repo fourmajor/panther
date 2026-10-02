@@ -756,3 +756,39 @@ def test_catalog_reader_can_follow_progress_but_cannot_create(editorial):
         request(m, "GET /editorial-jobs", username="example-reader", query={"gameId": "test-game"})
     )
     assert [value["jobId"] for value in listed["jobs"]] == [job["jobId"]]
+
+
+def test_prompt_overlay_reconstructs_complete_candidate_without_duplicate_speech():
+    from panther_journal import editorial as worker
+    original = raw()
+    original['segments'][0]['text'] = 'Long original speech. ' * 20000
+    original['segments'][0]['timingNote'] = 'Approximate source interval.'
+    corrected = copy.deepcopy(original)
+    corrected.update(artifactType='corrected-transcript', corrections=[{
+        'segmentIndex': 0, 'before': original['segments'][0]['text'], 'after': 'Corrected speech.'}],
+        uncertainties=['Identity remains provisional.'])
+    corrected['segments'][0]['text'] = 'Corrected speech.'
+    inputs = {'raw': original, 'candidate': corrected,
+              'priorStages': {'corrected-transcript': {'transcript': corrected}}}
+    before = copy.deepcopy(inputs)
+    result = worker.prompt_projection(inputs)
+    overlay = result['candidate']
+    assert overlay['entityType'] == 'TranscriptCorrectionOverlay'
+    assert overlay['readingBase'] == 'raw' and 'segments' not in overlay
+    rows = [dict(zip(result['raw']['segmentFields'], row, strict=True)) for row in result['raw']['segments']]
+    for edit in overlay['corrections']:
+        assert rows[edit['segmentIndex']]['text'] == edit['before']
+        rows[edit['segmentIndex']]['text'] = edit['after']
+    assert rows == worker.reading_transcript(corrected)['segments']
+    assert result['priorStages']['corrected-transcript']['transcript']['entityType'] == 'TranscriptCorrectionOverlay'
+    assert overlay['uncertainties'] == corrected['uncertainties']
+    assert inputs == before
+    # Identity/timing/text changes not represented by validated deltas cannot
+    # masquerade as an equivalent projection against this base.
+    for field, value in [('playerId', None), ('start', 100), ('text', 'Unaccounted change')]:
+        changed = copy.deepcopy(corrected)
+        changed['segments'][0][field] = value
+        assert worker.correction_overlay(changed, original) is None
+    changed = copy.deepcopy(corrected)
+    changed['players'] = [{'id': 'someone-else', 'name': 'Different fictional person'}]
+    assert worker.correction_overlay(changed, original) is None

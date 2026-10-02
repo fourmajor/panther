@@ -121,6 +121,9 @@ def agent(folder, stage, inputs, heartbeat):
         "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
         "Transcript prompts may encode segments as positional rows; segmentFields names each column. "
         "segmentIndex is always the zero-based row index. No speech or timing is omitted.\n"
+        "TranscriptCorrectionOverlay references the complete raw input: apply its corrections by segmentIndex "
+        "to raw text; every other speech field is identical. Review all edits against raw and pinned evidence. "
+        "This avoids duplicate transcript text, not review coverage.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
         "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
         "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
@@ -134,7 +137,9 @@ def agent(folder, stage, inputs, heartbeat):
         + "\nINPUT DATA:\n"
         + json.dumps(prompt_projection(inputs), ensure_ascii=False, separators=(",", ":"))
     )
-    if len(prompt.encode()) > 2 * 1024**2:
+    # The observed CLI turn/start transport rejects >1,048,576 characters.
+    # A byte ceiling below that also covers Unicode and instruction overhead.
+    if len(prompt.encode()) > 1_000_000:
         raise click.ClickException(
             "Context exceeds the safe stage limit; narrow/paginate before proceeding."
         )
@@ -321,16 +326,51 @@ def reading_transcript(document):
     return result
 
 
-def prompt_projection(value):
+def correction_overlay(document, raw):
+    """Use exact deltas only when they reconstruct every candidate speech field."""
+    if not isinstance(raw, dict) or document.get("artifactType") != "corrected-transcript":
+        return None
+    if any(document.get(k) != raw.get(k) for k in ("entityType", "gameId", "sessionId", "recordingId")):
+        return None
+    mutable = {"segments", "artifactType", "reviewStatus", "corrections", "uncertainties"}
+    if any(document.get(k) != raw.get(k) for k in (set(document) | set(raw)) - mutable):
+        return None
+    originals, candidates = raw.get("segments"), document.get("segments")
+    if not isinstance(originals, list) or not isinstance(candidates, list) or len(originals) != len(candidates):
+        return None
+    texts = [s["text"] for s in originals]
+    seen = set()
+    for edit in document.get("corrections", []):
+        index = edit.get("segmentIndex")
+        if type(index) is not int or not 0 <= index < len(texts) or index in seen or edit.get("before") != texts[index]:
+            return None
+        seen.add(index)
+        texts[index] = edit.get("after")
+    if any(candidate.get("text") != text or {k: v for k, v in candidate.items() if k != "text"} !=
+           {k: v for k, v in original.items() if k != "text"}
+           for original, candidate, text in zip(originals, candidates, texts, strict=True)):
+        return None
+    return {**{k: v for k, v in document.items() if k not in {"segments", "sourceTranscripts"}},
+            "entityType": "TranscriptCorrectionOverlay", "schemaVersion": 1, "readingBase": "raw",
+            "readingProjection": {"schemaVersion": 2, "originalEvidencePreserved": True,
+                                  "omitted": "Duplicate candidate speech; reconstruct exactly from raw and corrections."}}
+
+
+def prompt_projection(value, raw=None):
     if isinstance(value, list):
-        return [prompt_projection(item) for item in value]
+        return [prompt_projection(item, raw) for item in value]
     if isinstance(value, dict):
+        if isinstance(value.get("raw"), dict):
+            raw = value["raw"]
+        overlay = correction_overlay(value, raw)
+        if overlay is not None:
+            value = overlay
         if value.get("entityType") in {"PlayerTranscript", "EditorialTranscriptBundle", "BrowserTranscript"}:
             value = reading_transcript(value)
             fields = sorted({key for segment in value["segments"] for key in segment})
             value["segmentFields"] = fields
             value["segments"] = [[segment.get(field) for field in fields] for segment in value["segments"]]
-        return {key: prompt_projection(item) for key, item in value.items()}
+        return {key: prompt_projection(item, raw) for key, item in value.items()}
     return value
 
 
