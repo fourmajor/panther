@@ -789,3 +789,6 @@ def test_prompt_overlay_reconstructs_complete_candidate_without_duplicate_speech
         changed = copy.deepcopy(corrected)
         changed['segments'][0][field] = value
         assert worker.correction_overlay(changed, original) is None
+    changed = copy.deepcopy(corrected)
+    changed['players'] = [{'id': 'someone-else', 'name': 'Different fictional person'}]
+    assert worker.correction_overlay(changed, original) is None

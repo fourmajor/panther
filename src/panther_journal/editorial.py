@@ -332,6 +332,9 @@ def correction_overlay(document, raw):
         return None
     if any(document.get(k) != raw.get(k) for k in ("entityType", "gameId", "sessionId", "recordingId")):
         return None
+    mutable = {"segments", "artifactType", "reviewStatus", "corrections", "uncertainties"}
+    if any(document.get(k) != raw.get(k) for k in (set(document) | set(raw)) - mutable):
+        return None
     originals, candidates = raw.get("segments"), document.get("segments")
     if not isinstance(originals, list) or not isinstance(candidates, list) or len(originals) != len(candidates):
         return None
