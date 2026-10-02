@@ -53,11 +53,43 @@ async function fixture(context, { remembered = true, username = 'test' } = {}) {
       } });
     }
     if (pathname === '/config.js') return route.fulfill({ contentType: 'application/javascript', body: 'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};' });
-    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname, '../../web/media-explorer', ['/app.js', '/styles.css', '/ui-runtime.js', '/ui-system.css'].includes(pathname) ? pathname.slice(1) : 'index.html');
-    return route.fulfill({ body: fs.readFileSync(file), contentType: file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html', headers: { 'content-security-policy': policy } });
+    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname, '../../web/media-explorer', ['/app.js', '/styles.css', '/ui-runtime.js', '/ui-system.css', '/favicon.svg'].includes(pathname) ? pathname.slice(1) : 'index.html');
+    return route.fulfill({ body: fs.readFileSync(file), contentType: file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html', headers: { 'content-security-policy': policy } });
   });
   return state;
 }
+
+test('Panther favicon resolves from nested routes and renders at tab sizes under CSP', async ({context, page}, testInfo) => {
+  await fixture(context);
+  await page.goto('https://panther.place/games/test-game/dashboard');
+  const icon = page.locator('link[rel="icon"]');
+  await expect(icon).toHaveAttribute('type', 'image/svg+xml');
+  await expect(icon).toHaveAttribute('href', '/favicon.svg');
+  const result = await page.evaluate(async () => {
+    const url = document.querySelector('link[rel="icon"]').href;
+    const response = await fetch(url);
+    const image = new Image(); image.src = url; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.id = 'favicon-check'; canvas.width = 160; canvas.height = 80;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, 160, 80);
+    let x = 8; const colors = [];
+    for (const size of [16, 32, 64]) {
+      ctx.drawImage(image, x, 8, size, size);
+      colors.push([...ctx.getImageData(x + size / 2, 8 + size / 2, 1, 1).data]); x += size + 8;
+    }
+    document.body.prepend(canvas);
+    return {status: response.status, type: response.headers.get('content-type'), width: image.naturalWidth, colors};
+  });
+  expect(result.status).toBe(200);
+  expect(result.type).toContain('image/svg+xml');
+  expect(result.width).toBe(64);
+  for (const color of result.colors) {
+    expect(color[0]).toBeGreaterThan(220);
+    expect(color[1]).toBeGreaterThan(175);
+    expect(color[2]).toBeLessThan(100);
+    expect(color[3]).toBe(255);
+  }
+  await page.locator('#favicon-check').screenshot({path: testInfo.outputPath('favicon-sizes.png')});
+});
 
 test('additional configured account uses the same authenticated browser session', async ({context, page}) => {
   const state = await fixture(context, {username:'example-member'}); // Synthetic session, never real credentials.
