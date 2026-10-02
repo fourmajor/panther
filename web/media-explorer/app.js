@@ -1623,6 +1623,7 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  document.getElementById("episode-workspace")?.stopPreview?.();
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
     const epoch = ++routeEpoch;
     await roomCapture?.render("account", epoch);

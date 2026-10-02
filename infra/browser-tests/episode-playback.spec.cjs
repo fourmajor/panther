@@ -66,7 +66,11 @@ test('Selecting another take invalidates the cached episode composition immediat
  await expect.poll(()=>requests.filter(path=>path==='/episode-composition').length).toBeGreaterThan(0);const before=requests.filter(path=>path==='/episode-composition').length;
  await host.getByRole('button',{name:'City gate',exact:true}).click();await host.getByRole('button',{name:'Use in episode: City gate second take',exact:true}).click();
  await expect.poll(()=>requests.filter(path=>path==='/episode-composition').length).toBeGreaterThan(before);
- await host.getByRole('button',{name:'Preview episode',exact:true}).click();await expect(host.getByLabel('Episode preview',{exact:true})).toHaveAttribute('src','https://audio.example/gate-alt.webm');
+ await host.getByRole('button',{name:'Preview episode',exact:true}).click();const player=host.getByLabel('Episode preview',{exact:true});await expect(player).toHaveAttribute('src','https://audio.example/gate-alt.webm');
+ await expect.poll(()=>player.evaluate(video=>video.paused)).toBe(false);
+ await page.getByRole('link',{name:'Dashboard',exact:true}).click();
+ await expect.poll(()=>player.evaluate(video=>video.paused)).toBe(true);
+ await expect(player).not.toBeVisible();
 });
 
 test('An uncertain selection response is reconciled without repeating the write',async({page,context})=>{
