@@ -62,9 +62,10 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await review.getByRole('button',{name:'Close',exact:true}).click();
  await composer.getByLabel('First session',{exact:true}).check();
  await composer.getByLabel('Second session',{exact:true}).check();
- await composer.getByText('Add context',{exact:true}).click();
+ await composer.getByRole('button',{name:'Add context',exact:true}).click();
  await composer.getByLabel('Campaign lore',{exact:true}).check();
  await expect(composer.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
+ await page.getByRole('dialog',{name:'Add context',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
  const submit=composer.locator('form').getByRole('button',{name:target==='novel'?'Generate chapter':'Create project',exact:true});
  await expect(submit).toBeInViewport();
  expect(await submit.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
@@ -89,7 +90,7 @@ for(const width of [1280,390])for(const withSources of [false,true])test(`Prompt
  await composer.getByLabel('Prompt',{exact:true}).fill('A moonlit crossing');
  await expect(composer.getByText('Add context',{exact:true})).toHaveCount(0);
  await expect(composer.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
- if(withSources){await composer.getByText('Sources',{exact:true}).click();await composer.getByLabel('First session',{exact:true}).check();}
+ if(withSources){await composer.getByRole('button',{name:'Choose sources',exact:true}).click();await composer.getByLabel('First session',{exact:true}).check();await page.getByRole('dialog',{name:'Choose sources',exact:true}).getByRole('button',{name:'Close',exact:true}).click();}
  else await expect(composer.getByLabel('First session',{exact:true})).toHaveCount(0);
  const submit=composer.locator('form').getByRole('button',{name:'Generate',exact:true});
  await expect(submit).toBeEnabled();await submit.scrollIntoViewIfNeeded();await expect(submit).toBeInViewport();
@@ -192,10 +193,10 @@ for(const width of [1280,390]) test(`Chapter progress shows real activity and ac
  await expect(composer.getByRole('progressbar',{name:'Generation stages'})).toBeVisible();await expect(composer.getByRole('progressbar')).not.toHaveAttribute('value');
  expect(await composer.getByRole('progressbar').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-pulse');
  await page.screenshot({path:test.info().outputPath(`chapter-active-progress-${width}.png`),fullPage:true});
- await composer.locator('summary').filter({hasText:/^Prompt$/}).click();await expect(composer).toContainText('Follow the party across the river.');
+ await expect(composer.locator('[data-section=prompt]')).toBeVisible();await expect(composer).toContainText('Follow the party across the river.');
  status='FAILED';await expect(composer).toContainText('Generation failed',{timeout:10000});await expect(composer.getByRole('alert')).toContainText('Start the worker');
  await expect(composer.locator('summary').filter({hasText:/^Stages$/})).toHaveCount(0);await expect(composer.locator('summary').filter({hasText:'Processing details'})).toHaveCount(0);
- await expect(composer.locator('details[open]')).toContainText('Follow the party across the river.');
+ await expect(composer.locator('[data-section=prompt]')).toContainText('Follow the party across the river.');
  await expect(page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true})).toBeVisible();
  await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
  await expect(composer.getByLabel('Prompt',{exact:true})).toBeVisible();

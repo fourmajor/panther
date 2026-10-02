@@ -1465,11 +1465,10 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
     matching.sort((a,b) => b.lastModified.localeCompare(a.lastModified));
     list.replaceChildren();
     let previousGroup = null;
-    matching.sort((a,b) => `${a.kind}:${a.metadata?.category || "Unclassified"}`.localeCompare(`${b.kind}:${b.metadata?.category || "Unclassified"}`) || b.lastModified.localeCompare(a.lastModified));
+    matching.sort((a,b) => a.kind.localeCompare(b.kind) || b.lastModified.localeCompare(a.lastModified));
     for (const asset of matching) {
       const li = document.createElement("li");
-      const purpose = asset.metadata?.category || "Unclassified";
-      const group = `${asset.kind} · ${purpose}`;
+      const group = asset.kind;
       if (group !== previousGroup) {const header = document.createElement("li"), h = document.createElement("h3"); h.textContent = group; header.append(h); list.append(header); previousGroup = group;}
       const link = assetLink(asset);
       if (asset.contentType?.startsWith("image/")) {
@@ -1477,7 +1476,7 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
         image.loading = "lazy"; image.dataset.characterReference = asset.key;
         link.prepend(image); li.className = "character-reference-card";
       }
-      li.append(link, document.createTextNode(` · ${asset.kind} · ${purpose}`));
+      li.append(link, document.createTextNode((asset.metadata?.tags || []).length ? ` · ${asset.metadata.tags.join(" · ")}` : ""));
       list.append(li);
     }
     const images = [...list.querySelectorAll("img[data-character-reference]")];
@@ -1625,6 +1624,7 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  closeOptionalInfoDialogs();
   const legacySessionRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/(?:audio|transcripts)\/?$/);
   if(legacySessionRoute){navigate(`${legacySessionRoute[1]||''}/sessions${location.search}${location.hash}`,{replace:true});return;}
   closeLiveReader();
@@ -1879,6 +1879,7 @@ function previewElement(contentType, url, title) {
 }
 
 async function previewFile(file) {
+  closeOptionalInfoDialogs();
   dismissNarrativePreview();
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); }
   const epoch = ++previewEpoch;
@@ -1943,6 +1944,7 @@ async function downloadAsset(key, button, status, current = () => true) {
 }
 
 function closePreview() {
+  closeOptionalInfoDialogs();
   previewEpoch += 1;
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); media.removeAttribute("src"); media.load(); }
   elements.previewDialog.close();
@@ -2127,8 +2129,6 @@ async function novelOrganization(gameId, current) {
   return {stories:results[0],books:results[1]};
 }
 
-const narrativeClassification = {"grounded-adaptation":"Grounded adaptation", "creative-reimagining":"Creative reimagining", "playful-derivative":"Playful derivative", "unclassified":"Creative classification not assigned"};
-
 function bookLink(title, book, chapterId) {
   const link = novelLink(title, chapterId || "", book.id);
   link.href = gamePath(chapterId ? `novel/${chapterId}` : "novel") + `?book=${encodeURIComponent(book.id)}&bookRevision=${encodeURIComponent(book.revision)}`;
@@ -2142,7 +2142,7 @@ function bookCard(book, story, byKey, current) {
   const meta = document.createElement("p"); meta.className = "eyebrow";
   meta.textContent = `${story?.title || "Story unavailable"} · ${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
   const synopsis = document.createElement("p"); synopsis.textContent = book.synopsis || "No synopsis provided.";
-  const details = document.createElement("p"); details.textContent = [narrativeClassification[book.classification] || "Unclassified",book.authorCredit,
+  const details = document.createElement("p"); details.textContent = [...(book.tags || []),book.authorCredit,
     `${book.volumes.length} volume${book.volumes.length === 1 ? "" : "s"}`,`Revision ${book.revision.slice(0,8)}`].filter(Boolean).join(" · ");
   content.append(meta,heading,synopsis,details); card.append(content);
   if(book.previousRevision){const previous=bookLink("Previous book revision",{...book,revision:book.previousRevision});content.append(previous);}
@@ -2545,10 +2545,7 @@ function chapterDetails(chapter, versions) {
   }).catch(() => {
     if (epoch === routeEpoch && state.gameId === gameId && state.tokens) sources.textContent = "Connections unavailable. Reload the page to try again.";
   });
-  const provenance = document.createElement("details");
-  const label = document.createElement("summary"); label.textContent = "Full provenance and revision history";
-  const data = document.createElement("pre"); data.textContent = JSON.stringify(chapter.details, null, 2);
-  provenance.append(label, data);
+  const provenance = detailBlock("Provenance and revisions", chapter.details);
   novel.details.replaceChildren(heading, summary, creation, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
 }
 
@@ -2730,9 +2727,8 @@ async function loadNovel(chapterId, epoch) {
       if (chapter.details.previousChapterId) novel.details.append(novelLink("Previous chapter version",chapter.details.previousChapterId));
     }
     novel.notice.textContent = [chapter.notice,
-      state.gameDetail.game.purpose === "test" ? "Test-game adaptation · not campaign canon." : "",
       chapter.publicationStatus === "accepted-with-notes" ? "Working draft · AI review left unresolved notes. See Details." : "",
-      selectedBook ? `${selectedBook.title} · ${selectedBook.status === "approved" ? "Approved private selection" : "Private draft"} · ${narrativeClassification[selectedBook.classification]}.` : "Source edition · not an approved book selection.",
+      selectedBook ? selectedBook.title : "",
       sessions.get(chapter.sessionId)?.[0].id !== chapter.id ? "You are reading an earlier version. See Details for the latest." : "",
     ].filter(Boolean).join(" ");
     novel.notice.hidden = !novel.notice.textContent;
@@ -2779,7 +2775,7 @@ function clearLibrary() {
   document.getElementById("library-status").hidden = false;
   if (!state.tokens) {
     assetIndex = null; videoPlaylist = null;
-    videoLibraryView = {gameId:null,search:"",category:"all",tag:"",character:"",collection:""};
+    videoLibraryView = {gameId:null,search:"",tag:"",character:"",collection:""};
   }
 }
 
@@ -2820,7 +2816,7 @@ function assetLink(asset, label) {
   return link;
 }
 
-let videoLibraryView = {gameId:null, search:"", category:"all", tag:"", character:"", collection:""};
+let videoLibraryView = {gameId:null, search:"", tag:"", character:"", collection:""};
 let videoPlaylist = null;
 function sceneMapPicker(gameId, selectedKey, current, onChange = () => {}) {
   const host=document.createElement('section');host.className='scene-map-picker';
@@ -2917,8 +2913,8 @@ function renderEpisodeWorkspace(epoch) {
 
 function renderVideoLibrary(assets, list, status, current, loadMore) {
   const gameId = state.gameId;
-  const videoHost=document.createElement("div");list.append(videoHost);
-  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",category:"all",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
+  const videoHost=document.createElement("div");videoHost.hidden=!assets.length&&!loadMore;list.append(videoHost);
+  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
   const view = videoLibraryView;
   view.collection=new URLSearchParams(location.search).get("collection") || "";
   const controls = document.createElement("section"), cards = document.createElement("div"), collectionsStatus = document.createElement("p"), summary = document.createElement("p");
@@ -2926,9 +2922,6 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   cards.className = "video-library-cards"; summary.setAttribute("role", "status"); collectionsStatus.setAttribute("role", "status");
   const field = (text, element, id) => { const label = document.createElement("label"); label.textContent = text; element.id = id; label.htmlFor = id; const wrap = document.createElement("div"); wrap.append(label,element); controls.append(wrap); return element; };
   const search = field("Search videos",document.createElement("input"),"video-search"); search.type = "search";search.placeholder="Search videos and episodes"; search.maxLength = 300; search.value = view.search;
-  const category = field("Relationship to the game",document.createElement("select"),"video-category");
-  for (const [value,label] of [["all","All categories"],["playful-derivative","Playful derivatives"],["creative-reimagining","Creative reimaginings"],["grounded-adaptation","Grounded adaptations"],["canonical-source","Canonical sources"],["reference","References"],["unclassified","Unclassified / unknown"]]) category.add(new Option(label,value));
-  category.value = view.category;
   const tag = field("Tag",document.createElement("select"),"video-tag"); tag.add(new Option("All tags",""));
   for (const name of [...new Set(assets.flatMap(a=>a.metadata?.tags || []))].sort()) tag.add(new Option(name,name));
   tag.value = view.tag;
@@ -2938,12 +2931,13 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   const collection = field("Clip collection",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
   const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
   controls.append(collectionsStatus,retry,summary);
-  const libraryDetails=document.createElement("details"), librarySummary=document.createElement("summary"), galleryHeading=document.createElement("h2");
-  libraryDetails.className="video-library-details";librarySummary.textContent="Clip collections";galleryHeading.textContent="Finished videos";
-  libraryDetails.append(librarySummary,controls);videoHost.append(galleryHeading,libraryDetails,cards);
-  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filters=document.createElement('details'),filterLabel=document.createElement('summary'),filterFields=document.createElement('div');
-  filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filters.className='video-top-filters';filterLabel.textContent='Filters';filterFields.className='video-top-filter-fields';filterFields.append(category.parentNode,tag.parentNode,character.parentNode);filters.append(filterLabel,filterFields);filterBar.append(search.parentNode,filters);
+  const galleryHeading=document.createElement("h2");galleryHeading.textContent="Clips";
+  videoHost.append(galleryHeading,controls,cards);
+  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filterFields=document.createElement('div');
+  filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filterFields.className='video-top-filter-fields';filterFields.append(tag.parentNode,character.parentNode);filterBar.append(search.parentNode,filterFields);
   workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(filterBar);workspace?.filterEpisodes?.(view.search);
+  for(const select of [tag,character,collection])window.PantherUI.enhanceSelect(select,select===tag?'Tag':select===character?'Featuring character':'Clip collection');
+
 
   let displayed = assets, chosen = null, sequence = 0;
   const sceneActions = document.createElement("div"); sceneActions.className = "model-control-row";
@@ -3052,7 +3046,6 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
     editScene.disabled = !chosen;
     const needle = view.search.trim().toLocaleLowerCase();
     const selected = displayed.filter(a => (!needle || [a.metadata?.title,a.metadata?.description,...(a.metadata?.tags || [])].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle))
-      && (view.category === "all" || (a.metadata?.category || "unclassified") === view.category)
       && (!view.tag || a.metadata?.tags?.includes(view.tag)) && (!view.character || a.metadata?.characterIds?.includes(view.character)));
     summary.textContent = `${selected.length} clip${selected.length===1 ? "" : "s"}`;
     status.textContent = chosen ? chosen.description || "" : displayed.length ? "" : "No videos yet.";
@@ -3069,12 +3062,9 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
       }
       const title = document.createElement("h2"); title.append(assetLink(asset));
       const description = document.createElement("p"); description.textContent = asset.metadata?.description || "";
-      const categoryText = document.createElement("p"); categoryText.className = "video-category-label";
-      categoryText.textContent = (asset.metadata?.category || "").replaceAll("-"," ");
-      if (asset.metadata?.category === "playful-derivative") card.classList.add("playful-video");
-      const info = document.createElement("p"); info.textContent = `${asset.kind} · ${new Date(asset.lastModified).toLocaleString()} · ${(asset.metadata?.tags || []).join(", ") || "No tags"}`;
+      const info = document.createElement("p"); info.textContent = [new Date(asset.lastModified).toLocaleString(),...(asset.metadata?.tags || [])].join(" · ");
       const creator = asset.metadata?.extra?.creator; const credit = document.createElement("p"); credit.textContent = typeof creator === "string" ? `Creator: ${creator}` : "";
-      card.append(poster,categoryText,title,description,info,credit);
+      card.append(poster,title,description,info,credit);
       const related = document.createElement("p");
       for (const id of asset.metadata?.characterIds || []) { const c = state.gameDetail?.characters.find(c=>c.id===id); if (!c) continue; const link=document.createElement("a"); link.href=gamePath("characters")+`/${encodeURIComponent(id)}`; link.textContent=c.name; related.append(link,document.createTextNode(" · ")); }
       if (asset.metadata?.sessionId) related.append(document.createTextNode(`Session: ${asset.metadata.sessionId}`));
@@ -3084,7 +3074,6 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
     void images();
   }
   search.oninput = () => { view.search=search.value;workspace?.filterEpisodes?.(view.search);draw(); };
-  category.onchange = () => { view.category=category.value; draw(); };
   tag.onchange = () => { view.tag=tag.value; draw(); };
   character.onchange = () => { view.character=character.value; draw(); };
   async function choose() {
@@ -3112,12 +3101,13 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
         if(cursor && seen.has(cursor)) throw new Error("Repeated collection cursor"); if(cursor)seen.add(cursor);
         collection.disabled=false;
         collectionsStatus.textContent=count ? `${count} collections` : "";
+        videoHost.hidden=!assets.length&&!loadMore&&!count;
         collectionMore.hidden=!cursor; collectionMore.disabled=false;
       };
       const collectionMore=document.createElement("button"); collectionMore.type="button"; collectionMore.className="quiet-button"; collectionMore.textContent="Load more collections"; collectionMore.hidden=true; controls.append(collectionMore);
       collectionMore.onclick=async()=>{ collectionMore.disabled=true; try{await nextPage();}catch(error){if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. Reload the page to try again.`;} };
       await nextPage();
-      if(view.collection) { if(![...collection.options].some(o=>o.value===view.collection)) collection.add(new Option("Selected collection",view.collection)); collection.value=view.collection; await choose(); }
+      if(view.collection) { if(![...collection.options].some(o=>o.value===view.collection)) collection.add(new Option("Selected collection",view.collection)); collection.value=view.collection;for(const option of collection.options)option.toggleAttribute("selected",option.value===view.collection); await choose(); }
     } catch(error) { if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. The loaded video library remains usable.`; }
   })();
   draw();
@@ -3126,7 +3116,6 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
 function configureVideoPreview(asset, video, epoch) {
   const gameId=state.gameId, current=()=>epoch===previewEpoch && gameId===state.gameId && state.tokens;
   const host=document.createElement("section"); host.className="video-player-details"; video.after(host);
-  const notice=document.createElement("p"); notice.textContent=`${(asset.metadata?.category || "unclassified").replaceAll("-"," ")} · Classification and provenance remain as recorded. A dramatization or playful derivative is not a canonical session transcript.`; host.append(notice);
   const preview=asset.metadata?.extra?.preview;
   if(preview?.schemaVersion===1 && sameGameKey(preview.imageKey)) void api("/image-links",{},{body:{gameId,keys:[preview.imageKey]}}).then(result=>{if(current() && result.images?.[preview.imageKey]?.url)video.poster=result.images[preview.imageKey].url;}).catch(()=>{});
   const playlist=videoPlaylist?.gameId===gameId ? videoPlaylist : null;
@@ -3137,8 +3126,8 @@ function configureVideoPreview(asset, video, epoch) {
     const button=(name,position)=>{const node=document.createElement("button");node.type="button";node.className="quiet-button";node.textContent=name;node.disabled=position<0 || position>=playlist.assets.length;node.onclick=()=>{if(current()){const entry=playlist.assets[position];void previewFile({...entry,name:entry.metadata?.title || entry.name});}};return node;};
     navigation.append(label,button("Previous collection video",index-1),button("Next collection video",index+1));host.append(navigation);
   }
-  const captions=document.createElement("details"), heading=document.createElement("summary"), captionStatus=document.createElement("p");
-  heading.textContent="Caption tracks"; captionStatus.setAttribute("role","status");captionStatus.textContent="Finding explicitly associated WebVTT exports…";
+  const captions=document.createElement("section"), heading=document.createElement("h3"), captionStatus=document.createElement("p");
+  captions.className="video-captions";heading.textContent="Caption tracks"; captionStatus.setAttribute("role","status");captionStatus.textContent="Finding explicitly associated WebVTT exports…";
   captions.append(heading,captionStatus);host.append(captions);
   let blobUrl=null;
   video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
@@ -3148,7 +3137,7 @@ function configureVideoPreview(asset, video, epoch) {
       const directory=asset.key.slice(0,asset.key.lastIndexOf("/")+1);
       const tracks=assets.filter(a=>a.kind==="video-captions" && a.key.endsWith(".vtt") && sameGameKey(a.key)
         && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)));
-      if(!tracks.length){captionStatus.textContent="No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
+      if(!tracks.length){captions.remove();return;}
       const label=document.createElement("label"), select=document.createElement("select"), load=document.createElement("button");
       label.textContent="Caption export";select.id="video-caption-export";label.htmlFor=select.id;
       select.add(new Option("Choose a recorded caption track",""));for(const track of tracks)select.add(new Option(track.metadata?.title || track.name,track.key));
@@ -3180,7 +3169,7 @@ function configureVideoPreview(asset, video, epoch) {
       };
       captions.append(label,select,load);
       for(const track of tracks)captions.append(assetLink(track,`Open caption export · ${track.metadata?.title || track.name}`));
-      captionStatus.textContent=`${tracks.length} explicitly associated caption exports. No language, author or review status is guessed.`;
+      captionStatus.textContent=`${tracks.length} caption tracks`;
     }catch(error){if(current())captionStatus.textContent=`Caption lookup unavailable: ${error.message}. Video playback remains usable.`;}
   })();
 }
@@ -3387,10 +3376,9 @@ async function renderAssetLinks(key, epoch, resolved = null) {
     appendFinishedConnections(host, connections);
     const companions = assets.filter(a => a.key !== key && a.key.split("/")[3] === key.split("/")[3]);
     if (companions.length) {
-      const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("ul");
-      summary.textContent = "Technical files and original exports";
+      const list = document.createElement("ul");
       for (const asset of companions) { const li = document.createElement("li"); li.append(assetLink(asset)); list.append(li); }
-      details.append(summary, list); host.append(details);
+      host.append(optionalInfoDialog("Technical files and original exports", list).host);
     }
     const warnings = assets.filter(a => a.lineageWarning).length;
     if (warnings || connections.incomplete) { const warning = document.createElement("p"); warning.textContent = "Some provenance is missing or unreadable; finished-asset connections may be incomplete."; host.append(warning); }
@@ -3422,9 +3410,28 @@ async function renderAssetVersions(key, epoch) {
   } catch (error) { if (current()) host.textContent = `Versions unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
+function closeOptionalInfoDialogs() {
+  for (const dialog of [...document.querySelectorAll(".optional-info-dialog[open]")].reverse()) dialog.close();
+}
+
+// Native modal dialogs supply focus containment and Escape dismissal; closing
+// restores focus to the opener while it remains in the active view.
+function optionalInfoDialog(title, content, onOpen = () => {}) {
+  const host = document.createElement("div"), button = document.createElement("button"), dialog = document.createElement("dialog");
+  const header = document.createElement("header"), heading = document.createElement("h2"), close = document.createElement("button");
+  host.className = "optional-info"; dialog.className = "optional-info-dialog";
+  button.type = close.type = "button"; button.className = close.className = "quiet-button";
+  button.textContent = heading.textContent = title; close.textContent = "Close";
+  dialog.setAttribute("aria-label", title); close.onclick = () => dialog.close();
+  header.append(heading, close); dialog.append(header, content); host.append(button, dialog);
+  button.onclick = () => { dialog.showModal(); onOpen(); };
+  dialog.addEventListener("close", () => { if (button.isConnected && !button.closest("[hidden]")) button.focus({preventScroll:true}); });
+  return {host, dialog, button};
+}
+
 function detailBlock(title, value) {
-  const details = document.createElement("details"), summary = document.createElement("summary"), pre = document.createElement("pre");
-  summary.textContent = title; pre.textContent = JSON.stringify(value, null, 2); details.append(summary, pre); return details;
+  const pre = document.createElement("pre"); pre.textContent = JSON.stringify(value, null, 2);
+  return optionalInfoDialog(title, pre).host;
 }
 
 // Movie review is intentionally separate from the paid local generation CLI.
@@ -3559,8 +3566,8 @@ function drawMovieWorkspace(host, data, key, assets, current) {
     aside.append(movieNode("p", plan.budget.notes || "Includes retries. Quotes must be refreshed before approval. Unknown costs are not zero.", "movie-small"));
     const count = movieNode("p", `${reviewed.size} of ${plan.shots.length} shots reviewed`, "movie-reviewed-count"); aside.append(count);
     if (data.readiness.blockers.length) {
-      const details = movieNode("details", undefined, "movie-blockers"); details.open = true;
-      details.append(movieNode("summary", `${data.readiness.blockers.length} items need attention`));
+      const details = movieNode("section", undefined, "movie-blockers");
+      details.append(movieNode("h4", `${data.readiness.blockers.length} items need attention`));
       const list = movieNode("ul"); for (const blocker of data.readiness.blockers) list.append(movieNode("li", blocker)); details.append(list); aside.append(details);
     }
     if (data.review) {
@@ -3770,8 +3777,8 @@ function renderStructuredAsset(asset, epoch) {
 function transcriptNavigation(host, asset, transcript, epoch, people) {
   const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
   const sessionId = asset.metadata?.sessionId || transcript.sessionId;
-  const toolbox=document.createElement("details"), toolHeading=document.createElement("summary");toolHeading.textContent="Tools";toolbox.className="transcript-toolbox";
-  const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");toolbox.append(toolHeading,tools);host.append(toolbox);
+  const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");
+  const navigationPicker = optionalInfoDialog("Transcript tools", tools); host.append(navigationPicker.host);
   const label = document.createElement("label"), search = document.createElement("input"), results = document.createElement("p"), previous = document.createElement("button"), next = document.createElement("button");
   label.textContent = "Search speech or player names"; search.type = "search"; search.maxLength = 500; search.id = "transcript-search"; label.htmlFor = search.id;
   search.placeholder = "Find a name, place or phrase…"; results.setAttribute("role", "status");
@@ -3784,8 +3791,8 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   const selection = document.createElement("div"), selectionStatus = document.createElement("p");
   selectionStatus.setAttribute("role", "status"); selectionStatus.textContent = sessionId ? "Checking the explicit canonical selection…" : "Canonical selection unavailable: this transcript has no session identity.";
   selection.append(selectionStatus); tools.append(selection);
-  const source = document.createElement("details"), sourceHeading = document.createElement("summary"), sourceStatus = document.createElement("p"), audio = document.createElement("audio");
-  sourceHeading.textContent = "Source recording · listen at a transcript timestamp";
+  const source = document.createElement("section"), sourceHeading = document.createElement("h3"), sourceStatus = document.createElement("p"), audio = document.createElement("audio");
+  sourceHeading.textContent = "Recording";
   sourceStatus.setAttribute("role", "status"); sourceStatus.textContent = "Finding the exact source recording and its continuous listening copy…";
   audio.controls = true; audio.preload = "metadata"; audio.hidden = true;
   source.append(sourceHeading, sourceStatus, audio); tools.append(source);
@@ -3817,7 +3824,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   let duration = null;
   const seek = async seconds => {
     if (!current() || duration === null || !Number.isFinite(seconds) || seconds < 0 || seconds >= duration) return;
-    toolbox.open = true;source.open = true;
+    if (!navigationPicker.dialog.open) navigationPicker.dialog.showModal();
     try { audio.currentTime = seconds; await audio.play(); }
     catch { if (current()) sourceStatus.textContent = "Playback could not start. Use the source audio controls or refresh its link; transcript evidence is unchanged."; }
   };
@@ -3854,7 +3861,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
       const ready = () => { if (current()) { duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null; seeks.forEach(({button,start}) => { button.disabled = duration === null || !Number.isFinite(start) || start < 0 || start >= duration; }); } };
       audio.addEventListener("loadedmetadata", ready);
       if (audio.readyState >= 1) ready();
-      sourceStatus.textContent = "Continuous listening copy of the linked source. Timestamps follow the transcript; capture warnings and attribution uncertainty still apply.";
+      sourceStatus.textContent = ""; sourceStatus.hidden = true;
     } catch (error) { if (current()) { versions.replaceChildren(new Option("Version navigation unavailable",asset.key)); sourceStatus.textContent = `Source navigation unavailable: ${error.message}. Use Inputs or reopen to retry.`; } }
   };
   void configure();
@@ -3872,7 +3879,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
         }
       };
       report();
-      const details = document.createElement("details"), heading = document.createElement("summary"), explanation = document.createElement("p"), reasonLabel = document.createElement("label"), reason = document.createElement("input"), confirmLabel = document.createElement("label"), confirm = document.createElement("input"), button = document.createElement("button"), status = document.createElement("p");
+      const details = document.createElement("section"), heading = document.createElement("h3"), explanation = document.createElement("p"), reasonLabel = document.createElement("label"), reason = document.createElement("input"), confirmLabel = document.createElement("label"), confirm = document.createElement("input"), button = document.createElement("button"), status = document.createElement("p");
       heading.textContent = "Choose this canonical reading version";
       explanation.textContent = "This changes a session pointer only. It does not correct raw text, verify speakers, approve game facts or regenerate adaptations. Previous selections are retained.";
       reason.id = "canonical-reason"; reason.maxLength = 500; reasonLabel.htmlFor = reason.id; reasonLabel.textContent = "Selection reason";
@@ -3893,7 +3900,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
           report(); status.textContent = "Selection saved. Immutable transcripts and review state are unchanged.";
         } catch (error) { if (current()) { status.textContent = `Selection not confirmed: ${error.message}. An exact retry uses the same operation identity; reload if another selection changed.`; button.disabled = false; } }
       };
-      details.append(heading, explanation, reasonLabel, reason, confirmLabel, button, status); selection.append(details);
+      details.append(explanation, reasonLabel, reason, confirmLabel, button, status); selection.append(optionalInfoDialog(heading.textContent, details).host);
     } catch (error) { if (current()) selectionStatus.textContent = `Canonical selection unavailable: ${error.message}. No version is assumed canonical.`; }
   })();
   return {
@@ -4542,11 +4549,13 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     const cast=document.createElement('fieldset'),castLegend=document.createElement('legend'),castOptions=document.createElement('div'),castPreview=document.createElement('p');
     castLegend.textContent='Characters';castOptions.className='editorial-cast-options';castPreview.className='editorial-cast-preview';castPreview.setAttribute('aria-live','polite');cast.append(castLegend,castOptions,castPreview);
     const sources=document.createElement('fieldset'), legend=document.createElement('legend');legend.textContent='Transcripts';sources.append(legend);
-    const references=document.createElement('details'), summary=document.createElement('summary'), contexts=document.createElement('div');summary.textContent=isVideo?'Sources':'Add context';references.append(summary,isVideo?sources:contexts);
+    const referenceContents=document.createElement('div'), contexts=document.createElement('div'), referenceStatus=document.createElement('p'); referenceStatus.setAttribute('role','status'); referenceContents.append(referenceStatus,isVideo?sources:contexts);
+    const referencePicker=optionalInfoDialog(isVideo?'Choose sources':'Add context', referenceContents);
+    const references=referencePicker.host;
     const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=isVideo?'Generate':'Generate chapter';submit.disabled=true;
     const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
     const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
-    if(isMap)references.insertBefore(cast,sources);
+    if(isMap)referenceContents.insertBefore(cast,sources);
     if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');syncNovelEmptyState();};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
     if (!isVideo) {
       const write = document.createElement('button'); write.type = 'button'; write.className = 'text-link-button'; write.textContent = 'Write manually';
@@ -4556,12 +4565,12 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
     const choices=(assets,destination,set)=>{for(const asset of assets){if(!isVideo&&destination===sources){transcriptSourceChoice(asset,destination,set,updateSubmit,gameId,current);continue;}const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
-      showLoading(status,'Loading sources…');
+      showLoading(status,'Loading sources…');if(referencePicker.dialog.open)showLoading(referenceStatus,'Loading sources…');
       try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
-        choices(result.assets.filter(predicate),destination,set);status.textContent='';
+        choices(result.assets.filter(predicate),destination,set);status.textContent='';referenceStatus.textContent='';
         if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='Load more';more.onclick=()=>{more.remove();void page(section,destination,set,predicate,result.cursor);};destination.append(more);}
         if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No context sources yet.';destination.append(empty);}
-      }catch(error){if(current())status.textContent=error.message;}
+      }catch(error){if(current()){status.textContent=error.message;referenceStatus.textContent=error.message;}}
     };
     const loadCast=async(cursor)=>{
       try{const result=await api('/characters',{gameId,cursor});if(!current())return;
@@ -4572,12 +4581,12 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
         }
         if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='More characters';more.onclick=()=>{more.remove();void loadCast(result.cursor);};castOptions.append(more);}
         if(!castOptions.childNodes.length){const empty=document.createElement('p');empty.textContent='No characters yet.';castOptions.append(empty);}
-      }catch(error){if(current())status.textContent=error.message;}
+      }catch(error){if(current()){status.textContent=error.message;referenceStatus.textContent=error.message;}}
     };
-    if(isVideo){updateSubmit();if(!isMap)void loadCast();let castStarted=false;references.addEventListener('toggle',()=>{if(references.open&&isMap&&!castStarted){castStarted=true;void loadCast();}if(references.open&&!sources.querySelector('label,p'))void page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));});}
+    if(isVideo){updateSubmit();if(!isMap)void loadCast();let castStarted=false;referencePicker.button.addEventListener('click',()=>{if(isMap&&!castStarted){castStarted=true;void loadCast();}if(!sources.querySelector('label,p'))void page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));});}
     else {
       await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
-      references.addEventListener('toggle',()=>{if(references.open&&!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout','provenance','migration-report','audit-report','generation-metadata'].includes(a.kind)&&!/(?:^|[\/_-])(audit|migration|provenance|manifest|processing)(?:[\/_.-]|$)/i.test(a.key)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='creative-evidence'||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));});
+      referencePicker.button.addEventListener('click',()=>{if(!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout','provenance','migration-report','audit-report','generation-metadata'].includes(a.kind)&&!/(?:^|[\/_-])(audit|migration|provenance|manifest|processing)(?:[\/_.-]|$)/i.test(a.key)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='creative-evidence'||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));});
     }
     let pendingMap=null;
     form.onsubmit=async event=>{
@@ -4607,7 +4616,6 @@ async function showEditorialProgress(jobId, host, gameId, target) {
     const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
     if(!result.job)throw new Error('The generation job could not be found.');
     if(target==='novel'){const create=document.querySelector('#novel .explorer-heading [data-generation-action]');if(create)create.hidden=false;}
-    const expanded=new Set([...host.querySelectorAll('details[open]')].map(node=>node.dataset.section));
     const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
     heading.textContent=result.job.creation?.title||(target==='video'?'Video':'Chapter');
     const tasks=result.tasks || [], failed=['FAILED','BLOCKED','ATTENTION','DEFERRED'].includes(result.job.status);
@@ -4628,8 +4636,8 @@ async function showEditorialProgress(jobId, host, gameId, target) {
     } else if(!terminal) {
       const waiting=document.createElement('p');waiting.className='muted';waiting.textContent='Generation starts when the processing worker is available.';host.append(waiting);
     }
-    if(tasks.length){const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Stages';activity.dataset.section='stages';activity.open=expanded.has('stages');activity.append(summary,stages);host.append(activity);}
-    if(result.job.creation?.brief){const inputs=document.createElement('details'),label=document.createElement('summary'),prompt=document.createElement('p');label.textContent='Prompt';inputs.dataset.section='prompt';inputs.open=expanded.has('prompt');prompt.textContent=result.job.creation.brief;inputs.append(label,prompt);host.append(inputs);}
+    if(tasks.length){const activity=document.createElement('section'), heading=document.createElement('h3');heading.textContent='Stages';activity.dataset.section='stages';activity.append(heading,stages);host.append(activity);}
+    if(result.job.creation?.brief){const inputs=document.createElement('section'),label=document.createElement('h3'),prompt=document.createElement('p');label.textContent='Prompt';inputs.dataset.section='prompt';prompt.textContent=result.job.creation.brief;inputs.append(label,prompt);host.append(inputs);}
     if(target==='video'&&result.job.status==='READY_FOR_VIDEO_DISCUSSION'){const note=document.createElement('p');note.className='editorial-generation-note';note.textContent='Prompts prepared. Rendering requires approval.';host.append(note);}
     for(const task of tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
       if(task.status==='DONE'&&task.output?.key){const link=document.createElement('a');link.textContent='View';link.href=`/games/${gameId}/media?asset=${encodeURIComponent(task.output.key)}`;item.append(' ',link);}stages.append(item);}

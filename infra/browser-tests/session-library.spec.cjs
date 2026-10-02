@@ -85,12 +85,12 @@ for(const status of [403,503])test(`episode creation remains available when fini
  await expect(page.getByRole('button',{name:'TV episodes',exact:true})).toHaveCount(0);
 });
 
-for(const width of [1280,390]) test(`playful video filters, ordered collections and captions at ${width}`,async({page})=>{
+for(const width of [1280,390]) test(`tag-based video filters, ordered collections and captions at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000});await fixture(page);
   const second=prefix+'second-video/original/take.webm',poster=prefix+'poster-a/original/frame.svg';
   const caption=video.slice(0,video.lastIndexOf('/')+1)+'captions.vtt';
   const clip=(key,title,category,tags)=>({key,name:key.split('/').at(-1),kind:'silly-video',contentType:'video/webm',size:100,lastModified:'2026-01-01T12:00:00Z',sourceKeys:[],metadata:{title,description:'Synthetic test clip',category,tags,characterIds:['hero'],extra:{creator:'Example Artist',preview:{schemaVersion:1,imageKey:poster}}}});
-  const videos=[clip(video,'Practice joke','playful-derivative',['table-joke']),clip(second,'Scene test','creative-reimagining',['experiment'])];
+  const videos=[clip(video,'Practice joke','playful-derivative',['table-joke','canonical']),clip(second,'Scene test','creative-reimagining',['experiment'])];
   const captionAsset={key:caption,name:'captions.vtt',kind:'video-captions',contentType:'text/vtt',size:80,lastModified:'2026-01-01T12:00:00Z',sourceKeys:[],metadata:{title:'Synthetic captions'}};
   let galleryRequests=0;
   await page.route(`${api}/assets?**`,route=>route.fulfill({headers,json:{assets:new URL(route.request().url()).searchParams.get('section')==='videos'?videos:[...videos,captionAsset],cursor:null}}));
@@ -116,16 +116,18 @@ for(const width of [1280,390]) test(`playful video filters, ordered collections 
   await page.route('https://audio.example/test.webm',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
   const cards=page.locator('.video-card');await expect(cards).toHaveCount(2);
   await expect(cards.first().locator('img')).toBeVisible();expect(galleryRequests).toBe(1);
-  await page.locator('.video-top-filters > summary').click();
-  await page.getByLabel('Relationship to the game').selectOption('playful-derivative');await expect(cards).toHaveCount(1);
-  await expect(cards.first()).toHaveClass(/playful-video/);
+  await expect(page.getByText('Relationship to the game',{exact:true})).toHaveCount(0);
+  await expect(page.locator('#session-library details,#session-library summary')).toHaveCount(0);
+  await selectVideoFilter(page,'Tag','canonical');await expect(cards).toHaveCount(1);
+  await expect(cards.first()).not.toHaveClass(/playful-video/);
+  await expect(cards.first()).toContainText('canonical');
   await page.getByLabel('Search videos').fill('practice');await expect(cards).toHaveCount(1);
   await page.getByLabel('Search videos').fill('missing');await expect(cards).toHaveCount(0);
-  await page.getByLabel('Search videos').fill('');await page.getByLabel('Relationship to the game').selectOption('all');
-  await page.getByLabel('Tag',{exact:true}).selectOption('experiment');await expect(cards).toHaveCount(1);
-  await page.getByLabel('Tag',{exact:true}).selectOption('');
+  await page.getByLabel('Search videos').fill('');await selectVideoFilter(page,'Tag','All tags');
+  await selectVideoFilter(page,'Tag','experiment');await expect(cards).toHaveCount(1);
+  await selectVideoFilter(page,'Tag','All tags');
   expect(galleryRequests).toBe(1); // Filtering does not re-sign every thumbnail.
-  if(await page.locator('.video-library-details').getAttribute('open')===null)await page.getByText('Clip collections',{exact:true}).click();await page.getByLabel('Clip collection',{exact:true}).selectOption('favorites');
+  await selectVideoFilter(page,'Clip collection','Favorite takes (2)');
   await expect(cards.first()).toContainText('Scene test');await expect(cards).toHaveCount(2);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`video-collections-${width}.png`),fullPage:true});
@@ -134,7 +136,7 @@ for(const width of [1280,390]) test(`playful video filters, ordered collections 
   await expect(body.getByRole('button',{name:'Previous collection video'})).toBeDisabled();
   await body.getByRole('button',{name:'Next collection video'}).click();
   await expect(page.locator('#preview-title')).toHaveText('Practice joke');
-  await body.getByText('Caption tracks',{exact:true}).click();
+  await expect(body.getByRole('heading',{name:'Caption tracks'})).toBeVisible();
   await body.getByRole('button',{name:'Load selected captions'}).click();
   await expect(body).toContainText('Selected captions loaded');
   await expect.poll(()=>body.locator('video track').evaluate(t=>t.readyState)).toBe(2);
@@ -157,10 +159,10 @@ test('unavailable collection never substitutes library videos',async({page})=>{
   await page.route(`${api}/video-collections?**`,route=>new URL(route.request().url()).searchParams.get('id')
     ?route.fulfill({status:503,headers,json:{error:'Try later'}}):route.fulfill({headers,json:{collections:[{id:'favorites',name:'Favorites',assetKeys:[video]}],cursor:null}}));
   await page.goto(`${origin}/games/test-game/videos`);
-  if(await page.locator('.video-library-details').getAttribute('open')===null)await page.getByText('Clip collections',{exact:true}).click();await page.getByLabel('Clip collection',{exact:true}).selectOption('favorites');
+  await selectVideoFilter(page,'Clip collection','Favorites (1)');
   await expect(page.locator('#library-list')).toContainText('Collection not loaded; no partial playlist');
   await expect(page.locator('.video-card')).toHaveCount(0);
-  await page.getByLabel('Clip collection',{exact:true}).selectOption('');await expect(page.locator('.video-card')).toHaveCount(1);
+  await selectVideoFilter(page,'Clip collection','Video library');await expect(page.locator('.video-card')).toHaveCount(1);
 });
 
 for (const width of [1280,390]) test(`transcript search, versions, canonical choice and continuous source at ${width}`,async({page})=>{
@@ -186,6 +188,10 @@ for (const width of [1280,390]) test(`transcript search, versions, canonical cho
   const body=page.locator('#preview-body');
   await expect(body).toContainText('No canonical reading version has been designated');
   await expect(body.locator('.transcript-segment')).toHaveCount(2);
+  await expect(body.locator('details,summary')).toHaveCount(0);
+  const navigationButton=body.getByRole('button',{name:'Transcript tools',exact:true});
+  await navigationButton.click();await expect(body.getByLabel('Search speech or player names')).toBeVisible();
+  await page.keyboard.press('Escape');await expect(navigationButton).toBeFocused();
   await expect(body.getByLabel('Search speech or player names')).not.toBeVisible();
   await expect(body.locator('.transcript-segment').first()).toBeInViewport();
   await page.screenshot({path:test.info().outputPath(`transcript-first-${width}.png`)});
@@ -201,21 +207,21 @@ for (const width of [1280,390]) test(`transcript search, versions, canonical cho
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
   await expect(body.locator('audio')).toBeVisible();
   await expect(body.locator('.transcript-seek').first()).toBeEnabled();
-  await body.locator('.transcript-seek').first().click();
   await expect.poll(()=>body.locator('audio').evaluate(a=>a.paused)).toBe(false);
-  await body.getByText('Choose this canonical reading version',{exact:true}).click();
+  await body.getByRole('button',{name:'Choose this canonical reading version',exact:true}).click();
   await body.getByLabel('Selection reason').fill('Prefer original evidence for this test');
   await body.getByRole('checkbox').check();
   await body.getByRole('button',{name:'Use this version as canonical'}).click();
   await expect(body).toContainText('Selection saved. Immutable transcripts and review state are unchanged');
   await expect(body).toContainText('Viewing the canonical reading version');
+  await body.getByRole('dialog',{name:'Choose this canonical reading version',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
   expect(submitted.reason).toBe('Prefer original evidence for this test');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-reader-${width}.png`)});
   await body.getByLabel('Session transcript version').selectOption(corrected);
   await expect(body).toContainText('The lantern.');
   await expect(body).toContainText('Viewing a non-canonical version');
-  await body.getByText('Tools',{exact:true}).click();
+  await body.getByRole('button',{name:'Transcript tools',exact:true}).click();
   await expect(body.getByRole('link',{name:'Open canonical reading version'})).toBeVisible();
   await expect(body).toContainText('ai-reviewed-unverified');
 });
@@ -231,8 +237,8 @@ test('canonical selection failure never claims success and retries the exact ope
   });
   await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(raw)}`);
   const body=page.locator('#preview-body');
-  await body.getByText('Tools',{exact:true}).click();
-  await body.getByText('Choose this canonical reading version',{exact:true}).click();
+  await body.getByRole('button',{name:'Transcript tools',exact:true}).click();
+  await body.getByRole('button',{name:'Choose this canonical reading version',exact:true}).click();
   await body.getByLabel('Selection reason').fill('Reading preference');
   await body.getByRole('checkbox').check();
   const save=body.getByRole('button',{name:'Use this version as canonical'});
@@ -418,11 +424,12 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
   await expect(page.locator('.transcript-segment').last()).toContainText('Unassigned speaker');
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
-  await page.getByText('Capture integrity and warnings',{exact:true}).click();
-  await expect(page.locator('#preview-body')).toContainText('Synthetic capture gap');
+  await page.getByRole('button',{name:'Capture integrity and warnings',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Capture integrity and warnings',exact:true})).toContainText('Synthetic capture gap');
+  await page.getByRole('dialog',{name:'Capture integrity and warnings',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
   await page.locator('#asset-links [data-connections="outputs"]').getByRole('link',{name:'Corrected transcript · session-one',exact:true}).click();
   await expect(page.locator('.transcript-segment').first()).toContainText('The lantern.');
-  await expect(page.getByText('Transcript corrections, uncertainty and provenance',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Transcript corrections, uncertainty and provenance',exact:true})).toBeVisible();
   await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Video');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});
@@ -634,7 +641,7 @@ for(const width of [1280,390])test(`assemble clips into a guarded scene at ${wid
     return route.fulfill({headers,json:id?{collection:saved,assets:saved.assetKeys.map(key=>clips.find(a=>a.key===key)),warnings:[]}:{collections:saved?[saved]:[],cursor:null}});
   });
   await page.goto(`${origin}/games/test-game/videos`);
-  await page.getByText('Clip collections',{exact:true}).click();await page.getByRole('button',{name:'Create collection',exact:true}).click();
+  await page.getByRole('button',{name:'Create collection',exact:true}).click();
   const form=page.locator('.scene-edit-form');
   await form.getByLabel('Collection title').fill('Arrival at the harbor');
   await form.getByLabel('Collection description').fill('Two selected clips.');
@@ -685,7 +692,10 @@ for(const width of [1280,390])test(`Videos search and compact creation action st
  const heading=await page.locator('#library-title').boundingBox(),action=await create.boundingBox(),box=await search.boundingBox();expect(action.x).toBeGreaterThan(heading.x+heading.width);expect(action.height).toBeLessThanOrEqual(48);expect(box.y).toBeLessThan((await page.locator('.episode-cards').boundingBox()).y);
  await search.fill('river');await expect(page.locator('.episode-card')).toHaveCount(1);await expect(page.locator('.episode-card')).toHaveText('River crossing');
  await search.fill('unavailable phrase');await expect(page.locator('.episode-card')).toHaveCount(0);await search.fill('');await expect(page.locator('.episode-card')).toHaveCount(2);
- await page.locator('.video-top-filters > summary').click();await expect(page.getByLabel('Relationship to the game')).toBeVisible();await page.locator('.video-top-filters > summary').click();
+ for(const name of ['Tag','Featuring character']){await expect(page.getByRole('combobox',{name,exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name,exact:true})).toBeInViewport();}
+ await expect(page.locator('#session-library details,#session-library summary')).toHaveCount(0);await expect(page.getByText('Relationship to the game',{exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:test.info().outputPath(`videos-top-toolbar-${width}.png`),fullPage:true});
  await page.locator('#primary-nav').getByRole('link',{name:'Sessions',exact:true}).click();await expect(page.getByRole('button',{name:'Create episode',exact:true})).toBeHidden();await page.locator('#primary-nav').getByRole('link',{name:'Videos',exact:true}).click();await expect(create).toBeVisible();await create.click();await expect(page.getByRole('form',{name:'Episode editor'})).toBeVisible();
 });
+
+async function selectVideoFilter(page,label,name){await page.getByRole('combobox',{name:label,exact:true}).click();await page.getByRole('option',{name,exact:true}).click();}

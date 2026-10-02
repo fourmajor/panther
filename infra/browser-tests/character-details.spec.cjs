@@ -58,7 +58,7 @@ for(const width of [1280,390]) test(`structured character editing and catalog pa
   expect(control.requests).not.toContain('/character-details/history');await expect(page.locator('#character-assets')).toBeVisible();await expect(page.locator('#character-appearance-panel')).toBeVisible();await expect(page.getByRole('heading',{name:'Characters',exact:true})).toBeHidden();await expect(page.getByRole('heading',{name:'Lantern Hero',exact:true})).toHaveCount(1);
   await expect(facts).toContainText('Example Player'); await expect(facts).not.toContainText('they/them');
   await page.getByRole('button',{name:'Connections',exact:true}).click();await expect(facts.getByRole('link',{name:'River Guide'})).toHaveAttribute('href',`/games/${gameId}/characters/guide`);
-  await expect(page.locator('#character-assets')).toBeVisible();await expect(page.locator('#character-assets-list')).toContainText('portrait · reference');
+  await expect(page.locator('#character-assets')).toBeVisible();await expect(page.locator('#character-assets-list').getByRole('heading',{name:'portrait',exact:true})).toBeVisible();await expect(page.locator('#character-assets-list')).not.toContainText('portrait · reference');
   await page.getByRole('button',{name:'Edit character information'}).click();
   await page.getByLabel('Backstory',{exact:true}).fill('Updated fictional backstory.');
   await chooseSelect(page,'Status','Retired');

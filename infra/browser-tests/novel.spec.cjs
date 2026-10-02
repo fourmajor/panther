@@ -127,7 +127,8 @@ for(const width of [1280,390]) test(`organized book and pinned editions are usab
   await expect(page.locator('#novel-list ol a')).toHaveText(['The Earlier Lantern','Beyond the Harbor']);
   await page.getByRole('link',{name:'The Earlier Lantern',exact:true}).click();
   await expect(page.locator('#novel-title')).toHaveText('The Earlier Lantern');
-  await expect(page.locator('#novel-notice')).toContainText('Approved private selection');
+  await expect(page.locator('#novel-notice')).toContainText('The Lantern Voyage');
+  await expect(page.locator('#novel-notice')).not.toContainText('Grounded adaptation');
   await expect(page.locator('#novel-pagination a')).toHaveText(['Beyond the Harbor →']);
   await expect(page.locator('#novel-pagination a')).toHaveAttribute('href',new RegExp(`bookRevision=${book.revision}`));
   await page.getByRole('button',{name:'← All chapters'}).click();
@@ -190,7 +191,7 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
   await accessibleInViewport(link,width);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`chapter-connections-${width}.png`),fullPage:true});
-  await expect(page.getByText('Full provenance and revision history',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Provenance and revisions',exact:true})).toBeVisible();
 });
 
 async function accessibleInViewport(locator, width) {
@@ -238,7 +239,7 @@ test('explicit novel references can preview and open same-game video collections
   expect(requested).not.toContain('other');
   await preview.getByRole('link',{name:'Open linked page'}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
-  await page.getByText('Clip collections',{exact:true}).click();await expect(page.getByLabel('Clip collection',{exact:true})).toHaveValue('favorites');
+  await expect(page.getByRole('combobox',{name:'Clip collection',exact:true})).toContainText('Favorite');
 });
 
 for(const width of [1280,390]) test(`novel hover previews show summaries and images without obscuring controls at ${width}`,async({page})=>{
