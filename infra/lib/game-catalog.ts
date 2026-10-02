@@ -13,7 +13,7 @@ import { CharacterAppearances } from "./character-appearances";
 export class GameCatalog extends Construct {
   readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; readerUsernames: string[]; browseTable: dynamodb.ITable;
   }) {
     super(scope, id);
     const table = this.table = new dynamodb.Table(this, "Data", {
@@ -31,7 +31,8 @@ export class GameCatalog extends Construct {
       }),
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
       environment: { ASSET_BUCKET_NAME: props.bucket.bucketName,
-        CATALOG_TABLE: table.tableName, CATALOG_EDITORS: props.accessEnvironment.MODEL_PUBLISHERS,
+        CATALOG_TABLE: table.tableName, CATALOG_READERS: props.readerUsernames.join(","),
+        CATALOG_EDITORS: props.accessEnvironment.MODEL_PUBLISHERS,
         ASSET_MIGRATORS: props.accessEnvironment.ASSET_MIGRATORS },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
