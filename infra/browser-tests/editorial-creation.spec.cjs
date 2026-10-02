@@ -50,7 +50,7 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await page.goto(`https://panther.place/games/test-game/${target==='novel'?'novel':'videos'}`);
  const composer=page.locator(`#editorial-${target}-composer`);
  const before=reads.filter(p=>p==='/assets').length;
- await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
  await expect(composer).toBeVisible();
  await expect(composer.getByLabel('Title',{exact:true})).toHaveCount(0);
  await expect(composer.getByLabel('Direction',{exact:true})).toHaveCount(0);
@@ -148,7 +148,7 @@ test('A failed map save retains the image and prompt and retries the same operat
 for(const width of [1280,390])test(`Novel has one prompt action and supports a chapter without transcripts at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});const {submissions}=await fixture(context);
  await page.goto('https://panther.place/games/test-game/novel');
- const action=page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true});
+ const action=page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true});
  await expect(action).toBeVisible();await expect(action).toBeInViewport();
  expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
@@ -163,7 +163,7 @@ for(const width of [1280,390])test(`Novel has one prompt action and supports a c
 
 for(const width of [1280,390])test(`Transcript picker replaces technical names with reviewed summary titles at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});await fixture(context,{technicalSources:true});
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter'}).click();
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate chapter'}).filter({visible:true}).click();
  const composer=page.locator('#editorial-novel-composer');await expect(composer.getByRole('checkbox',{name:'The river crossing'})).toHaveCount(2);
  await expect(composer).not.toContainText('089c592c');await expect(composer).toContainText('Recorded');await expect(composer).toContainText('Morgan');
  await composer.getByRole('button',{name:'Review The river crossing'}).first().click();await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('The river crossing');
@@ -175,7 +175,7 @@ test('An uncertain summary regeneration retries the same operation',async({page,
   if(route.request().method()==='POST'){operations.push(route.request().postDataJSON().operationId);if(operations.length===1)return route.fulfill({status:503,json:{error:'Connection interrupted'},headers:{'access-control-allow-origin':'https://panther.place'}});}
   return route.fulfill({json:{status:'READY',participants:[],summary:{summary:'The river crossing.'}},headers:{'access-control-allow-origin':'https://panther.place'}});
  });
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter'}).click();
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate chapter'}).filter({visible:true}).click();
  await page.getByRole('button',{name:'Review First session',exact:true}).click();const dialog=page.getByRole('dialog');
  await dialog.getByRole('button',{name:'Regenerate summary',exact:true}).click();await dialog.getByRole('button',{name:'Retry summary',exact:true}).click();
  expect(operations).toHaveLength(2);expect(operations[0]).toMatch(/^[a-f0-9]{32}$/);expect(operations[1]).toBe(operations[0]);
@@ -187,7 +187,7 @@ for(const width of [1280,390]) test(`Chapter progress shows real activity and ac
   if(!new URL(route.request().url()).searchParams.has('jobId'))return route.fallback();
   return route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{job:{jobId:'a'.repeat(64),status,creation:{title:'A river crossing',brief:'Follow the party across the river.'},...(status==='FAILED'?{message:'The worker stopped before finishing. Start the worker to continue.'}:{})},tasks:status==='FAILED'?[]:[{stage:'novel-draft',status:'RUNNING'}]}});
  });
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
  const composer=page.locator('#editorial-novel-composer');await composer.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await composer.locator('form').getByRole('button',{name:'Generate chapter',exact:true}).click();
  await expect(composer.getByRole('progressbar',{name:'Generation stages'})).toBeVisible();await expect(composer.getByRole('progressbar')).not.toHaveAttribute('value');
  expect(await composer.getByRole('progressbar').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-pulse');
@@ -196,9 +196,23 @@ for(const width of [1280,390]) test(`Chapter progress shows real activity and ac
  status='FAILED';await expect(composer).toContainText('Generation failed',{timeout:10000});await expect(composer.getByRole('alert')).toContainText('Start the worker');
  await expect(composer.locator('summary').filter({hasText:/^Stages$/})).toHaveCount(0);await expect(composer.locator('summary').filter({hasText:'Processing details'})).toHaveCount(0);
  await expect(composer.locator('details[open]')).toContainText('Follow the party across the river.');
- await expect(page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true})).toBeVisible();
- await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true})).toBeVisible();
+ await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
  await expect(composer.getByLabel('Prompt',{exact:true})).toBeVisible();
  await expect(composer.getByLabel('Prompt',{exact:true})).toHaveValue('');
  await expect(composer.getByRole('alert')).toHaveCount(0);
+});
+
+for(const width of [1280,390])test(`Empty Novel explains its purpose and offers usable prompts at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});const {submissions}=await fixture(context);await page.goto('https://panther.place/games/test-game/novel');
+ const empty=page.getByRole('region',{name:'Create your first chapter',exact:true});await expect(empty).toBeVisible();await expect(empty).toContainText('Transcripts are optional');
+ const action=page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true});await expect(action).toHaveCount(1);await expect(action).toBeInViewport();
+ const centered=await action.boundingBox();expect(Math.abs(centered.x+centered.width/2-width/2)).toBeLessThan(5);
+ expect(await action.evaluate(el=>{const box=el.getBoundingClientRect();return el.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));})).toBe(true);
+ await page.screenshot({path:test.info().outputPath(`novel-empty-${width}.png`),fullPage:true});
+ const prompt='Retell the session from one character’s point of view.';await empty.getByRole('button',{name:prompt,exact:true}).click();
+ const composer=page.locator('#editorial-novel-composer');await expect(composer.getByLabel('Prompt',{exact:true})).toHaveValue(prompt);await expect(composer.getByLabel('Prompt',{exact:true})).toBeFocused();
+ await expect(empty).toBeHidden();expect(submissions).toHaveLength(0);await expect(composer.getByRole('button',{name:'Generate chapter',exact:true})).toBeEnabled();
+ await composer.getByRole('button',{name:'Cancel',exact:true}).click();await expect(empty).toBeVisible();await action.click();await expect(composer.getByLabel('Prompt',{exact:true})).toBeVisible();await expect(empty).toBeHidden();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

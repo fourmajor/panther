@@ -2568,7 +2568,7 @@ function manualChapterEditor(previous = null) {
   const references = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "References (optional)"; references.append(legend);
   const save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p"), buttons = document.createElement("div");
   save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Save chapter";
-  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true; if (!previous) {if (composer) composer.hidden = false; if (create) create.hidden = false; composer?.querySelector(".editorial-creation-panel")?.setAttribute("hidden", "");}};
+  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true; if (!previous) {if (composer) composer.hidden = false; if (create) create.hidden = false; composer?.querySelector(".editorial-creation-panel")?.setAttribute("hidden", "");}syncNovelEmptyState();};
   status.setAttribute("role","status"); buttons.className = "model-control-row"; buttons.append(save,cancel); host.append(titleLabel,proseLabel,references,buttons,status);
   void allAssets(gameId).then(assets=>{
     if(epoch !== routeEpoch || !host.isConnected) return;
@@ -2596,7 +2596,39 @@ function manualChapterEditor(previous = null) {
       else {save.disabled = false; save.textContent = "Retry save";cancel.disabled = false;}
     }
   };
+  syncNovelEmptyState();
   title.focus();
+}
+
+function syncNovelEmptyState() {
+  const empty=document.getElementById('novel-empty-state');
+  if(!empty)return;
+  const panel=document.querySelector('#editorial-novel-composer .editorial-creation-panel');
+  const form=panel?.querySelector('form');
+  empty.hidden=!document.getElementById('manual-chapter-form').hidden || Boolean(panel&&!panel.hidden&&form&&!form.hidden);
+}
+
+function renderNovelEmptyState() {
+  const empty=document.createElement('section');empty.id='novel-empty-state';empty.className='novel-empty-state';empty.setAttribute('aria-label','Create your first chapter');
+  const heading=document.createElement('h2');heading.textContent='Create your first chapter';
+  const purpose=document.createElement('p');purpose.textContent='Turn recorded sessions into story chapters you can read and collect into books—or start a new story from a prompt. Transcripts are optional.';
+  const generate=document.createElement('button');generate.type='button';generate.className='primary-button';generate.textContent='Generate chapter';
+  const examples=document.createElement('div');examples.className='novel-prompt-examples';
+  const label=document.createElement('p');label.textContent='Try a prompt';examples.append(label);
+  const start=async(prompt='')=>{
+    for(const button of empty.querySelectorAll('button'))button.disabled=true;
+    try {
+      await document.querySelector('#novel .explorer-heading [data-generation-action]').onclick();
+      syncNovelEmptyState();
+      const brief=document.querySelector('#editorial-novel-composer textarea');
+      if(brief){if(prompt){brief.value=prompt;brief.dispatchEvent(new Event('input',{bubbles:true}));}brief.focus();}
+    } finally {for(const button of empty.querySelectorAll('button'))button.disabled=false;}
+  };
+  generate.onclick=()=>void start();
+  for(const prompt of ['Turn the selected session into a chapter with vivid scenes and natural dialogue.','Retell the session from one character’s point of view.','Write an original opening chapter for an adventure in this game.']){
+    const example=document.createElement('button');example.type='button';example.className='quiet-button';example.textContent=prompt;example.onclick=()=>void start(prompt);examples.append(example);
+  }
+  empty.append(heading,purpose,generate,examples);novel.list.append(empty);syncNovelEmptyState();
 }
 
 async function loadNovel(chapterId, epoch) {
@@ -2606,7 +2638,7 @@ async function loadNovel(chapterId, epoch) {
   const composer = document.getElementById("editorial-novel-composer");
   composer.hidden=Boolean(chapterId);
   const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
-  if (create) create.hidden = Boolean(chapterId) || !composer.querySelector(".editorial-creation-panel").hidden;
+  if (create) create.hidden = true;
   const gameId = state.gameId;
   const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
   const loading = showLoading(novel.status, "Fetching the chapter list…");
@@ -2655,6 +2687,7 @@ async function loadNovel(chapterId, epoch) {
         novel.resume.append(link); novel.resume.hidden = false;
       }
       if (selectedBook) {
+        if(create)create.hidden=!composer.querySelector(".editorial-creation-panel").hidden;
         novel.list.append(bookCard(selectedBook,organization.stories.find(s=>s.id===selectedBook.storyId),byKey,current));
         for(const volume of selectedBook.volumes) {
           const section=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ol"); heading.textContent=volume.title;
@@ -2670,8 +2703,10 @@ async function loadNovel(chapterId, epoch) {
         for(const book of books)section.append(bookCard(book,story,byKey,current));if(!books.length){const empty=document.createElement("p");empty.textContent="No books organized yet.";section.append(empty);}novel.list.append(section);}
       if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
       if(ordered.length&&organization.stories.length){const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters";novel.list.append(sourceHeading);}
-      novel.status.hidden = Boolean(ordered.length || organization.stories.length);
-      novel.status.textContent = "No chapters yet.";
+      novel.status.hidden = true;
+      novel.status.textContent = "";
+      if(!ordered.length&&!organization.stories.length)renderNovelEmptyState();
+      if(create)create.hidden=!composer.querySelector(".editorial-creation-panel").hidden;
       for (const [index, chapter] of ordered.entries()) {
         const card = document.createElement("div"); card.className = "novel-card";
         const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
@@ -2724,6 +2759,7 @@ async function loadNovel(chapterId, epoch) {
     novel.status.hidden = false;
     novel.list.replaceChildren();
     novel.status.textContent = `${error.message}. Use Reload the page to try again.`;
+    if(create)create.hidden=Boolean(chapterId)||!composer.querySelector(".editorial-creation-panel").hidden;
   }
 }
 
@@ -4493,7 +4529,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
   open.onclick=async()=>{
     if(panel.dataset.project==='true'){panel.replaceChildren();panel.dataset.project='false';panel.hidden=true;}
     panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
-    if(target==='novel')open.hidden=!panel.hidden;
+    if(target==='novel'){open.hidden=!panel.hidden;syncNovelEmptyState();}
     if(panel.hidden||panel.childNodes.length)return;
     const form=document.createElement('form'), fields=document.createElement('div'), status=document.createElement('p');status.setAttribute('role','status');
     const field=(label,multiline=false)=>{const wrapper=document.createElement('label'), caption=document.createElement('span'), input=document.createElement(multiline?'textarea':'input');caption.textContent=label;wrapper.append(caption,input);fields.append(wrapper);return input;};
@@ -4511,12 +4547,12 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
     const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
     if(isMap)references.insertBefore(cast,sources);
-    if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
+    if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');syncNovelEmptyState();};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
     if (!isVideo) {
       const write = document.createElement('button'); write.type = 'button'; write.className = 'text-link-button'; write.textContent = 'Write manually';
       write.onclick = () => manualChapterEditor(); form.append(write);
     }
-    panel.append(form);
+    panel.append(form);if(target==='novel')syncNovelEmptyState();
     const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
     const choices=(assets,destination,set)=>{for(const asset of assets){if(!isVideo&&destination===sources){transcriptSourceChoice(asset,destination,set,updateSubmit,gameId,current);continue;}const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
@@ -4579,7 +4615,7 @@ async function showEditorialProgress(jobId, host, gameId, target) {
     const running=tasks.some(task=>task.status==='RUNNING')||result.job.status==='RUNNING';
     const finished=tasks.filter(task=>task.status==='DONE').length;
     copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':failed?(result.job.status==='FAILED'?'Generation failed':'Generation unavailable'):running?'Generating…':'Waiting for worker';
-    host.replaceChildren(heading,copy);
+    host.replaceChildren(heading,copy);if(target==='novel')syncNovelEmptyState();
     if (failed) {
       const error=document.createElement('p');error.className='error-text';error.setAttribute('role','alert');
       error.textContent=result.job.message || result.job.error || tasks.find(task=>task.status==='FAILED')?.error || 'Generation stopped before completion.';host.append(error);

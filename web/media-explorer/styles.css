@@ -1666,3 +1666,12 @@ body { padding-bottom:0; }
 .editorial-stage-progress:not([value]) { animation: panther-pulse 1.6s ease-in-out infinite; }
 
 @media (prefers-reduced-motion:reduce) { .editorial-stage-progress:not([value]) {animation:none;} }
+
+.novel-empty-state {text-align:center;max-width:44rem;margin:2rem auto;padding:1.5rem 1rem;}
+.novel-empty-state h2 {font:400 2rem/1.2 Georgia,serif;margin:0 0 .75rem;}
+.novel-empty-state>p {color:var(--muted);line-height:1.6;margin:0 auto 1.25rem;max-width:38rem;}
+.novel-empty-state>.primary-button {justify-self:center;min-height:44px;padding:.65rem 1rem;}
+.novel-prompt-examples {display:grid;gap:.5rem;margin:1.75rem auto 0;max-width:36rem;}
+.novel-prompt-examples>p {color:var(--muted);font-size:.85rem;margin:0 0 .25rem;}
+.novel-prompt-examples button {text-align:left;white-space:normal;line-height:1.5;padding:.7rem 1rem;}
+#novel:has(#novel-empty-state:not([hidden])) .explorer-heading [data-generation-action] {display:none;}

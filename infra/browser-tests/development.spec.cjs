@@ -41,7 +41,7 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.locator('#character-name')).toHaveText('Ash Meadow');
   await page.screenshot({path:testInfo.outputPath(`development-character-${width}.png`),fullPage:true});
   await page.goto(origin+'/games/preview-campaign/novel');
-  await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+  await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
   await page.getByRole('button',{name:'Write manually',exact:true}).click();
   await page.locator('#manual-chapter-form').getByLabel('Chapter title').fill('The northern gate');
   await page.locator('#manual-chapter-form').getByLabel('Chapter text').fill('A lantern burned beside the northern gate.');

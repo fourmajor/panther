@@ -348,7 +348,7 @@ for(const width of [1280,390]) {
     await expect(page.locator('#novel-title')).toHaveText('Beyond the Harbor');
     await selectGame(page,'test-b');
     await expect(page).toHaveURL(`${origin}/games/test-b/novel`);
-    await expect(page.locator('#novel-status')).toContainText('No chapters yet');
+    await expect(page.getByRole('heading',{name:'Create your first chapter',exact:true})).toBeVisible();
     await expect(page.locator('#novel-prose')).toBeEmpty();
     await expect(page.locator('#novel-details')).toBeEmpty();
     expect(errors).toEqual([]);
@@ -375,7 +375,7 @@ test('late chapter response cannot leak into another game', async({page})=>{
   });
   await page.goto(`${origin}/games/campaign-a/novel/${first}`); await waiting;
   await selectGame(page,'test-b');
-  await expect(page.locator('#novel-status')).toContainText('No chapters yet'); release();
+  await expect(page.getByRole('heading',{name:'Create your first chapter',exact:true})).toBeVisible(); release();
   await expect(page.locator('#novel-prose')).toBeEmpty();
 });
 
@@ -538,10 +538,10 @@ for(const width of [1280,390]) test(`manually add a chapter and preserve its ear
     return record?route.fulfill({headers,json:record}):route.fallback();
   });
   await page.goto(`${origin}/games/campaign-a/novel`);
-  await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+  await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
   await page.getByRole('button',{name:'Write manually',exact:true}).click();
   const form=page.locator('#manual-chapter-form');
-  await expect(page.getByRole('button',{name:'Generate chapter',exact:true})).toBeHidden();
+  await expect(page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true})).toBeHidden();
   await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
   await form.getByLabel('Chapter title').fill('The River');
   await form.getByLabel('Chapter text').fill('An explicitly authored story.');
