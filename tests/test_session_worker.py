@@ -80,6 +80,7 @@ def test_transcript_reuses_raw_and_checkpoint_without_repeating_inference(tmp_pa
     monkeypatch.setattr(worker.live, "process_part", reuse)
     rerun = Mock(side_effect=AssertionError("Do not rerun saved recognition"))
     monkeypatch.setattr(worker.live, "transcribe_part", rerun)
+    monkeypatch.setattr(worker.audio, "executable", lambda name: name)
     monkeypatch.setattr(worker.live, "run_process", lambda cmd, *_: Path(cmd[-1]).write_bytes(b"synthetic wav"))
     class Analyzer:
         calls = 0
