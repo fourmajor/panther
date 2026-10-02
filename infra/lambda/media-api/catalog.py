@@ -20,6 +20,7 @@ import character_details
 table = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
 serializer = TypeSerializer()
 EDITORS = set(os.environ.get("CATALOG_EDITORS", "").split(","))
+READERS = set(filter(None, os.environ.get("CATALOG_READERS", "").split(",")))
 
 
 def clean(record):
@@ -505,7 +506,19 @@ def handler(event, _context):
         "GET /character-details/inventory",
         "GET /character-details/verify",
     }
-    allowed = set(os.environ.get("ASSET_MIGRATORS", "").split(",")) if migration else EDITORS
+    read_routes = {
+        "GET /games",
+        "GET /game",
+        "GET /players",
+        "GET /characters",
+        "GET /character-details",
+    }
+    if migration:
+        allowed = set(filter(None, os.environ.get("ASSET_MIGRATORS", "").split(",")))
+    elif route in read_routes:
+        allowed = READERS
+    else:
+        allowed = EDITORS
     if not claims.get("sub") or claims.get("cognito:username") not in allowed:
         return media._response(403, {"error": "This account cannot access the game catalog"})
     try:

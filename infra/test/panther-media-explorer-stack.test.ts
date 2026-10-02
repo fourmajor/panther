@@ -359,7 +359,7 @@ test("editorial workflow has separate review stages, parallel adaptations, and n
 test("structured game catalog is retained, on-demand and cannot mutate artwork", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::Lambda::Function", {
-    Handler: "catalog.handler", Environment: { Variables: Match.objectLike({ CATALOG_EDITORS: "example-operator,example-editor" }) },
+    Handler: "catalog.handler", Environment: { Variables: Match.objectLike({ CATALOG_EDITORS: "example-operator,example-editor", CATALOG_READERS: "example-operator,example-editor,example-member" }) },
   });
   const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
     .filter(([id]) => id.startsWith("GameCatalog"));

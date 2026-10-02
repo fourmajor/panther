@@ -12,7 +12,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'fourmajor/panther' &&
-      github.actor == 'fourmajor' && github.triggering_actor == 'fourmajor' &&
+      (github.actor == github.repository_owner || contains(fromJSON(vars.CI_TRUSTED_ACTORS || '[]'), github.actor)) &&
+      (github.triggering_actor == github.repository_owner || contains(fromJSON(vars.CI_TRUSTED_ACTORS || '[]'), github.triggering_actor)) &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/codex/'))
     runs-on: [self-hosted, Linux, panther-local]
     timeout-minutes: 20

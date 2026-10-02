@@ -20,6 +20,7 @@ def catalog(monkeypatch):
     monkeypatch.setenv("ASSET_BUCKET_NAME", "test-assets")
     monkeypatch.setenv("CATALOG_TABLE", "test-catalog")
     monkeypatch.setenv("CATALOG_EDITORS", "example-operator,example-editor")
+    monkeypatch.setenv("CATALOG_READERS", "example-operator,example-editor,example-member")
     monkeypatch.setenv("ASSET_MIGRATORS", "example-operator")
     monkeypatch.setenv("ASSET_BROWSE_TABLE", "test-catalog-assets")
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "infra/lambda/media-api"))
@@ -69,6 +70,24 @@ def setup(game="test-game"):
             {"playerId": "person-b", "role": "dungeon-master", "characterIds": []},
         ],
     }
+
+
+def test_member_reads_catalog_without_editor_or_migration_rights(catalog):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    for route in ("GET /games", "GET /game", "GET /players", "GET /characters"):
+        assert request(catalog, route, username="example-member")["statusCode"] == 200
+        assert request(catalog, route, username="outsider")["statusCode"] == 403
+    for route in (
+        "POST /games",
+        "POST /game/style",
+        "POST /character-details",
+        "GET /character-details/inventory",
+        "GET /character-details/verify",
+        "POST /character-details/migrate",
+    ):
+        assert request(catalog, route, setup(), username="example-member")["statusCode"] == 403
+    catalog.READERS = set()
+    assert request(catalog, "GET /games", username="example-member")["statusCode"] == 403
 
 
 def test_add_character_preserves_people_memberships_and_prior_identity(catalog):

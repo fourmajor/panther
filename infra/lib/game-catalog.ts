@@ -32,6 +32,7 @@ export class GameCatalog extends Construct {
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
       environment: { ASSET_BUCKET_NAME: props.bucket.bucketName,
         CATALOG_TABLE: table.tableName, CATALOG_EDITORS: props.accessEnvironment.MODEL_PUBLISHERS,
+        CATALOG_READERS: props.accessEnvironment.CATALOG_READERS,
         ASSET_MIGRATORS: props.accessEnvironment.ASSET_MIGRATORS },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
