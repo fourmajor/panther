@@ -1041,7 +1041,9 @@ body { font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 
 .primary-nav a:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
 main { width:min(1180px,calc(100% - 3rem)); padding:2rem 0 4rem; }
 .game-context { display:flex; align-items:center; flex-wrap:wrap; gap:.6rem 1rem; min-height:1.8rem; margin-bottom:2rem; color:var(--muted); font-size:.78rem; }
-.game-context .game-purpose, .game-context .game-ruleset { padding:0; font-size:inherit; }
+.game-context .game-purpose, .game-context .game-ruleset { padding:0; font-size:inherit; flex-basis:auto; }
+.game-context .game-purpose:empty { display:none; }
+.navigation-arrow { width:1em; height:1em; fill:none; stroke:currentColor; stroke-width:1.7; vertical-align:middle; flex-shrink:0; }
 .game-context .recording-badge { margin-left:auto; font-size:.7rem; }
 h1 { font-size:clamp(2rem,4vw,3.4rem); line-height:1.1; letter-spacing:-.035em; }
 .welcome { padding-top:clamp(1rem,4vw,4rem); }

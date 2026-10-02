@@ -473,6 +473,12 @@ function gameLink(link, section) {
   };
 }
 
+function navigationArrow() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true"); svg.classList.add("navigation-arrow");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", "M5 19 19 5M5 5h14v14"); svg.append(path); return svg;
+}
+
 function renderDashboard() {
   const {game, players, memberships, characters} = state.gameDetail;
   document.getElementById("dashboard-name").textContent = game.name;
@@ -495,7 +501,7 @@ function renderDashboard() {
     const card = document.createElement("a"); card.className = "dashboard-card"; gameLink(card, section);
     const top = document.createElement("span"); top.className = "dashboard-card-top";
     const number = document.createElement("span"); number.className = "dashboard-card-number"; number.textContent = String(index + 1).padStart(2,"0"); number.setAttribute("aria-hidden","true");
-    const arrow = document.createElement("span"); arrow.className = "dashboard-card-arrow"; arrow.textContent = "↗"; arrow.setAttribute("aria-hidden","true"); top.append(number, arrow);
+    const arrow = document.createElement("span"); arrow.className = "dashboard-card-arrow"; arrow.append(navigationArrow()); arrow.setAttribute("aria-hidden","true"); top.append(number, arrow);
     const copy = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p"); title.textContent = label; detail.textContent = description; copy.append(title, detail); card.append(top, copy); cards.append(card);
   }
   elements.playerRoster.replaceChildren();
