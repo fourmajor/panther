@@ -13,6 +13,10 @@ from panther_journal import recording as audio
 from panther_journal.audio_storage import write_json
 
 
+class EmptySpeakerEmbedding(click.ClickException):
+    """The analyzer detected a turn without usable identity evidence."""
+
+
 def model_pin(model):
     files = {str(p.relative_to(model)): audio.digest(p) for p in sorted(model.rglob('*'))
              if p.is_file() and p.suffix in {'.bin', '.npz', '.yaml'}}
@@ -35,7 +39,7 @@ def vector(value):
         raise click.ClickException('Invalid speaker embedding')
     norm = math.sqrt(sum(x*x for x in value))
     if norm < 1e-8:
-        raise click.ClickException('Empty speaker embedding')
+        raise EmptySpeakerEmbedding('Empty speaker embedding')
     return [x / norm for x in value]
 
 
@@ -150,10 +154,22 @@ def label_lines(lines, result, profiles, offset):
     turns = [audio.SpeakerTurn(start=float(t['start']) + offset,
                               end=float(t['end']) + offset, speaker=t['speaker'])
              for t in result['turns']]
-    mapping = {label: match(embedding, profiles) for label, embedding in result['embeddings'].items()}
+    mapping, unavailable = {}, set()
+    for label, embedding in result['embeddings'].items():
+        try:
+            candidate = vector(embedding)
+        except EmptySpeakerEmbedding:
+            # Very short/contaminated turns can produce an all-zero runtime
+            # vector. Keep speech and the original result; never force identity.
+            mapping[label] = None
+            unavailable.add(label)
+        else:
+            mapping[label] = match(candidate, profiles)
     labeled = audio.attributed_lines(lines, turns, mapping)
     for line in labeled:
         line['attribution'] = 'provisional-enrolled-voice' if line['playerId'] else 'unassigned'
+        if any(t.speaker in unavailable and t.start < line['end'] and t.end > line['start'] for t in turns):
+            line['attributionWarnings'] = ['Detected speech has no usable speaker embedding; identity remains unassigned.']
     return labeled
 
 

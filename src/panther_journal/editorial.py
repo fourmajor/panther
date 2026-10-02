@@ -312,7 +312,7 @@ def reading_transcript(document):
     """
     result = copy.deepcopy(document)
     fields = {"start", "end", "text", "playerId", "attribution", "speechContext",
-              "speakerLabel", "sourceSegmentIndex", "sourceKey", "timingMethod"}
+              "speakerLabel", "sourceSegmentIndex", "sourceKey", "timingMethod", "attributionWarnings"}
     result["segments"] = [{k: v for k, v in segment.items() if k in fields}
                           for segment in document["segments"]]
     result.pop("sourceTranscripts", None)
