@@ -49,6 +49,7 @@ def validate_generation(value):
     return value
 
 INTERNAL_KINDS = {
+    "episode-composition",
     "context", "correction", "capture-health", "recording-checkpoint", "recording-manifest",
     "recording-playback-manifest", "novel-brief", "novel-options", "novel-outline", "novel-draft",
     "novel-developmental-edit", "novel-revision", "novel-continuity", "novel-line-copyedit", "novel-proof",

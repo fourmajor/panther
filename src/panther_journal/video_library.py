@@ -109,3 +109,6 @@ def migrate_workspace(apply, inventory_hash):
     if apply:
         body["expectedInventoryHash"] = inventory_hash
     click.echo(json.dumps(cloud.api(cloud.configuration(), "POST", "/video-workspace/migrate", json=body), indent=2))
+
+from panther_journal.episode_rendering import register as register_episode_rendering  # noqa: E402
+register_episode_rendering(videos)

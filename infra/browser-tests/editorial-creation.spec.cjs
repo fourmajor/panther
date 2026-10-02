@@ -14,7 +14,7 @@ async function fixture(context){
  await context.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
   const fulfill=value=>route.fulfill({...value,headers:{"access-control-allow-origin":"https://panther.place"}});
   const url=new URL(route.request().url());reads.push(url.pathname);
-  if(url.pathname==='/episodes')return fulfill({json:{records:[{id:sceneRef.episodeId,name:'First episode',description:'',revision:'episode-revision'}],cursor:null}});
+  if(url.pathname==='/episodes')return fulfill({json:{records:[{id:sceneRef.episodeId,name:'First episode',description:'',revision:'episode-revision',sceneIds:[sceneRef.sceneId]}],cursor:null}});
   if(url.pathname==='/scenes')return fulfill({json:{records:[{id:sceneRef.sceneId,episodeId:sceneRef.episodeId,name:'A moonlit crossing',description:'',revision:sceneRef.revision,position:0}],cursor:null}});
   if(url.pathname==='/video-collections')return fulfill({json:{collections:[],cursor:null}});
   if(url.pathname==='/characters')return fulfill({json:{characters,cursor:null}});

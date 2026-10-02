@@ -190,3 +190,18 @@ def test_playback_projection_requires_exact_same_recording_identity(library):
         s3.objects[key]["Body"] = json.dumps(changed).encode()
         item = response_body(call(library, "/asset-document", key=key))
         assert "playback" not in item and item["lineageWarning"]
+
+
+def test_episode_composition_indexes_all_finished_scene_inputs(library):
+    import asset_metadata
+    lib, media, s3 = library
+    first = add(s3, "first/original/scene.mp4", "video")
+    second = add(s3, "second/original/scene.mp4", "video")
+    key = add(s3, "episode/original/composition.json", "episode-composition", {
+        "schemaVersion": 1, "entityType": "EpisodeRender", "gameId": "example-game",
+        "sourceKeys": [first, second],
+        "inputArtifacts": {"scene-0": {"key": first}, "scene-1": {"key": second}},
+    })
+    record = lib.describe(media, "example-game", key)
+    assert record["sourceKeys"] == sorted([first, second])
+    assert asset_metadata.internal("episode-composition")

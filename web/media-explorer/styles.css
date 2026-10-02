@@ -1482,3 +1482,14 @@ body { padding-bottom:6rem; }
 .video-library-details { margin:12px 0 20px; }
 .video-library-details>summary { padding:12px 0; cursor:pointer; }
 @media(max-width:600px) { .episode-detail { padding:16px; } .episode-toolbar h2 { flex-basis:100%; } }
+
+.scene-order-row {display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:10px;}
+.scene-order-row .scene-card {flex:1 1 100%;border:0;padding:8px;min-height:44px;}
+.scene-order-row small {flex:1;color:var(--muted);}
+.scene-order-row .quiet-button {min-height:44px;}
+.scene-output-row {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.episode-preview {margin:16px 0;}
+.episode-preview video {display:block;width:100%;max-height:65vh;margin-top:16px;background:#000;border-radius:10px;}
+.episode-preview>a {display:inline-block;margin-left:16px;}
+
+.scene-order-row .scene-card::before {content:attr(data-order);margin-right:8px;color:var(--muted);font-variant-numeric:tabular-nums;}

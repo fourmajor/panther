@@ -32,7 +32,35 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript("CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, game TEXT, payload TEXT, PRIMARY KEY(kind,id)); CREATE TABLE IF NOT EXISTS objects (key TEXT PRIMARY KEY, game TEXT, metadata TEXT, data BLOB, created TEXT); CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, payload TEXT, response TEXT);")
+        self.migrate_episode_composition()
         self.path.chmod(0o600)
+
+    def migrate_episode_composition(self):
+        """One-time audited upgrade of prior explicit local scene order, never a read fallback."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM records WHERE kind='development-migration' AND id='episode-composition-v1'").fetchone():
+                return
+            rows = db.execute("SELECT kind,id,game,payload FROM records WHERE kind IN ('episode','scene') ORDER BY id").fetchall()
+            scenes = [json.loads(row[3]) for row in rows if row[0] == "scene"]
+            snapshots = []
+            for kind, identity, game, payload in rows:
+                record = json.loads(payload)
+                updated = dict(record)
+                if kind == "episode" and "sceneIds" not in record:
+                    owned = [scene for scene in scenes if scene["gameId"] == game and scene["episodeId"] == record["id"]]
+                    updated["sceneIds"] = [scene["id"] for scene in sorted(owned, key=lambda scene: (scene["position"], scene["id"]))]
+                if kind == "scene" and "selectedOutputKey" not in record:
+                    updated.update(selectedOutputKey=None, selectedOutputSceneRevision=None)
+                if updated != record:
+                    updated["revision"] = uuid.uuid4().hex
+                    updated["updatedAt"] = datetime.now(timezone.utc).isoformat()
+                    snapshots.append({"kind": kind, "id": identity, "sourceSha256": hashlib.sha256(payload.encode()).hexdigest(), "sourcePayload": payload, "destinationRevision": updated["revision"]})
+                    db.execute("UPDATE records SET payload=? WHERE kind=? AND id=?", (json.dumps(updated), kind, identity))
+                    history = {"record": updated, "previousRecord": record, "recordedAt": updated["updatedAt"], "reason": "Development composition schema migration v1"}
+                    db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind + "-history", identity + ":" + updated["revision"], game, json.dumps(history)))
+            audit = {"schemaVersion": 1, "migratedAt": datetime.now(timezone.utc).isoformat(), "sources": snapshots}
+            db.execute("INSERT INTO records VALUES ('development-migration','episode-composition-v1','',?)", (json.dumps(audit),))
 
     def connect(self):
         return sqlite3.connect(self.path, timeout=30)
@@ -108,15 +136,16 @@ class Store:
     def save_story_entity(self, kind, body):
         game, identity, operation = body["gameId"], body["id"], body["operationId"]
         self.game(game)
-        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type"} if kind == "scene" else set())
-        if set(body) != expected_fields:
+        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey"} if kind == "scene" else {"sceneIds"})
+        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "sceneIds"}
+        if not required_fields <= set(body) <= expected_fields:
             raise ValueError("Invalid episode or scene edit")
         if kind not in ("episode", "scene") or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity) or not re.fullmatch(r"[a-f0-9]{32}", operation):
             raise ValueError("Invalid episode, scene or operation ID")
         if not isinstance(body.get("name"), str) or not 1 <= len(body["name"].strip()) <= 160 or not isinstance(body.get("description", ""), str) or len(body.get("description", "")) > 4000:
             raise ValueError("Enter a title and a description under 4000 characters")
         episode_id = body.get("episodeId") if kind == "scene" else None
-        if kind == "scene" and (not isinstance(episode_id, str) or not self.get("episode", game + ":" + episode_id) or body.get("type") not in {"general", "opener", "travel", "action", "dialogue"}):
+        if kind == "scene" and (not isinstance(episode_id, str) or not self.get("episode", game + ":" + episode_id) or body.get("type", "general") not in {"general", "opener", "travel", "action", "dialogue"}):
             raise ValueError("Choose an episode in this game and a valid scene type")
         key = game + ":" + ((episode_id + ":") if episode_id else "") + identity
         payload = json.dumps(body, sort_keys=True)
@@ -135,15 +164,77 @@ class Store:
             record["createdAt"] = previous["createdAt"] if previous else record["updatedAt"]
             if kind == "episode":
                 record["position"] = previous["position"] if previous else int(time.time() * 1000)
+                ids = body.get("sceneIds", previous["sceneIds"] if previous else [])
+                owned = [json.loads(row[0])["id"] for row in db.execute("SELECT payload FROM records WHERE kind='scene' AND game=? AND json_extract(payload,'$.episodeId')=?", (game, identity)).fetchall()]
+                if not isinstance(ids, list) or len(ids) > 50 or any(not isinstance(value, str) for value in ids) or len(ids) != len(set(ids)) or set(ids) != set(owned):
+                    raise ValueError("Scene order must include every same-episode scene exactly once")
+                record["sceneIds"] = ids
             if kind == "scene":
                 count = db.execute("SELECT count(*) FROM records WHERE kind='scene' AND game=? AND json_extract(payload,'$.episodeId')=?", (game, episode_id)).fetchone()[0]
-                record.update(episodeId=episode_id, type=body["type"], position=previous["position"] if previous else count)
+                if not previous and count >= 50:
+                    raise ValueError("Episode supports at most 50 scenes")
+                selected = body.get("selectedOutputKey", previous["selectedOutputKey"] if previous else None)
+                selected_revision = None
+                if selected is not None:
+                    if not isinstance(selected, str) or not selected.startswith(f"games/{game}/assets/"):
+                        raise ValueError("Choose a same-game finished scene video")
+                    asset_row = db.execute("SELECT metadata FROM objects WHERE key=? AND game=?", (selected, game)).fetchone()
+                    meta = json.loads(asset_row[0]) if asset_row else {}
+                    extra = meta.get("extra", {})
+                    ref = extra.get("sceneRef", {})
+                    if not meta.get("contentType", "").startswith("video/") or extra.get("relationshipRole") != "finished" or ref.get("episodeId") != episode_id or ref.get("sceneId") != identity or not re.fullmatch(r"[a-f0-9]{32}", ref.get("revision", "")):
+                        raise ValueError("Choose a finished output of this scene")
+                    historical = db.execute("SELECT 1 FROM records WHERE kind='scene-history' AND id=?", (key + ":" + ref["revision"],)).fetchone()
+                    if not historical:
+                        raise ValueError("Selected output has no exact scene revision")
+                    selected_revision = ref["revision"]
+                record.update(episodeId=episode_id, type=body.get("type", "general"), position=previous["position"] if previous else count, selectedOutputKey=selected, selectedOutputSceneRevision=selected_revision)
             db.execute("INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload", (kind, key, game, json.dumps(record)))
             history = {"record": record, "previousRecord": previous, "recordedAt": record["updatedAt"]}
             db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind + "-history", key + ":" + record["revision"], game, json.dumps(history)))
             response = {"record": record}
+            if kind == "scene" and not previous:
+                parent_key = game + ":" + episode_id
+                parent_row = db.execute("SELECT payload FROM records WHERE kind='episode' AND id=?", (parent_key,)).fetchone()
+                parent = json.loads(parent_row[0])
+                updated_parent = {**parent, "sceneIds": [*parent["sceneIds"], identity], "revision": uuid.uuid4().hex, "updatedAt": record["updatedAt"]}
+                db.execute("UPDATE records SET payload=? WHERE kind='episode' AND id=?", (json.dumps(updated_parent), parent_key))
+                parent_history = {"record": updated_parent, "previousRecord": parent, "recordedAt": record["updatedAt"], "reason": "Append newly created scene"}
+                db.execute("INSERT INTO records VALUES ('episode-history',?,?,?)", (parent_key + ":" + updated_parent["revision"], game, json.dumps(parent_history)))
+                response["episodeRecord"] = updated_parent
             db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, kind + ":" + payload, json.dumps(response)))
         return response
+
+    def episode_composition(self, game, episode_id, revision):
+        history = self.get("episode-history", game + ":" + episode_id + ":" + revision)
+        episode = history["record"] if history else None
+        if not episode or episode.get("gameId") != game:
+            raise LookupError("Episode revision not found")
+        if not episode["sceneIds"]:
+            raise ValueError("Add scenes before previewing this episode")
+        scenes, missing, sources = [], [], []
+        for identity in episode["sceneIds"]:
+            scene = self.get("scene", game + ":" + episode_id + ":" + identity)
+            if not scene:
+                raise LookupError("Scene in episode order is unavailable")
+            selected = scene["selectedOutputKey"]
+            generation = None
+            if selected:
+                with self.connect() as db:
+                    asset_row = db.execute("SELECT metadata FROM objects WHERE key=? AND game=?", (selected, game)).fetchone()
+                if not asset_row:
+                    raise LookupError("Selected output unavailable")
+                meta = json.loads(asset_row[0])
+                generation = meta.get("extra", {}).get("sceneRef")
+                if not meta.get("contentType", "").startswith("video/") or meta.get("extra", {}).get("relationshipRole") != "finished" or not generation or generation.get("episodeId") != episode_id or generation.get("sceneId") != identity or generation.get("revision") != scene["selectedOutputSceneRevision"]:
+                    raise ValueError("Selected scene output is invalid")
+                sources.append(selected)
+            else:
+                missing.append(identity)
+            scenes.append({"sceneRef": {"episodeId": episode_id, "sceneId": identity, "revision": scene["revision"]}, "generationSceneRef": generation, "scene": scene, "assetKey": selected})
+        result = {"schemaVersion": 1, "entityType": "EpisodeComposition", "gameId": game, "episode": episode, "ready": not missing, "missingSceneIds": missing, "scenes": scenes, "sourceKeys": sources}
+        result["compositionHash"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        return result
 
     def objects(self, game):
         with self.connect() as db:
@@ -214,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
                 for values in groups.values():
                     values.sort(key=lambda value: str(value.get("updatedAt", value.get("publishedAt", value.get("lastModified", "")))), reverse=True)
                 result = {"complete": True, "groups": {k: v[:5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
+            elif path == "/episode-composition":
+                store.game(game)
+                result = store.episode_composition(game, q["episodeId"], q["revision"])
             elif path in ("/episodes", "/scenes"):
                 store.game(game)
                 kind = "episode" if path == "/episodes" else "scene"
@@ -224,7 +318,18 @@ class Handler(BaseHTTPRequestHandler):
                     records.sort(key=lambda record: record["position"])
                 else:
                     records = store.list(kind, game)
-                result = {"records": records, "cursor": None}
+                if q.get("id"):
+                    identity = game + ":" + ((q["episodeId"] + ":") if kind == "scene" else "") + q["id"]
+                    if q.get("revision"):
+                        historical = store.get(kind + "-history", identity + ":" + q["revision"])
+                        record = historical["record"] if historical else None
+                    else:
+                        record = store.get(kind, identity)
+                    if not record:
+                        raise LookupError("Episode or scene not found")
+                    result = {"record": record}
+                else:
+                    result = {"records": records, "cursor": None}
             elif path == "/characters":
                 result = {"characters": store.list("character", game), "cursor": None}
             elif path in ("/character", "/character-details", "/character-details/history"):

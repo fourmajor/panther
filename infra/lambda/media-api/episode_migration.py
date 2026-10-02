@@ -73,7 +73,7 @@ def inventory(media):
             target = db.get_item(Key=records.pointer(PREFIX, game, "episode", identity), ConsistentRead=True).get("Item")
             imported = records.decode(db.get_item(Key={"pk": f"{PREFIX}-history#episode#{game}#{identity}", "sk": prior.get("destinationRevision", "missing")}, ConsistentRead=True).get("Item")) if prior else None
             current = records.decode(target)
-            if prior and prior.get("sourceHash") == source_hash and prior.get("snapshot") and json.loads(prior["snapshot"]) == snapshot and current and imported and current.get("entityType") == "Episode" and current.get("gameId") == game and current.get("id") == identity and imported.get("revision") == prior.get("destinationRevision") and imported.get("migration", {}).get("sourceHash") == source_hash and imported.get("name") == record["title"] and imported.get("description") == record["synopsis"]:
+            if prior and prior.get("sourceHash") == source_hash and prior.get("snapshot") and json.loads(prior["snapshot"]) == snapshot and current and imported and current.get("entityType") == "Episode" and current.get("gameId") == game and current.get("id") == identity and imported.get("revision") == prior.get("destinationRevision") and imported.get("migration", {}).get("sourceHash") == source_hash and imported.get("name") == record["title"] and imported.get("description") == record["synopsis"] and imported.get("sceneIds") == []:
                 status = "already-migrated"
             elif prior or target:
                 status = "conflict"
@@ -102,7 +102,7 @@ def migrate(media, body, claims):
         source = records.decode(item["source"])
         revision = item["sourceHash"][:32]
         now = datetime.now(timezone.utc).isoformat()
-        target = {"schemaVersion": 1, "entityType": "Episode", "gameId": item["gameId"], "id": item["id"], "name": source["title"], "description": source["synopsis"], "revision": revision, "previousRevision": None, "position": source.get("number", 0), "createdAt": source.get("createdAt"), "updatedAt": now, "updatedBy": claims["sub"], "reason": "Import explicit legacy TVEpisode", "migration": {"schemaVersion": VERSION, "sourceHash": item["sourceHash"], "sourceRevision": source["revision"]}}
+        target = {"schemaVersion": 1, "entityType": "Episode", "gameId": item["gameId"], "id": item["id"], "name": source["title"], "description": source["synopsis"], "sceneIds": [], "revision": revision, "previousRevision": None, "position": source.get("number", 0), "createdAt": source.get("createdAt"), "updatedAt": now, "updatedBy": claims["sub"], "reason": "Import explicit legacy TVEpisode", "migration": {"schemaVersion": VERSION, "sourceHash": item["sourceHash"], "sourceRevision": source["revision"]}}
         payload = json.dumps(target, separators=(",", ":"))
         audit = {"pk": f"{AUDIT}#{item['gameId']}", "sk": item["id"], "sourceHash": item["sourceHash"], "inventoryHash": inventory_hash, "appliedAt": now, "appliedBy": claims["sub"], "snapshot": json.dumps(item["snapshot"], separators=(",", ":")), "destinationRevision": revision}
         puts = [{**records.pointer(PREFIX, item["gameId"], "episode", item["id"]), "revision": revision, "payload": payload}, {"pk": f"{PREFIX}-history#episode#{item['gameId']}#{item['id']}", "sk": revision, "payload": payload}, audit]

@@ -582,7 +582,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 105);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 106);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -667,7 +667,7 @@ test("remembered sign-in uses maximum rotating refresh sessions and an uncached 
 
 test("episode-owned scenes have authenticated metadata routes and no media generation permissions", () => {
   const template = mediaExplorerTemplate();
-  for (const RouteKey of ["GET /episodes", "POST /episodes", "GET /scenes", "POST /scenes", "POST /video-workspace/migrate"])
+  for (const RouteKey of ["GET /episodes", "POST /episodes", "GET /scenes", "POST /scenes", "GET /episode-composition", "POST /video-workspace/migrate"])
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey, AuthorizationType:"JWT"});
   template.hasResourceProperties("AWS::Lambda::Function", {Handler:"video_scenes.handler",
     Environment:{Variables:Match.objectLike({CATALOG_READERS:Match.anyValue(),MODEL_PUBLISHERS:Match.anyValue(),ASSET_MIGRATORS:Match.anyValue()})}});

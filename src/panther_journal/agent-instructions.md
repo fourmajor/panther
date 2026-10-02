@@ -740,3 +740,30 @@ existing destinations, and resume safely after interruption. Verify a new comple
 run reports every legacy episode already migrated before workspace cutover. No scenes
 or footage ownership can be inferred from alternate cuts; clip collections remain
 collections. Bounds or unresolved history/conflicts block migration, never exempt data.
+
+## Episode assembly from rendered scenes
+
+Episodes have an explicit ordered `sceneIds` list. Creating a scene appends it to its
+own episode atomically; reordering creates a guarded Episode revision. Each scene
+selects one finished same-game output using `selectedOutputKey`, with the original
+render's exact scene revision recorded separately. Never infer a take from filenames,
+titles, latest timestamps or an unrelated episode. Unrendered scenes block complete
+episode assembly rather than being silently skipped.
+
+Use `panther videos render-episode --game GAME_ID --episode EPISODE_ID --work-dir
+/private/path/episode-renders` to assemble already rendered scenes in that order.
+The local versioned FFmpeg profile preserves their existing audio and produces one
+continuous browser MP4; it does not generate footage, perform inference, default to
+mute, create separate stems or invent captions. Keep original inputs, frozen
+composition, output and technical receipts outside Git. Checks cover full technical
+decode, duration and exact checksums, not a new creative/perceptual review.
+
+Publication uses Panther authentication and immutable uploads: add `--publish` to
+rendering, or use `panther videos publish-episode RUN_DIRECTORY` afterward. The hidden
+`episode-composition` JSON preserves all ordered Scene/Episode revisions and exact
+input keys/checksums/sizes, plus actual FFmpeg version. The finished output links
+through that artifact so Inputs/Outputs expose all finished scene inputs. Record
+procedural local generation accurately without relabeling upstream provider charges.
+Retain uncertain upload identities and inspect metadata before retrying; do not
+create new identities to conceal an unknown submission. See docs/video-production.md
+for bounds, recovery, source-audio handling and the explicit profile.
