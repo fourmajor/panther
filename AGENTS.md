@@ -198,7 +198,8 @@
 - Avoid running CI unless it adds material confidence beyond the relevant local checks.
 - A Docker-based, repository-scoped runner can run on the owner's MacBook. Start it with
   `bash ops/runner/start.sh`; it accepts one job and exits. See `docs/self-hosted-runner.md`.
-- CI remains manually triggered by the owner on reviewed `main` or `codex/` branches in this repo.
+- CI remains manually triggered by trusted collaborators with repository write access on reviewed
+  `main` or `codex/` branches in this repo.
   Do not dispatch untrusted contributor code, including code copied from forks. Never enable
   automatic fork/PR execution on a personal runner. Containers are not a complete security boundary.
 - Do not mount personal directories, AWS credentials, or the Docker socket into the runner.
