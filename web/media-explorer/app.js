@@ -538,6 +538,7 @@ function setActiveNavigation(section) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
+  drawLive();
 }
 
 function folderName(prefix) {
@@ -1623,6 +1624,7 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  document.getElementById("recording-badge").hidden = true;
   document.getElementById("episode-workspace")?.stopPreview?.();
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
     const epoch = ++routeEpoch;
@@ -4138,7 +4140,7 @@ function drawLive() {
   const current = active || liveRecords[0];
   const mode = current ? liveState(current) : liveFailure ? "lost" : "none";
   const labels = {recording:"Recording in progress", stalled:"Recording progress stalled", stopped:"Recording stopped", lost:"Recording signal lost"};
-  badge.hidden = mode === "none"; badge.dataset.state = mode; badge.href = gamePath("transcripts");
+  badge.hidden = !["audio", "transcripts"].includes(section) || mode === "none"; badge.dataset.state = mode; badge.href = gamePath("transcripts");
   document.getElementById("recording-label").textContent = labels[mode] || "";
   status.textContent = liveFailure ? "Live feed unavailable. Recording may still be running locally. Retrying automatically."
     : liveRecords.length ? "Updates automatically as completed audio chunks are transcribed."

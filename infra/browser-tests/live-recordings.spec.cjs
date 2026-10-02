@@ -187,3 +187,26 @@ async function selectGame(page,id) {
   await page.getByRole('combobox',{name:'Current game'}).click();
   await page.getByRole('option',{name,exact:true}).click();
 }
+
+for (const width of [1280,390]) test(`recording badge stays in recording pages at ${width}`, async({page}) => {
+  await page.setViewportSize({width,height:1000});
+  const feed = await fixture(page); await page.clock.install();
+  feed.records = [recording({captureState:'stopped',previewState:'stopped'})];
+  await page.goto(`${origin}/games/test-game/novel`);
+  const badge = page.locator('#recording-badge');
+  await expect.poll(()=>feed.reads).toBeGreaterThan(0);
+  await expect(badge).toBeHidden();
+  await page.getByRole('link',{name:'Audio',exact:true}).click();
+  await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording stopped');
+  await page.getByRole('link',{name:'Novel',exact:true}).click();
+  await expect(badge).toBeHidden();
+  feed.records = [recording()];
+  await page.clock.fastForward(21000);
+  await expect(badge).toBeHidden();
+  await page.getByRole('link',{name:'Transcripts',exact:true}).click();
+  await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
+  for (const section of ['Dashboard','Settings','Characters','Videos','Media']) {
+    await page.getByRole('link',{name:section,exact:true}).click();
+    await expect(badge).toBeHidden();
+  }
+});
