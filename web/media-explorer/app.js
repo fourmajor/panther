@@ -1,5 +1,92 @@
 const config = window.PANTHER_CONFIG;
 
+// Alternate shells share the exact same live DOM and data layer. Never remount
+// editors, media, recording controls or the model viewer just to compare a look.
+(() => {
+  const designs = [
+    {id:"studio", name:"Studio", label:"The original", description:"Quiet dark surfaces, familiar tabs, balanced cards. The original interface remains the default."},
+    {id:"chronicle", name:"Chronicle", label:"An illuminated archive", description:"Warm paper, bookish typography, a contents rail and a chapter-like reading rhythm."},
+    {id:"cinema", name:"Cinema", label:"The premiere", description:"An edge-to-edge dark stage, crimson accents, expansive titles and widescreen media shelves."},
+    {id:"mission", name:"Mission Control", label:"Everything at a glance", description:"A compact navigation console, precision typography and a dense, instrument-like workspace."},
+    {id:"poster", name:"Poster Wall", label:"Loud by design", description:"Oversized type, acid yellow, thick purple outlines and a graphic, asymmetric poster grid."},
+    {id:"field", name:"Field Guide", label:"Room to breathe", description:"Soft green, generous paper cards and a right-hand index. A calm field notebook for your world."},
+  ];
+  const key = "panther.interface.v1";
+  const valid = id => designs.some(design => design.id === id);
+  let saved = "studio";
+  try { const value = localStorage.getItem(key); if (valid(value)) saved = value; } catch { /* Optional preference storage. */ }
+  const requested = new URL(location.href).searchParams.get("ui");
+  let candidate = valid(requested) ? requested : saved;
+  let comparing = false;
+  const root = document.documentElement;
+  const dialog = document.getElementById("design-atlas");
+  const open = document.getElementById("design-open");
+  const tools = document.getElementById("design-preview-tools");
+  const feedback = document.getElementById("design-feedback");
+  const compare = document.getElementById("design-compare");
+  const options = document.getElementById("design-options");
+  function render() {
+    const showing = comparing ? saved : candidate;
+    root.dataset.interface = showing;
+    root.dataset.interfacePreview = String(candidate !== saved);
+    document.getElementById("design-current").textContent = designs.find(item => item.id === showing).name;
+    tools.hidden = candidate === saved;
+    compare.setAttribute("aria-pressed", String(comparing));
+    compare.textContent = comparing ? "Back to preview" : "Compare saved";
+    for (const button of options.querySelectorAll("button")) {
+      button.setAttribute("aria-pressed", String(button.dataset.design === candidate));
+      button.querySelector(".atlas-saved").hidden = button.dataset.design !== saved;
+    }
+  }
+  function announce(message) { feedback.textContent = message; }
+  function preview(id) {
+    candidate = id; comparing = false; render();
+    announce(`Previewing ${designs.find(item => item.id === id).name}. Nothing has been saved.`);
+  }
+  for (const [index, design] of designs.entries()) {
+    const button = document.createElement("button");
+    button.type = "button"; button.dataset.design = design.id;
+    button.className = "atlas-option";
+    const sketch = document.createElement("span");
+    sketch.className = "atlas-sketch"; sketch.setAttribute("aria-hidden", "true");
+    sketch.innerHTML = '<span class="sketch-nav"></span><span class="sketch-title"></span><span class="sketch-tile"></span><span class="sketch-tile"></span><span class="sketch-tile"></span>';
+    const number = document.createElement("span"); number.className = "atlas-number"; number.textContent = String(index + 1).padStart(2,"0");
+    const title = document.createElement("strong"); title.textContent = design.name;
+    const label = document.createElement("span"); label.className = "atlas-label"; label.textContent = design.label;
+    const description = document.createElement("span"); description.className = "atlas-description"; description.textContent = design.description;
+    const badge = document.createElement("span"); badge.className = "atlas-saved"; badge.textContent = "Saved look";
+    button.append(sketch, number, title, label, description, badge);
+    button.addEventListener("click", () => { preview(design.id); dialog.close(); });
+    options.append(button);
+  }
+  open.addEventListener("click", () => { render(); dialog.showModal(); });
+  document.getElementById("design-close").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => open.focus({preventScroll:true}));
+  document.getElementById("design-previous").addEventListener("click", () => preview(designs[(designs.findIndex(item => item.id === candidate) + 5) % 6].id));
+  document.getElementById("design-next").addEventListener("click", () => preview(designs[(designs.findIndex(item => item.id === candidate) + 1) % 6].id));
+  compare.addEventListener("click", () => { comparing = !comparing; render(); announce(comparing ? "Showing your saved interface for comparison." : "Back to the preview."); });
+  function cancel() { candidate = saved; comparing = false; render(); open.focus({preventScroll:true}); announce("Preview canceled. Your saved interface is restored."); }
+  document.getElementById("design-cancel").addEventListener("click", cancel);
+  document.getElementById("design-keep").addEventListener("click", () => {
+    saved = candidate; comparing = false;
+    let stored = true;
+    try { localStorage.setItem(key, saved); } catch { stored = false; }
+    const url = new URL(location.href);
+    if (url.searchParams.has("ui")) { url.searchParams.delete("ui"); history.replaceState(history.state,"",url); }
+    render(); open.focus({preventScroll:true});
+    announce(stored ? "Interface saved for this browser." : "Interface selected for this visit. Your browser prevented saving the preference.");
+  });
+  document.addEventListener("keydown", event => {
+    if (event.defaultPrevented || event.repeat) return;
+    if (event.key === "Escape" && !dialog.open && candidate !== saved && !document.querySelector("dialog[open]")) { cancel(); return; }
+    const editing = event.target.closest?.("input,textarea,select,[contenteditable=true],[role=textbox],[role=combobox]");
+    if (!editing && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "d") {
+      event.preventDefault(); if (!dialog.open && !document.querySelector("dialog[open]")) dialog.showModal();
+    }
+  });
+  render();
+})();
+
 // One loading treatment everywhere. Counts come from responses, never simulated percentages.
 const loadingStates = new WeakMap();
 function showLoading(host, message) {

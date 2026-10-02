@@ -14,6 +14,23 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
+    <aside id="design-dock" class="design-dock" aria-label="Interface comparison">
+      <button id="design-open" type="button" aria-haspopup="dialog" aria-controls="design-atlas"><span aria-hidden="true">▦</span> Design Atlas <span id="design-current">Studio</span></button>
+      <div id="design-preview-tools" hidden>
+        <button id="design-previous" type="button" aria-label="Previous interface">←</button>
+        <button id="design-next" type="button" aria-label="Next interface">→</button>
+        <button id="design-compare" type="button" aria-pressed="false">Compare saved</button>
+        <button id="design-keep" type="button">Keep this look</button>
+        <button id="design-cancel" type="button" aria-label="Cancel interface preview">×</button>
+      </div>
+      <span id="design-feedback" class="sr-only" role="status"></span>
+    </aside>
+    <dialog id="design-atlas" class="design-atlas" aria-labelledby="design-atlas-title" aria-describedby="design-atlas-description">
+      <header class="atlas-heading"><div><p>Six ways into the same world</p><h2 id="design-atlas-title">Design Atlas</h2></div><button id="design-close" type="button" aria-label="Close Design Atlas">×</button></header>
+      <p id="design-atlas-description">Choose a layout to try it on this very page. Your drafts, playback and place stay intact. Only the interface changes—not your game’s visual style.</p>
+      <div id="design-options" class="design-options"></div>
+      <footer class="atlas-footer"><span>Preview → compare → keep your favorite.</span><span><kbd>Shift</kbd> + <kbd>D</kbd> to open · <kbd>Esc</kbd> to close or cancel a preview</span></footer>
+    </dialog>
     <header class="masthead">
       <a class="brand" href="/" aria-label="Panther home">
         <span class="brand-mark" aria-hidden="true">P</span>
