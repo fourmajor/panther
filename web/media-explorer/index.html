@@ -18,40 +18,68 @@
           <strong>Panther</strong>
         </span>
       </a>
+      <div class="game-toolbar" id="game-toolbar" hidden>
+        <label for="game-selector">Current game</label>
+        <select id="game-selector" aria-label="Game"></select>
+      </div>
       <nav class="primary-nav" id="primary-nav" aria-label="Panther sections" hidden>
+        <a href="/dashboard">Dashboard</a>
         <a href="/characters">Characters</a>
         <a href="/audio">Audio</a>
         <a href="/transcripts">Transcripts</a>
         <a href="/novel">Novel</a>
         <a href="/videos">Videos</a>
         <a href="/media">Media</a>
+        <a href="/settings">Settings</a>
       </nav>
       <div class="account" id="account" hidden>
         <span id="username"></span>
-        <button class="quiet-button" id="account-settings-button" type="button">Account</button>
-        <button class="quiet-button" id="logout-button" type="button">Sign out</button>
+        <button class="quiet-button" id="account-settings-button" type="button" aria-label="Account"><span class="account-action-label">Account</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>
+        <button class="quiet-button" id="logout-button" type="button" aria-label="Sign out"><span class="account-action-label">Sign out</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4"/></svg></button>
       </div>
     </header>
 
     <main>
       <div id="page-loading" hidden></div>
-      <div class="game-toolbar" id="game-toolbar" hidden>
-        <label for="game-selector">Game</label>
-        <select id="game-selector" aria-label="Game"></select>
+      <div class="game-context" id="game-context" hidden>
         <span id="game-purpose" class="game-purpose"></span>
         <span id="game-ruleset" class="game-ruleset"></span>
-        <details id="game-style" class="game-style" hidden>
-          <summary>Visual style</summary>
-          <form id="game-style-form">
-            <label for="visual-style">Generated visuals</label>
-            <select id="visual-style" aria-describedby="style-help"></select>
-            <button class="quiet-button" type="submit">Save style</button>
-            <p id="style-help">For new generated visuals in this game. Uploaded originals and existing assets stay unchanged.</p>
-            <p id="style-status" role="status"></p>
-          </form>
-        </details>
         <a id="recording-badge" class="recording-badge" hidden><span class="recording-dot" aria-hidden="true"></span><span id="recording-label" role="status"></span></a>
       </div>
+      <section id="dashboard" class="dashboard" aria-label="Game dashboard" hidden>
+        <div class="dashboard-hero">
+          <div><p class="eyebrow" id="dashboard-purpose">Your campaign</p><h1 id="dashboard-name"></h1><p class="dashboard-description" id="dashboard-description"></p>
+            <div class="dashboard-facts" id="dashboard-facts"></div>
+          </div>
+          <a class="primary-button dashboard-open" data-game-section="media" href="/media">Explore the archive <svg class="navigation-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></a>
+        </div>
+        <div class="dashboard-section-heading"><div><p class="eyebrow">Everything in one place</p><h2>Explore your game</h2></div><span>Source material & stories</span></div>
+        <div class="dashboard-sections" id="dashboard-sections"></div>
+        <div class="dashboard-bottom">
+          <section class="dashboard-crew"><div class="dashboard-section-heading"><h2>At the table</h2><a data-game-section="characters" href="/characters">View characters <svg class="navigation-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></a></div><ul id="player-roster"></ul></section>
+          <section class="dashboard-note"><p class="eyebrow">Make it your own</p><h2>The world starts here.</h2><p>Set the game’s description, system and visual direction in Settings.</p><a data-game-section="settings" href="/settings">Game settings <span aria-hidden="true">→</span></a></section>
+        </div>
+      </section>
+      <section id="game-settings" class="game-settings" aria-label="Game settings" hidden>
+        <div class="page-intro"><p class="eyebrow">Your game, your world</p><h1>Game settings</h1><p>The details and creative defaults shared by this game.</p></div>
+        <p id="game-settings-access" class="settings-access" hidden></p>
+        <section class="settings-card"><div class="settings-card-intro"><h2>Game details</h2><p>Give the game a name, describe its world, and choose the system you play.</p></div>
+          <form id="game-settings-form">
+            <label for="game-name">Game name</label><input id="game-name" name="name" maxlength="120" required>
+            <label for="game-description">Description <span class="field-optional">Optional</span></label><textarea id="game-description" name="description" rows="4" maxlength="2000" placeholder="What is this game about?"></textarea>
+            <label for="game-system">Game system</label><input id="game-system" name="ruleset" maxlength="120" placeholder="For example, Dungeons & Dragons 5e">
+            <p class="field-help">Leave the system empty if it hasn’t been decided yet.</p>
+            <div class="settings-form-footer"><button class="primary-button" type="submit">Save game details</button><p id="game-settings-status" role="status"></p></div>
+          </form>
+        </section>
+        <section class="settings-card" id="game-style" hidden><div class="settings-card-intro"><h2>Generation defaults</h2><p>The visual direction for new images created for this game.</p></div>
+          <form id="game-style-form">
+            <label for="visual-style">Generated visuals</label><select id="visual-style" aria-describedby="style-help"></select>
+            <p id="style-help" class="field-help">Used for future generated images. Your existing images and uploaded originals stay as they are.</p>
+            <div class="settings-form-footer"><button class="primary-button" type="submit">Save style</button><p id="style-status" role="status"></p></div>
+          </form>
+        </section>
+      </section>
       <section class="welcome" id="welcome">
         <p class="eyebrow">Private game archive</p>
         <h1>Your game’s source material and finished stories, together.</h1>
@@ -59,8 +87,10 @@
           Browse recordings, portraits, maps, transcripts, narrative retellings, episodic
           reimaginings, and the wonderfully unnecessary videos in between.
         </p>
-        <button class="primary-button" id="login-button" type="button">Sign in</button>
-        <button class="quiet-button" id="password-recovery-button" type="button">Forgot password?</button>
+        <div class="sign-in-actions">
+          <button class="primary-button" id="login-button" type="button">Sign in</button>
+          <button class="text-link-button" id="password-recovery-button" type="button">Forgot password?</button>
+        </div>
         <p class="error" id="auth-error" role="alert" hidden></p>
       </section>
 
@@ -71,7 +101,6 @@
             <h1>Characters</h1>
           </div>
         </div>
-        <section class="roster" aria-label="Players"><h2>Players</h2><ul id="player-roster"></ul></section>
         <div class="status" id="characters-status" role="status">Loading…</div>
         <div class="character-list" id="character-list" aria-live="polite"></div>
         <button class="quiet-button" id="characters-more" type="button" hidden>Load more characters</button>

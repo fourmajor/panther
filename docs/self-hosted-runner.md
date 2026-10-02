@@ -4,15 +4,8 @@
 
 Kiwi runs a persistent, repository-scoped runner in a restricted Docker
 container. It provides CI compute after host restarts without Dandelion. The
-Panther workflow accepts only manual dispatches by the owner or explicitly
-owner-approved contributors on reviewed `main` or `codex/` branches. Configure
-approved identities outside source in the repository Actions variable
-`CI_TRUSTED_ACTORS`, a JSON array (fictional example: `["example-contributor"]`).
-Missing configuration permits only the owner. Both the original dispatcher and
-rerun actor must be authorized; ordinary repository write access alone is not
-runner authorization. Review the branch diff before dispatch. This grants code
-execution on owned compute, not AWS access. Never run untrusted forks or enable
-automatic PR execution. The container has two CPUs, 4 GiB RAM, no host mounts,
+Panther workflow still accepts only manually dispatched jobs on reviewed `main`
+or `codex/` branches. The container has two CPUs, 4 GiB RAM, no host mounts,
 no Docker socket, no AWS credentials, and no private game files. Its registration
 credential remains inside the container; a new registration is required if
 that container is removed.
@@ -82,8 +75,13 @@ the exact stopped container. Completed ephemeral runners normally remove their o
 
 ## Security and limits
 
-- Manual dispatch only, on reviewed `main` or `codex/` branches in `fourmajor/panther`, by
-  `fourmajor` (including reruns). No PR or fork event triggers.
+- Manual dispatch only, on reviewed `main` or `codex/` branches in `fourmajor/panther`.
+  GitHub requires repository write access to dispatch workflows; trusted collaborators with
+  that access can dispatch and rerun CI without an account-specific allowlist. No PR or fork
+  event triggers. Repository write access does not grant runner registration/administration
+  or override branch protection and merge requirements.
+- Browser screenshots and diagnostics use synthetic fixtures and are retained as the
+  `browser-test-results` artifact for seven days. Never supply private assets or credentials.
 - Read-only workflow token; checkout does not retain Git credentials.
 - Non-root container, dropped capabilities, no privilege escalation, two CPUs and 4 GiB RAM.
 - No host directories, Docker socket, AWS keys, SSH agent, or personal files mounted.

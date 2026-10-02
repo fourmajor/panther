@@ -465,7 +465,7 @@ export class PantherMediaExplorerStack extends Stack {
       mediaApi.addRoutes({path: "/asset-relocations-v1", methods: [apigwv2.HttpMethod.POST], authorizer,
         integration: new apigwv2Integrations.HttpLambdaIntegration("AssetRelocationV1Integration", relocation)});
     }
-    const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table });
+    const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable:assetBrowse.table });
     CharacterAppearances.grantProducer(mediaApiFunction,assetBrowse.table,gameCatalog.table);
     new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table,catalogTable:gameCatalog.table });
     new CharacterAppearances(this,"CharacterAppearances",{bucket:privateAssets,api:mediaApi,authorizer,

@@ -16,6 +16,7 @@ from botocore.exceptions import ClientError
 import index as media
 from visual_styles import STYLES, validate_style
 import character_details
+import game_settings
 
 table = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
 serializer = TypeSerializer()
@@ -159,7 +160,7 @@ def games():
     return sorted(found.values(), key=lambda g: (g["purpose"] == "test", g["name"].casefold()))
 
 
-def detail(game_id):
+def detail(game_id, can_edit=False):
     identifier(game_id)
     game = read("GAMES", game_id)
     if not game:
@@ -177,6 +178,8 @@ def detail(game_id):
             "memberships": members,
             "characters": [clean(r) for r in entries if r["entityType"] == "Character"],
             "visualStyles": STYLES,
+            "gameSettings": game_settings.description(sys.modules[__name__], game_id),
+            "canEditGame": can_edit and not game.get("legacy", False),
         },
     )
 
@@ -188,7 +191,7 @@ def create(body, actor):
     if existing:
         if existing.get("fingerprint") != fingerprint:
             return media._response(409, {"error": "Game exists; creation never overwrites it"})
-        return detail(body["id"])
+        return detail(body["id"], can_edit=True)
     now = datetime.now(timezone.utc).isoformat()
     records = [
         {
@@ -266,7 +269,7 @@ def create(body, actor):
             for r in records
         ]
     )
-    return detail(body["id"])
+    return detail(body["id"], can_edit=True)
 
 
 def set_ruleset(body, actor):
@@ -317,7 +320,7 @@ def set_ruleset(body, actor):
                 ":actor": actor,
             },
         )
-    return detail(game_id)
+    return detail(game_id, can_edit=True)
 
 
 def set_style(body, actor):
@@ -373,7 +376,7 @@ def set_style(body, actor):
             },
         ]
     )
-    return detail(game_id)
+    return detail(game_id, can_edit=True)
 
 
 def add_character(body, actor):
@@ -593,7 +596,9 @@ def handler(event, _context):
         if route == "GET /games":
             return media._response(200, {"games": games()})
         if route == "GET /game":
-            return detail(media._query(event, "gameId"))
+            return detail(
+                media._query(event, "gameId"), can_edit=claims.get("cognito:username") in EDITORS
+            )
         if route == "GET /players":
             return media._response(200, {"players": [clean(p) for p in query("PLAYERS")]})
         if route in (
@@ -602,6 +607,7 @@ def handler(event, _context):
             "POST /game/style",
             "POST /character-profile",
             "POST /game/characters",
+            "POST /game/settings",
         ):
             raw = event.get("body") or ""
             if len(raw) > 24000:
@@ -609,6 +615,8 @@ def handler(event, _context):
             if event.get("isBase64Encoded"):
                 raw = base64.b64decode(raw, validate=True)
             body = json.loads(raw)
+            if route == "POST /game/settings":
+                return game_settings.save(sys.modules[__name__], body, claims["sub"])
             if route == "POST /game/characters":
                 return add_character(body, claims["sub"])
             if route == "POST /game/style":

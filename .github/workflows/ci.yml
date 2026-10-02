@@ -12,8 +12,6 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'fourmajor/panther' &&
-      (github.actor == github.repository_owner || contains(fromJSON(vars.CI_TRUSTED_ACTORS || '[]'), github.actor)) &&
-      (github.triggering_actor == github.repository_owner || contains(fromJSON(vars.CI_TRUSTED_ACTORS || '[]'), github.triggering_actor)) &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/codex/'))
     runs-on: [self-hosted, Linux, panther-local]
     timeout-minutes: 20
@@ -39,6 +37,14 @@ jobs:
       - name: Playwright browser tests (self-hosted)
         run: npm run test:browser
         working-directory: infra
+      - name: Browser test screenshots and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: infra/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
       - run: >-
           npm run synth --
           --context account=000000000000

@@ -109,6 +109,35 @@ test('authenticator removal and global sign-out require explicit acknowledgement
   expect(calls.some(v=>v.action==='sign-out-everywhere')).toBe(true);
 });
 
+for(const width of [1280,390]) {
+  test(`signed-out recovery is a visible keyboard-accessible text link at ${width}`,async({page,context},testInfo)=>{
+    await page.setViewportSize({width,height:900});
+    await fixture(context,{signedIn:false}); await page.goto('https://panther.place/media');
+    const signIn=page.getByRole('button',{name:'Sign in',exact:true});
+    const recovery=page.getByRole('button',{name:'Forgot password?'});
+    for(const control of [signIn,recovery]) {
+      await expect(control).toBeVisible();
+      await expect(control).toBeInViewport();
+      const box=await control.boundingBox();
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(await control.evaluate((node,p)=>node.contains(document.elementFromPoint(p.x,p.y)),{x:box.x+box.width/2,y:box.y+box.height/2})).toBe(true);
+    }
+    await expect(recovery).toHaveCSS('text-decoration-line','underline');
+    await expect(recovery).toHaveCSS('border-top-width','0px');
+    await expect(recovery).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+    await signIn.focus(); await page.keyboard.press('Tab');
+    await expect(recovery).toBeFocused();
+    await expect(recovery).toHaveCSS('outline-style','solid');
+    await page.screenshot({path:testInfo.outputPath(`sign-in-recovery-${width}.png`)});
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog',{name:'Password recovery'})).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(recovery).toBeFocused();
+    await recovery.click();
+    await expect(page.getByRole('dialog',{name:'Password recovery'})).toBeVisible();
+  });
+}
+
 test('signed-out recovery uses generic acknowledgement and clears new passwords',async({page,context})=>{
   const {calls}=await fixture(context,{signedIn:false}); await page.goto('https://panther.place/media');
   await page.getByRole('button',{name:'Forgot password?'}).click();

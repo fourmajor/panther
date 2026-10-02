@@ -54,11 +54,11 @@ test("indexed relocation is temporary, exact-plan scoped and cannot delete histo
 
 test("character facts are catalog-owned, authenticated, and migration capability is explicit", () => {
   const template = mediaExplorerTemplate();
-  for (const RouteKey of ["GET /characters", "GET /character-details", "POST /character-details", "POST /character-details/migrate", "GET /character-details/inventory", "GET /character-details/verify"]) {
+  for (const RouteKey of ["POST /game/settings", "GET /characters", "GET /character-details", "POST /character-details", "POST /character-details/migrate", "GET /character-details/inventory", "GET /character-details/verify"]) {
     template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey, AuthorizationType:"JWT"});
   }
   template.hasResourceProperties("AWS::Lambda::Function", {
-    Handler:"catalog.handler", Environment:{Variables:Match.objectLike({ASSET_MIGRATORS:"example-operator",CATALOG_EDITORS:"example-operator,example-editor"})},
+    Handler:"catalog.handler", Environment:{Variables:Match.objectLike({ASSET_MIGRATORS:"example-operator",CATALOG_EDITORS:"example-operator,example-editor",CATALOG_READERS:"example-operator,example-editor,example-member"})},
   });
   const routes = Object.values(template.findResources("AWS::ApiGatewayV2::Route"));
   const character = routes.find((r:any)=>r.Properties.RouteKey==="GET /characters") as any;
@@ -574,7 +574,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 94);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 95);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

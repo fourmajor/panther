@@ -236,12 +236,15 @@ def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, m
     )
 
 
-def request(m, route, body=None, username="example-operator", game="test-game"):
+def request(m, route, body=None, username="example-operator", game="test-game", character=None):
     return m.handler(
         {
             "routeKey": route,
             "body": json.dumps(body),
-            "queryStringParameters": {"gameId": game},
+            "queryStringParameters": {
+                "gameId": game,
+                **({"characterId": character} if character else {}),
+            },
             "requestContext": {
                 "authorizer": {
                     "jwt": {"claims": {"sub": "test-owner", "cognito:username": username}}
@@ -302,9 +305,54 @@ def test_player_conflict_never_partially_creates_game(catalog):
     assert catalog.read("GAMES", "new-game") is None
 
 
-def test_catalog_rejects_unapproved_account(catalog):
+@pytest.mark.parametrize(
+    "route",
+    sorted(
+        [
+            "GET /games",
+            "GET /game",
+            "GET /players",
+            "GET /characters",
+            "GET /character-details",
+        ]
+    ),
+)
+def test_invited_member_can_browse_without_publishing_access(catalog, route):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    assert "example-member" not in catalog.EDITORS
+    result = request(catalog, route, username="example-member", character="hero")
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"])
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "POST /games",
+        "POST /game/ruleset",
+        "POST /game/style",
+        "POST /game/characters",
+        "POST /character-profile",
+        "POST /character-details",
+        "POST /character-details/migrate",
+        "GET /character-details/inventory",
+        "GET /character-details/verify",
+    ],
+)
+def test_invited_member_cannot_edit_or_migrate(catalog, route):
+    assert request(catalog, route, setup(), username="example-member")["statusCode"] == 403
+    assert catalog.query("GAMES") == []
+
+
+def test_catalog_reads_fail_closed_without_reader_configuration(catalog, monkeypatch):
+    monkeypatch.setattr(catalog, "READERS", set())
+    assert request(catalog, "GET /games")["statusCode"] == 403
+
+
+@pytest.mark.parametrize("username", ["outsider", "", None])
+def test_catalog_rejects_unapproved_account(catalog, username):
     for route in ("GET /games", "GET /game", "GET /players", "POST /games", "POST /game/ruleset"):
-        assert request(catalog, route, setup(), username="outsider")["statusCode"] == 403
+        assert request(catalog, route, setup(), username=username)["statusCode"] == 403
 
 
 def put_indexed_fixture(catalog, key, body):
@@ -437,3 +485,110 @@ def test_cli_ruleset_update_requires_explicit_precondition(monkeypatch):
     assert result.exit_code == 0, result.output
     assert api.call_args.args[1:3] == ("POST", "/game/ruleset")
     assert api.call_args.kwargs["json"]["expectedRuleset"] is None
+
+
+def settings_body():
+    return {
+        "gameId": "test-game",
+        "name": "Renamed Game",
+        "ruleset": "New System",
+        "description": "A synthetic campaign description.",
+        "expectedName": "Synthetic Game",
+        "expectedRuleset": "Synthetic System (First Edition)",
+        "expectedDescriptionRevision": None,
+        "operationId": "save-one",
+    }
+
+
+def test_settings_are_atomic_guarded_audited_and_retryable(catalog):
+    request(catalog, "POST /games", setup())
+    before = json.loads(request(catalog, "GET /game")["body"])
+    assert before["canEditGame"] is True
+    assert before["gameSettings"] == {"description": None, "descriptionRevision": None}
+    body = settings_body()
+    result = request(catalog, "POST /game/settings", body)
+    assert result["statusCode"] == 200
+    after = json.loads(result["body"])
+    assert after["game"]["name"] == body["name"]
+    assert after["game"]["ruleset"] == body["ruleset"]
+    assert after["gameSettings"]["description"] == body["description"]
+    for field in ("players", "characters", "memberships"):
+        assert after[field] == before[field]
+    assert after["game"]["visualStyle"] == before["game"]["visualStyle"]
+    audit = catalog.read("GAME#test-game", "SETTINGS#save-one")
+    assert audit["schemaVersion"] == 1
+    assert audit["previousSettings"]["name"] == before["game"]["name"]
+    assert audit["previousSettings"]["description"] is None
+    assert request(catalog, "POST /game/settings", body)["statusCode"] == 200
+    assert request(catalog, "POST /game/settings", {**body, "name": "Changed"})["statusCode"] == 409
+    assert (
+        request(catalog, "POST /game/settings", {**body, "operationId": "save-two"})["statusCode"]
+        == 409
+    )
+    assert catalog.read("GAME#test-game", "SETTINGS#save-two") is None
+    second = {
+        **body,
+        "expectedName": body["name"],
+        "expectedRuleset": body["ruleset"],
+        "expectedDescriptionRevision": after["gameSettings"]["descriptionRevision"],
+        "description": None,
+        "ruleset": None,
+        "operationId": "save-two",
+    }
+    assert request(catalog, "POST /game/settings", second)["statusCode"] == 200
+    assert (
+        catalog.read("GAME#test-game", "SETTINGS#save-two")["previousSettings"]["description"]
+        == body["description"]
+    )
+
+
+def test_settings_read_capability_does_not_grant_writes(catalog):
+    request(catalog, "POST /games", setup())
+    detail = json.loads(request(catalog, "GET /game", username="example-member")["body"])
+    assert detail["canEditGame"] is False
+    assert (
+        request(catalog, "POST /game/settings", settings_body(), username="example-member")[
+            "statusCode"
+        ]
+        == 403
+    )
+    assert catalog.read("GAME#test-game", "DESCRIPTION") is None
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [
+        {"description": "x" * 2001},
+        {"description": "\x00bad"},
+        {"name": ""},
+        {"ruleset": ""},
+        {"extra": "unknown"},
+    ],
+)
+def test_settings_invalid_edits_do_not_write(catalog, edits):
+    request(catalog, "POST /games", setup())
+    assert (
+        request(catalog, "POST /game/settings", {**settings_body(), **edits})["statusCode"] == 400
+    )
+    assert catalog.read("GAME#test-game", "DESCRIPTION") is None
+    assert catalog.read("GAMES", "test-game")["name"] == "Synthetic Game"
+
+
+def test_settings_transaction_conflict_preserves_all_records(catalog, monkeypatch):
+    from botocore.exceptions import ClientError
+    import game_settings
+
+    request(catalog, "POST /games", setup())
+    client = Mock()
+    client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "TransactionCanceledException", "Message": "Conflicting update"}},
+        "TransactWriteItems",
+    )
+    monkeypatch.setattr(game_settings.boto3, "client", lambda *args, **kwargs: client)
+    assert request(catalog, "POST /game/settings", settings_body())["statusCode"] == 409
+    assert catalog.read("GAME#test-game", "DESCRIPTION") is None
+    assert catalog.read("GAME#test-game", "SETTINGS#save-one") is None
+    assert catalog.read("GAMES", "test-game")["name"] == "Synthetic Game"
+    items = client.transact_write_items.call_args.kwargs["TransactItems"]
+    assert len(items) == 3
+    assert all("ConditionExpression" in next(iter(item.values())) for item in items)

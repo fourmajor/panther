@@ -305,8 +305,10 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   await expect(status.locator('.loading-state')).toHaveCount(0);
   expect(catalogRequests).toBe(1);
   await page.screenshot({path:test.info().outputPath(`catalog-first-page-${width}.png`),fullPage:true});
+  const cardTop=await page.locator('.session-card').evaluate(node=>node.getBoundingClientRect().y+scrollY);
   await more.click();
   await expect(page.locator('.session-card')).toHaveCount(1);
+  expect(await page.locator('.session-card').evaluate(node=>node.getBoundingClientRect().y+scrollY)).toBeCloseTo(cardTop,1);
   await page.emulateMedia({reducedMotion:'reduce'});
   expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   releaseSecond();
