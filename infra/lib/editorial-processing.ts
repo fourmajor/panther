@@ -15,13 +15,14 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 
 /** Each editorial discipline is a durable callback stage, not a Lambda-hosted AI call. */
 export class EditorialProcessing extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
     bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
   }) {
     super(scope, id);
     const plan = JSON.parse(fs.readFileSync(path.join(__dirname,
       "../../../src/panther_journal/editorial-plan.json"), "utf8"));
-    const table = new dynamodb.Table(this, "Jobs", {
+    const table = this.table = new dynamodb.Table(this, "Jobs", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,

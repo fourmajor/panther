@@ -74,6 +74,18 @@ def test_submission_is_idempotent_and_rejects_adaptation_and_cross_game(editoria
     assert request(m, "POST /editorial-jobs", body, username="intruder")["statusCode"] == 403
 
 
+def test_large_preserved_word_evidence_can_start_editorial_without_truncation(editorial):
+    m = editorial
+    original = raw()
+    original["segments"][0]["wordAttribution"] = {"evidence": "x" * (3 * 1024**2)}
+    key = "games/test-game/assets/test-recording/original/detailed-raw.json"
+    put(m, key, json.dumps(original).encode(), "application/json")
+    result = request(m, "POST /editorial-jobs", {"gameId": "test-game", "rawKey": key})
+    assert result["statusCode"] == 200
+    job = unpack(result)
+    assert job["raw"]["size"] > 2 * 1024**2
+
+
 def test_leases_callback_redaction_and_expiry(editorial):
     m = editorial
     job, claim = queued(m)
@@ -1392,3 +1404,66 @@ def test_prompt_led_novel_has_optional_sources_and_no_required_title(editorial):
             )["statusCode"]
             == 400
         )
+
+def test_prompt_overlay_reconstructs_complete_candidate_without_duplicate_speech():
+    from panther_journal import editorial as worker
+    original = raw()
+    original['segments'][0]['text'] = 'Long original speech. ' * 20000
+    original['segments'][0]['timingNote'] = 'Approximate source interval.'
+    corrected = copy.deepcopy(original)
+    corrected.update(artifactType='corrected-transcript', corrections=[{
+        'segmentIndex': 0, 'before': original['segments'][0]['text'], 'after': 'Corrected speech.'}],
+        uncertainties=['Identity remains provisional.'])
+    corrected['segments'][0]['text'] = 'Corrected speech.'
+    inputs = {'raw': original, 'candidate': corrected,
+              'priorStages': {'corrected-transcript': {'transcript': corrected}}}
+    before = copy.deepcopy(inputs)
+    result = worker.prompt_projection(inputs)
+    overlay = result['candidate']
+    assert overlay['entityType'] == 'TranscriptCorrectionOverlay'
+    assert overlay['readingBase'] == 'raw' and 'segments' not in overlay
+    rows = [dict(zip(result['raw']['segmentFields'], row, strict=True)) for row in result['raw']['segments']]
+    for edit in overlay['corrections']:
+        assert rows[edit['segmentIndex']]['text'] == edit['before']
+        rows[edit['segmentIndex']]['text'] = edit['after']
+    assert rows == worker.reading_transcript(corrected)['segments']
+    assert result['priorStages']['corrected-transcript']['transcript']['entityType'] == 'TranscriptCorrectionOverlay'
+    assert overlay['uncertainties'] == corrected['uncertainties']
+    assert inputs == before
+    # Identity/timing/text changes not represented by validated deltas cannot
+    # masquerade as an equivalent projection against this base.
+    for field, value in [('playerId', None), ('start', 100), ('text', 'Unaccounted change')]:
+        changed = copy.deepcopy(corrected)
+        changed['segments'][0][field] = value
+        assert worker.correction_overlay(changed, original) is None
+    changed = copy.deepcopy(corrected)
+    changed['players'] = [{'id': 'someone-else', 'name': 'Different fictional person'}]
+    assert worker.correction_overlay(changed, original) is None
+
+
+def test_prompt_projection_keeps_multisource_timing_identity_and_prompt_only_inputs():
+    from panther_journal import editorial as worker
+
+    first, second = raw(), raw()
+    second["segments"][0]["playerId"] = None
+    second["segments"][0]["timingNote"] = "Source-local interval."
+    refs = [{"key": "first"}, {"key": "second"}]
+    bundle = worker.transcript_bundle(
+        [first, second], refs,
+        {"jobId": "a" * 64, "gameId": "test-game", "sessionId": "collection"},
+    )
+    before = copy.deepcopy(bundle)
+    projected = worker.prompt_projection({"raw": bundle})["raw"]
+    rows = [
+        dict(zip(projected["segmentFields"], row, strict=True))
+        for row in projected["segments"]
+    ]
+    # Missing fields use null in positional rows; every present speech fact is exact.
+    for source, projected_row in zip(bundle["segments"], rows, strict=True):
+        assert all(projected_row[key] == value for key, value in source.items())
+    assert [row["sourceKey"] for row in rows] == ["first", "second"]
+    assert rows[1]["playerId"] is None
+    assert projected["sourceKeys"] == ["first", "second"]
+    assert bundle == before
+    prompt_only = {"raw": None, "creation": {"brief": "A river crossing."}}
+    assert worker.prompt_projection(prompt_only) == prompt_only

@@ -24,6 +24,8 @@ Choose the current game in the header. Its sections are:
   follows its selected rendered scene outputs in order; drafting or planning does not imply footage
   has been generated.
 - **Assets:** browse and search game assets, filter by type, identify file formats, upload files and request image generation. Jobs show activity or an explicit worker/configuration problem.
+- **Workflows:** inspect reported server/laptop job stages, dependencies and output links. Progress
+  updates automatically; queued work is distinct from a running worker or completed output.
 - **Settings:** edit the game's name, description, system and visual defaults. Account settings have
   their own page.
 

@@ -13,6 +13,10 @@ from panther_journal import recording as audio
 from panther_journal.audio_storage import write_json
 
 
+class EmptySpeakerEmbedding(click.ClickException):
+    """The analyzer detected a turn without usable identity evidence."""
+
+
 def model_pin(model):
     files = {str(p.relative_to(model)): audio.digest(p) for p in sorted(model.rglob('*'))
              if p.is_file() and p.suffix in {'.bin', '.npz', '.yaml'}}
@@ -35,7 +39,7 @@ def vector(value):
         raise click.ClickException('Invalid speaker embedding')
     norm = math.sqrt(sum(x*x for x in value))
     if norm < 1e-8:
-        raise click.ClickException('Empty speaker embedding')
+        raise EmptySpeakerEmbedding('Empty speaker embedding')
     return [x / norm for x in value]
 
 
@@ -150,10 +154,22 @@ def label_lines(lines, result, profiles, offset):
     turns = [audio.SpeakerTurn(start=float(t['start']) + offset,
                               end=float(t['end']) + offset, speaker=t['speaker'])
              for t in result['turns']]
-    mapping = {label: match(embedding, profiles) for label, embedding in result['embeddings'].items()}
+    mapping, unavailable = {}, set()
+    for label, embedding in result['embeddings'].items():
+        try:
+            candidate = vector(embedding)
+        except EmptySpeakerEmbedding:
+            # Very short/contaminated turns can produce an all-zero runtime
+            # vector. Keep speech and the original result; never force identity.
+            mapping[label] = None
+            unavailable.add(label)
+        else:
+            mapping[label] = match(candidate, profiles)
     labeled = audio.attributed_lines(lines, turns, mapping)
     for line in labeled:
         line['attribution'] = 'provisional-enrolled-voice' if line['playerId'] else 'unassigned'
+        if any(t.speaker in unavailable and t.start < line['end'] and t.end > line['start'] for t in turns):
+            line['attributionWarnings'] = ['Detected speech has no usable speaker embedding; identity remains unassigned.']
     return labeled
 
 
@@ -162,7 +178,9 @@ def label_lines(lines, result, profiles, offset):
 @click.option('--output', required=True, type=click.Path(path_type=Path))
 @click.option('--runtime', default=audio.DEFAULT_RUNTIME, type=click.Path(exists=True, path_type=Path))
 @click.option('--model', default=audio.DEFAULT_SPEAKER_MODEL, type=click.Path(exists=True, path_type=Path))
-def enroll(manifest, output, runtime, model):
+@click.option('--minimum-speech-seconds', default=10.0, type=click.FloatRange(3, 120),
+              help='Explicitly accept shorter confirmed samples (lower evidence quality); default 10 seconds.')
+def enroll(manifest, output, runtime, model, minimum_speech_seconds):
     """Enroll explicitly identified, clean single-speaker WAV samples from a private manifest."""
     from panther_journal.live_transcript import read_json
     import os
@@ -189,12 +207,15 @@ def enroll(manifest, output, runtime, model):
         attempt = output.parent / f'enrollment-{uuid.uuid4().hex}'
         attempt.mkdir(mode=0o700)
         result = analyze(source, model, runtime, attempt)
-        if len(result['embeddings']) != 1 or sum(t['end']-t['start'] for t in result['turns']) < 10:
-            raise click.ClickException('Need at least ten seconds of clean, single-speaker speech')
+        speech_seconds = sum(t['end']-t['start'] for t in result['turns'])
+        if len(result['embeddings']) != 1 or speech_seconds < minimum_speech_seconds:
+            raise click.ClickException(f'Need at least {minimum_speech_seconds:g} seconds of clean, single-speaker speech')
         if audio.digest(source) != sample['sha256']:
             raise click.ClickException('Enrollment audio changed during processing')
         profiles.append({**sample, 'embedding': vector(next(iter(result['embeddings'].values()))),
-                         'analysisSha256': audio.digest(attempt / 'speaker-result.json')})
+                         'analysisSha256': audio.digest(attempt / 'speaker-result.json'),
+                         'detectedSpeechSeconds': speech_seconds,
+                         'sampleQuality': 'short-confirmed-reference' if speech_seconds < 10 else 'standard-reference'})
     document = {'schemaVersion': 1, 'entityType': 'SpeakerRecognitionProfiles',
                 'gameId': request['gameId'], 'modelFiles': pins, 'profiles': profiles,
                 'purpose': 'speaker-recognition-only', 'manifestSha256': manifest_hash}

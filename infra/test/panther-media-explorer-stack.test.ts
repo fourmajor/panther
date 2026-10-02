@@ -25,6 +25,19 @@ function mediaExplorerTemplate(context = {}): Template {
   return Template.fromStack(stack);
 }
 
+test("Workshop projection is bounded, JWT protected and cannot run workflows",()=>{
+  const template=mediaExplorerTemplate();
+  for(const route of ["GET /workflows","POST /workflow-progress","POST /workflows/rebuild"])template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:route,AuthorizationType:"JWT"});
+  const reader=Object.entries(template.findResources("AWS::Lambda::Function")).find(([id])=>id.startsWith("WorkflowWorkshopReader"));
+  assert.ok(reader);assert.equal(reader[1].Properties.Handler,"workflow_workshop.handler");
+  const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("WorkflowWorkshopReader"));
+  const statements=JSON.stringify(policies);
+  assert.ok(!statements.includes("dynamodb:Scan"));assert.ok(!statements.includes("s3:"));assert.ok(!statements.includes("states:"));
+  const resources=template.findResources("AWS::DynamoDB::Table");
+  const index=Object.entries(resources).find(([id])=>id.startsWith("WorkflowWorkshopIndex"));
+  assert.ok(index);assert.equal(index[1].Properties.BillingMode,"PAY_PER_REQUEST");assert.equal(index[1].DeletionPolicy,"Retain");
+});
+
 test("indexed relocation is temporary, exact-plan scoped and cannot delete historical versions", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "panther-relocation-test-"));
   const file = path.join(directory, "hashes.json");
@@ -582,7 +595,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 119);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 122);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });

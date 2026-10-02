@@ -1256,6 +1256,8 @@ def approve(plan_id, models_and_rights_approved, auto_topup_disabled):
 def submit_command(plan_id, shot, attempt, reason):
     """Submit one explicitly approved attempt. Repeating the command never duplicates it."""
     click.echo(json.dumps(submit(plan_id, shot, attempt, reason, Fal()), indent=2))
+    from panther_journal.workflows import report_video
+    report_video(plan_id)
 
 
 @video.command("poll")
@@ -1263,6 +1265,11 @@ def submit_command(plan_id, shot, attempt, reason):
 def poll_command(attempt_id):
     """Resume one existing request; does not submit or retry a generation."""
     click.echo(json.dumps(poll(attempt_id, Fal()), indent=2))
+    from panther_journal.workflows import report_video
+    with database() as db:
+        row = db.execute("SELECT plan_id FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+    if row:
+        report_video(row["plan_id"])
 
 
 @video.command("download")

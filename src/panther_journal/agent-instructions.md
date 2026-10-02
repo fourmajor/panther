@@ -1,5 +1,11 @@
 # Panther agent instructions
 
+Inspect reported processing with `panther workflows list --game GAME`, or the
+web app’s Workflows section. See `docs/workflow-workshop.md` for repeatable
+historical indexing and imports of genuine local checkpoints. Status reporting
+is not execution or spending approval; never run missing stages merely to fill
+the status display. Preserve uncertainty and private operational evidence.
+
 Curated chapter artwork uses `panther novels illustrations` and `save-illustrations` with exact
 completed chapter and immutable same-game image keys, meaningful alt text/captions and a guarded
 selection revision. This is a separate illustrative adaptation, not manuscript text or canon.
@@ -811,3 +817,12 @@ Regeneration creates a new revision with exact `sourceKeys` and preserves the ol
 For existing/new records across all games use `panther transcripts summaries-rebuild`
 with a private `--report`, inventory first, `--apply`, then `--verify` after workers finish.
 Never invent capture timestamps, speakers or character associations to satisfy a projection.
+
+## Completed session automation
+
+After verified recording-set completion, the configured owned-compute session worker preserves
+raw ASR, creates separate conservative enrolled-player annotations, and commits the editorial
+pipeline. Follow Session finalization and Story & screen planning in Workshop. Novel completion
+is automatic; video preparation stops for approval of the exact script/storyboard. The standing
+session ceiling is $10 with the established fal models, not automatic spending permission or
+authority to retry, reset budgets, buy credits or clone voices. See `docs/session-automation.md`.

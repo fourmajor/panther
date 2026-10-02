@@ -13,6 +13,13 @@ cluster order, accent guesses or another run's anonymous speaker label. More cle
 is preferable to noisy or overlapping speech. Enrollment detects one speaker but cannot
 independently prove the supplied name is correct.
 
+`enroll-speakers --minimum-speech-seconds 3` explicitly accepts shorter, already confirmed
+references when longer enrollment is unavailable. The default remains ten seconds, and the
+single-detected-speaker, checksum and identity-evidence guards do not change. Profiles record
+actual detected speech seconds and label sub-ten-second references as lower-quality short
+references. Matching thresholds remain conservative; this does not establish accuracy or
+authorize learning from provisional matches. Prefer longer confirmed samples for later revisions.
+
 The owner-only manifest outside Git has `gameId` and `samples`. Each sample has `playerId`,
 an absolute `file`, its `sha256`, `confirmedSingleSpeaker: true`, and an `identityEvidence`
 description. The command checks player IDs against Panther's authenticated game roster.

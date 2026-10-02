@@ -134,6 +134,11 @@ def agent(folder, stage, inputs, heartbeat):
         "creation is the user’s creative direction and title, which can independently define a requested chapter or video without any transcript. Use it to direct the requested adaptation, "
         "never to override source integrity, invent speech, assign an unknown speaker or authorize generation. "
         "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
+        "Transcript prompts may encode segments as positional rows; segmentFields names each column. "
+        "segmentIndex is always the zero-based row index. No speech or timing is omitted.\n"
+        "TranscriptCorrectionOverlay references the complete raw input: apply its corrections by segmentIndex "
+        "to raw text; every other speech field is identical. Review all edits against raw and pinned evidence. "
+        "This avoids duplicate transcript text, not review coverage.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
         "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
         "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
@@ -145,9 +150,11 @@ def agent(folder, stage, inputs, heartbeat):
         "At video-preflight, undecided provider and budget are expected approval blockers, not missing planning; list them explicitly. "
         + BRIEFS[stage]
         + "\nINPUT DATA:\n"
-        + json.dumps(inputs, ensure_ascii=False)
+        + json.dumps(prompt_projection(inputs), ensure_ascii=False, separators=(",", ":"))
     )
-    if len(prompt.encode()) > 900_000:
+    # The observed CLI turn/start transport rejects >1,048,576 characters.
+    # A byte ceiling below that also covers Unicode and instruction overhead.
+    if len(prompt.encode()) > 1_000_000:
         raise click.ClickException(
             "Context exceeds the safe stage limit; narrow/paginate before proceeding."
         )
@@ -343,6 +350,71 @@ def fetch(config, reference, folder, name):
     file = folder / name
     local.download(config, reference, file)
     return json.loads(file.read_text()) if reference["key"].endswith(".json") else file.read_text()
+
+
+def reading_transcript(document):
+    """Lossless speech projection: keep every utterance, identity, time and warning.
+
+    Detailed token/embedding evidence stays in the exact checksummed input, not
+    duplicated in every writing prompt. This is not a replacement raw artifact.
+    """
+    result = copy.deepcopy(document)
+    fields = {"start", "end", "text", "playerId", "attribution", "speechContext",
+              "speakerLabel", "sourceSegmentIndex", "sourceKey", "timingMethod", "timingNote", "attributionWarnings"}
+    result["segments"] = [{k: v for k, v in segment.items() if k in fields}
+                          for segment in document["segments"]]
+    result.pop("sourceTranscripts", None)
+    result["readingProjection"] = {"schemaVersion": 1, "originalEvidencePreserved": True,
+                                  "omitted": "Per-word analysis and duplicate source documents; see pinned raw inputs."}
+    return result
+
+
+def correction_overlay(document, raw):
+    """Use exact deltas only when they reconstruct every candidate speech field."""
+    if not isinstance(raw, dict) or document.get("artifactType") != "corrected-transcript":
+        return None
+    if any(document.get(k) != raw.get(k) for k in ("entityType", "gameId", "sessionId", "recordingId")):
+        return None
+    mutable = {"segments", "artifactType", "reviewStatus", "corrections", "uncertainties"}
+    if any(document.get(k) != raw.get(k) for k in (set(document) | set(raw)) - mutable):
+        return None
+    originals, candidates = raw.get("segments"), document.get("segments")
+    if not isinstance(originals, list) or not isinstance(candidates, list) or len(originals) != len(candidates):
+        return None
+    texts = [s["text"] for s in originals]
+    seen = set()
+    for edit in document.get("corrections", []):
+        index = edit.get("segmentIndex")
+        if type(index) is not int or not 0 <= index < len(texts) or index in seen or edit.get("before") != texts[index]:
+            return None
+        seen.add(index)
+        texts[index] = edit.get("after")
+    if any(candidate.get("text") != text or {k: v for k, v in candidate.items() if k != "text"} !=
+           {k: v for k, v in original.items() if k != "text"}
+           for original, candidate, text in zip(originals, candidates, texts, strict=True)):
+        return None
+    return {**{k: v for k, v in document.items() if k not in {"segments", "sourceTranscripts"}},
+            "entityType": "TranscriptCorrectionOverlay", "schemaVersion": 1, "readingBase": "raw",
+            "readingProjection": {"schemaVersion": 2, "originalEvidencePreserved": True,
+                                  "omitted": "Duplicate candidate speech; reconstruct exactly from raw and corrections."}}
+
+
+def prompt_projection(value, raw=None):
+    if isinstance(value, list):
+        return [prompt_projection(item, raw) for item in value]
+    if isinstance(value, dict):
+        if isinstance(value.get("raw"), dict):
+            raw = value["raw"]
+        overlay = correction_overlay(value, raw)
+        if overlay is not None:
+            value = overlay
+        if value.get("entityType") in {"PlayerTranscript", "EditorialTranscriptBundle", "BrowserTranscript"}:
+            value = reading_transcript(value)
+            fields = sorted({key for segment in value["segments"] for key in segment})
+            value["segmentFields"] = fields
+            value["segments"] = [[segment.get(field) for field in fields] for segment in value["segments"]]
+        return {key: prompt_projection(item, raw) for key, item in value.items()}
+    return value
 
 
 def upload(config, file, job, kind, category, source_keys, run_suffix):

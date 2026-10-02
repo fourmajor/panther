@@ -11,7 +11,7 @@ const characters=[{id:'lantern-guide',characterId:'lantern-guide',name:'Lantern 
 const contextAsset={key:'games/test-game/assets/context/original/lore.json',name:'lore.json',kind:'game-context',metadata:{title:'Campaign lore',category:'reference'}};
 const mapAsset={key:'games/test-game/assets/atlas/original/map.png',name:'map.png',kind:'map',contentType:'image/png',metadata:{title:'Riverlands atlas',category:'reference'}};
 const secondMap={...mapAsset,key:'games/test-game/assets/coast/original/map.png',metadata:{title:'Coastal atlas',category:'reference'}};
-async function fixture(context,{mapScene=false,technicalSources=false}={}){
+async function fixture(context,{mapScene=false,technicalSources=false,automatic=false}={}){
  const submissions=[],reads=[],sceneWrites=[];
  let sceneRecord={id:sceneRef.sceneId,episodeId:sceneRef.episodeId,name:'A moonlit crossing',description:'',revision:sceneRef.revision,position:0,type:mapScene?'map':'general',mapAssetKey:null};
  await context.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
@@ -28,6 +28,7 @@ async function fixture(context,{mapScene=false,technicalSources=false}={}){
   if(url.pathname==='/assets')return fulfill({json:{assets:url.searchParams.get('section')==='transcripts'?(technicalSources?transcripts.map(asset=>({...asset,name:'089c592c-47bd-49ad-abcc-447755aa11ff.json',metadata:{title:'089c592c-47bd-49ad-abcc-447755aa11ff.json'},lastModified:'2026-02-01T12:00:00Z'})):transcripts):url.searchParams.get('section')==='all'?[contextAsset,internalAsset]:[],cursor:null}});
   if(url.pathname==='/editorial-jobs'){
    if(route.request().method()==='POST'){submissions.push(route.request().postDataJSON());return fulfill({json:{jobId:'a'.repeat(64),status:'SUBMITTED'}});}
+   if(automatic){if(!url.searchParams.has('jobId'))return fulfill({json:{jobs:[{jobId:'a'.repeat(64),sessionId:'test-session'}],cursor:null}});return fulfill({json:{job:{jobId:'a'.repeat(64),sessionId:'test-session',status:'READY_FOR_VIDEO_DISCUSSION'},tasks:[{stage:'video-screenplay',status:'DONE',output:{key:'games/test-game/assets/plan/original/screenplay.json'}}]}});}
    if(!url.searchParams.has('jobId'))return fulfill({json:{jobs:submissions.map(submission=>({jobId:'a'.repeat(64),creation:{...submission.creation,title:'A moonlit crossing'},createdAt:1,status:'READY_FOR_VIDEO_DISCUSSION'})),cursor:null}});
    const creation={...submissions.at(-1).creation,title:submissions.at(-1).creation.title||'A moonlit crossing'};
    return fulfill({json:{job:{jobId:'a'.repeat(64),creation,status:creation.target==='novel'?'NOVEL_READY':'READY_FOR_VIDEO_DISCUSSION'},tasks:[{stage:creation.target==='novel'?'novel-draft':'video-treatment',status:'DONE'}]}});
@@ -71,7 +72,7 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  expect(await submit.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await page.screenshot({path:testInfo.outputPath(`editorial-form-${width}.png`),fullPage:true});
  await submit.click();
- await expect(composer).toContainText(target==='novel'?'Chapter ready':'Planning ready');
+ await expect(composer).toContainText(target==='novel'?'Chapter ready':'awaiting your approval before video generation');
  expect(submissions).toHaveLength(1);
  expect(submissions[0]).toEqual({gameId:'test-game',creation:{schemaVersion:3,target,brief:'Follow the companions across the river.',sourceKeys:transcripts.map(a=>a.key),contextKeys:[contextAsset.key]}});
  expect(reads.filter(p=>p==='/assets').length).toBeGreaterThan(before);
@@ -218,4 +219,20 @@ for(const width of [1280,390])test(`Empty Novel explains its purpose and offers 
  await expect(empty).toBeHidden();expect(submissions).toHaveLength(0);await expect(composer.getByRole('button',{name:'Generate chapter',exact:true})).toBeEnabled();
  await composer.getByRole('button',{name:'Cancel',exact:true}).click();await expect(empty).toBeVisible();await action.click();await expect(composer.getByLabel('Prompt',{exact:true})).toBeVisible();await expect(empty).toBeHidden();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+for(const width of [1280,390])test(`Automatic session plans remain reviewable before spending at ${width}px`,async({page,context},testInfo)=>{
+ await page.setViewportSize({width,height:900});const{submissions}=await fixture(context,{automatic:true});
+ await page.goto('https://panther.place/games/test-game/videos');
+ const composer=page.locator('#session-video-plans');
+ const project=composer.getByRole('button',{name:'Session test-session · automatic',exact:true});
+ await expect(project).toBeVisible();await expect(project).toBeInViewport();await project.click();
+ const progress=page.getByRole('dialog',{name:'Session test-session · automatic',exact:true});await expect(progress).toContainText('Video plan ready');await expect(progress).toContainText('Rendering requires approval');
+ await expect(progress.locator('details,summary')).toHaveCount(0);
+ const screenplay=progress.getByRole('link',{name:'View',exact:true});
+ await expect(screenplay).toBeVisible();
+ await expect(screenplay).toHaveAttribute('href','/games/test-game/media?asset=games%2Ftest-game%2Fassets%2Fplan%2Foriginal%2Fscreenplay.json');
+ expect(submissions).toHaveLength(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:testInfo.outputPath(`automatic-session-${width}.png`)});
 });
