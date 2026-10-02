@@ -97,3 +97,31 @@ Historical workflow inputs and raw evidence must remain unchanged.
 Infrastructure belongs to CDK; record storage uses existing on-demand tables. Game files,
 manifests, inventories and migration reports remain outside Git. No paid inference or
 always-on compute is introduced by appearance organization.
+
+## New characters and empty artwork
+
+The trusted game/character creation producers record an explicit versioned
+`appearanceContractJson` genesis marker (`schemaVersion: 1`, `origin: created-current`).
+These characters start in the current appearance contract with no selected portrait/model;
+they require no historical appearance migration to read their profile or edit artwork.
+Normal character-detail edits cannot add or change the genesis marker. An empty profile
+returns null appearance/selection identifiers, an empty model object, and no activation
+revision. Reading it does not scan legacy storage or create migration records.
+
+Characters created before this producer change still require the authenticated appearance
+migration, even when the UI currently shows no artwork. Do not infer an empty retained
+history from a missing current selection. Prepare, apply, and verify the complete all-game
+inventory with private files outside the repository:
+
+```sh
+panther character prepare-appearance-migration --plan /private/path/appearances-plan.json
+panther character apply-appearance-migration --plan /private/path/appearances-plan.json --report /private/path/appearances-apply.jsonl
+panther character verify-appearance-migration --report /private/path/appearances-verify.json
+```
+
+The existing verification/finalization operations cover empty histories too: they inspect
+retained current and historical source versions, preserve the evidence, and commit an audited
+completion seal only after the verified inventory is unchanged. A source with no corresponding
+preserved snapshot blocks finalization. No direct storage writes or fabricated appearances
+are needed. New characters may also pass through this same maintenance operation; their
+explicit current-contract genesis remains unchanged.

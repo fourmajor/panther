@@ -554,3 +554,68 @@ def test_oversized_selected_model_is_not_signed_and_does_not_borrow_another_mode
     view = looks[0].view(looks[1], "test-game", "example-character")
     assert view["poster"] and view["model"] is None and view["warnings"]
     signer.assert_called_once_with(looks[2][0])
+
+
+def test_born_current_character_has_empty_view_profile_and_can_add_artwork_without_legacy_seal(
+    looks, monkeypatch
+):
+    module, media, _ = looks
+    db = module.browse_index.table()
+    db.delete_item(
+        Key={"pk": "character-looks-migration#test-game#example-character", "sk": "complete"}
+    )
+    catalog = boto3.resource("dynamodb").Table("narrative-games")
+    catalog.update_item(
+        Key={"pk": "GAME#test-game", "sk": "CHARACTER#example-character"},
+        UpdateExpression="SET appearanceContractJson = :v",
+        ExpressionAttributeValues={
+            ":v": json.dumps({"schemaVersion": 1, "origin": "created-current"})
+        },
+    )
+    monkeypatch.setattr(
+        media.raw_s3,
+        "get_paginator",
+        lambda *_: pytest.fail("New-character reads must not scan legacy storage"),
+    )
+    view = module.view(media, "test-game", "example-character")
+    assert view["appearance"] is None and view["selection"] is None and view["poster"] is None
+    profile = module.profile(media, "test-game", "example-character")
+    assert profile[2]["model"] == {} and profile[2]["appearanceId"] is None and profile[3] is None
+    history = module.history(media, "test-game", "example-character")
+    assert (
+        history["current"] is None
+        and history["activationRevision"] is None
+        and history["appearances"] == []
+    )
+    assert call(looks, "appearance", appearance())["statusCode"] == 200
+    assert module.view(media, "test-game", "example-character")["selection"] is None
+    response = media._character_profile(
+        {"queryStringParameters": {"gameId": "test-game", "characterId": "example-character"}}
+    )
+    assert response["statusCode"] == 200
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        None,
+        {"schemaVersion": 1, "origin": "unknown"},
+        {"schemaVersion": True, "origin": "created-current"},
+        {"schemaVersion": 1, "origin": "created-current", "legacy": True},
+    ],
+)
+def test_missing_or_invalid_genesis_marker_still_requires_real_appearance_migration(looks, marker):
+    module, media, _ = looks
+    module.browse_index.table().delete_item(
+        Key={"pk": "character-looks-migration#test-game#example-character", "sk": "complete"}
+    )
+    boto3.resource("dynamodb").Table("narrative-games").update_item(
+        Key={"pk": "GAME#test-game", "sk": "CHARACTER#example-character"},
+        UpdateExpression="SET appearanceContractJson = :v",
+        ExpressionAttributeValues={":v": json.dumps(marker)},
+    )
+    with pytest.raises(RuntimeError):
+        module.view(media, "test-game", "example-character")
+    with pytest.raises(RuntimeError):
+        module.profile(media, "test-game", "example-character")
+    assert call(looks, "appearance", appearance())["statusCode"] == 400

@@ -80,6 +80,32 @@ def character(game, identity):
     return db, key, item
 
 
+def born_current(registered):
+    """Only the trusted creation producer declares a current-contract empty genesis."""
+    try:
+        value = json.loads(registered.get("appearanceContractJson", "null"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(value, dict)
+        and set(value) == {"schemaVersion", "origin"}
+        and type(value["schemaVersion"]) is int
+        and value["schemaVersion"] == 1
+        and value["origin"] == "created-current"
+    )
+
+
+def require_current(game, cid):
+    _, _, registered = character(game, cid)
+    if not born_current(registered) and not browse_index.table().get_item(
+        Key={"pk": f"{PREFIX}-migration#{game}#{cid}", "sk": "complete"}, ConsistentRead=True
+    ).get("Item"):
+        raise RuntimeError(
+            "Appearance migration is incomplete; no legacy or mixed selection is shown"
+        )
+    return registered
+
+
 def association_id(key):
     return hashlib.sha256(key.encode()).hexdigest()
 
@@ -101,7 +127,7 @@ def save(media, body, claims, name, *, maintenance_guards=(), maintenance_fields
     db = browse_index.table()
     seal_key = {"pk": f"{PREFIX}-migration#{game}#{cid}", "sk": "complete"}
     seal = db.get_item(Key=seal_key, ConsistentRead=True).get("Item")
-    if not seal and not maintenance_fields:
+    if not seal and not maintenance_fields and not born_current(character_item):
         raise ValueError(
             "Complete this character's appearance migration before editing its artwork"
         )
@@ -444,12 +470,7 @@ def resolve(game, cid, appearance_id=None, selection_id=None):
 
 def view(media, game, cid, appearance_id=None, selection_id=None):
     db = browse_index.table()
-    if not db.get_item(
-        Key={"pk": f"{PREFIX}-migration#{game}#{cid}", "sk": "complete"}, ConsistentRead=True
-    ).get("Item"):
-        raise RuntimeError(
-            "Appearance migration is incomplete; no legacy or mixed selection is shown"
-        )
+    require_current(game, cid)
     if (
         appearance_id is None
         and selection_id is None
@@ -543,14 +564,25 @@ def view(media, game, cid, appearance_id=None, selection_id=None):
 def profile(media, game, cid):
     """Small modern profile projection for CLI/job consumers, never an S3 source lookup."""
     db = browse_index.table()
-    if not db.get_item(
-        Key={"pk": f"{PREFIX}-migration#{game}#{cid}", "sk": "complete"}, ConsistentRead=True
-    ).get("Item"):
-        raise RuntimeError("Appearance migration is incomplete")
+    registered = require_current(game, cid)
     if not db.get_item(
         Key=records.pointer(PREFIX, game, kind("activation", cid), "current"), ConsistentRead=True
     ).get("Item"):
-        return None
+        details = json.loads(registered.get("detailsJson", "{}"))
+        document = {
+            "schemaVersion": 2,
+            "gameId": game,
+            "id": cid,
+            "name": registered["name"],
+            "title": details.get("subtitle") or "Character",
+            "summary": details.get("overview") or "",
+            "appearanceId": None,
+            "appearanceRevision": None,
+            "selectionId": None,
+            "selectionRevision": None,
+            "model": {},
+        }
+        return None, json.dumps(document).encode(), document, None
     registered, _, selection, activation = resolve(game, cid)
     details = json.loads(registered.get("detailsJson", "{}"))
     document = {
@@ -881,7 +913,9 @@ def initialize(media, body, actor):
             "Artwork is already selected; use a guarded revision or explicit appearance activation"
         )
     seal_key = {"pk": f"{PREFIX}-migration#{game}#{cid}", "sk": "complete"}
-    if not db.get_item(Key=seal_key, ConsistentRead=True).get("Item"):
+    if not born_current(character(game, cid)[2]) and not db.get_item(
+        Key=seal_key, ConsistentRead=True
+    ).get("Item"):
         if migration.inventory(media, game, cid):
             raise ValueError("Retained legacy artwork requires the all-game appearance migration")
         proof = migration.verification(media, game, cid)

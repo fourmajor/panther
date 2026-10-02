@@ -448,7 +448,7 @@ function foregroundBlocked() {
 function foregroundPreservesView(section) {
   const host = section === "media" ? elements.explorer : section === "novel" ? elements.novel : document.getElementById("session-library");
   if (section === "media" && mediaListing.loadedPages > 1) return true;
-  if (["audio", "transcripts", "videos"].includes(section) && host.dataset.paged === "true") return true;
+  if (["sessions", "videos"].includes(section) && host.dataset.paged === "true") return true;
   const visible = element => element.getClientRects().length > 0;
   if ([...host.querySelectorAll('input[type="search"]')].some(input => visible(input) && input.value.trim())) return true;
   if ([...host.querySelectorAll("select")].some(select => visible(select) && select.options.length && select.value !== select.options[0].value)) return true;
@@ -469,7 +469,7 @@ async function revalidateForeground() {
     } else paths.push("/characters");
   }
   if (section === "novel") paths.push("/novel", "/novel-stories", "/novel-books");
-  if (["audio", "transcripts", "videos"].includes(section)) {
+  if (["sessions", "videos"].includes(section)) {
     paths.push("/assets"); filters["/assets"] = {section};
     if (section === "videos") paths.push("/video-collections", "/episodes", "/scenes", "/episode-composition");
   }
@@ -495,7 +495,7 @@ async function revalidateForeground() {
       if (!elements.characterProfile.hidden && state.currentCharacter) await loadCharacterFacts(state.currentCharacter.gameId, state.currentCharacter.characterId, epoch);
       else await loadCharacters();
     } else if (section === "novel") await loadNovel(null, epoch);
-    else if (["audio", "transcripts", "videos"].includes(section)) await loadLibrary(section, epoch);
+    else if (["sessions", "videos"].includes(section)) await loadLibrary(section, epoch);
   })().catch(() => { /* Retain visible content through a temporary refresh failure. */ }).finally(() => {foregroundRefresh = null;});
   return foregroundRefresh;
 }
@@ -671,8 +671,7 @@ function renderDashboard() {
   }
   const sections = [
     ["characters", "Characters", "Meet the characters and explore their portraits, appearances and stories."],
-    ["audio", "Audio", "Listen to session recordings and return to the moments that mattered."],
-    ["transcripts", "Transcripts", "Read the session record, with speakers and saved versions preserved."],
+    ["sessions", "Sessions", "Record, listen and read your sessions."],
     ["novel", "Novel", "Explore narrative retellings, chapters and books from your game."],
     ["videos", "Videos", "Watch episodes, trailers and other creative reimaginings."],
     ["media", "Media", "Browse the full archive of images, maps, models and other assets."],
@@ -706,7 +705,7 @@ async function loadDashboardRecent(epoch) {
     if(epoch!==routeEpoch || gameId!==state.gameId)return;
     if(result.complete!==true || !result.groups)throw new Error("Recent activity unavailable");
     host.replaceChildren();
-    for(const [label,section,key] of [["Characters","characters","characters"],["Transcripts","transcripts","transcripts"],["Videos","videos","videos"],["Chapters","novel","chapters"]]) {
+    for(const [label,section,key] of [["Characters","characters","characters"],["Transcripts","sessions","transcripts"],["Videos","videos","videos"],["Chapters","novel","chapters"]]) {
       const panel=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ul");
       heading.textContent=`Recent ${label.toLowerCase()}`;panel.append(heading,list);host.append(panel);
       for(const item of result.groups[key]) {
@@ -1243,6 +1242,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
     const record = result.character;
     state.currentCharacterFacts = record;
     const render = () => {
+      if(record.name)elements.characterName.textContent=record.name;
       elements.characterTitle.textContent = record.details.subtitle || "";
       host.replaceChildren();
       const heading = document.createElement("div"); heading.className = "explorer-heading";
@@ -1423,6 +1423,8 @@ async function loadCharacter(gameId, characterId) {
   document.getElementById("characters-more").hidden = true;
   document.getElementById("character-create").hidden = true;
   document.getElementById("character-create-form").hidden = true;
+  const registered=state.gameDetail?.characters?.find(character=>character.id===characterId);
+  configureCharacter({character:{...registered,gameId,id:characterId,name:registered?.name||characterId},poster:null,model:null});
   void loadCharacterFacts(gameId, characterId, epoch);
   document.getElementById("character-assets-list").replaceChildren();
   document.getElementById("appearance-history").hidden = true;
@@ -1432,9 +1434,10 @@ async function loadCharacter(gameId, characterId) {
   appearanceRequest++;
   showLoading(document.getElementById("character-assets-status"), "Finding this character’s images, models and media…");
   elements.characterList.hidden = true;
-  elements.characterProfile.hidden = true;
+  elements.characterProfile.hidden = false;
   elements.charactersStatus.hidden = false;
-  showLoading(elements.charactersStatus, "Fetching character details and portrait…");
+  showLoading(elements.charactersStatus, "Fetching portrait…");
+  void loadCharacterAssets(gameId,characterId,epoch);
   try {
     const params=new URLSearchParams(location.search);
     const profile = await api("/character", { gameId, characterId,
@@ -1448,7 +1451,7 @@ async function loadCharacter(gameId, characterId) {
   } catch (error) {
     if (epoch !== routeEpoch) return;
     if (error.message !== "Session expired") {
-      elements.charactersStatus.textContent = error.message;
+      elements.charactersStatus.textContent = `Appearance unavailable: ${error.message}`;
     }
   }
 }
@@ -1624,6 +1627,9 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  const legacySessionRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/(?:audio|transcripts)\/?$/);
+  if(legacySessionRoute){navigate(`${legacySessionRoute[1]||''}/sessions${location.search}${location.hash}`,{replace:true});return;}
+  closeLiveReader();
   document.getElementById("recording-badge").hidden = true;
   document.getElementById("episode-workspace")?.stopPreview?.();
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
@@ -1646,7 +1652,7 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|audio|transcripts|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|sessions|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1676,7 +1682,7 @@ async function renderRoute() {
     setActiveNavigation("settings"); elements.characters.hidden = true; elements.explorer.hidden = true;
     document.getElementById("game-settings").hidden = false; renderGameSettings(); return;
   }
-  if (["audio", "transcripts", "videos"].includes(section)) {
+  if (["sessions", "videos"].includes(section)) {
     setActiveNavigation(section);
     elements.characters.hidden = true;
     elements.explorer.hidden = true;
@@ -1901,7 +1907,7 @@ function renderGeneration(host, metadata) {
     const dt = document.createElement("dt"), dd = document.createElement("dd");
     dt.textContent = label; dd.textContent = value; list.append(dt, dd);
   };
-  if (!g || g.schemaVersion !== 1) { host.append(heading, "Generation details unavailable."); return; }
+  if (!g || g.schemaVersion !== 1) return;
   const methods = {ai:"AI-generated", "ai-assisted":"AI-assisted", procedural:"Software-generated", capture:"Recorded", human:"Human-created", unknown:"Unknown"};
   const locations = {local:"Local computer", remote:"Provider-hosted", "not-applicable":"Not applicable", unknown:"Unknown"};
   row("Creation", methods[g.method] || "Unknown");
@@ -3046,6 +3052,22 @@ function configureVideoPreview(asset, video, epoch) {
   })();
 }
 
+let liveReaderOpen=false,liveReaderRecording=null;
+function ensureSessionGroup(list,sessionId){
+  let group=[...list.querySelectorAll('.session-group')].find(node=>node.dataset.sessionId===sessionId);
+  if(!group){group=document.createElement('section');group.className='session-group transcript-session';group.dataset.sessionId=sessionId;const title=document.createElement('h2');title.textContent=sessionId?`Session · ${sessionId}`:'Unassigned session';group.append(title);list.append(group);}return group;
+}
+function closeLiveReader(){liveReaderOpen=false;liveReaderRecording=null;document.getElementById('live-transcript').hidden=true;const list=document.getElementById('library-list');if(list)list.hidden=false;}
+function openLiveReader(recordingId){const record=liveRecords.find(item=>item.recordingId===recordingId);if(record&&!liveHistory.get(historyKey(record))?.loaded)void loadLiveHistory(record);liveReaderOpen=true;liveReaderRecording=recordingId;liveRenderKey='';document.getElementById('library-list').hidden=true;document.getElementById('library-status').hidden=true;drawLive();document.getElementById('live-reader-back').focus();}
+document.getElementById('live-reader-back').onclick=()=>{closeLiveReader();document.querySelector('.session-live-entry button')?.focus();};
+function renderLiveSessionEntries(){
+  if(elements.primaryNav.querySelector('[aria-current]')?.dataset.section!=='sessions')return;
+  const list=document.getElementById('library-list');for(const node of list.querySelectorAll('.session-live-entry'))node.remove();
+  for(const group of list.querySelectorAll('.session-group[data-live-only]'))if(group.children.length===1)group.remove();
+  for(const record of liveRecords){const group=ensureSessionGroup(list,record.sessionId||'');if(group.children.length===1)group.dataset.liveOnly='true';const row=document.createElement('article');row.className='session-live-entry';const open=document.createElement('button');open.type='button';open.className='quiet-button';open.textContent='Open transcript';open.setAttribute('aria-label',`Open transcript for ${record.sessionId}`);open.onclick=()=>openLiveReader(record.recordingId);row.append(open);if(liveState(record)==='recording'){const state=document.createElement('span');state.className='session-recording-indicator';state.textContent='Recording';row.append(state);}group.insertBefore(row,group.children[1]||null);}
+  if(liveRecords.length)document.getElementById('library-status').hidden=true;
+}
+
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   document.getElementById("session-library").dataset.paged = String(previousAssets.length > 0 || Boolean(cursor));
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
@@ -3054,12 +3076,12 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   if(section === "videos") renderEpisodeWorkspace(epoch);else {const workspace=document.getElementById("episode-workspace");if(workspace){workspace.stopPreview?.();workspace.hidden=true;}}
   const videoComposer=document.getElementById("editorial-video-composer");
   if(videoComposer)videoComposer.hidden=section!=="videos";
-  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section) || (!liveRecords.length && !liveFailure);
-  if (["transcripts", "audio"].includes(section)) {
+  document.getElementById("live-transcript").hidden = section!=="sessions" || !liveReaderOpen;
+  if (["sessions"].includes(section)) {
     drawLive();
-    for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
+    if(liveReaderOpen)for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
-  document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
+  document.getElementById("library-title").textContent = {sessions:"Sessions", videos:"Videos"}[section];
   status.hidden = false;
   status.dataset.empty = "false";
   const loading = showLoading(status, `Fetching ${section} from the catalog…`);
@@ -3078,11 +3100,9 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     if (status.hidden) return;
     const manifests = new Set(assets.filter(a => a.recording?.partCount > 0).map(a => a.key.split("/")[3]));
     const keys = new Set(assets.map(a => a.key));
-    const selected = assets.filter(a => section === "audio"
-      ? a.recording?.partCount > 0 || ((a.contentType.startsWith("audio/") || /\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name)) && !manifests.has(a.key.split("/")[3]))
-      : section === "videos" ? a.contentType.startsWith("video/") || /\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name)
-      : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
-        && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
+    const isRecording=a=>a.recording?.partCount>0||((a.contentType?.startsWith("audio/")||/\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name))&&!manifests.has(a.key.split("/")[3]));
+    const isTranscript=a=>["transcript","raw-transcript","corrected-transcript","edited-transcript"].includes(a.kind)&&!(a.key.endsWith(".md")&&keys.has(a.key.slice(0,-3)+".json"));
+    const selected=assets.filter(a=>section==="videos"?a.contentType?.startsWith("video/")||/\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name):isRecording(a)||isTranscript(a));
     status.dataset.empty=String(!selected.length);
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     if (section === "videos") {
@@ -3090,39 +3110,18 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
       return;
     }
-    status.textContent = selected.length
-      ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
-        : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
-      : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
-    if (!selected.length && roomCapture?.draft && !roomCapture.el.result.hidden) status.hidden=true;
-    const sessionGroups = new Map();
-    for (const asset of selected) {
-      const card = document.createElement("article"); card.className = "novel-card session-card";
-      const heading = document.createElement("h2");
-      const label = section === "audio" && asset.kind === "recording-manifest" ? `Recording · ${asset.metadata?.sessionId || asset.name}` : asset.metadata?.title || asset.name;
-      heading.append(assetLink(asset, label));
-      const kind = document.createElement("p");
-      kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${section === "videos" ? "Video" : asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
-      const date = document.createElement("p"); date.textContent = new Date(asset.lastModified).toLocaleString();
-      card.append(heading, kind, date);
-      if (section === "transcripts") {
-        const sessionId = asset.metadata?.sessionId || "";
-        if (!sessionGroups.has(sessionId)) {
-          const group = document.createElement("section"), title = document.createElement("h2"), note = document.createElement("p");
-          group.className = "transcript-session";
-          title.textContent = sessionId ? `Session · ${sessionId}` : "Session not identified";
-          note.textContent = "Loaded transcript versions. Canonical selection is separate from review or human verification; dates below are asset timestamps, not inferred session dates.";
-          group.append(title, note); list.append(group); sessionGroups.set(sessionId, group);
-        }
-        const summary = document.createElement("p"), version = asset.metadata?.extra?.version;
-        const observed = asset.transcript;
-        summary.textContent = observed?.state === "available"
-          ? `Observed speakers: ${observed.participants.map(p => p.name || p.id).join(", ") || "None assigned"} · ${observed.unassignedSegments} unassigned segments · Review: ${observed.reviewStatus}`
-          : "Speaker summary unavailable; open the preserved transcript to inspect its evidence.";
-        const revision = document.createElement("p"); revision.textContent = version ? `Asset version ${version.number} · ${version.seriesId}` : "Version metadata unavailable — inventory verification required.";
-        card.append(summary, revision); sessionGroups.get(sessionId).append(card);
-      } else list.append(card);
+    status.textContent=selected.length?'':'No saved sessions yet.';status.hidden=!!selected.length||liveReaderOpen;
+    for(const asset of selected){
+      const sessionId=asset.metadata?.sessionId||'',group=ensureSessionGroup(list,sessionId),card=document.createElement('article');card.className='novel-card session-card';
+      const heading=document.createElement('h3'),kind=document.createElement('p'),version=asset.metadata?.extra?.version;
+      heading.append(assetLink(asset,asset.kind==='recording-manifest'?'Recording':asset.metadata?.title||asset.name));
+      kind.className='session-asset-meta';const type=isTranscript(asset)?asset.kind==='raw-transcript'?'Raw transcript':['corrected-transcript','edited-transcript'].includes(asset.kind)?'Corrected transcript':'Transcript':'Recording';
+      kind.textContent=type+(version?` · v${version.number}`:'');card.append(heading,kind);
+      const observed=asset.transcript;
+      if(observed?.state==='available'){const summary=document.createElement('p');summary.className='session-asset-meta';const speakers=(observed.participants||[]).map(person=>person.name||person.id);summary.textContent=[speakers.join(', '),observed.unassignedSegments?`${observed.unassignedSegments} unassigned segments`:'',observed.reviewStatus].filter(Boolean).join(' · ');if(summary.textContent)card.append(summary);}
+      group.append(card);
     }
+    renderLiveSessionEntries();list.hidden=liveReaderOpen;
     if (page.cursor) {
       const more = document.createElement("button");
       more.type = "button"; more.className = "load-more"; more.textContent = `Load more ${section}`;
@@ -3225,6 +3224,7 @@ function finishedAssetConnections(assets, key, gameId) {
 
 function appendFinishedConnections(host, connections) {
   for (const [title, records] of [["Inputs", connections.inputs], ["Outputs", connections.outputs]]) {
+    if (!records.length) continue;
     const heading = document.createElement("h3"); heading.textContent = title;
     const list = document.createElement("ul"); list.dataset.connections = title.toLowerCase();
     for (const record of records) {
@@ -3233,7 +3233,6 @@ function appendFinishedConnections(host, connections) {
         ? novelLink(record.connectionLabel, jobId) : assetLink(record, record.connectionLabel));
       list.append(li);
     }
-    if (!records.length) { const li = document.createElement("li"); li.textContent = `No finished ${title.toLowerCase()} recorded.`; list.append(li); }
     host.append(heading, list);
   }
 }
@@ -3259,8 +3258,7 @@ async function renderAssetLinks(key, epoch) {
     }
     const warnings = assets.filter(a => a.lineageWarning).length;
     if (warnings || connections.incomplete) { const warning = document.createElement("p"); warning.textContent = "Some provenance is missing or unreadable; finished-asset connections may be incomplete."; host.append(warning); }
-    const note = document.createElement("p"); note.className = "status";
-    note.textContent = "Finished assets only. Processing steps are omitted; full provenance is retained. Connections do not establish factual accuracy."; host.append(note);
+
   } catch (error) { if (current()) host.textContent = `Connections unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
@@ -3273,7 +3271,7 @@ async function renderAssetVersions(key, epoch) {
     if (!current()) return;
     const item = assets.find(asset => asset.key === key);
     const version = item?.metadata?.extra?.version;
-    if (!version || version.schemaVersion !== 1) { host.textContent = "Version record unavailable; the asset migration is not complete."; return; }
+    if (!version || version.schemaVersion !== 1) { host.replaceChildren(); return; }
     const series = assets.filter(asset => asset.metadata?.extra?.version?.seriesId === version.seriesId)
       .sort((a, b) => a.metadata.extra.version.number - b.metadata.extra.version.number);
     const heading = document.createElement("h3"), list = document.createElement("ol");
@@ -3571,10 +3569,9 @@ function renderStructuredAsset(asset, epoch) {
   if (transcript && Array.isArray(transcript.segments)) {
     const notice = document.createElement("p"); notice.className = "novel-notice";
     const edited = [asset.kind, doc.stage, doc.artifactType].some(kind => ["corrected-transcript", "edited-transcript"].includes(kind));
-    notice.textContent = `${edited ? "Corrected / edited transcript" : "Raw transcript"} · ${doc.reviewStatus || "unreviewed"}. Speakers identify players, not characters.`;
+    notice.textContent = `${edited ? "Corrected transcript" : "Raw transcript"}${doc.reviewStatus ? ` · ${doc.reviewStatus}` : ""}`;
     if (doc.publicationStatus === "accepted-with-notes") notice.textContent += " Working draft with unresolved review notes.";
-    if (!transcript.captureIntegrity) notice.textContent += " Capture integrity was not recorded in this version.";
-    if (doc.entityType === "BrowserTranscript") notice.textContent = "Full browser transcription · unreviewed. Speakers are unassigned. Timestamps mark transcription windows, not individual utterances.";
+    if (doc.entityType === "BrowserTranscript") {notice.textContent = `Browser transcript${doc.reviewStatus ? ` · ${doc.reviewStatus}` : ""}`;notice.title="Speakers are unassigned; timestamps mark transcription windows.";}
     host.append(notice);
     if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
@@ -3602,11 +3599,11 @@ function renderStructuredAsset(asset, epoch) {
     if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
     navigation.finish();
   } else if (["Recording", "BrowserRecording"].includes(doc.entityType) && Array.isArray(doc.parts)) {
-    const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} lossless original parts retained. One continuous listening copy; assembly does not repair capture gaps.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
     const status = document.createElement("p"); status.setAttribute("role", "status"); showLoading(status, "Finding the continuous audio playback file…");
-    const parts = document.createElement("div"); parts.className = "recording-parts";
-    host.append(notice, audio, status, parts);
+    host.append(audio, status);
+    if (doc.captureIntegrity) host.append(detailBlock("Capture integrity and warnings",doc.captureIntegrity));
+    if (doc.captureWarnings?.length) host.append(detailBlock("Capture warnings",doc.captureWarnings));
     const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
     void (async () => {
       try {
@@ -3617,7 +3614,7 @@ function renderStructuredAsset(asset, epoch) {
         copies.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
         if (!copies.length) {
           audio.hidden = true;
-          status.textContent = "Continuous playback has not been prepared yet. It is produced after the uploaded chunk set is marked complete and the laptop workflow runs. Lossless originals remain under Technical files and original exports.";
+          status.textContent = "Playback is not ready yet.";
           return;
         }
         const copy = copies[0].playback;
@@ -3625,16 +3622,7 @@ function renderStructuredAsset(asset, epoch) {
         if (!current()) return;
         audio.src = result.url;
         attachMediaRecovery(audio, copy.audioKey, current);
-        status.textContent = `Continuous playback · ${timestamp(copy.durationSeconds)} · MP3 listening copy. No file switches at part boundaries.`;
-        doc.parts.forEach((part,index) => {
-          if (!Number.isFinite(part.start) || part.start < 0 || part.start >= copy.durationSeconds) return;
-          const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button";
-          button.textContent = `Jump to part ${index+1} · ${timestamp(part.start)}`;
-          button.disabled = audio.readyState < 1;
-          audio.addEventListener("loadedmetadata", () => { if (current()) button.disabled = false; });
-          button.addEventListener("click", () => { if (current()) audio.currentTime = part.start; });
-          parts.append(button);
-        });
+        status.replaceChildren(); status.hidden=true;
       } catch (error) { if (current()) status.textContent = `${error.message}. Close and reopen to retry. Original parts are retained.`; }
     })();
   } else {
@@ -3646,13 +3634,14 @@ function renderStructuredAsset(asset, epoch) {
 function transcriptNavigation(host, asset, transcript, epoch, people) {
   const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
   const sessionId = asset.metadata?.sessionId || transcript.sessionId;
-  const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");
+  const toolbox=document.createElement("details"), toolHeading=document.createElement("summary");toolHeading.textContent="Tools";toolbox.className="transcript-toolbox";
+  const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");toolbox.append(toolHeading,tools);host.append(toolbox);
   const label = document.createElement("label"), search = document.createElement("input"), results = document.createElement("p"), previous = document.createElement("button"), next = document.createElement("button");
   label.textContent = "Search speech or player names"; search.type = "search"; search.maxLength = 500; search.id = "transcript-search"; label.htmlFor = search.id;
   search.placeholder = "Find a name, place or phrase…"; results.setAttribute("role", "status");
   previous.type = next.type = "button"; previous.className = next.className = "quiet-button";
   previous.textContent = "Previous match"; next.textContent = "Next match";
-  tools.append(label, search, previous, next, results); host.append(tools);
+  tools.append(label, search, previous, next, results);
   const versionLabel = document.createElement("label"), versions = document.createElement("select");
   versions.id = "transcript-version"; versions.disabled = true; versionLabel.htmlFor = versions.id; versionLabel.textContent = "Session transcript version";
   versions.add(new Option("Finding saved versions…", asset.key)); tools.append(versionLabel, versions);
@@ -3673,7 +3662,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
       if (query && entry.search.includes(query)) { matches.push(index); entry.line.classList.add("transcript-match"); }
     });
     previous.disabled = next.disabled = matches.length === 0;
-    results.textContent = query ? `${matches.length} matching ${matches.length === 1 ? "line" : "lines"}. All source lines remain visible.` : `${lines.length} transcript lines. Search does not hide or edit evidence.`;
+    results.textContent = query ? `${matches.length} matching ${matches.length === 1 ? "line" : "lines"}.` : "";
   };
   const move = direction => {
     if (!matches.length) return;
@@ -3682,7 +3671,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
     const line = lines[matches[position]].line;
     line.classList.add("transcript-current-match"); line.tabIndex = -1;
     line.scrollIntoView({block:"center", behavior:"instant"}); line.focus({preventScroll:true});
-    results.textContent = `Match ${position+1} of ${matches.length}. All source lines remain visible.`;
+    results.textContent = `Match ${position+1} of ${matches.length}.`;
   };
   search.addEventListener("input", update);
   search.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); move(event.shiftKey ? -1 : 1); } });
@@ -3692,7 +3681,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   let duration = null;
   const seek = async seconds => {
     if (!current() || duration === null || !Number.isFinite(seconds) || seconds < 0 || seconds >= duration) return;
-    source.open = true;
+    toolbox.open = true;source.open = true;
     try { audio.currentTime = seconds; await audio.play(); }
     catch { if (current()) sourceStatus.textContent = "Playback could not start. Use the source audio controls or refresh its link; transcript evidence is unchanged."; }
   };
@@ -3739,8 +3728,8 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
       if (!current()) return;
       const report = () => {
         selectionStatus.textContent = chosen.warning || (chosen.selection
-          ? `${chosen.selection.key === asset.key ? "Viewing the canonical reading version" : "Viewing a non-canonical version"}. Canonical selection is not human verification; review/uncertainty remain as reported above.`
-          : "No canonical reading version has been designated for this session. This is an archived transcript, not an approved record.");
+          ? `${chosen.selection.key === asset.key ? "Viewing the canonical reading version" : "Viewing a non-canonical version"}.`
+          : "No canonical reading version has been designated.");
         selection.querySelector('[data-canonical-link]')?.remove();
         if (chosen.selection?.key && chosen.selection.key !== asset.key && sameGameKey(chosen.selection.key)) {
           const link = assetLink({key:chosen.selection.key}, "Open canonical reading version"); link.dataset.canonicalLink = "true"; selection.append(link);
@@ -3811,9 +3800,14 @@ class RoomRecorder {
     this.writeChain=Promise.resolve(); this.uploadChain=Promise.resolve(); this.nodes=new Map();
     this.el=Object.fromEntries(['start','stop','status','state','timer','level','live-toggle','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
     this.el.audio=document.createElement('audio');this.el.audio.id='room-audio';this.el.audio.controls=true;this.el.audio.preload='metadata';this.el.audio.hidden=true;
+    this.liveDialog=document.createElement('dialog');this.liveDialog.className='preview room-live-dialog';this.liveDialog.setAttribute('aria-label','Live transcript');this.liveDialog.title='Provisional recognition; speakers are unassigned';
+    const closeLive=document.createElement('button');closeLive.type='button';closeLive.className='icon-button';closeLive.textContent='×';closeLive.setAttribute('aria-label','Close live transcript');closeLive.onclick=()=>this.liveDialog.close();this.liveDialog.append(closeLive,this.el.live);document.body.append(this.liveDialog);
+    this.viewLive=document.createElement('button');this.viewLive.type='button';this.viewLive.className='quiet-button';this.viewLive.textContent='View transcript';this.viewLive.hidden=true;this.viewLive.onclick=()=>this.liveDialog.showModal();this.host.querySelector('.room-controls').append(this.viewLive);
     this.el.start.onclick=()=>this.start(); this.el.stop.onclick=()=>this.stop();
     this.el['live-toggle'].onclick=()=>{this.liveEnabled=!this.liveEnabled; this.buttons(); this.say(this.liveEnabled?'Live transcription enabled for new audio.':'New live requests paused. A full pass will still run after Stop.');};
-    this.el.resume.onclick=async()=>{this.uploadError=false; this.el.resume.disabled=true; try {await this.upload(); if(!this.recording) await this.archive();} catch(error) {this.say(error.message,true);} finally {this.el.resume.disabled=false;}};
+    this.el.resume.onclick=()=>this.retrySave();
+    this.el.result.append(this.el.recovery);
+    this.retained=document.createElement('section');this.retained.id='room-retained';this.retained.setAttribute('aria-label','Unsaved recordings');this.retained.hidden=true;this.host.append(this.retained);
     this.el.download.onclick=()=>this.download();
     window.addEventListener('beforeunload',event=>{if(this.recording){event.preventDefault();event.returnValue='';}});
   }
@@ -3833,19 +3827,46 @@ class RoomRecorder {
     });
   }
   persist() {const draft=this.draft; this.writeChain=this.writeChain.then(()=>this.store('drafts','put',structuredClone(draft))); return this.writeChain;}
-  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;}
+  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;if(error)(this.el.result.hidden?this.host:this.el.result).append(this.el.status);}
+  async retrySave() {
+    if(this.recording || this.stopping || this.archiving) return;
+    this.uploadError=false;this.storageError=null;this.writeChain=Promise.resolve();this.el.resume.disabled=true;this.say('');this.showResult('Saving audio…');
+    try {await this.archive();} catch(error) {this.saveFailed(error);}
+    finally {this.el.resume.disabled=false;this.buttons();await this.listRetained();}
+  }
+  saveFailed(error) {
+    this.showResult('Not saved','error');this.el.recovery.hidden=false;this.el.resume.hidden=false;
+    const network=['TypeError','TimeoutError','AbortError'].includes(error?.name);
+    this.say(network?'Could not upload audio. It is safe in this browser. Retry saving or download it.':error.message,true);
+    this.buttons();
+  }
+  async listRetained() {
+    const drafts=await this.store('drafts','getAll');this.retained.replaceChildren();
+    const pending=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived' && d.parts.length && d.id!==this.draft?.id);
+    this.retained.hidden=!pending.length;
+    for(const draft of pending) {
+      const row=document.createElement('div'),name=document.createElement('span'),save=document.createElement('button'),download=document.createElement('button');name.textContent=draft.sessionName;
+      for(const [button,text] of [[save,'Save recording'],[download,'Download']]) {button.type='button';button.className='quiet-button';button.textContent=text;button.disabled=this.recording || !!this.archiving || !!this.stopping;}
+      const activate=()=>{clearTimeout(this.pollTimer);this.draft=draft;this.writeChain=Promise.resolve();this.uploadChain=Promise.resolve();this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el.live.hidden=true;this.el['live-text'].replaceChildren();this.el.audio.pause();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.showResult('Not saved','error');this.el.recovery.hidden=false;this.el.resume.hidden=false;};
+      save.onclick=async()=>{if(this.recording || this.archiving || this.stopping)return;activate();await this.retrySave();};
+      download.onclick=async()=>{if(this.recording || this.archiving || this.stopping)return;activate();await this.download();await this.listRetained();};
+      row.append(name,save,download);this.retained.append(row);
+    }
+  }
   buttons() {
     this.host.dataset.recording=String(this.recording); this.el.start.hidden=this.recording; this.el.stop.hidden=!this.recording;
-    this.el.start.disabled=!!this.archiving || !!this.stopping || (!!this.draft && this.draft.status!=='archived');
+    this.el.start.disabled=!!this.archiving || !!this.stopping;
+    this.el.resume.disabled=this.recording || !!this.archiving || !!this.stopping;
     this.el['live-toggle'].disabled=!this.capabilities?.transcriptionAvailable;this.el['live-toggle'].hidden=!this.recording || !this.capabilities?.transcriptionAvailable;
     this.el['live-toggle'].setAttribute('aria-pressed',String(this.liveEnabled)); this.el['live-toggle'].textContent=this.liveEnabled?'Live text on':'Live text off';
     this.el.state.textContent=this.stopping?'Finishing…':'Recording';this.el.state.hidden=!this.recording && !this.stopping;this.el.timer.hidden=!this.recording && !this.stopping;this.el.level.hidden=!this.recording;
     elements.gameSelector.disabled=this.recording || !!this.stopping || !!this.archiving;
   }
   async render(section,epoch) {
-    const visible=section==='audio' || this.recording || this.stopping;
+    if(section!=='sessions')this.liveDialog.close();
+    const visible=section==='sessions' || this.recording || this.stopping;
     this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
-    if(['audio','transcripts'].includes(section)) document.getElementById('session-library').insertBefore(this.host,document.getElementById('live-transcript'));
+    if(section==='sessions') document.getElementById('session-library').insertBefore(this.host,document.getElementById('live-transcript'));
     else document.getElementById('game-context').after(this.host);
     try {
       this.capabilities ||= await api('/browser-recording/capabilities');
@@ -3853,16 +3874,17 @@ class RoomRecorder {
       if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;return;}
       if(!this.capabilities.canRecord) {this.host.hidden=true; return;}
       if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
-        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
+        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
         const held=await navigator.locks?.query();
         if(held?.held.some(lock=>lock.name==='panther-room-capture')) {this.say('Another tab is using the room recorder.',true);this.el.start.disabled=true;return;}
         const drafts=await this.store('drafts','getAll');
         this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived').sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
-        if(this.draft) {this.draft.status='interrupted';if(!this.draft.manifestDoc) this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');await this.persist();this.showResult('Audio retained','error');this.el.recovery.hidden=false;this.say('Closed audio parts were recovered from this browser. Save them without recording again.');}
+        if(this.draft) {if(this.draft.status==='recording'){this.draft.status='interrupted';this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');}await this.persist();this.showResult('Not saved','error');this.el.recovery.hidden=false;this.say('Audio is saved in this browser. Retry saving or download it.',true);}
+        await this.listRetained();
         this.liveEnabled=!!this.capabilities.transcriptionAvailable;
       }
       this.buttons();
-    } catch(error) {this.host.hidden=true;}
+    } catch(error) {this.say(error.message,true);this.el.start.disabled=true;}
   }
   async start() {
     if(this.recording || this.stopping || !this.capabilities?.canRecord || this.el.start.disabled) return;
@@ -3878,22 +3900,22 @@ class RoomRecorder {
         await this.context.audioWorklet.addModule(document.querySelector('meta[name="panther-pcm-worklet"]').content);
         const track=this.stream.getAudioTracks()[0];
         this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+new Date().toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
-        this.writeChain=Promise.resolve(); await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
+        this.writeChain=Promise.resolve(); this.storageError=null; await this.persist(); this.uploadError=false; this.nodes.clear(); this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
         this.node=new AudioWorkletNode(this.context,'panther-pcm-capture-v1'); this.source=this.context.createMediaStreamSource(this.stream);
         this.node.port.onmessage=event=>{
-          if(event.data.type==='level') this.el.level.value=event.data.peak;
-          if(event.data.type==='part') this.writeChain=this.writeChain.then(()=>this.savePart(event.data.samples)).catch(error=>{this.say(error.message,true);void this.stop('Browser storage failed; the active part may be incomplete.');});
+          if(event.data.type==='level') {const db=20*Math.log10(Math.max(event.data.peak,0.000001));this.el.level.value=Math.max(0,Math.min(1,(db+60)/60));this.el.level.title=`${Math.round(db)} dBFS`;this.el.level.setAttribute('aria-valuetext',`${Math.round(db)} decibels below full scale`);}
+          if(event.data.type==='part') this.writeChain=this.writeChain.then(()=>this.savePart(event.data.samples)).catch(error=>{this.storageError=error;this.say(error.message,true);void this.stop('Browser storage failed; the active part may be incomplete.');});
           if(event.data.type==='stopped') {if(this.stopping) this.stopped?.();else if(this.recording) void this.stop('The supported recording length was reached; captured parts are retained.',true);}
         };
         this.node.onprocessorerror=()=>void this.stop('The audio processor failed; the unfinished part may be missing.');
         track.onended=()=>{if(this.recording) void this.stop('The microphone disconnected.');};
         this.source.connect(this.node);this.node.connect(this.context.destination);await this.context.resume();
         this.context.onstatechange=()=>{if(this.recording && this.context.state==='suspended') {this.draft.captureWarnings.push('The browser suspended capture; audio may be missing.');this.say('Audio capture is suspended by the browser. Return to this tab and Stop to retain captured parts.',true);}};
-        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();this.say('Recording. Closed parts are saved in this browser before backup.');
+        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();await this.listRetained();this.say('');
         this.timer=setInterval(()=>{this.el.timer.textContent=timestamp((performance.now()-this.started)/1000);},1000);
         await new Promise(resolve=>{this.unlock=resolve;});
       } catch(error) {
-        this.stream?.getTracks().forEach(track=>track.stop());await this.context?.close();this.recording=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
+        this.stream?.getTracks().forEach(track=>track.stop());try{await this.context?.close();}catch{/* A prior capture context may already be closed. */}this.recording=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
         this.say(error.name==='NotAllowedError'?'Microphone access was denied. Allow microphone access to start recording.':error.message,true);this.buttons();
       }
     });
@@ -3921,7 +3943,7 @@ class RoomRecorder {
     try {const old=await api('/object-url',{key});if(old.size===blob.size && old.metadata?.extra?.sha256===sha) return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};throw new Error('An existing archive object differs. Retained audio will not be overwritten.');} catch(error) {if(error.status!==404) throw error;}
     const signed=await api('/uploads',{}, {body:{gameId:this.draft.gameId,assetId:this.draft.id,kind,filename,size:blob.size,sha256:sha,contentType:blob.type,metadata:{title:kind==='recording-manifest'?this.draft.sessionName:filename,sessionId:this.draft.sessionId,category:kind==='recording'?'canonical-source':'unclassified',characterIds:[],sourceKeys:sources,extra:{...extra,sha256:sha,chunkSetId:this.draft.id,generation:{schemaVersion:1,method:kind==='recording'?'capture':'procedural',inference:'not-applicable',execution:'local',tool:kind==='recording'?'Browser Web Audio PCM capture':'Panther browser recording manifest',cost:{status:'not-applicable'}}}}}});
     const headers={...signed.headers};delete headers['Content-Length'];
-    const response=await fetch(signed.url,{method:'PUT',headers,body:blob});
+    const response=await fetch(signed.url,{method:'PUT',headers,body:blob,signal:AbortSignal.timeout(45000)});
     if(!response.ok) throw new Error('Audio backup did not finish. Retained browser audio can be saved again.');
     return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};
   }
@@ -3942,20 +3964,29 @@ class RoomRecorder {
           catch {this.say('Live transcription is unavailable for this part. Source audio is retained for the full pass.',true);}
         }
       }
-    }).catch(error=>{this.uploadError=true;this.el.recovery.hidden=false;this.say(error.message,true);});
+    }).catch(error=>{this.uploadError=true;this.saveFailed(error);});
     return this.uploadChain;
   }
   async stop(warning=null,alreadyStopped=false) {
     if(!this.recording || this.stopping) return;
-    this.stopping=true;this.el.stop.disabled=true;this.showResult('Saving audio…');let flushFailed=false;if(warning) this.draft.captureWarnings.push(warning);
-    if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
-    this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream.getTracks().forEach(track=>track.stop());this.source.disconnect();this.node.disconnect();await this.context.close();
-    await this.writeChain;this.unlock?.();if(!this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=true;this.el.result.hidden=true;this.say('No audio was captured. You can start a new recording.');return;}
-    this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
-    this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=false;this.el.download.hidden=false;
-    try {await this.archive();} catch(error) {this.say(error.message,true);}
+    this.stopping=true;this.el.stop.disabled=true;this.buttons();this.showResult('Saving audio…');let flushFailed=false,failed=false;if(warning)this.draft.captureWarnings.push(warning);
+    try {
+      if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
+      this.recording=false;await this.writeChain;
+      if(this.storageError)throw this.storageError;
+      if(!this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;this.el.recovery.hidden=true;this.el.result.hidden=true;this.say('No audio was captured.',true);return;}
+      this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
+    } catch(error) {failed=true;this.saveFailed(error);}
+    finally {
+      this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream?.getTracks().forEach(track=>track.stop());
+      this.source?.disconnect();this.node?.disconnect();try{await this.context?.close();}catch{/* Capture is stopped; retain persisted originals. */}
+      this.unlock?.();this.unlock=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();
+    }
+    if(failed)return;
+    this.el.recovery.hidden=false;this.el.download.hidden=false;
+    try {await this.archive();} catch(error) {this.saveFailed(error);} finally {await this.listRetained();}
   }
-  interrupt() {if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
+  interrupt() {this.liveDialog.close();this.viewLive.hidden=true;if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
   async archive() {
     if(this.archiving) return this.archiving;
     this.archiving=this.saveArchive().finally(()=>{this.archiving=null;this.buttons();});this.buttons();return this.archiving;
@@ -3976,7 +4007,7 @@ class RoomRecorder {
       catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say('Audio saved. Retry to finish transcription.',true);this.buttons();}
     }
   }
-  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=!(this.draft.manifestDoc?.status==='interrupted' || this.draft.status==='interrupted');this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
+  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=true;this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
   schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
   async poll() {
     if(!this.draft || !state.tokens) return;
@@ -3994,12 +4025,13 @@ class RoomRecorder {
         pending ||= result.jobs.some(job=>['SUBMITTED','RUNNING'].includes(job.status));
         if(mode==='live') {
           for(const job of result.jobs) if(job.status==='DONE' && !this.nodes.has(job.id)) {
-            this.el.live.hidden=false;const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
+            this.el.live.hidden=false;this.viewLive.hidden=false;const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
           }
           if(result.jobs.some(job=>job.status==='UNKNOWN')) this.say('Some live transcription outcomes are unknown. Audio is retained; paid requests will not be repeated automatically.',true);
         } else {
-          pending ||= !result.transcriptKey && !result.jobs.some(job=>job.status==='UNKNOWN');
-          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':result.jobs.some(job=>job.status==='UNKNOWN')?'error':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':result.jobs.some(job=>job.status==='UNKNOWN')?'Transcription unavailable':'Transcribing…';
+          const blocked=result.playback?.status==='FAILED' || result.jobs.some(job=>['UNKNOWN','FAILED'].includes(job.status));
+          pending ||= !result.transcriptKey && !blocked;
+          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':blocked?'error':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':blocked?'Transcription unavailable':'Transcribing…';
           if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}
         }
       }
@@ -4135,16 +4167,14 @@ function drawLive() {
   if (!state.tokens || !liveGame || liveGame !== state.gameId) return;
   const badge = document.getElementById("recording-badge"), status = document.getElementById("live-status");
   const section=elements.primaryNav.querySelector("[aria-current]")?.dataset.section;
-  document.getElementById("live-transcript").hidden = !["audio","transcripts"].includes(section) || (!liveRecords.length && !liveFailure);
+  document.getElementById("live-transcript").hidden = section!=="sessions" || !liveReaderOpen;
   const active = liveRecords.find(r => liveState(r) === "recording");
   const current = active || liveRecords[0];
   const mode = current ? liveState(current) : liveFailure ? "lost" : "none";
   const labels = {recording:"Recording in progress", stalled:"Recording progress stalled", stopped:"Recording stopped", lost:"Recording signal lost"};
-  badge.hidden = !["audio", "transcripts"].includes(section) || mode === "none"; badge.dataset.state = mode; badge.href = gamePath("transcripts");
+  badge.hidden = !current || section!=="sessions" || ["none","stopped"].includes(mode); badge.dataset.state = mode; badge.href = gamePath("sessions");
   document.getElementById("recording-label").textContent = labels[mode] || "";
-  status.textContent = liveFailure ? "Live feed unavailable. Recording may still be running locally. Retrying automatically."
-    : liveRecords.length ? "Updates automatically as completed audio chunks are transcribed."
-    : "No live recording reported for this game. Start the live worker from the recording laptop.";
+  status.textContent=liveFailure?'Live feed unavailable. Recording may still be running locally. Retrying automatically.':'';status.hidden=!liveFailure;renderLiveSessionEntries();
   const projected = liveRecords.map(r => ({recordingId:r.recordingId, previewId:r.previewId, sessionId:r.sessionId, mode:liveState(r), previewState:r.previewState, segments:r.segments, omittedChunks:r.omittedChunks, history:liveHistory.get(historyKey(r))}));
   const key = JSON.stringify(projected);
   if (key === liveRenderKey) return;
@@ -4153,10 +4183,9 @@ function drawLive() {
   const focusAction = host.contains(document.activeElement) ? document.activeElement.dataset.historyAction : null;
   for (const el of host.querySelectorAll(".live-lines")) positions.set(el.dataset.recording, {top:el.scrollTop, bottom:el.scrollHeight-el.scrollTop-el.clientHeight<30});
   host.replaceChildren();
-  for (const record of projected) {
+  for (const record of projected.filter(record=>!liveReaderRecording||record.recordingId===liveReaderRecording)) {
     const article = document.createElement("article"), heading = document.createElement("h3"), note = document.createElement("p"), lines = document.createElement("div");
-    heading.textContent = record.sessionId;
-    note.textContent = `${labels[record.mode] || "Recording status unknown"} · ${record.previewState.replaceAll("-", " ")}.${record.omittedChunks ? " Joined after recording began." : ""}`;
+    heading.textContent=record.sessionId;heading.hidden=true;note.hidden=true;
     const view = record.history, controls = document.createElement("div"), historyNote = document.createElement("p");
     controls.className = "live-history-controls"; controls.setAttribute("role","group"); controls.setAttribute("aria-label","Transcript history navigation");
     const chunks = view?.chunks || [], first = chunks[0]?.partIndex, last = chunks.at(-1)?.partIndex;
@@ -4164,7 +4193,7 @@ function drawLive() {
       ["Beginning","beginning",undefined,false], ["Earlier","before",first,first===undefined || first===0],
       ["Later","after",last,last===undefined], ["Live","live",undefined,false],
     ]) {
-      const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+      const button = document.createElement("button"); button.type = "button"; button.title=label;button.setAttribute('aria-label',label);button.className='icon-button';button.innerHTML=({Beginning:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M18 5l-9 7 9 7z"/></svg>',Earlier:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5-8 7 8 7"/></svg>',Later:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5 8 7-8 7"/></svg>',Live:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></svg>'})[label];if(label==='Live')button.setAttribute('aria-pressed',String(view?.mode!=='history'));
       button.dataset.historyAction = `${record.recordingId}:${label}`; button.disabled = disabled;
       button.addEventListener("click",()=>loadLiveHistory(record,position,cursor)); controls.append(button);
     }
@@ -4172,8 +4201,8 @@ function drawLive() {
     historyNote.textContent = view?.error || (view?.loading ? "Loading transcript history…"
       : view?.loaded && !chunks.length ? "History is being uploaded from the recording laptop."
       : view?.position === "beginning" && first>0 ? "The beginning is still being transcribed. Retry Beginning shortly."
-      : view?.mode === "history" ? "Browsing earlier speech. Choose Live to follow new speech."
-      : "Following new speech. Use Beginning or Earlier to browse the full session.");
+      : "");
+    historyNote.hidden=!historyNote.textContent;
     if (view?.loading && !view?.error) showLoading(historyNote, "Fetching transcript history…");
     lines.className = "live-lines"; lines.dataset.recording = record.recordingId; lines.tabIndex = 0;
     lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Provisional transcript for ${record.sessionId}`);
@@ -4240,10 +4269,9 @@ async function refreshLive() {
     }
   }
 }
-document.getElementById("live-refresh").addEventListener("click", refreshLive);
 document.getElementById("recording-badge").addEventListener("click", event => {
   if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  event.preventDefault(); navigate(gamePath("transcripts"));
+  event.preventDefault();const record=liveRecords.find(item=>liveState(item)==="recording")||liveRecords[0];if(record)openLiveReader(record.recordingId);
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(liveTimer); liveController?.abort(); }

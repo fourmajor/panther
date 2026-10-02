@@ -186,13 +186,19 @@ for (const width of [1280,390]) test(`transcript search, versions, canonical cho
   const body=page.locator('#preview-body');
   await expect(body).toContainText('No canonical reading version has been designated');
   await expect(body.locator('.transcript-segment')).toHaveCount(2);
+  await expect(body.getByLabel('Search speech or player names')).not.toBeVisible();
+  await expect(body.locator('.transcript-segment').first()).toBeInViewport();
+  await page.screenshot({path:test.info().outputPath(`transcript-first-${width}.png`)});
+  await expect(body.locator('.transcript-seek').first()).toBeEnabled();
+  await body.locator('.transcript-seek').first().click();
+  await expect(body.locator('audio')).toBeVisible();
+  await expect(body.getByLabel('Search speech or player names')).toBeVisible();
   const search=body.getByLabel('Search speech or player names');
   await search.fill('Pizza'); await search.press('Enter');
   await expect(body).toContainText('Match 1 of 1');
   await expect(body.locator('.transcript-current-match')).toContainText('Pizza?');
   await expect(body.locator('.transcript-segment')).toHaveCount(2);
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
-  await body.getByText('Source recording · listen at a transcript timestamp',{exact:true}).click();
   await expect(body.locator('audio')).toBeVisible();
   await expect(body.locator('.transcript-seek').first()).toBeEnabled();
   await body.locator('.transcript-seek').first().click();
@@ -209,6 +215,7 @@ for (const width of [1280,390]) test(`transcript search, versions, canonical cho
   await body.getByLabel('Session transcript version').selectOption(corrected);
   await expect(body).toContainText('The lantern.');
   await expect(body).toContainText('Viewing a non-canonical version');
+  await body.getByText('Tools',{exact:true}).click();
   await expect(body.getByRole('link',{name:'Open canonical reading version'})).toBeVisible();
   await expect(body).toContainText('ai-reviewed-unverified');
 });
@@ -224,6 +231,7 @@ test('canonical selection failure never claims success and retries the exact ope
   });
   await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(raw)}`);
   const body=page.locator('#preview-body');
+  await body.getByText('Tools',{exact:true}).click();
   await body.getByText('Choose this canonical reading version',{exact:true}).click();
   await body.getByLabel('Selection reason').fill('Reading preference');
   await body.getByRole('checkbox').check();
@@ -382,17 +390,17 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await page.setViewportSize({width,height:1000}); await fixture(page);
   const errors=[]; page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`${origin}/games/test-game/audio`);
-  await expect(page.locator('.session-card')).toHaveCount(1);
-  for (const name of ['Audio','Transcripts','Videos']) {
+  await expect(page.locator('.session-card')).toHaveCount(3);
+  for (const name of ['Sessions','Videos']) {
     const link=page.locator('#primary-nav').getByRole('link',{name,exact:true});
     const box=await link.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
   }
-  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
-  await expect(page.locator('#preview-body')).toContainText('Recording status: interrupted');
+  await page.getByRole('link',{name:'Recording',exact:true}).click();
+  await expect(page.locator('#preview-body')).not.toContainText('Recording status:');
   await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Original transcript');
   await expect(page.locator('audio')).toHaveAttribute('controls','');
-  await expect(page.locator('#preview-body p[role="status"]', {hasText:'Continuous playback'})).toBeVisible();
-  await expect(page.getByRole('button',{name:'Jump to part 2',exact:false})).toBeEnabled();
+  await expect(page.locator('#preview-body audio')).toBeVisible();
+  await expect(page.getByRole('button',{name:/Jump to part/})).toHaveCount(0);
   const playerBox=await page.locator('audio').boundingBox();
   expect(playerBox.x).toBeGreaterThanOrEqual(0);
   expect(playerBox.x+playerBox.width).toBeLessThanOrEqual(width);
@@ -403,8 +411,8 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   expect(await close.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await page.screenshot({path:test.info().outputPath(`audio-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.locator('#primary-nav').getByRole('link',{name:'Transcripts',exact:true}).click();
-  await expect(page.locator('.session-card')).toHaveCount(2);
+  await page.locator('#primary-nav').getByRole('link',{name:'Sessions',exact:true}).click();
+  await expect(page.locator('.session-card')).toHaveCount(3);
   await page.getByRole('link',{name:'raw-transcript',exact:true}).click();
   await expect(page.locator('.transcript-segment').first()).toContainText('0:00–0:02 · Alex');
   await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
@@ -420,7 +428,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
   await selectGame(page,'other-game');
-  await expect(page.locator('#library-status')).toContainText('No transcripts yet');
+  await expect(page.locator('#library-status')).toContainText('No saved sessions yet');
   await expect(page.locator('#preview-body')).toBeEmpty();
   expect(errors).toEqual([]);
 });
@@ -472,9 +480,9 @@ test('deep-linked transcript survives reload and expired authentication clears c
   await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
   await page.reload(); await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.locator('#primary-nav').getByRole('link',{name:'Audio',exact:true}).click();
+  await page.locator('#primary-nav').getByRole('link',{name:'Sessions',exact:true}).click();
   await expect(page.locator('#session-library')).toBeVisible();
-  await expect(page.locator('.session-card')).toHaveCount(1);
+  await expect(page.locator('.session-card')).toHaveCount(3);
   await page.route(`${api}/assets*`,route=>route.fulfill({status:401,headers,json:{error:'Expired'}}));
   await page.route(`${origin}/auth/refresh`,route=>route.fulfill({status:401,json:{error:'Expired'}}));
   await page.reload();
@@ -513,27 +521,27 @@ test('catalog errors are recoverable without silently claiming empty results',as
   await page.goto(`${origin}/games/test-game/transcripts`);
   await expect(page.locator('#library-status')).toContainText('Storage unavailable');
   broken=false; await page.reload();
-  await expect(page.locator('.session-card')).toHaveCount(2);
+  await expect(page.locator('.session-card')).toHaveCount(3);
 });
 
 test('one continuous MP3 track crosses part boundaries and seeks without changing files',async({page})=>{
   const requested=[];
   page.on('request',r=>{if(r.url().startsWith(api+'/object-url')) requested.push(new URL(r.url()).searchParams.get('key'));});
   await fixture(page); await page.goto(`${origin}/games/test-game/audio`);
-  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
+  await page.getByRole('link',{name:'Recording',exact:true}).click();
   const audio=page.locator('audio');
   await expect.poll(()=>audio.evaluate(el=>el.readyState)).toBeGreaterThan(0);
   await expect.poll(()=>audio.evaluate(el=>el.duration)).toBeCloseTo(1.2,1);
-  await page.getByRole('button',{name:'Jump to part 2',exact:false}).click();
+  await audio.evaluate(el=>{el.currentTime=.6;});
   await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeCloseTo(.6,1);
-  await page.getByRole('button',{name:'Jump to part 1',exact:false}).click();
+  await audio.evaluate(el=>{el.currentTime=0;});
   const src=await audio.getAttribute('src');
   await audio.evaluate(el=>el.play());
   await expect.poll(()=>audio.evaluate(el=>el.currentTime)).toBeGreaterThan(.65);
   await expect(audio).toHaveAttribute('src',src);
   expect(requested.filter(key=>key===continuous)).toHaveLength(1);
   expect(requested).not.toContain(part); expect(requested).not.toContain(part2);
-  await expect(page.locator('#preview-body [role="status"]')).toContainText('Continuous playback');
+  await expect(page.locator('#preview-body')).not.toContainText('No file switches');
   await page.evaluate(()=>{window.testAudio=document.querySelector('audio');});
   await page.keyboard.press('Escape');
   await expect(page.locator('#preview-dialog')).not.toBeVisible();
@@ -544,8 +552,8 @@ test('unprepared or incomplete copies do not silently fall back to gapped part s
   await fixture(page);
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:assets.filter(a=>a.key!==continuous),cursor:null}}));
   await page.goto(`${origin}/games/test-game/audio`);
-  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
-  await expect(page.locator('#preview-body')).toContainText('Continuous playback has not been prepared');
+  await page.getByRole('link',{name:'Recording',exact:true}).click();
+  await expect(page.locator('#preview-body')).toContainText('Playback is not ready yet');
   await expect(page.locator('#preview-body audio')).not.toBeVisible();
   await expect(page.locator('#asset-links')).toContainText('recording');
 });
@@ -554,7 +562,7 @@ test('continuous playback refreshes expired links without changing to a source c
   await fixture(page); let links=0;
   await page.route(`${api}/object-url*`,route=>{if(new URL(route.request().url()).searchParams.get('key')===continuous) links++; return route.fallback();});
   await page.goto(`${origin}/games/test-game/audio`);
-  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
+  await page.getByRole('link',{name:'Recording',exact:true}).click();
   const audio=page.locator('#preview-body audio');
   await expect.poll(()=>audio.evaluate(a=>a.readyState)).toBeGreaterThan(0);
   await audio.evaluate(a=>{a.currentTime=.7;a.dispatchEvent(new Event('error'));});
@@ -575,7 +583,7 @@ for (const width of [1280,390]) test(`finished connections hide workflow interna
     extra(chapter.replace('.json','.md'),'novel-chapter',[proof]));
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:graph,cursor:null}}));
   await page.goto(`${origin}/games/test-game/audio`);
-  await page.getByRole('link',{name:'Recording · session-one',exact:true}).click();
+  await page.getByRole('link',{name:'Recording',exact:true}).click();
   const connections=page.locator('#asset-links [data-connections]');
   await expect(connections.getByRole('link')).toHaveText(['Original transcript · session-one']);
   await connections.getByRole('link',{name:'Original transcript · session-one'}).click();
@@ -600,7 +608,7 @@ test('late catalog and document responses cannot populate a different game',asyn
   });
   await page.goto(`${origin}/games/test-game/audio`); await waiting;
   await selectGame(page,'other-game');
-  await expect(page.locator('#library-status')).toContainText('No recordings yet'); release();
+  await expect(page.locator('#library-status')).toContainText('No saved sessions yet'); release();
   await expect(page.locator('#library-list')).toBeEmpty();
 });
 
@@ -656,4 +664,14 @@ test('leaving a scene editor removes the open Select portal',async({page})=>{
  await page.getByRole('combobox',{name:'Scene type',exact:true}).click();await expect(page.getByRole('option',{name:'Action',exact:true})).toBeVisible();
  await page.goBack();await expect(page).toHaveURL(/\/dashboard$/);await expect(page.getByRole('option',{name:'Action',exact:true})).toHaveCount(0);
  await expect(page.locator('[data-radix-select-viewport]')).toHaveCount(0);
+});
+
+for(const width of [1280,390])test(`Sessions combines recordings and transcripts while legacy links preserve state at ${width}px`,async({page},testInfo)=>{
+ await page.setViewportSize({width,height:900});await fixture(page);const sections=[];page.on('request',request=>{const url=new URL(request.url());if(url.pathname==='/assets')sections.push(url.searchParams.get('section'));});
+ await page.goto(`${origin}/games/test-game/audio?session=example#recording`);await expect(page).toHaveURL(`${origin}/games/test-game/sessions?session=example#recording`);
+ const nav=page.locator('#primary-nav');await expect(nav.getByRole('link',{name:'Sessions',exact:true})).toHaveCount(1);await expect(nav.getByRole('link',{name:'Audio',exact:true})).toHaveCount(0);await expect(nav.getByRole('link',{name:'Transcripts',exact:true})).toHaveCount(0);
+ await expect(page.locator('.session-group')).toHaveCount(1);await expect(page.locator('.session-card')).toHaveCount(3);await expect(page.getByRole('region',{name:'Live transcript',exact:true})).toBeHidden();
+ expect(sections).toContain('sessions');await page.screenshot({path:testInfo.outputPath(`sessions-${width}.png`)});
+ await page.goto(`${origin}/games/test-game/transcripts?session=example#text`);await expect(page).toHaveURL(`${origin}/games/test-game/sessions?session=example#text`);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

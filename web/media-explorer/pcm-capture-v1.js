@@ -1,7 +1,7 @@
 /* Browser capture v1: mono 32 kHz PCM16; no inference or audible monitoring. */
 class PantherPcmCapture extends AudioWorkletProcessor {
   constructor() {
-    super(); this.buffer = new Int16Array(480000); this.count = 0; this.partCount = 0; this.active = true; this.meterFrames = 0;
+    super(); this.buffer = new Int16Array(480000); this.count = 0; this.partCount = 0; this.active = true; this.meterFrames = 0; this.peak = 0;
     this.port.onmessage = event => {
       if (event.data === 'stop') { this.active = false; this.flush(); this.port.postMessage({type:'stopped'}); }
     };
@@ -20,8 +20,8 @@ class PantherPcmCapture extends AudioWorkletProcessor {
       this.buffer[this.count++] = Math.round(sample * (sample < 0 ? 32768 : 32767));
       if(this.count === this.buffer.length) {this.flush();if(!this.active) break;}
     }
-    this.meterFrames += input.length;
-    if(this.meterFrames >= 3200) { this.meterFrames = 0; this.port.postMessage({type:'level',peak}); }
+    this.peak = Math.max(this.peak, peak); this.meterFrames += input.length;
+    if(this.meterFrames >= 3200) { this.meterFrames = 0; this.port.postMessage({type:'level',peak:this.peak}); this.peak = 0; }
     return true;
   }
 }

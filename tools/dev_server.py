@@ -24,6 +24,31 @@ def details():
     return {"schemaVersion": 1, "aliases": [], "pronouns": None, "role": None, "status": None, "overview": None, "subtitle": None, "backstory": None, "notes": None, "statistics": [], "relationships": [], "thumbnailAssetKey": None}
 
 
+
+def session_asset(asset):
+    """Use the production logical Sessions contract for persistent local data."""
+    import sys
+    module_path = str(ROOT / "infra/lambda/media-api")
+    if module_path not in sys.path:
+        sys.path.insert(0, module_path)
+    import asset_views
+    return asset_views.session_asset(asset)
+
+
+def local_assets(assets, section):
+    selected = [a for a in assets if section == "all"
+        or section == "sessions" and session_asset(a)
+        or section == "audio" and a["contentType"].startswith("audio/")
+        or section == "transcripts" and "transcript" in a["kind"]
+        or section == "videos" and a["contentType"].startswith("video/")
+        or section == "images" and a["contentType"].startswith("image/")]
+    if section in {"sessions", "transcripts"}:
+        by_key = {a["key"]: a for a in assets}
+        selected = [a for a in selected if not (a["key"].endswith(".md")
+            and a["kind"] in {"transcript", "raw-transcript", "corrected-transcript", "edited-transcript"}
+            and by_key.get(a["key"][:-3] + ".json", {}).get("kind") == a["kind"])]
+    return selected
+
 class Store:
     def __init__(self, path):
         self.path = Path(path).expanduser().resolve()
@@ -345,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/assets":
                 assets = store.objects(game)
                 section = q.get("section", "all")
-                result = {"assets": [a for a in assets if section == "all" or section == "audio" and a["contentType"].startswith("audio/") or section == "transcripts" and "transcript" in a["kind"] or section == "videos" and a["contentType"].startswith("video/") or section == "images" and a["contentType"].startswith("image/")], "cursor": None}
+                result = {"assets": local_assets(assets, section), "cursor": None}
             elif path == "/objects":
                 prefix = q["prefix"]
                 game = prefix.split("/")[1]

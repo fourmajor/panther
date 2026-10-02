@@ -692,7 +692,7 @@ paid requests. See `docs/game-visual-style.md` for the setting and migration con
 
 # Browser room capture
 
-The web Audio and Transcripts pages can capture schema-1 `BrowserRecording` WAV originals,
+The web Sessions page can capture schema-1 `BrowserRecording` WAV originals,
 with explicit capture warnings and immutable parts in the shared location catalog. The native
 CLI `Recording` FLAC contract remains distinct. Keep the originals; playback is produced only
 by the separate completed-set laptop worker, which now advertises protocol 2. Upgrade that

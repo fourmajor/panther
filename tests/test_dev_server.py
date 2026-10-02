@@ -146,3 +146,25 @@ def test_development_startup_composition_migration_preserves_exact_source_once(t
     assert store.list("episode-history", "example-game")[0]["previousRecord"] == previous
     assert dev.Store(path).get("development-migration", "episode-composition-v1") == audit
     assert dev.Store(path).get("episode", "example-game:arrival") == episode
+
+
+def test_sessions_local_filter_matches_union_and_export_suppression():
+    audio = {"key": "audio.flac", "name": "audio.flac", "kind": "recording", "contentType": "audio/flac"}
+    raw = {"key": "raw.json", "name": "raw.json", "kind": "raw-transcript", "contentType": "application/json"}
+    export = {**raw, "key": "raw.md", "name": "raw.md", "contentType": "text/markdown"}
+    chunk = {**audio, "key": "part.flac", "name": "part-0001.flac"}
+    internal = {**audio, "key": "checkpoint.json", "kind": "recording-checkpoint"}
+    processing = {**raw, "key": "working.json", "metadata": {"extra": {"relationshipRole": "intermediate"}}}
+    video = {"key": "video.mp4", "name": "video.mp4", "kind": "video-master", "contentType": "video/mp4"}
+    values = [audio, raw, export, chunk, internal, processing, video]
+    assert dev.local_assets(values, "sessions") == [audio, raw]
+    assert dev.local_assets(values, "all") == values
+    assert dev.local_assets(values, "videos") == [video]
+
+
+
+def test_sessions_local_hides_browser_wav_chunk_without_parent_manifest():
+    part = {"key": "part-0001.wav", "name": "part-0001.wav", "kind": "recording", "contentType": "audio/wav",
+        "metadata": {"extra": {"browserPart": {"chunkSetId": "synthetic-chunks", "index": 1}}}}
+    assert dev.local_assets([part], "sessions") == []
+    assert dev.local_assets([part], "audio") == [part]

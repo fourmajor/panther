@@ -40,8 +40,7 @@ for(const width of [1280,390]) {
     });
     for(const [name,path,status,heading] of [
       ['Characters','/characters','#characters-status','#characters > .explorer-heading h1'],
-      ['Audio','/assets','#library-status','#library-title'],
-      ['Transcripts','/assets','#library-status','#library-title'],
+      ['Sessions','/assets','#library-status','#library-title'],
       ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
       ['Videos','/assets','#library-status','#library-title'],
       ['Media','/objects','.media-browser','#explorer h1'],
@@ -221,7 +220,7 @@ for (const width of [1280,390]) {
       await expect(link).toBeInViewport();
       expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     }
-    await expect(page.locator('#dashboard-sections a')).toHaveCount(6);
+    await expect(page.locator('#dashboard-sections a')).toHaveCount(5);
     for(const card of await page.locator('#dashboard-sections a').all()) await expect(card).toHaveAttribute('href',/^\/games\/campaign-a\//);
     await page.screenshot({path:test.info().outputPath(`dashboard-${width}.png`),fullPage:true});
     await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();

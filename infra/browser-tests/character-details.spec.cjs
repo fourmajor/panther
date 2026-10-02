@@ -129,3 +129,11 @@ for(const width of [1280,390]) test(`create a character, edit background and ins
   await expect(page.getByRole('button',{name:/Refresh|Retry character information/})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 });
+
+for(const width of [1280,390])test(`New character information remains editable when artwork is unavailable at ${width}px`,async({page},testInfo)=>{
+ await page.setViewportSize({width,height:900});const control=await fixture(page);await page.route('https://test.execute-api.us-west-2.amazonaws.com/character?**',route=>route.fulfill({status:503,headers:{'access-control-allow-origin':'https://panther.place'},json:{error:'Appearance unavailable while old artwork is verified'}}));
+ await page.goto(`https://panther.place/games/${gameId}/characters`);await page.getByRole('button',{name:'Add character',exact:true}).click();const form=page.locator('#character-create-form');await form.getByLabel('Character name').fill('New Guide');await form.getByRole('button',{name:'Create character'}).click();
+ await expect(page.locator('#character-profile')).toBeVisible();await expect(page.locator('#characters-status')).toContainText('Appearance unavailable');await page.getByRole('button',{name:'Edit character information',exact:true}).click();
+ await page.getByLabel('Backstory',{exact:true}).fill('An explicitly recorded background.');await page.getByLabel('Reason for change').fill('Add background');await page.getByRole('button',{name:'Save character information',exact:true}).click();await expect(page.locator('#character-facts')).toContainText('An explicitly recorded background.');expect(control.posted[0].details.backstory).toBe('An explicitly recorded background.');
+ await page.screenshot({path:testInfo.outputPath(`character-artwork-unavailable-${width}.png`)});
+});

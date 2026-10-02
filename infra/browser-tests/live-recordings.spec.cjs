@@ -56,6 +56,7 @@ for (const width of [1280,390]) test(`provisional player names in live and earli
     {start:6,end:7,text:'Foreign identity remains unknown.',playerId:'foreign-player',attribution:'provisional-enrolled-voice'},
   ];
   await page.goto(`${origin}/games/test-game/transcripts`);
+  await page.getByRole('button',{name:/Open transcript for/}).first().click();
   const panel = page.getByRole('region',{name:'Live transcript',exact:true});
   await expect(panel.getByText('Alex Example (provisional):', {exact:true})).toBeVisible();
   await expect(panel.getByText('Unknown player (provisional):', {exact:true})).toBeVisible();
@@ -71,10 +72,11 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   const errors = []; page.on('pageerror', e=>errors.push(e.message));
   await page.goto(`${origin}/games/test-game/transcripts`);
   const badge = page.locator('#recording-badge'), panel = page.getByRole('region',{name:'Live transcript',exact:true});
+  await expect(panel).toBeHidden();await page.getByRole('button',{name:/Open transcript for/}).first().click();
   await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
   await expect(panel).toBeVisible(); await expect(panel).toContainText('The synthetic lantern is lit.');
-  await expect(panel).toContainText('player labels are tentative');
-  await expect(page.locator('#library-status')).toContainText('No transcripts yet');
+  await expect(panel).not.toContainText('player labels are tentative');
+  await expect(page.locator('#library-status')).toBeHidden();
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('recording-pulse');
   for (const target of [badge]) {
     const box = await target.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
@@ -86,12 +88,14 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   feed.records[0].segments.push({start:4,end:8,approximateTiming:true,text:'<img src=x onerror=window.attacked=true> Synthetic second line.'});
   await page.reload();
+  await page.getByRole('button',{name:/Open transcript for/}).first().click();
   await expect(panel).toContainText('Synthetic second line.'); await expect(panel.locator('img')).toHaveCount(0);
   await expect(panel.locator('time').last()).toHaveText('~0:04');
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
   feed.records[0].segments.push({start:30,end:60,kind:'preview-gap',text:'Must not appear as spoken dialogue.'});
   feed.records[0].segments.push({start:61,end:65,text:'Valid speech after the gap.'});
   await page.reload();
+  await page.getByRole('button',{name:/Open transcript for/}).first().click();
   const gap = panel.getByRole('note');
   await expect(gap).toBeVisible(); await expect(gap).toContainText('Preview gap: invalid recognizer output');
   await expect(gap).toContainText('not silence');
@@ -113,10 +117,9 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await expect(badge).toHaveText('Recording signal lost');
   feed.records = [recording({captureState:'stopped',previewState:'stopped',heartbeatAgeSeconds:200,connectionStale:true})];
   await page.reload();
-  await expect(badge).toHaveText('Recording stopped');
+  await expect(badge).toBeHidden();
   feed.fail = true; await page.reload();
-  await expect(badge).toHaveText('Recording signal lost');
-  await expect(page.locator('#live-status')).toContainText('may still be running locally');
+  await expect(badge).toBeHidden();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });
@@ -124,17 +127,17 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
 test('automatic feed polling, cross-game isolation and sign-out cleanup', async({page}) => {
   const feed = await fixture(page); await page.clock.install();
   await page.goto(`${origin}/games/test-game/audio`);
-  await expect(page.locator('#recording-badge')).toHaveText('Recording in progress');
+  await expect(page.locator('#recording-badge')).toHaveText('Recording in progress');await page.getByRole('button',{name:/Open transcript for/}).first().click();
   feed.records[0].segments.push({start:10,end:12,text:'Arrived automatically.'});
   await page.clock.fastForward(21000);
   await expect(page.locator('#live-recordings')).toContainText('Arrived automatically.');
   expect(feed.reads).toBeGreaterThanOrEqual(2);
   await page.locator('#recording-badge').click();
-  await expect(page).toHaveURL(`${origin}/games/test-game/transcripts`);
+  await expect(page).toHaveURL(`${origin}/games/test-game/sessions`);
   await selectGame(page,'other-game');
   await expect(page.locator('#live-recordings')).toBeEmpty();
   await expect(page.locator('#recording-badge')).toBeHidden();
-  await expect(page.locator('#live-status')).toContainText('No live recording reported');
+  await expect(page.locator('#live-status')).toBeHidden();
   await selectGame(page,'test-game');
   await expect(page.locator('#live-recordings')).toContainText('Arrived automatically.');
   await page.evaluate(()=>window.dispatchEvent(new StorageEvent('storage',{key:'panther.signed-out',newValue:'true'})));
@@ -149,6 +152,7 @@ for (const width of [1280,390]) test(`full live history beginning, paging and li
   feed.chunks = Array.from({length:45},(_,i)=>({partIndex:i,start:i*30,end:(i+1)*30,
     segments:[{start:i*30,end:i*30+2,text:`Historical speech ${i}.`}]}));
   await page.goto(`${origin}/games/test-game/transcripts`);
+  await page.getByRole('button',{name:/Open transcript for/}).first().click();
   const panel = page.getByRole('region',{name:'Live transcript',exact:true});
   await expect(panel).toContainText('Historical speech 44.');
   await expect(panel).not.toContainText('Historical speech 0.');
@@ -196,17 +200,23 @@ for (const width of [1280,390]) test(`recording badge stays in recording pages a
   const badge = page.locator('#recording-badge');
   await expect.poll(()=>feed.reads).toBeGreaterThan(0);
   await expect(badge).toBeHidden();
-  await page.getByRole('link',{name:'Audio',exact:true}).click();
-  await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording stopped');
+  await page.getByRole('link',{name:'Sessions',exact:true}).click();
+  await expect(badge).toBeHidden();
   await page.getByRole('link',{name:'Novel',exact:true}).click();
   await expect(badge).toBeHidden();
   feed.records = [recording()];
   await page.clock.fastForward(21000);
   await expect(badge).toBeHidden();
-  await page.getByRole('link',{name:'Transcripts',exact:true}).click();
+  await page.getByRole('link',{name:'Sessions',exact:true}).click();
   await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
   for (const section of ['Dashboard','Settings','Characters','Videos','Media']) {
     await page.getByRole('link',{name:section,exact:true}).click();
     await expect(badge).toBeHidden();
   }
+});
+
+for(const width of [1280,390]) test(`failed live feed never invents a recording indicator at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:900});const feed=await fixture(page);feed.records=[];feed.fail=true;
+  await page.goto(`${origin}/games/test-game/sessions`);await expect.poll(()=>feed.reads).toBeGreaterThan(0);
+  await expect(page.locator('#recording-badge')).toBeHidden();await expect(page.locator('#live-transcript')).toBeHidden();
 });

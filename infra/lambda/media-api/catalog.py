@@ -28,7 +28,7 @@ def clean(record):
     result = {
         k: int(v) if isinstance(v, Decimal) else v
         for k, v in record.items()
-        if k not in {"pk", "sk", "fingerprint"}
+        if k not in {"pk", "sk", "fingerprint", "appearanceContractJson"}
     }
     if result.get("entityType") == "Game":
         result.setdefault("ruleset", None)

@@ -1493,3 +1493,30 @@ body { padding-bottom:6rem; }
 .episode-preview>a {display:inline-block;margin-left:16px;}
 
 .scene-order-row .scene-card::before {content:attr(data-order);margin-right:8px;color:var(--muted);font-variant-numeric:tabular-nums;}
+
+.session-group {grid-column:1 / -1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;margin:0 0 24px;}
+.session-group>h2,.session-live-entry {grid-column:1 / -1;}
+.session-group>h2 {margin:0;font:1.3rem Georgia,serif;}
+.session-card h3 {margin:0 0 12px;font:1.15rem Georgia,serif;}
+.session-asset-meta {font-size:.85rem;color:var(--muted);margin:4px 0;}
+.session-live-entry {display:flex;gap:12px;align-items:center;}
+.session-recording-indicator {font-size:.85rem;color:var(--accent);}
+.live-history-controls {display:flex;gap:8px;align-items:center;margin:12px 0;}
+.live-history-controls .icon-button {width:44px;height:44px;min-width:44px;padding:10px;}
+.live-history-controls svg {width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;}
+.live-history-controls [aria-pressed=true] {color:var(--accent);border-color:var(--accent);}
+
+#room-retained {display:grid;gap:8px;margin-top:16px;}
+#room-retained>div {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--line);border-radius:8px;}
+#room-retained>div button {min-height:44px;}
+
+.room-live-dialog {padding:20px;max-height:calc(100dvh - 32px);overflow:auto;}
+.room-live-dialog>.icon-button {display:block;position:sticky;top:0;margin-left:auto;min-width:44px;min-height:44px;background:var(--panel);z-index:1;}
+.room-live-dialog #room-live {margin-top:8px;}
+.room-live-dialog #room-live-text {white-space:pre-wrap;overflow-wrap:anywhere;}
+
+:is(#asset-generation,#asset-versions,#asset-links):empty {display:none;}
+.transcript-toolbox {margin-block:12px;}
+.transcript-toolbox>summary {cursor:pointer;min-height:44px;line-height:44px;color:var(--muted);}
+
+.preview-body:has(>.structured-asset) {min-height:0;place-items:start stretch;}

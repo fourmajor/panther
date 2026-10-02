@@ -26,7 +26,7 @@ test.beforeAll(async()=>{
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${server.address().port}`;headers['access-control-allow-origin']=origin;
 });
 test.afterAll(async()=>{await new Promise(resolve=>server.close(resolve));});
-async function fixture(page,transcriptionAvailable=true,failFinal=false) {
+async function fixture(page,transcriptionAvailable=true,failFinal=false,uploadOrigin=null) {
   const posts=[],files=new Map(),signed=new Map();let live=null,final=null,finalAttempts=0;
   await page.context().grantPermissions(['microphone'],{origin});
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-member'}))+'.test'})));
@@ -53,7 +53,7 @@ async function fixture(page,transcriptionAvailable=true,failFinal=false) {
     }
     if(name==='/uploads') {
       signed.set(String(signed.size),body);
-      return respond({url:`https://test.execute-api.us-west-2.amazonaws.com/signed-upload?id=${signed.size-1}`,headers:{'Content-Type':body.contentType}});
+      return respond({url:`${uploadOrigin || "https://test.execute-api.us-west-2.amazonaws.com"}/signed-upload?id=${signed.size-1}`,headers:{'Content-Type':body.contentType}});
     }
     if(name==='/listening.wav') return route.fulfill({body:files.get('part-0000.wav').raw,contentType:'audio/wav',headers});
     if(name==='/browser-recording/complete') return respond({jobId:'verified-set',workflowVersion:2});
@@ -75,7 +75,7 @@ async function fixture(page,transcriptionAvailable=true,failFinal=false) {
   await expect(page.locator('#room-recorder').getByRole('textbox')).toHaveCount(0);
   await expect(page.locator('#live-transcript')).not.toBeVisible();
   expect((await page.locator('#library-title').boundingBox()).y).toBeLessThan((await page.locator('#room-start').boundingBox()).y);
-  return {posts,files};
+  return {posts,files,signed};
 }
 
 for(const width of [1280,390]) {
@@ -93,6 +93,19 @@ for(const width of [1280,390]) {
     await expect.poll(()=>page.evaluate(()=>roomCapture.recording?'Recording':document.querySelector('#room-status').textContent)).toBe('Recording');
     await expect(page.locator('#room-state')).toBeVisible();
     await expect(page.locator('#room-live-text')).toContainText('Synthetic live speech',{timeout:25000});
+    await expect(page.locator('#room-live')).not.toBeVisible();
+    await page.getByRole('button',{name:'View transcript',exact:true}).click();
+    await expect(page.getByRole('dialog',{name:'Live transcript',exact:true})).toBeVisible();
+    await expect(page.locator('#room-live-text')).toBeVisible();
+    const closeLive=page.getByRole('button',{name:'Close live transcript',exact:true});
+    await expect(closeLive).toBeInViewport();
+    const closeBox=await closeLive.boundingBox();
+    expect(closeBox.width).toBeGreaterThanOrEqual(44);expect(closeBox.height).toBeGreaterThanOrEqual(44);
+    expect(closeBox.x).toBeGreaterThanOrEqual(0);expect(closeBox.x+closeBox.width).toBeLessThanOrEqual(width);
+    expect(await closeLive.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+    await page.screenshot({path:test.info().outputPath(`browser-live-dialog-${width}.png`),fullPage:true});
+    await closeLive.click();
+    await expect(page.locator('#room-live')).not.toBeVisible();
     await page.locator('#room-live-toggle').click();
     await expect(page.locator('#room-live-toggle')).toHaveAttribute('aria-pressed','false');
     await page.locator('#room-stop').click();
@@ -164,4 +177,78 @@ test('recording remains stoppable on the Account page and processes directly bel
   await stop.click();await expect(page.locator('#room-result')).toBeVisible();
   await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
   expect((await page.locator('#room-result').boundingBox()).y).toBeGreaterThan((await page.locator('.room-controls').boundingBox()).y);
+});
+
+for(const width of [1280,390]) test(`cross-origin upload failure recovers after reload without trapping Record at ${width}px`,async({page})=>{
+  test.setTimeout(65000);await page.setViewportSize({width,height:900});let allow=false,data,puts=0;
+  const uploads=http.createServer((request,response)=>{
+    if(allow){response.setHeader('Access-Control-Allow-Origin',origin);response.setHeader('Access-Control-Allow-Methods','PUT,OPTIONS');response.setHeader('Access-Control-Allow-Headers','*');}
+    if(request.method==='OPTIONS'){response.statusCode=allow?204:403;response.end();return;}
+    puts++;const chunks=[];request.on('data',chunk=>chunks.push(chunk));request.on('end',()=>{
+      const upload=data.signed.get(new URL(request.url,'http://localhost').searchParams.get('id'));
+      data.files.set(upload.filename,{raw:Buffer.concat(chunks),metadata:upload.metadata,size:upload.size});response.end();
+    });
+  });
+  await new Promise(resolve=>uploads.listen(0,'127.0.0.1',resolve));
+  try {
+    data=await fixture(page,false,false,`http://127.0.0.1:${uploads.address().port}`);
+    await page.locator('#room-start').click();
+    await expect.poll(()=>page.evaluate(()=>roomCapture.recording)).toBe(true);
+    await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0.4);
+    await page.locator('#room-stop').click();
+    await expect(page.locator('#room-audio-status')).toHaveText('Not saved');
+    await expect(page.locator('#room-status')).toContainText('safe in this browser');
+    await expect(page.locator('#room-resume')).toBeEnabled();
+    await expect(page.locator('#room-start')).toBeEnabled();
+    const retry=page.locator('#room-resume');await expect(retry).toBeInViewport();const box=await retry.boundingBox();expect(box.width).toBeGreaterThanOrEqual(44);expect(box.height).toBeGreaterThanOrEqual(44);expect(await retry.evaluate((e,p)=>e.contains(document.elementFromPoint(p.x,p.y)),{x:box.x+box.width/2,y:box.y+box.height/2})).toBe(true);
+    await page.screenshot({path:test.info().outputPath(`recording-save-failure-${width}.png`),fullPage:true});
+    const before=await page.evaluate(async()=>{const parts=await roomCapture.store('parts','getAll');return Promise.all(parts.map(async p=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await p.blob.arrayBuffer())))));});
+    await page.reload();
+    await expect(page.locator('#room-audio-status')).toHaveText('Not saved');
+    await expect(page.locator('#room-start')).toBeEnabled();
+    await expect(page.locator('#room-capture-warning')).toBeHidden();
+    allow=true;await page.locator('#room-resume').click();
+    await expect(page.locator('#room-audio-status')).toHaveText('Audio ready',{timeout:15000});
+    const after=await page.evaluate(async()=>{const parts=await roomCapture.store('parts','getAll');return Promise.all(parts.map(async p=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await p.blob.arrayBuffer())))));});
+    expect(after).toEqual(before);expect(puts).toBeGreaterThanOrEqual(2);
+    expect(Array.from(require('node:crypto').createHash('sha256').update(data.files.get('part-0000.wav').raw).digest())).toEqual(before[0]);
+    expect(data.posts.filter(p=>p.name==='/browser-recording/complete')).toHaveLength(1);
+  } finally {await new Promise(resolve=>uploads.close(resolve));}
+});
+
+test('new capture keeps an unsaved recording recoverable',async({page})=>{
+  test.setTimeout(65000);await fixture(page,false);
+  await page.route('**/signed-upload?**',route=>route.abort('failed'));
+  await page.locator('#room-start').click();await expect.poll(()=>page.evaluate(()=>roomCapture.recording)).toBe(true);
+  await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);
+  await page.locator('#room-stop').click();await expect(page.locator('#room-audio-status')).toHaveText('Not saved');
+  const first=await page.evaluate(()=>roomCapture.draft.id);
+  await page.locator('#room-start').click();await expect.poll(()=>page.evaluate(()=>roomCapture.recording)).toBe(true);
+  await expect(page.locator('#room-retained').getByRole('button',{name:'Save recording',exact:true})).toBeVisible();
+  await expect(page.locator('#room-retained').getByRole('button',{name:'Save recording',exact:true})).toBeDisabled();
+  expect(await page.evaluate(()=>roomCapture.draft.id)).not.toBe(first);
+  await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);
+  await page.locator('#room-stop').click();await expect(page.locator('#room-audio-status')).toHaveText('Not saved');
+  await expect(page.locator('#room-retained').getByRole('button',{name:'Save recording',exact:true})).toBeEnabled();
+  expect(await page.evaluate(async()=> (await roomCapture.store('drafts','getAll')).filter(d=>d.parts.length).length)).toBe(2);
+});
+
+test('microphone denial after a previous capture leaves Record usable',async({page})=>{
+  await fixture(page,false);await page.locator('#room-start').click();
+  await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);
+  await page.locator('#room-stop').click();await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
+  await page.evaluate(()=>{navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('Denied','NotAllowedError');};});
+  await page.locator('#room-start').click();await expect(page.locator('#room-status')).toContainText('Microphone access was denied');
+  await expect(page.locator('#room-start')).toBeEnabled();
+  expect(await page.evaluate(()=>roomCapture.recording)).toBe(false);
+});
+
+test('a temporary browser storage failure can retry the preserved audio',async({page})=>{
+  await fixture(page,false);await page.locator('#room-start').click();
+  await expect.poll(()=>page.locator('#room-level').evaluate(e=>e.value)).toBeGreaterThan(0);
+  await page.evaluate(()=>{const store=roomCapture.store.bind(roomCapture);let fail=true;roomCapture.store=async(name,operation,value)=>{if(fail&&name==='drafts'&&operation==='put'&&roomCapture.draft.parts.length){fail=false;throw new Error('Temporary browser storage failure');}return store(name,operation,value);};});
+  await page.locator('#room-stop').click();await expect(page.locator('#room-audio-status')).toHaveText('Not saved');
+  await expect(page.locator('#room-start')).toBeEnabled();await page.locator('#room-resume').click();
+  await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
+  expect(await page.evaluate(()=>roomCapture.draft.status)).toBe('archived');
 });

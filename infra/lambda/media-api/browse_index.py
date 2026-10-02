@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
+from asset_views import session_asset
 
 SECTIONS = ("all", "audio", "transcripts", "videos", "novels")
 VERSION = 3
@@ -88,27 +89,33 @@ def refresh(media, reference, *, write=True):
     return asset
 
 
+
 def page(game, section, cursor=None):
-    if section not in SECTIONS:
+    if section not in (*SECTIONS, "sessions"):
         raise ValueError("Invalid asset section")
     if not table().get_item(Key={"pk": f"v{VERSION}#catalog", "sk": "ready"}, ConsistentRead=True).get("Item"):
         raise IndexNotReady("The catalog upgrade is being prepared. No assets have been removed; please retry shortly.")
-    pk = partition(game, section)
+    pk = partition(game, "all" if section == "sessions" else section)
     args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": 100, "ConsistentRead": True}
     if cursor:
         try:
             key = json.loads(base64.urlsafe_b64decode(cursor))
-            if set(key) != {"pk", "sk"} or key["pk"] != pk or not isinstance(key["sk"], str):
+            expected = {"pk", "sk", "section"} if section == "sessions" else {"pk", "sk"}
+            if set(key) != expected or key["pk"] != pk or not isinstance(key["sk"], str) or section == "sessions" and key["section"] != section:
                 raise ValueError()
-            args["ExclusiveStartKey"] = key
+            args["ExclusiveStartKey"] = {field: key[field] for field in ("pk", "sk")}
         except (ValueError, TypeError):
             raise ValueError("Invalid or foreign asset cursor") from None
     result = table().query(**args)
     next_key = result.get("LastEvaluatedKey")
     assets = [json.loads(item["payload"]) for item in result.get("Items", [])]
-    if section == "transcripts":
+    if section == "sessions":
+        assets = [asset for asset in assets if session_asset(asset)]
+        if next_key:
+            next_key = {**next_key, "section": section}
+    if section in {"transcripts", "sessions"}:
         def unpaired(asset):
-            if not asset["key"].endswith(".md"):
+            if not asset["key"].endswith(".md") or section == "sessions" and "transcripts" not in sections(asset):
                 return True
             counterpart = table().get_item(Key={"pk": partition(game, "all"),
                 "sk": asset["key"][:-3] + ".json"}, ConsistentRead=True).get("Item")

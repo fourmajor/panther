@@ -1,6 +1,6 @@
 # Browser room recording
 
-Audio and Transcripts offer **Record room audio** to signed-in catalog members. Get agreement from everyone being recorded, then press **Record** and grant microphone access.
+Sessions offers **Record** to signed-in catalog members. Get agreement from everyone being recorded, then press **Record** and grant microphone access.
 The session ID and a dated display name are generated automatically. Stop shows processing
 progress directly below the controls; playback and the transcript appear there when ready.
 A current browser on HTTPS (or localhost) needs Web Audio, AudioWorklet, Web Locks and IndexedDB.
@@ -27,6 +27,18 @@ playback processing. The server verifies membership, declared manifest checksum 
 The separate laptop playback worker advertises protocol 2 and produces the continuous listening
 copy. Protocol-1 workers skip browser sets; upgrade the laptop CLI before deploying browser capture.
 Original WAV parts remain the transcription inputs, never the MP3 derivative.
+
+## Browser upload deployment
+
+The foundation stack's private asset bucket must allow cross-origin **PUT** from the exact
+application origin, in addition to GET/HEAD. Recording backup sends a presigned PUT with
+conditional-write, SHA-256 and signed metadata headers. Its OPTIONS preflight requires those
+headers; allowing only GET/HEAD makes the browser report a generic network failure before
+uploading any audio. CDK owns this CORS rule. It grants no anonymous write access: signed
+requests, authentication, checksums and create-only storage conditions remain required.
+The published bucket has no browser upload CORS rule. Deploy the foundation CORS change
+alongside browser recording fixes; a frontend deployment alone cannot repair the preflight.
+Retained browser originals remain available for a later successful save.
 
 ## Optional OpenAI transcription
 

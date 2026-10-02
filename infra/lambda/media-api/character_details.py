@@ -33,6 +33,7 @@ def empty_details():
 def initial_fields():
     return {
         "schemaVersion": 2,
+        "appearanceContractJson": json.dumps({"schemaVersion": 1, "origin": "created-current"}),
         "detailsJson": json.dumps(empty_details()),
         "detailsRevision": uuid.uuid4().hex,
     }
