@@ -81,7 +81,9 @@ def settings(path):
                 continue
             if not isinstance(item, str) or not Path(item).is_absolute():
                 raise click.ClickException("Worker paths must be absolute")
-            private_path(Path(item))
+            # A venv interpreter is normally a symlink to the system Python.
+            # It is executable tooling, not a voice-data destination.
+            private_path(Path(item).parent if name == "speakerRuntime" else Path(item))
     return value
 
 

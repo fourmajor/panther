@@ -25,6 +25,9 @@ def test_private_config_requires_activation_boundary_and_no_users(tmp_path):
     with pytest.raises(click.ClickException):
         worker.settings(path)
     options["completedAfter"] = 10
+    interpreter = tmp_path / "system-python"
+    interpreter.write_text("synthetic executable")
+    Path(options["speakerRuntime"]).symlink_to(interpreter)
     write_json(path, {"schemaVersion": 1, "games": {"synthetic-game": options}}, replace=True)
     assert worker.settings(path)["games"]["synthetic-game"]["completedAfter"] == 10
     options["speakerProfiles"] = "relative.json"
