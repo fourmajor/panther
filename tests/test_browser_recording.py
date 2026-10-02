@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import shutil
 import wave
 
 import click
@@ -65,6 +66,7 @@ def test_browser_contract_is_distinct_and_checks_immutable_originals(tmp_path):
         verified(tmp_path)
 
 
+@pytest.mark.skipif(not all(shutil.which(tool) for tool in ("ffmpeg", "ffprobe")), reason="Laptop playback tools are not installed")
 def test_laptop_playback_accepts_browser_pcm_without_changing_original(tmp_path):
     doc = manifest()
     (tmp_path / "recording.json").write_text(json.dumps(doc))
