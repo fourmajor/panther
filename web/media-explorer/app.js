@@ -2615,13 +2615,14 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
-  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section);
+  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section) || (!liveRecords.length && !liveFailure);
   if (["transcripts", "audio"].includes(section)) {
     drawLive();
     for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
   document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
   status.hidden = false;
+  status.dataset.empty = "false";
   const loading = showLoading(status, `Fetching ${section} from the catalog…`);
   try {
     // A bounded page of the selected section, never an automatic whole-game scan.
@@ -2643,6 +2644,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       : section === "videos" ? a.contentType.startsWith("video/") || /\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name)
       : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
         && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
+    status.dataset.empty=String(!selected.length);
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     if (section === "videos") {
       renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
@@ -2652,6 +2654,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
         : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
       : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
+    if (!selected.length && roomCapture?.draft && !roomCapture.el.result.hidden) status.hidden=true;
     const sessionGroups = new Map();
     for (const asset of selected) {
       const card = document.createElement("article"); card.className = "novel-card session-card";
@@ -3420,6 +3423,8 @@ class RoomRecorder {
   async render(section,epoch) {
     const visible=['audio','transcripts'].includes(section) || this.recording || this.stopping;
     this.host.hidden=!visible; if(!visible) return;
+    if(['audio','transcripts'].includes(section)) document.getElementById('session-library').insertBefore(this.host,document.getElementById('live-transcript'));
+    else document.getElementById('game-context').after(this.host);
     try {
       this.capabilities ||= await api('/browser-recording/capabilities');
       if(epoch!==routeEpoch) return;
@@ -3549,7 +3554,7 @@ class RoomRecorder {
       catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say('Audio saved. Retry to finish transcription.',true);this.buttons();}
     }
   }
-  showResult(text,state='processing') {this.el.result.hidden=false;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=!(this.draft.manifestDoc?.status==='interrupted' || this.draft.status==='interrupted');this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
+  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=!(this.draft.manifestDoc?.status==='interrupted' || this.draft.status==='interrupted');this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
   schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
   async poll() {
     if(!this.draft || !state.tokens) return;
@@ -3707,6 +3712,8 @@ function liveState(record) {
 function drawLive() {
   if (!state.tokens || !liveGame || liveGame !== state.gameId) return;
   const badge = document.getElementById("recording-badge"), status = document.getElementById("live-status");
+  const section=elements.primaryNav.querySelector("[aria-current]")?.dataset.section;
+  document.getElementById("live-transcript").hidden = !["audio","transcripts"].includes(section) || (!liveRecords.length && !liveFailure);
   const active = liveRecords.find(r => liveState(r) === "recording");
   const current = active || liveRecords[0];
   const mode = current ? liveState(current) : liveFailure ? "lost" : "none";

@@ -2,9 +2,15 @@ const {test,expect}=require('@playwright/test');
 const fs=require('node:fs');
 const path=require('node:path');
 const http=require('node:http');
+const os=require('node:os');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 
-test.use({launchOptions:{args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']}});
+const fakeMicrophone=path.join(os.tmpdir(),'panther-browser-synthetic-microphone.wav');
+const fixturePcm=Buffer.alloc(44+32000*2);
+fixturePcm.write('RIFF');fixturePcm.writeUInt32LE(fixturePcm.length-8,4);fixturePcm.write('WAVEfmt ',8);fixturePcm.writeUInt32LE(16,16);fixturePcm.writeUInt16LE(1,20);fixturePcm.writeUInt16LE(1,22);fixturePcm.writeUInt32LE(32000,24);fixturePcm.writeUInt32LE(64000,28);fixturePcm.writeUInt16LE(2,32);fixturePcm.writeUInt16LE(16,34);fixturePcm.write('data',36);fixturePcm.writeUInt32LE(64000,40);
+for(let i=0;i<32000;i++) fixturePcm.writeInt16LE(Math.round(8192*Math.sin(2*Math.PI*440*i/32000)),44+i*2);
+fs.writeFileSync(fakeMicrophone,fixturePcm);
+test.use({launchOptions:{args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream',`--use-file-for-fake-audio-capture=${fakeMicrophone}`]}});
 let server,origin;
 const headers={'access-control-allow-origin':'','access-control-allow-methods':'GET,POST,PUT,OPTIONS','access-control-allow-headers':'*'};
 
@@ -67,6 +73,8 @@ async function fixture(page,transcriptionAvailable=true,failFinal=false) {
   await expect(page.locator('#room-result')).not.toBeVisible();
   await expect(page.locator('#room-recorder')).not.toContainText('Capture the session');
   await expect(page.locator('#room-recorder').getByRole('textbox')).toHaveCount(0);
+  await expect(page.locator('#live-transcript')).not.toBeVisible();
+  expect((await page.locator('#library-title').boundingBox()).y).toBeLessThan((await page.locator('#room-start').boundingBox()).y);
   return {posts,files};
 }
 
@@ -75,6 +83,8 @@ for(const width of [1280,390]) {
     test.setTimeout(65000);
     await page.setViewportSize({width,height:900});
     const {posts,files}=await fixture(page);
+    await expect(page.locator('#live-transcript')).toBeHidden();
+    await expect(page.locator('#room-recorder')).not.toContainText('Capture the session');
     for(const id of ['room-start']) {
       const box=await page.locator('#'+id).boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);expect(box.height).toBeGreaterThanOrEqual(44);
       await expect(page.locator('#'+id)).toBeInViewport();
@@ -88,6 +98,10 @@ for(const width of [1280,390]) {
     await page.locator('#room-stop').click();
     await expect(page.locator('#room-audio-status')).toHaveText('Audio ready',{timeout:15000});
     await expect(page.locator('#room-final-link')).toBeVisible();
+    const recordBox=await page.locator('#room-start').boundingBox(), resultBox=await page.locator('#room-result').boundingBox();
+    expect(resultBox.y).toBeGreaterThanOrEqual(recordBox.y+recordBox.height);
+    expect(resultBox.y-recordBox.y-recordBox.height).toBeLessThan(32);
+    await expect(page.locator('#library-status')).toBeHidden();
     const calls=posts.filter(p=>p.name==='/browser-transcriptions');
     expect(calls.filter(p=>p.body.mode==='live')).toHaveLength(1);
     expect(calls.filter(p=>p.body.mode==='final')).toHaveLength(1);
