@@ -41,6 +41,9 @@
   pointer-events: none;
 }
 
+#page-loading > .loading-state,
+:is(#characters-status, #novel-status, #library-status, #status) > .loading-state { padding:1rem; }
+
 :is(#characters-status, #novel-status, #library-status, #status):has(> .loading-state) {
   height: var(--loading-slot-height, 0px);
   box-sizing: border-box;
