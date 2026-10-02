@@ -133,6 +133,12 @@ def test_reading_projection_preserves_speech_and_evidence_source():
     assert result["segments"][0] == {k: v for k, v in raw["segments"][0].items() if k != "wordAttribution"}
     assert result["captureIntegrity"] == raw["captureIntegrity"]
     assert "wordAttribution" in raw["segments"][0]
+    from panther_journal.editorial import prompt_projection
+    original = {**raw, "entityType": "PlayerTranscript"}
+    projected = prompt_projection(original)
+    rows = [dict(zip(projected["segmentFields"], row, strict=True)) for row in projected["segments"]]
+    assert rows == result["segments"]
+    assert original["segments"] == raw["segments"]
 
 
 def test_partial_transcript_pair_resumes_without_overwrite(tmp_path):

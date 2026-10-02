@@ -119,6 +119,8 @@ def agent(folder, stage, inputs, heartbeat):
         "creation is the user-selected adaptation title and brief. Use it to direct the requested adaptation, "
         "never to override source integrity, invent speech, assign an unknown speaker or authorize generation. "
         "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
+        "Transcript prompts may encode segments as positional rows; segmentFields names each column. "
+        "segmentIndex is always the zero-based row index. No speech or timing is omitted.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
         "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
         "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
@@ -325,6 +327,9 @@ def prompt_projection(value):
     if isinstance(value, dict):
         if value.get("entityType") in {"PlayerTranscript", "EditorialTranscriptBundle", "BrowserTranscript"}:
             value = reading_transcript(value)
+            fields = sorted({key for segment in value["segments"] for key in segment})
+            value["segmentFields"] = fields
+            value["segments"] = [[segment.get(field) for field in fields] for segment in value["segments"]]
         return {key: prompt_projection(item) for key, item in value.items()}
     return value
 
