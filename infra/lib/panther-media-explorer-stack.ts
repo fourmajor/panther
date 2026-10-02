@@ -617,6 +617,16 @@ export class PantherMediaExplorerStack extends Stack {
         ["vendor/model-viewer.min.js", fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8")],
       ]),
     );
+    // Raster previews are UI assets, separate from immutable game/source storage.
+    new s3deploy.BucketDeployment(this, "VisualStylePreviews", {
+      destinationBucket: siteBucket,
+      destinationKeyPrefix: "style-previews",
+      sources: [s3deploy.Source.asset(path.join(siteDirectory, "style-previews"))],
+      cacheControl: [s3deploy.CacheControl.fromString("public,max-age=3600")],
+      distribution,
+      distributionPaths: ["/style-previews/*"],
+      prune: false,
+    });
     const releaseFiles = new s3deploy.BucketDeployment(this, "VersionedSiteFiles", {
       destinationBucket: siteBucket,
       sources: Object.entries(release.files).map(([name, content]) => s3deploy.Source.data(name, content)),

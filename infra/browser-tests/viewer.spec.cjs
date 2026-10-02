@@ -109,7 +109,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     });
     await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'test'}))+'.test'})));
     await page.goto('https://panther.place/characters/test-game/test-character');
-    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
+    await expect(page.locator('#character-appearance-panel')).toBeVisible();
     const portrait = page.locator('#character-portrait-only');
     await expect(portrait).toBeVisible();
     await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);
@@ -173,7 +173,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     });
     await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({ id_token: 'test.' + btoa(JSON.stringify({ exp: Date.now() / 1000 + 3600, 'cognito:username': 'test' })) + '.test' })));
     await page.goto('https://panther.place/characters/test-game/test-character');
-    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
+    await expect(page.locator('#character-appearance-panel')).toBeVisible();
     await expect.poll(()=>page.evaluate(()=>Boolean(customElements.get("model-viewer")))).toBe(true);
     await expect.poll(()=>page.locator("#character-poster").evaluate(image=>image.naturalHeight)).toBeGreaterThan(0);
     await expect(page).toHaveTitle('Panther');
@@ -293,7 +293,7 @@ for (const width of [1280,390]) for (const reduced of [false,true]) {
     });
     await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'synthetic'}))+'.test'})));
     await page.goto('https://panther.place/characters/test-game/test-character');
-    await page.getByRole('button',{name:'Appearances & 3D',exact:true}).click();
+    await expect(page.locator('#character-appearance-panel')).toBeVisible();
     await page.locator('#character-model').scrollIntoViewIfNeeded();
     await page.locator('#model-load').click();
     const viewer=page.locator('#character-model'),button=page.locator('#model-animation-toggle');
@@ -326,4 +326,4 @@ for (const width of [1280,390]) for (const reduced of [false,true]) {
   });
 }
 
-async function openAppearances(page){const button=page.getByRole('button',{name:'Appearances & 3D',exact:true});await expect(button).toBeVisible();if(await button.getAttribute('aria-expanded')!=='true')await button.click();}
+async function openAppearances(page){await expect(page.locator('#character-appearance-panel')).toBeVisible();}

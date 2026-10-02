@@ -1620,3 +1620,49 @@ body { padding-bottom:0; }
   .character-profile .character-facts {grid-column:1 / -1;grid-row:2;margin-top:0;}
   .character-profile .character-heading:has(#character-facts .character-edit-form) .character-bio-heading {grid-column:1;}
 }
+/* Videos use the same compact top actions as Characters and Assets. */
+#episode-create-action,.explorer-heading > button.primary-button { flex:0 0 auto;min-height:44px;padding:.6rem 1rem;font-size:.9rem;line-height:1.2;white-space:nowrap; }
+.video-search-toolbar { display:flex;align-items:flex-end;gap:.75rem;margin:0 0 1rem; }
+.video-search-toolbar > div { flex:1;min-width:0; }
+.video-search-toolbar label { display:block;font-size:.8rem;color:var(--muted);margin-bottom:.3rem; }
+.video-search-toolbar input { width:100%;box-sizing:border-box;min-height:44px;padding:.65rem .8rem;border:1px solid var(--line);border-radius:.45rem;background:var(--paper);color:var(--ink);font:inherit; }
+.video-top-filters { flex:0 0 auto;position:relative; }
+.video-top-filters > summary { cursor:pointer;min-height:44px;padding:.6rem .9rem;box-sizing:border-box;border:1px solid var(--line);border-radius:.45rem; }
+.video-top-filter-fields { position:absolute;right:0;top:calc(100% + .5rem);z-index:5;display:grid;gap:.75rem;width:min(310px,calc(100vw - 2rem));padding:1rem;border:1px solid var(--line);border-radius:.6rem;background:var(--panel);box-shadow:0 8px 25px #0004; }
+.video-top-filter-fields select { width:100%;min-height:44px;box-sizing:border-box; }
+@media(max-width:600px){#session-library > .explorer-heading {flex-wrap:nowrap;gap:.5rem;}#session-library > .explorer-heading h1 {font-size:1.8rem;}.video-search-toolbar {gap:.5rem;}}
+.video-search-toolbar { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end; }
+.video-top-filters[open] { display:contents; }
+.video-top-filters[open] > summary { grid-column:2;grid-row:1; }
+.video-top-filter-fields { position:static;grid-column:1 / -1;grid-row:2;width:auto;grid-template-columns:repeat(3,minmax(0,1fr));box-shadow:none; }
+@media(max-width:600px){.video-top-filter-fields {grid-template-columns:1fr;}}
+
+.settings-card-intro h2 {font:400 clamp(1.6rem,3vw,2.2rem)/1.2 Georgia,serif;}
+#game-style {grid-template-columns:1fr;gap:1rem;}
+.visual-style-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:1rem;}
+.visual-style-card {min-width:0;border:1px solid var(--line);border-radius:.6rem;overflow:hidden;padding:.7rem;}
+.visual-style-card[data-selected="true"] {border-color:var(--accent);}
+.visual-style-card img {width:100%;aspect-ratio:3/2;object-fit:cover;border-radius:.4rem;}
+.visual-style-card h3 {font:400 1.3rem/1.3 Georgia,serif;margin:.7rem 0;}
+.visual-style-actions {display:flex;gap:.5rem;justify-content:space-between;}
+.style-preview-dialog {padding:1rem;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:.8rem;width:min(90vw,72rem);max-height:90vh;}
+.style-preview-dialog::backdrop {background:#000b;}
+.style-preview-dialog>div {display:flex;justify-content:space-between;align-items:center;gap:1rem;}
+.style-preview-dialog h2 {font:400 1.8rem/1.2 Georgia,serif;}
+.style-preview-dialog img {display:block;width:100%;max-height:70vh;object-fit:contain;}
+.character-avatar {position:relative;}
+.character-avatar:has(#character-portrait-empty:not([hidden])) .character-portrait-actions {position:absolute;top:3rem;left:.5rem;right:.5rem;display:grid;justify-items:stretch;margin:0;gap:.5rem;}
+.character-avatar:has(#character-portrait-empty:not([hidden])) .character-portrait-actions button {min-height:44px;}
+@media(max-width:600px){.character-avatar:has(#character-portrait-empty:not([hidden])) .character-portrait-actions {top:1rem;}}
+
+.character-reference-empty {border:1px dashed var(--line);border-radius:.6rem;min-height:5rem;padding:1rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;}
+.character-reference-empty[hidden] {display:none;}
+#character-appearance-panel {margin-top:1.5rem;}
+#character-appearance-panel>h2,#character-assets h2 {font:400 1.7rem/1.2 Georgia,serif;}
+#character-appearance-panel .model-help,#character-appearance-panel .model-panel>.eyebrow,#character-appearance-panel .model-facts {display:none;}
+#appearance-story:empty {display:none;}
+
+.editorial-stage-progress { display:block; width:100%; height:8px; margin:12px 0 6px; accent-color:var(--accent); border:0; border-radius:4px; overflow:hidden; }
+.editorial-stage-progress:not([value]) { animation: panther-pulse 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion:reduce) { .editorial-stage-progress:not([value]) {animation:none;} }

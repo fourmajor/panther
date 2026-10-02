@@ -203,7 +203,7 @@ def test_map_scene_title_only_then_selection_pins_exact_local_image(tmp_path):
     assert job["selectedScene"] == selected
     assert job["selectedMap"] == {"schemaVersion": 1, "key": key, "sha256": base64.b64encode(hashlib.sha256(b"original-map-bytes").digest()).decode(), "size": len(b"original-map-bytes"), "contentType": "image/png", "role": "first-frame", "instructions": dev.production_asset_views().MAP_SCENE_INSTRUCTIONS}
     assert "red footprints" in job["selectedMap"]["instructions"]
-    assert job["status"] == "SUBMITTED" and job["videoGenerationAuthorized"] is False
+    assert job["status"] == "BLOCKED" and "not connected" in job["message"] and job["videoGenerationAuthorized"] is False
     assert handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation}) == job
     assert store.get("scene", "preview-campaign:journey:road")["mapAssetKey"] is None
 
@@ -421,3 +421,24 @@ def test_local_novel_accepts_prompt_without_sources_or_title(tmp_path):
     assert handler.post("/editorial-jobs", body) == job
     with pytest.raises(ValueError, match="prompt"):
         handler.post("/editorial-jobs", {**body, "creation": {**creation, "brief": ""}})
+
+
+def test_local_editorial_queue_reports_missing_worker_without_mutating_history(tmp_path):
+    import json
+    import threading
+    from urllib.request import Request, urlopen
+    store = dev.Store(tmp_path / "editorial.sqlite")
+    store.put("editorial", "prior-job", {"jobId": "prior-job", "status": "SUBMITTED", "creation": {"target": "novel", "brief": "A fictional river crossing"}}, "fictional-game")
+    server = dev.Server(("127.0.0.1", 0), store)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = json.load(urlopen(Request(f"http://127.0.0.1:{server.server_port}/editorial-jobs?jobId=prior-job", headers={"Authorization": "Bearer local"})))
+        assert response["job"]["status"] == "BLOCKED"
+        assert "not connected" in response["job"]["message"]
+        assert response["tasks"] == []
+        assert store.get("editorial", "prior-job")["status"] == "SUBMITTED"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

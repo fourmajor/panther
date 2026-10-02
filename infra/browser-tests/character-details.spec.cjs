@@ -28,7 +28,7 @@ async function fixture(page) {
       }
       body={character:record};
     }
-    else if(url.pathname==='/character') body={character:{gameId,id:characterId,name:record.name},appearance:null,selection:null,model:null,poster:null,warnings:[]};
+    else if(url.pathname==='/character') body={character:{gameId,id:url.searchParams.get('characterId'),name:record.name},appearance:null,selection:null,model:null,poster:null,warnings:[]};
     else if(url.pathname==='/character-versions') body={schemaVersion:2,appearances:[],selections:[],activations:[],current:null,activationRevision:null};
     else if(url.pathname==='/assets') body={assets:[{key:portrait,name:'Portrait.png',kind:'portrait',contentType:'image/png',lastModified:'2026-01-01T00:00:00Z',metadata:{title:'Selected reference',characterIds:[characterId],category:'reference'}}],cursor:null};
     else if(url.pathname==='/image-links') body={images:{[portrait]:{url:'https://test.s3.amazonaws.com/portrait.svg'}},expiresIn:300};
@@ -41,7 +41,7 @@ async function fixture(page) {
     const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
-  return {posted,created,requests,conflict:()=>{fail=true;}};
+  return {posted,created,requests,history,conflict:()=>{fail=true;}};
 }
 for(const width of [1280,390]) test(`structured character editing and catalog pagination at ${width}px`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:900}); const control=await fixture(page);
@@ -55,10 +55,10 @@ for(const width of [1280,390]) test(`structured character editing and catalog pa
   await expect(page.getByRole('button',{name:'Load more characters'})).toBeHidden();
   await page.getByRole('button',{name:/Lantern Hero/}).click();
   const facts=page.locator('#character-facts');
-  expect(control.requests).not.toContain('/character-details/history');expect(control.requests).not.toContain('/character-versions');expect(control.requests).not.toContain('/assets');await expect(page.locator('#character-assets')).toBeHidden();await expect(page.locator('#character-appearance-panel')).toBeHidden();await expect(page.getByRole('heading',{name:'Characters',exact:true})).toBeHidden();await expect(page.getByRole('heading',{name:'Lantern Hero',exact:true})).toHaveCount(1);
+  expect(control.requests).not.toContain('/character-details/history');await expect(page.locator('#character-assets')).toBeVisible();await expect(page.locator('#character-appearance-panel')).toBeVisible();await expect(page.getByRole('heading',{name:'Characters',exact:true})).toBeHidden();await expect(page.getByRole('heading',{name:'Lantern Hero',exact:true})).toHaveCount(1);
   await expect(facts).toContainText('Example Player'); await expect(facts).not.toContainText('they/them');
   await page.getByRole('button',{name:'Connections',exact:true}).click();await expect(facts.getByRole('link',{name:'River Guide'})).toHaveAttribute('href',`/games/${gameId}/characters/guide`);
-  await page.getByRole('button',{name:'Media & references',exact:true}).click();await expect(page.locator('#character-assets-list')).toContainText('portrait · reference');
+  await expect(page.locator('#character-assets')).toBeVisible();await expect(page.locator('#character-assets-list')).toContainText('portrait · reference');
   await page.getByRole('button',{name:'Edit character information'}).click();
   await page.getByLabel('Backstory',{exact:true}).fill('Updated fictional backstory.');
   await chooseSelect(page,'Status','Retired');
@@ -109,7 +109,7 @@ for(const width of [1280,390]) test(`create a character, edit background and ins
   await form.getByRole('button',{name:'Create character'}).click();
   await expect(page).toHaveURL(/characters\/new-ranger-[a-f0-9]{8}$/);
   expect(control.created[0].name).toBe('New Ranger');
-  await expect(page.getByRole('button',{name:'History',exact:true})).toBeVisible();await expect(page.locator('.character-change-history')).toBeHidden();
+  await expect(page.getByRole('button',{name:'History',exact:true})).toHaveCount(0);await expect(page.getByRole('heading',{name:'Backstory',exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:'Statistics',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Edit character information'}).click();
   await page.locator('#character-facts').getByLabel('Character name',{exact:true}).fill('River Ranger');
   await page.getByLabel('Backstory',{exact:true}).fill('A recorded childhood on the river.');
@@ -121,9 +121,7 @@ for(const width of [1280,390]) test(`create a character, edit background and ins
   await page.getByRole('button',{name:'Save character information'}).click();
   await expect(page.locator('#character-facts')).toContainText('A recorded childhood on the river.');
   expect(control.posted[0].details.relationships).toEqual([{entityType:'Player',id:'player',relation:'Ally'}]);
-  await page.getByRole('button',{name:'History',exact:true}).click();await expect(page.locator('.character-change-history')).toContainText('Updated');
-  await page.locator('.character-change-history summary').click();
-  await expect(page.locator('.character-change-history')).toContainText('New Ranger → River Ranger');
+  expect(control.history[0].name).toBe('River Ranger');expect(control.history[0].previousName).toBe('New Ranger');await expect(page.locator('.character-change-history')).toHaveCount(0);
   await expect(page.getByRole('button',{name:/Refresh|Retry character information/})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 });
@@ -161,3 +159,10 @@ for(const width of [1280,390]) test(`uploaded profile portrait survives reload w
 });
 
 async function chooseSelect(page,label,choice){await page.getByRole('combobox',{name:label,exact:true}).click();await page.getByRole('option',{name:choice,exact:true}).click();}
+
+for(const width of [1280,390])test(`empty character fields and portrait actions remain visible at ${width}px`,async({page},testInfo)=>{
+ await page.setViewportSize({width,height:900});await fixture(page);await page.goto(`https://panther.place/games/${gameId}/characters`);await page.getByRole('button',{name:'Add character',exact:true}).click();await page.locator('#character-create-form').getByLabel('Character name').fill('Quiet Ranger');await page.getByRole('button',{name:'Create character',exact:true}).click();
+ await expect(page.locator('#character-title')).toHaveText('Class / role · —');await expect(page.getByRole('heading',{name:'Backstory',exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:'Statistics',exact:true})).toBeVisible();await expect(page.locator('#character-facts')).toContainText('Status');await expect(page.locator('#character-facts')).toContainText('Played by');await expect(page.getByRole('button',{name:'History',exact:true})).toHaveCount(0);
+ const frame=await page.locator('#character-portrait-empty').boundingBox();for(const id of ['character-portrait-upload','character-portrait-generate']){const button=page.locator('#'+id);await expect(button).toBeVisible();const box=await button.boundingBox();expect(box.x).toBeGreaterThanOrEqual(frame.x);expect(box.y).toBeGreaterThanOrEqual(frame.y);expect(box.x+box.width).toBeLessThanOrEqual(frame.x+frame.width);expect(box.y+box.height).toBeLessThanOrEqual(frame.y+frame.height);}
+ await page.screenshot({path:testInfo.outputPath(`character-empty-profile-${width}.png`),fullPage:true});
+});

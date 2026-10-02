@@ -64,7 +64,48 @@ class Store:
         with self.connect() as db:
             db.executescript("CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, game TEXT, payload TEXT, PRIMARY KEY(kind,id)); CREATE TABLE IF NOT EXISTS objects (key TEXT PRIMARY KEY, game TEXT, metadata TEXT, data BLOB, created TEXT); CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, payload TEXT, response TEXT);")
         self.migrate_episode_composition()
+        self.migrate_browser_playback()
         self.path.chmod(0o600)
+
+    def browser_playback_job(self, game, key, checksum):
+        meta, raw = self.object(key)
+        if hashlib.sha256(raw).hexdigest() != checksum:
+            raise ValueError("Recording manifest checksum mismatch")
+        doc = json.loads(raw)
+        if doc.get("entityType") != "BrowserRecording" or doc.get("gameId") != game or doc.get("status") not in {"complete", "interrupted"} or not isinstance(doc.get("parts"), list) or not 1 <= len(doc["parts"]) <= 1000:
+            raise ValueError("Choose a completed browser recording")
+        if not key.startswith(f"games/{game}/assets/"):
+            raise ValueError("Recording belongs to another game")
+        for part in doc["parts"]:
+            if not re.fullmatch(r"part-[0-9]{4}\.wav", part.get("file", "")):
+                raise ValueError("Invalid recording part")
+            _, audio = self.object(key.rsplit("/", 1)[0] + "/" + part["file"])
+            if hashlib.sha256(audio).hexdigest() != part["sha256"]:
+                raise ValueError("Audio checksum mismatch")
+        return {"jobId": checksum, "gameId": game, "chunkSetId": doc["id"], "workflowVersion": 2, "setStatus": "COMPLETE", "recordingKey": key, "sourceManifestSha256": checksum, "status": "QUEUED"}
+
+    def migrate_browser_playback(self):
+        """Pin old local completed sets by their exact manifest digest; preserve audit history."""
+        if self.get("development-migration", "browser-playback-v2"):
+            return
+        snapshots = []
+        with self.connect() as db:
+            jobs = db.execute("SELECT id,game,payload FROM records WHERE kind='playback'").fetchall()
+            sources = db.execute("SELECT key,game,data FROM objects WHERE key LIKE '%/recording.json'").fetchall()
+        for identity, game, payload in jobs:
+            old = json.loads(payload)
+            if old.get("recordingKey") or old.get("status") == "DONE":
+                continue
+            matches = [(key, raw) for key, source_game, raw in sources if source_game == game and hashlib.sha256(raw).hexdigest() == identity]
+            try:
+                if len(matches) != 1:
+                    raise ValueError("The original completed recording manifest could not be verified. Retained browser audio remains downloadable.")
+                job = self.browser_playback_job(game, matches[0][0], identity)
+            except (ValueError, LookupError, KeyError) as error:
+                job = {**old, "status": "FAILED", "message": str(error)}
+            self.put("playback", identity, job, game)
+            snapshots.append({"jobId": identity, "previousRecord": old, "previousSha256": hashlib.sha256(payload.encode()).hexdigest(), "newStatus": job["status"]})
+        self.put("development-migration", "browser-playback-v2", {"schemaVersion": 2, "migratedAt": datetime.now(timezone.utc).isoformat(), "sources": snapshots})
 
     def migrate_episode_composition(self):
         """One-time audited upgrade of prior explicit local scene order, never a read fallback."""
@@ -134,7 +175,7 @@ class Store:
         record = self.get("game", identity)
         if not record:
             raise LookupError("Game not found")
-        return {"game": {k: v for k, v in record.items() if k not in ("description", "descriptionRevision")}, "gameSettings": {k: record.get(k) for k in ("description", "descriptionRevision")}, "canEditGame": True, "visualStyles": [{"id": v, "label": v.replace("-", " ").title()} for v in STYLES], "players": self.list("player", identity), "memberships": self.list("membership", identity), "characters": self.list("character", identity)}
+        return {"game": {k: v for k, v in record.items() if k not in ("description", "descriptionRevision")}, "gameSettings": {k: record.get(k) for k in ("description", "descriptionRevision")}, "canEditGame": True, "visualStyles": [{"id": v, "label": v.replace("-", " ").title(), "previewImage": "/style-previews/" + v + ".webp"} for v in STYLES], "players": self.list("player", identity), "memberships": self.list("membership", identity), "characters": self.list("character", identity)}
 
     def create_character(self, body):
         game, identity = body["gameId"], body["id"]
@@ -590,7 +631,9 @@ class Handler(BaseHTTPRequestHandler):
                 meta, raw = store.object(q["key"])
                 result = {"key": q["key"], "kind": meta.get("kind", "unclassified"), "filename": q["key"].rsplit("/", 1)[-1], "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "url": self.origin + "/development/object?key=" + q["key"], "size": len(raw), "metadata": meta, "expiresIn": None, "contentType": meta.get("contentType", "application/octet-stream")}
             elif path == "/browser-recording/capabilities":
-                result = {"canRecord": True, "transcriptionAvailable": False, "transcriptionUnavailableReason": "Transcription is not configured in local development.", "playbackAvailable": False, "playbackUnavailableReason": "Playback processing is not configured in local development.", "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
+                worker = store.get("service", "playback") or {}
+                available = worker.get("status") == "RUNNING" and time.time() - worker.get("updatedAt", 0) < 120
+                result = {"canRecord": True, "transcriptionAvailable": False, "transcriptionUnavailableReason": "Transcription is not configured in local development.", "playbackAvailable": available, "playbackUnavailableReason": "Start local playback with: .venv/bin/python tools/dev_playback_worker.py --work-dir ~/.local/state/panther/development-playback", "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
             elif path == "/browser-transcriptions":
                 job = store.get("playback", q.get("playbackJobId", ""))
                 if job and job.get("status") == "SUBMITTED":
@@ -603,7 +646,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not result or result["gameId"] != game:
                     raise LookupError("Chapter not found")
             elif path == "/editorial-jobs":
-                result = {"jobs": store.list("editorial", game), "cursor": None} if "jobId" not in q else {"job": store.get("editorial", q["jobId"]), "tasks": []}
+                def local_job(job):
+                    if job and job.get("status") == "SUBMITTED":
+                        return {**job, "status": "BLOCKED", "message": "Generation is not connected in this local preview. Use the live app with its processing worker running."}
+                    return job
+                result = {"jobs": [local_job(job) for job in store.list("editorial", game)], "cursor": None} if "jobId" not in q else {"job": local_job(store.get("editorial", q["jobId"])), "tasks": []}
             elif path in ("/novel-stories", "/novel-books", "/tv-series", "/tv-episodes"):
                 kind = {"/novel-stories": "story", "/novel-books": "book", "/tv-series": "tv-series", "/tv-episodes": "tv-episode"}[path]
                 if "id" in q:
@@ -729,7 +776,7 @@ class Handler(BaseHTTPRequestHandler):
             selected_map = store.pin_map(game, scene) if video else None
             identity_body = {**body, **({"selectedMap": selected_map} if selected_map else {})}
             identity = hashlib.sha256(json.dumps(identity_body, sort_keys=True).encode()).hexdigest()
-            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 4 if video else 3, "status": "SUBMITTED", "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "sourceMode": "transcript" if creation["sourceKeys"] else "prompt", **({"selectedMap": selected_map} if selected_map else {})} if video else {})}
+            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 4 if video else 3, "status": "BLOCKED", "message": "Generation is not connected in this local preview. Use the live app with its processing worker running.", "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "sourceMode": "transcript" if creation["sourceKeys"] else "prompt", **({"selectedMap": selected_map} if selected_map else {})} if video else {})}
             store.put("editorial", identity, job, game)
             return self.send(job)
         if path == "/novel-chapters":
@@ -777,16 +824,11 @@ class Handler(BaseHTTPRequestHandler):
             store.put("upload", identity, body, body["gameId"])
             return self.send({"key": key, "url": self.origin + "/development/upload/" + identity, "headers": {"Content-Type": body["contentType"], "x-amz-checksum-sha256": body["sha256"], "If-None-Match": "*"}})
         if path == "/browser-recording/complete":
-            meta, raw = store.object(body["recordingKey"])
-            doc = json.loads(raw)
-            for part in doc["parts"]:
-                _, audio = store.object(body["recordingKey"].rsplit("/", 1)[0] + "/" + part["file"])
-                if hashlib.sha256(audio).hexdigest() != part["sha256"]:
-                    raise ValueError("Audio checksum mismatch")
-            identity = hashlib.sha256(raw).hexdigest()
-            # Source recording is durable. Real derivatives need the laptop playback worker.
-            store.put("playback", identity, {"status": "BLOCKED", "message": "Playback processing is not configured in local development."}, body["gameId"])
-            return self.send({"jobId": identity, "workflowVersion": 2})
+            job = store.browser_playback_job(body["gameId"], body["recordingKey"], body["manifestSha256"])
+            existing = store.get("playback", job["jobId"])
+            if not existing:
+                store.put("playback", job["jobId"], job, body["gameId"])
+            return self.send({"jobId": job["jobId"], "workflowVersion": 2})
         return self.send({"error": "This operation requires the live Panther service."}, status=501)
 
     def do_PUT(self):

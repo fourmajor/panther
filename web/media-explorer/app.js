@@ -559,7 +559,7 @@ function renderBreadcrumbs(prefix) {
     accumulated += `${segment}/`;
     if (accumulated === "games/") continue;
     const destination = accumulated;
-    const current = accumulated === prefix;
+    const current = accumulated === segments.join("/") + "/";
     const button = document.createElement(current ? "span" : "button");
     button.className = "crumb";
     if(current)button.setAttribute("aria-current","page");else button.type = "button";
@@ -743,53 +743,30 @@ function renderGameSettings() {
 }
 
 function renderGameStyle() {
-  const panel = document.getElementById("game-style");
-  const form = document.getElementById("game-style-form");
-  form.dataset.dirty = "false";
-  const select = document.getElementById("visual-style");
-  const status = document.getElementById("style-status");
-  const detail = state.gameDetail;
-  panel.hidden = !detail?.visualStyles?.length;
-  if (panel.hidden) return;
-  const gameId = state.gameId;
-  const expectedStyle = detail.game.visualStyle ?? null;
-  select.replaceChildren();
-  for (const style of detail.visualStyles) {
-    const option = document.createElement("option");
-    option.value = style.id;
-    option.textContent = style.label;
-    select.append(option);
+  const panel=document.getElementById("game-style"),form=document.getElementById("game-style-form"),select=document.getElementById("visual-style"),status=document.getElementById("style-status"),detail=state.gameDetail;
+  panel.hidden=!detail?.visualStyles?.length;if(panel.hidden)return;
+  const gameId=state.gameId,expectedStyle=detail.game.visualStyle??null,canEdit=detail.canEditGame===true;
+  form.dataset.dirty="false";select.replaceChildren();select.hidden=true;
+  document.getElementById("visual-style-cards")?.remove();
+  const grid=document.createElement("div");grid.id="visual-style-cards";grid.className="visual-style-cards";grid.setAttribute("role","group");grid.setAttribute("aria-label","Visual style");
+  for(const style of detail.visualStyles){
+    select.add(new Option(style.label,style.id));
+    const card=document.createElement("article");card.className="visual-style-card";card.dataset.style=style.id;card.dataset.selected=String(style.id===expectedStyle);
+    const title=document.createElement("h3");title.textContent=style.label;
+    const controls=document.createElement("div");controls.className="visual-style-actions";
+    const chosen=style.id===expectedStyle,choose=document.createElement("button");choose.type="button";choose.className=chosen?"quiet-button":"primary-button";choose.textContent=chosen?"Selected":"Select";choose.setAttribute("aria-label",`${chosen?"Selected":"Select"} ${style.label}`);choose.disabled=!canEdit||chosen;
+    const preview=style.previewImage===`/style-previews/${style.id}.webp`?style.previewImage:null;
+    if(preview){const image=document.createElement("img");image.src=preview;image.alt=`${style.label} preview`;image.loading="lazy";card.append(image);const zoom=document.createElement("button");zoom.type="button";zoom.className="icon-button";zoom.title="Zoom";zoom.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>';zoom.setAttribute("aria-label",`Zoom ${style.label}`);zoom.onclick=()=>{const dialog=document.getElementById("style-preview-dialog");document.getElementById("style-preview-title").textContent=style.label;const large=document.getElementById("style-preview-image");large.src=preview;large.alt=image.alt;dialog.showModal();document.getElementById("style-preview-close").onclick=()=>{dialog.close();zoom.focus();};};controls.append(zoom);image.onerror=()=>{image.remove();zoom.remove();};}
+    controls.append(choose);card.append(title,controls);grid.append(card);
+    choose.onclick=async()=>{
+      const epoch=routeEpoch;for(const button of grid.querySelectorAll("button"))button.disabled=true;status.textContent="Saving style…";
+      try{const updated=await api("/game/style",{},{body:{gameId,visualStyle:style.id,expectedStyle}});if(state.gameId!==gameId||routeEpoch!==epoch)return;state.gameDetail=updated;renderGameStyle();status.textContent="Style saved.";}
+      catch(error){if(state.gameId!==gameId||routeEpoch!==epoch)return;status.textContent=`Could not save style. ${error.message}`;for(const button of grid.querySelectorAll("button"))button.disabled=false;for(const selected of grid.querySelectorAll('[data-selected="true"] button[aria-label^="Selected"]'))selected.disabled=true;}
+    };
   }
-  if (!expectedStyle) {
-    const unset = new Option("Choose a style", "", true, true);
-    unset.disabled = true;
-    select.prepend(unset);
-  } else select.value = expectedStyle;
-  const canEdit = detail.canEditGame === true;
-  select.disabled = !canEdit;
-  form.querySelector("button").disabled = !canEdit;
-  status.textContent = "";
-  form.onsubmit = async event => {
-    event.preventDefault();
-    if (!select.value || select.disabled) return;
-    const epoch = routeEpoch;
-    select.disabled = true;
-    form.querySelector("button").disabled = true;
-    status.textContent = "Saving this game’s visual style…";
-    try {
-      const updated = await api("/game/style", {}, { body: { gameId, visualStyle: select.value, expectedStyle } });
-      if (state.gameId !== gameId || routeEpoch !== epoch) return;
-      state.gameDetail = updated;
-      renderGameStyle();
-      status.textContent = "Style saved. Existing assets are unchanged.";
-    } catch (error) {
-      if (state.gameId !== gameId || routeEpoch !== epoch) return;
-      status.textContent = `Could not save style. ${error.message} Refresh before retrying.`;
-      select.disabled = false;
-      form.querySelector("button").disabled = false;
-    }
-  };
+  select.value=expectedStyle||"";select.disabled=!canEdit;form.prepend(grid);status.textContent="";form.onsubmit=event=>event.preventDefault();
 }
+
 
 function navigate(path, { replace = false } = {}) {
   if (replace) window.history.replaceState({}, "", path);
@@ -906,36 +883,6 @@ async function createCharacter() {
   host.querySelector("button[type=button]").onclick = () => {host.hidden = true;};
 }
 
-async function loadCharacterHistory(gameId, characterId, host, epoch) {
-  const list = host.querySelector("ol"), more = host.querySelector("button");
-  let cursor = null;
-  const load = async () => {
-    more.disabled = true;
-    try {
-      const result = await api("/character-details/history", {gameId,characterId,cursor});
-      if (epoch !== routeEpoch || !host.isConnected) return;
-      for (const entry of result.history || []) {
-        const li = document.createElement("li"), disclosure = document.createElement("details"), summary = document.createElement("summary");
-        summary.textContent = `${new Date(entry.recordedAt).toLocaleString()} · ${entry.reason}`;
-        const changes = document.createElement("dl"); changes.className = "character-fact-grid";
-        for (const [key,value] of Object.entries(entry.details || {})) {
-          if (key === "schemaVersion" || JSON.stringify(value) === JSON.stringify(entry.previousDetails?.[key])) continue;
-          const dt = document.createElement("dt"), dd = document.createElement("dd");
-          dt.textContent = key; dd.textContent = value == null ? "Cleared" : typeof value === "object" ? JSON.stringify(value) : String(value);
-          changes.append(dt,dd);
-        }
-        if (entry.name && entry.previousName !== entry.name) {const p = document.createElement("p"); p.textContent = `Name: ${entry.previousName} → ${entry.name}`; disclosure.append(p);}
-        disclosure.prepend(summary); disclosure.append(changes); li.append(disclosure); list.append(li);
-      }
-      cursor = result.cursor; more.hidden = !cursor;
-      if (!list.children.length) {const li = document.createElement("li"); li.textContent = "No changes yet."; list.append(li);}
-    } catch(error) {const p = document.createElement("p"); p.textContent = error.message; host.append(p); more.hidden = true;}
-    finally {more.disabled = false;}
-  };
-  more.onclick = load;
-  await load();
-}
-
 async function loadCharacterThumbnails(epoch) {
   const hosts = [...elements.characterList.querySelectorAll("[data-image-key]:not([data-requested])")];
   for (const host of hosts) host.dataset.requested = "true";
@@ -986,9 +933,10 @@ function configureCharacter(profile) {
   state.currentCharacter = { gameId: character.gameId, characterId: character.id };
   elements.characterName.textContent = character.name;
   const facts = state.currentCharacterFacts;
-  elements.characterTitle.textContent = facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.role || "" : "";
+  elements.characterTitle.textContent = `Class / role · ${facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.role || "—" : "—"}`;
   elements.characterSummary.textContent = "";
   document.querySelector("#character-model-area").hidden = !model;
+  document.getElementById("character-artwork-empty").hidden=Boolean(model||poster);
   document.querySelector("#character-no-model").hidden = true;
   const portraitOnly = document.querySelector("#character-portrait-only");
   portraitOnly.hidden = !poster;
@@ -1035,7 +983,7 @@ function configureModelView(model, poster, name, keepActive = false) {
     model.sourceRetained && model.provenanceRetained
       ? "Original and provenance retained"
       : "Web representation";
-  elements.modelStatus.textContent = keepActive ? "Loading the selected model…" : "Portrait ready. Load the model when you want it.";
+  elements.modelStatus.textContent = keepActive ? "Loading model…" : "";
 }
 
 let appearanceRequest = 0;
@@ -1068,15 +1016,6 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
     states.value = selected?.appearanceId || result.appearances[0]?.id || "";
     states.disabled = result.appearances.length < 2 || Boolean(state.pendingAppearanceRestore);
     populateArtworkEditions(selected?.id);
-    const events = document.getElementById("appearance-events");
-    events.replaceChildren();
-    for (const entry of result.activations) {
-      const li=document.createElement("li");
-      const recorded = Number.isNaN(Date.parse(entry.updatedAt)) ? "Unknown record time" : new Date(entry.updatedAt).toLocaleString();
-      li.textContent = `${entry.activationKind==="artwork-selection"?"Artwork edition selected":"Physical appearance selected"} · recorded ${recorded} · ${entry.reason}`;
-      events.append(li);
-    }
-    if (!events.children.length) {const li=document.createElement("li");li.textContent="Earlier imported selections have unknown original selection times.";events.append(li);}
     const legacy = new URLSearchParams(location.search).get("model");
     if (legacy) {
       const matches=result.selections.filter(s=>s.modelKey===legacy);
@@ -1091,7 +1030,7 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
     } else {
       status.textContent=result.selections.find(s=>s.id===selected?.id)?.previewOnly
         ? "Previewing an unselected edition. The current official selection is unchanged."
-        : result.selections.length ? `${result.appearances.length} recorded physical states · ${result.selections.length} retained artwork pairs. Viewing never changes the current selection.` : "No official artwork has been selected.";
+        : "";
       renderAppearanceDownloads();
       updateAppearanceStory();
     }
@@ -1124,7 +1063,7 @@ function updateAppearanceStory() {
   const host=document.getElementById("appearance-story");
   host.textContent=story && Object.values(story).some(v=>v!==null)
     ? `Story timing supplied: ${[story.sessionId,story.eventId,story.date].filter(Boolean).join(" · ")}`
-    : "Story timing unknown. File and selection record times are not fictional dates.";
+    : "";
   document.getElementById("appearance-restore").disabled=!selected?.selection || selected.selection.id===data?.current || Boolean(state.pendingAppearanceRestore);
 }
 
@@ -1236,7 +1175,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
     loadProfilePortrait(record,epoch);
     const render = () => {
       if(record.name)elements.characterName.textContent=record.name;
-      elements.characterTitle.textContent = record.details.role || "";
+      elements.characterTitle.textContent = `Class / role · ${record.details.role || "—"}`;
       for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
       host.replaceChildren();
       const heading = document.createElement("div"); heading.className = "explorer-heading";
@@ -1247,20 +1186,19 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
       const membership = state.gameDetail.memberships.filter(m => m.characterIds?.includes(characterId));
       const players = membership.map(m => state.gameDetail.players.find(p => p.id === m.playerId)?.name).filter(Boolean);
       for (const [label, value] of [["Played by", players.join(", ")], ["Status", record.details.status]]) {
-        if (!value) continue;
         const row = document.createElement("div"), dt = document.createElement("dt"), dd = document.createElement("dd");
-        dt.textContent = label; dd.textContent = value; row.append(dt, dd); facts.append(row);
+        dt.textContent = label; dd.textContent = value || "—"; row.append(dt, dd); facts.append(row);
       }
       host.append(facts);
-      for (const [field, label] of [["backstory","Backstory"]]) if (record.details[field]) {
-        const h = document.createElement("h3"), p = document.createElement("p"); h.textContent = label; p.textContent = record.details[field]; p.className = "character-prose"; host.append(h,p);
+      for (const [field, label] of [["backstory","Backstory"]]) {
+        const h = document.createElement("h3"), p = document.createElement("p"); h.textContent = label; p.textContent = record.details[field] || "—"; p.className = "character-prose"; host.append(h,p);
       }
-      if (record.details.statistics.length) {
+      {
         const h = document.createElement("h3"); h.textContent = "Statistics"; host.append(h);
         const list = document.createElement("dl"); list.className = "character-fact-grid";
         for (const stat of record.details.statistics) { const row = document.createElement("div"), name = document.createElement("dt"), value = document.createElement("dd");
           name.textContent = stat.name; value.textContent = stat.value === null ? "—" : String(stat.value); row.append(name,value); list.append(row); }
-        host.append(list);
+        if(!list.children.length){const unknown=document.createElement("p");unknown.textContent="—";list.append(unknown);}host.append(list);
       }
       if (record.details.relationships.length) {
         const h = document.createElement("h3"), list = document.createElement("ul"),panel=document.createElement("section"),toggle=document.createElement("button"); h.textContent = "Connections";panel.hidden=true;toggle.type="button";toggle.className="quiet-button";toggle.textContent="Connections";toggle.setAttribute("aria-expanded","false");toggle.onclick=()=>{panel.hidden=!panel.hidden;toggle.setAttribute("aria-expanded",String(!panel.hidden));};
@@ -1274,12 +1212,6 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         }
         panel.append(h,list);host.append(toggle,panel);
       }
-      const history = document.createElement("section"); history.className = "character-change-history";
-      const historyHeading = document.createElement("h3"), changes = document.createElement("ol"), more = document.createElement("button");
-      historyHeading.textContent = "Change history"; more.textContent = "Load earlier changes"; more.type = "button"; more.className = "quiet-button"; more.hidden = true;
-      history.hidden = true;
-      const historyToggle = document.createElement("button"); historyToggle.type="button"; historyToggle.className="quiet-button"; historyToggle.textContent="History"; historyToggle.setAttribute("aria-expanded","false"); let historyLoaded=false;historyToggle.onclick=()=>{history.hidden=!history.hidden;historyToggle.setAttribute("aria-expanded",String(!history.hidden));if(!history.hidden&&!historyLoaded){historyLoaded=true;void loadCharacterHistory(gameId,characterId,history,epoch);}};
-      history.append(historyHeading,changes,more); host.append(historyToggle,history);
       edit.onclick = () => editor();
     };
     const editor = () => {
@@ -1450,7 +1382,7 @@ function generateCharacterPortrait(gameId,characterId,epoch) {
   form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{if(!job){request ||= {gameId,type:"portrait",characterId,name:`${record.name} portrait`,prompt:prompt.value.trim(),operationId:crypto.randomUUID().replaceAll("-","")};job=await api("/asset-generation",{},{body:request});prompt.disabled=true;}void poll();}catch(error){if(current()){status.textContent=error.message;submit.disabled=false;submit.textContent="Retry portrait request";}}};prompt.focus();
 }
 
-async function uploadCharacterPortrait(gameId,characterId,file,epoch) {
+async function uploadCharacterPortrait(gameId,characterId,file,epoch,setThumbnail=true) {
   if(!file)return;
   const status=document.getElementById("character-portrait-status"),button=document.getElementById("character-portrait-upload"),record=state.currentCharacterFacts;
   if(!record || record.characterId!==characterId){status.textContent="Wait for the profile to load.";return;}
@@ -1464,9 +1396,9 @@ async function uploadCharacterPortrait(gameId,characterId,file,epoch) {
     const uploaded=await fetch(signed.url,{method:"PUT",headers,body:bytes,signal:AbortSignal.timeout(45000)});if(!uploaded.ok)throw new Error("Portrait upload failed.");
     const verified=await api("/object-url",{key:signed.key});if(verified.sha256!==sha256||verified.size!==file.size)throw new Error("Portrait verification failed.");
     const details={...record.details,thumbnailAssetKey:signed.key};
-    await api("/character-details",{},{body:{gameId,characterId,name:record.name,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,operationId,reason:"Uploaded profile portrait",dryRun:false}});
+    if(setThumbnail)await api("/character-details",{},{body:{gameId,characterId,name:record.name,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,operationId,reason:"Uploaded profile portrait",dryRun:false}});
     if(epoch!==routeEpoch)return;
-    const portrait=document.getElementById("character-portrait-only");portrait.src=verified.url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;
+    if(setThumbnail){const portrait=document.getElementById("character-portrait-only");portrait.src=verified.url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;}
     assetIndex=null;await window.PantherUI.invalidate(apiScope(),["/assets","/characters","/character-details","/character-details/history","/dashboard-recent"],gameId);
     await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);status.textContent="";
   }catch(error){if(epoch===routeEpoch)status.textContent=error.message;}
@@ -1477,6 +1409,10 @@ async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   state.currentCharacterFacts = null;
   for(const button of document.querySelectorAll("[data-character-panel]")){const panel=document.getElementById(button.dataset.characterPanel);panel.hidden=true;button.setAttribute("aria-expanded","false");button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute("aria-expanded",String(!panel.hidden));if(!panel.hidden&&panel.id==="character-assets")void loadCharacterAssets(gameId,characterId,epoch);if(!panel.hidden&&panel.id==="character-appearance-panel"&&!state.appearanceVersions)void loadAppearanceVersions(gameId,characterId,epoch);};}
+  document.getElementById("character-appearance-panel").hidden=false;document.getElementById("character-assets").hidden=false;
+  for(const button of document.querySelectorAll('[data-character-upload]'))button.onclick=()=>document.getElementById(button.dataset.characterUpload==="reference"?"character-reference-file":"character-portrait-file").click();
+  for(const button of document.querySelectorAll('[data-character-generate]'))button.onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
+  document.getElementById("character-reference-file").onchange=event=>void uploadCharacterPortrait(gameId,characterId,event.target.files?.[0],epoch,false);
   const portraitStatus=document.getElementById("character-portrait-status");portraitStatus.textContent="";
   document.getElementById("character-portrait-upload").onclick=()=>document.getElementById("character-portrait-file").click();
   document.getElementById("character-portrait-file").value="";
@@ -1495,7 +1431,8 @@ async function loadCharacter(gameId, characterId) {
   state.selectedAppearance = null;
   state.pendingAppearanceRestore = null;
   appearanceRequest++;
-  showLoading(document.getElementById("character-assets-status"), "Finding this character’s images, models and media…");
+  showLoading(document.getElementById("character-assets-status"), "Loading references…");
+  void loadCharacterAssets(gameId,characterId,epoch);
   elements.characterList.hidden = true;
   elements.characterProfile.hidden = false;
   elements.charactersStatus.hidden = false;
@@ -1508,7 +1445,7 @@ async function loadCharacter(gameId, characterId) {
     configureCharacter(profile);
     elements.characterProfile.hidden = false;
     elements.charactersStatus.hidden = true;
-    if(params.has("appearance")||params.has("selection")||params.has("model")){document.getElementById("character-appearance-panel").hidden=false;document.querySelector('[data-character-panel="character-appearance-panel"]').setAttribute("aria-expanded","true");void loadAppearanceVersions(gameId,characterId,epoch);}
+    void loadAppearanceVersions(gameId,characterId,epoch);
   } catch (error) {
     if (epoch !== routeEpoch) return;
     if (error.message !== "Session expired") {
@@ -1551,7 +1488,7 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
         for (const img of batch) { const url = links.images?.[img.dataset.characterReference]?.url; if (url) img.src = url; else img.remove(); }
       }).catch(()=>batch.forEach(img=>img.remove()));
     }
-    status.textContent = matching.length ? "" : "No media yet.";
+    status.textContent = "";const empty=document.getElementById("character-reference-empty"),upload=document.querySelector('[data-character-upload="reference"]');empty.hidden=Boolean(matching.length);if(matching.length)document.querySelector("#character-assets .explorer-heading").append(upload);else empty.append(upload);
   } catch (error) {
     if (current()) status.textContent = error.message;
   }
@@ -1942,6 +1879,7 @@ function previewElement(contentType, url, title) {
 }
 
 async function previewFile(file) {
+  dismissNarrativePreview();
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); }
   const epoch = ++previewEpoch;
   const download = document.getElementById("asset-download");
@@ -2008,6 +1946,7 @@ function closePreview() {
   previewEpoch += 1;
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); media.removeAttribute("src"); media.load(); }
   elements.previewDialog.close();
+  dismissNarrativePreview();
   elements.previewBody.replaceChildren();
   elements.openOriginal.removeAttribute("href");
   document.getElementById("asset-links").replaceChildren();
@@ -2616,6 +2555,10 @@ function chapterDetails(chapter, versions) {
 function manualChapterEditor(previous = null) {
   const host = document.getElementById("manual-chapter-form");
   host.hidden = false; host.replaceChildren();
+  const composer = document.getElementById("editorial-novel-composer");
+  const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
+  if (composer) composer.hidden = true;
+  if (create) create.hidden = true;
   const gameId = state.gameId, epoch = routeEpoch;
   const titleLabel = document.createElement("label"), title = document.createElement("input");
   titleLabel.textContent = "Chapter title"; title.required = true; title.maxLength = 160; title.value = previous?.title || ""; titleLabel.append(title);
@@ -2624,8 +2567,8 @@ function manualChapterEditor(previous = null) {
   const selectedSources = new Set(previous?.details.sourceKeys || []);
   const references = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "References (optional)"; references.append(legend);
   const save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p"), buttons = document.createElement("div");
-  save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Add chapter";
-  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true;};
+  save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Save chapter";
+  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true; if (!previous) {if (composer) composer.hidden = false; if (create) create.hidden = false; composer?.querySelector(".editorial-creation-panel")?.setAttribute("hidden", "");}};
   status.setAttribute("role","status"); buttons.className = "model-control-row"; buttons.append(save,cancel); host.append(titleLabel,proseLabel,references,buttons,status);
   void allAssets(gameId).then(assets=>{
     if(epoch !== routeEpoch || !host.isConnected) return;
@@ -2657,11 +2600,13 @@ function manualChapterEditor(previous = null) {
 }
 
 async function loadNovel(chapterId, epoch) {
-  document.getElementById("manual-chapter-create").onclick = () => manualChapterEditor();
   document.getElementById("manual-chapter-form").hidden = true;
   document.getElementById("manual-chapter-edit")?.remove();
   renderEditorialComposer("novel",epoch);
-  document.getElementById("editorial-novel-composer").hidden=Boolean(chapterId);
+  const composer = document.getElementById("editorial-novel-composer");
+  composer.hidden=Boolean(chapterId);
+  const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
+  if (create) create.hidden = Boolean(chapterId) || !composer.querySelector(".editorial-creation-panel").hidden;
   const gameId = state.gameId;
   const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
   const loading = showLoading(novel.status, "Fetching the chapter list…");
@@ -2901,7 +2846,8 @@ function renderEpisodeWorkspace(epoch) {
       }catch(error){if(current()){status.textContent=error.message;save.disabled=error.status===409;if(error.status===400){pending=null;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=false;}save.textContent=error.status===409?'Reopen to edit':'Retry save';}}
     };
   }
-  function drawEpisodes(){if(episodes.length&&episodeStatus.textContent==='No episodes yet.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
+  function drawEpisodes(){if(episodes.length&&episodeStatus.textContent==='No episodes yet.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){if(host.videoSearch&&!`${episode.name} ${episode.description||''}`.toLowerCase().includes(host.videoSearch.toLowerCase()))continue;const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
+  host.filterEpisodes=value=>{host.videoSearch=value;drawEpisodes();};
   let sceneCards,sceneStatus,sceneDetail,sceneMore,previewHost,scenesComplete=false,mutationPending=false,mutationUncertain=false,previewGeneration=0,playbackView=0;
   const orderedScenes=()=>Array.isArray(selectedEpisode?.sceneIds)?selectedEpisode.sceneIds.map(id=>scenes.find(scene=>scene.id===id)):[];
   const finishedVideo=asset=>sameGameKey(asset.key)&&asset.contentType?.startsWith('video/')&&asset.metadata?.extra?.relationshipRole==='finished';
@@ -2943,7 +2889,7 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   controls.className = "video-library-controls"; controls.setAttribute("aria-label", "Filter videos");
   cards.className = "video-library-cards"; summary.setAttribute("role", "status"); collectionsStatus.setAttribute("role", "status");
   const field = (text, element, id) => { const label = document.createElement("label"); label.textContent = text; element.id = id; label.htmlFor = id; const wrap = document.createElement("div"); wrap.append(label,element); controls.append(wrap); return element; };
-  const search = field("Search loaded videos",document.createElement("input"),"video-search"); search.type = "search"; search.maxLength = 300; search.value = view.search;
+  const search = field("Search videos",document.createElement("input"),"video-search"); search.type = "search";search.placeholder="Search videos and episodes"; search.maxLength = 300; search.value = view.search;
   const category = field("Relationship to the game",document.createElement("select"),"video-category");
   for (const [value,label] of [["all","All categories"],["playful-derivative","Playful derivatives"],["creative-reimagining","Creative reimaginings"],["grounded-adaptation","Grounded adaptations"],["canonical-source","Canonical sources"],["reference","References"],["unclassified","Unclassified / unknown"]]) category.add(new Option(label,value));
   category.value = view.category;
@@ -2957,8 +2903,12 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
   controls.append(collectionsStatus,retry,summary);
   const libraryDetails=document.createElement("details"), librarySummary=document.createElement("summary"), galleryHeading=document.createElement("h2");
-  libraryDetails.className="video-library-details";librarySummary.textContent="Filters and clip collections";galleryHeading.textContent="Finished videos";
+  libraryDetails.className="video-library-details";librarySummary.textContent="Clip collections";galleryHeading.textContent="Finished videos";
   libraryDetails.append(librarySummary,controls);videoHost.append(galleryHeading,libraryDetails,cards);
+  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filters=document.createElement('details'),filterLabel=document.createElement('summary'),filterFields=document.createElement('div');
+  filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filters.className='video-top-filters';filterLabel.textContent='Filters';filterFields.className='video-top-filter-fields';filterFields.append(category.parentNode,tag.parentNode,character.parentNode);filters.append(filterLabel,filterFields);filterBar.append(search.parentNode,filters);
+  workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(filterBar);workspace?.filterEpisodes?.(view.search);
+
   let displayed = assets, chosen = null, sequence = 0;
   const sceneActions = document.createElement("div"); sceneActions.className = "model-control-row";
   const createScene = document.createElement("button"), editScene = document.createElement("button"), sceneForm = document.createElement("form");
@@ -3097,7 +3047,7 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
     }
     void images();
   }
-  search.oninput = () => { view.search=search.value; draw(); };
+  search.oninput = () => { view.search=search.value;workspace?.filterEpisodes?.(view.search);draw(); };
   category.onchange = () => { view.category=category.value; draw(); };
   tag.onchange = () => { view.tag=tag.value; draw(); };
   character.onchange = () => { view.character=character.value; draw(); };
@@ -3221,6 +3171,8 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
   if(section === "videos") renderEpisodeWorkspace(epoch);else {const workspace=document.getElementById("episode-workspace");if(workspace){workspace.stopPreview?.();workspace.hidden=true;}}
+  const episodeCreate=document.getElementById("episode-create-action");
+  if(episodeCreate)episodeCreate.hidden=section!=="videos";
   const videoComposer=document.getElementById("editorial-video-composer");
   if(videoComposer)videoComposer.hidden=section!=="videos";
   document.getElementById("live-transcript").hidden = section!=="sessions" || !liveReaderOpen;
@@ -4032,6 +3984,7 @@ class RoomRecorder {
         this.liveEnabled=!!this.capabilities.transcriptionAvailable;
       }
       this.buttons();
+      if (this.draft?.status === 'archived' && this.capabilities.playbackAvailable === false) this.processingUnavailable();
     } catch(error) {this.say(error.message,true);this.el.start.disabled=true;}
   }
   async start() {
@@ -4148,12 +4101,20 @@ class RoomRecorder {
     const manifest=await this.put(new Blob([JSON.stringify(doc)],{type:'application/json'}),'recording.json','recording-manifest',{recordingId:this.draft.id});
     const completed=await api('/browser-recording/complete',{}, {body:{gameId:this.draft.gameId,recordingKey:manifest.key,manifestSha256:manifest.hex,status:'COMPLETE'}});
     this.draft.status='archived';this.draft.playbackJobId=completed.jobId;this.draft.processingStarted=Date.now();this.processingStarted=this.draft.processingStarted;await this.persist();this.buttons();this.say('Audio saved.');this.showResult(this.capabilities?.playbackAvailable===false?'Audio saved':'Preparing audio…',this.capabilities?.playbackAvailable===false?'ready':'processing');this.transcriptionAvailability();
-    this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;this.schedulePoll();
+    this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;
+    if (this.capabilities?.playbackAvailable === false) this.processingUnavailable();
+    this.schedulePoll();
     if(this.capabilities?.transcriptionAvailable) {
       this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='processing';this.el['final-status'].textContent='Transcribing…';
       try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'final',playbackJobId:completed.jobId}});this.draft.finalRequested=true;await this.persist();this.schedulePoll();}
       catch(error) {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say(`Audio saved. ${error.message || 'Transcription request failed.'} Retry to finish transcription.`,true);this.buttons();}
     }
+  }
+  processingUnavailable() {
+    this.processingUnavailableShown=true;
+    this.showResult('Audio saved', 'ready');
+    this.say(this.capabilities?.playbackUnavailableReason || 'Audio processing is unavailable. Your recording is saved and can be downloaded.', true);
+    this.el.recovery.hidden = false; this.el.resume.hidden = true; this.el.download.hidden = false;
   }
   transcriptionAvailability() {if(!this.capabilities?.transcriptionAvailable){this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='unavailable';this.el['final-status'].textContent=config.development?'Transcription unavailable locally':'Transcription not configured';this.el['final-status'].title=this.capabilities?.transcriptionUnavailableReason || 'Server transcription is not configured.';}}
   showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=true;this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
@@ -4167,7 +4128,14 @@ class RoomRecorder {
         const result=await api('/browser-transcriptions',{gameId:draft.gameId,recordingId:draft.id,mode,...(draft.playbackJobId?{playbackJobId:draft.playbackJobId}:{})});
         if(this.draft!==draft || state.gameId!==draft.gameId || !state.tokens) return;
         if(this.pollError){this.pollError=false;this.say('');}
+        if (mode === 'live' && draft.playbackJobId && !result.playback) {
+          this.processingUnavailableShown=true;
+          this.showResult('Audio saved · Status unavailable', 'waiting');
+          this.say('The processing job could not be found. Your original audio is saved and can be downloaded.', true);
+          this.el.recovery.hidden=false; this.el.resume.hidden=true; this.el.download.hidden=false;
+        }
         if(result.playback) {
+          if(result.playback.status==='DONE' && this.processingUnavailableShown){this.processingUnavailableShown=false;this.say('');}
           const playback=result.playback, blocked=['FAILED','BLOCKED','DEFERRED'].includes(playback.status), queued=['SUBMITTED','QUEUED'].includes(playback.status), delayed=Date.now()-(this.processingStarted || Date.now())>600000;pending ||= !['DONE','FAILED','BLOCKED','DEFERRED'].includes(playback.status);
           this.showResult(playback.status==='DONE'?'Audio ready':blocked?'Audio saved':queued?'Audio saved · Waiting for processing':delayed?'Audio saved · Processing delayed':'Preparing audio…',playback.status==='DONE'||blocked?'ready':queued||delayed?'waiting':'processing');
           if(blocked){this.say(playback.message || 'Audio processing failed. Original audio is saved and can be downloaded.',true);this.el.recovery.hidden=false;this.el.resume.hidden=true;this.el.download.hidden=false;}
@@ -4544,6 +4512,10 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
     if(isMap)references.insertBefore(cast,sources);
     if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
+    if (!isVideo) {
+      const write = document.createElement('button'); write.type = 'button'; write.className = 'text-link-button'; write.textContent = 'Write manually';
+      write.onclick = () => manualChapterEditor(); form.append(write);
+    }
     panel.append(form);
     const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
     const choices=(assets,destination,set)=>{for(const asset of assets){if(!isVideo&&destination===sources){transcriptSourceChoice(asset,destination,set,updateSubmit,gameId,current);continue;}const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
@@ -4583,7 +4555,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
         }
         const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:3,target,brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
         const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
-        if(!current())return;form.hidden=true;open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
+        if(!current())return;form.hidden=true;status.textContent='';panel.dataset.project='true';open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
         const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);
         editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
       }catch(error){if(current()){status.textContent=error.status===409?'This scene changed. Reopen it before generating.':error.message;if(error.status===400)pendingMap=null;for(const control of controls)control.disabled=false;if(map&&pendingMap)map.select.disabled=true;updateSubmit();if(error.status===409)submit.disabled=true;}}
@@ -4597,14 +4569,33 @@ async function showEditorialProgress(jobId, host, gameId, target) {
   if(state.gameId!==gameId||host.closest('[hidden]')||!host.isConnected)return;
   try {
     const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
+    if(!result.job)throw new Error('The generation job could not be found.');
+    if(target==='novel'){const create=document.querySelector('#novel .explorer-heading [data-generation-action]');if(create)create.hidden=false;}
+    const expanded=new Set([...host.querySelectorAll('details[open]')].map(node=>node.dataset.section));
     const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
     heading.textContent=result.job.creation?.title||(target==='video'?'Video':'Chapter');
-    const terminal=['FAILED','NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
-    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':result.job.status==='FAILED'?'Processing failed':'Processing';
-    const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Processing details';activity.append(summary,stages);
-    host.replaceChildren(heading,copy,activity);
+    const tasks=result.tasks || [], failed=['FAILED','BLOCKED','ATTENTION','DEFERRED'].includes(result.job.status);
+    const terminal=failed||['NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
+    const running=tasks.some(task=>task.status==='RUNNING')||result.job.status==='RUNNING';
+    const finished=tasks.filter(task=>task.status==='DONE').length;
+    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':failed?(result.job.status==='FAILED'?'Generation failed':'Generation unavailable'):running?'Generating…':'Waiting for worker';
+    host.replaceChildren(heading,copy);
+    if (failed) {
+      const error=document.createElement('p');error.className='error-text';error.setAttribute('role','alert');
+      error.textContent=result.job.message || result.job.error || tasks.find(task=>task.status==='FAILED')?.error || 'Generation stopped before completion.';host.append(error);
+      if(target==='novel' && config.development){const write=document.createElement('button');write.type='button';write.className='quiet-button';write.textContent='Write manually';write.onclick=()=>manualChapterEditor();host.append(write);}
+    } else if(!terminal && (tasks.length || running)) {
+      const progress=document.createElement('progress');progress.className='editorial-stage-progress';progress.setAttribute('aria-label','Generation stages');progress.max=1;
+      if(!running)progress.value=0;
+      host.append(progress);
+      const count=document.createElement('small');count.textContent=finished?`${finished} steps complete`:running?'Working on the current step':'Waiting for the next step';host.append(count);
+    } else if(!terminal) {
+      const waiting=document.createElement('p');waiting.className='muted';waiting.textContent='Generation starts when the processing worker is available.';host.append(waiting);
+    }
+    if(tasks.length){const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Stages';activity.dataset.section='stages';activity.open=expanded.has('stages');activity.append(summary,stages);host.append(activity);}
+    if(result.job.creation?.brief){const inputs=document.createElement('details'),label=document.createElement('summary'),prompt=document.createElement('p');label.textContent='Prompt';inputs.dataset.section='prompt';inputs.open=expanded.has('prompt');prompt.textContent=result.job.creation.brief;inputs.append(label,prompt);host.append(inputs);}
     if(target==='video'&&result.job.status==='READY_FOR_VIDEO_DISCUSSION'){const note=document.createElement('p');note.className='editorial-generation-note';note.textContent='Prompts prepared. Rendering requires approval.';host.append(note);}
-    for(const task of result.tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
+    for(const task of tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
       if(task.status==='DONE'&&task.output?.key){const link=document.createElement('a');link.textContent='View';link.href=`/games/${gameId}/media?asset=${encodeURIComponent(task.output.key)}`;item.append(' ',link);}stages.append(item);}
     if(target==='video'&&result.tasks.some(t=>t.stage==='video-storyboards'&&t.status==='DONE')) {
       const task=result.tasks.find(t=>t.stage==='video-storyboards');

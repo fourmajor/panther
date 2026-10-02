@@ -111,14 +111,15 @@
             <div class="settings-form-footer"><button class="primary-button" type="submit">Save game details</button><p id="game-settings-status" role="status"></p></div>
           </form>
         </section>
-        <section class="settings-card" id="game-style" hidden><div class="settings-card-intro"><h2>Generation defaults</h2><p>The visual direction for new images created for this game.</p></div>
+        <section class="settings-card" id="game-style" hidden><div class="settings-card-intro"><h2>Visual style</h2></div>
           <form id="game-style-form">
-            <label for="visual-style">Generated visuals</label><select id="visual-style" aria-describedby="style-help"></select>
-            <p id="style-help" class="field-help">Used for future generated images. Your existing images and uploaded originals stay as they are.</p>
-            <div class="settings-form-footer"><button class="primary-button" type="submit">Save style</button><p id="style-status" role="status"></p></div>
+            <select id="visual-style" aria-label="Generated visuals" hidden></select>
+
+            <p id="style-status" role="status"></p>
           </form>
         </section>
       </section>
+      <dialog id="style-preview-dialog" class="style-preview-dialog" aria-labelledby="style-preview-title"><div><h2 id="style-preview-title"></h2><button id="style-preview-close" class="quiet-button" type="button">Close preview</button></div><img id="style-preview-image" alt=""></dialog>
       <section class="welcome" id="welcome">
 
         <h1>Your game’s source material and finished stories, together.</h1>
@@ -160,10 +161,9 @@
             <section id="character-facts" class="character-facts" aria-label="Character information"></section>
           </div>
           <p id="character-no-model" hidden></p>
-          <div class="character-support-actions"><button class="quiet-button" type="button" data-character-panel="character-appearance-panel" aria-expanded="false">Appearances &amp; 3D</button><button class="quiet-button" type="button" data-character-panel="character-assets" aria-expanded="false">Media &amp; references</button></div>
-          <div id="character-appearance-panel" hidden>
+          <section id="character-appearance-panel" aria-label="Artwork"><h2>Artwork</h2><div id="character-artwork-empty" class="character-reference-empty"><button class="quiet-button" type="button" data-character-upload="portrait">Upload artwork</button><button class="quiet-button" type="button" data-character-generate>Generate artwork</button></div>
           <section class="appearance-history" id="appearance-history" aria-label="Appearance versions">
-            <div><h2>Appearances</h2></div>
+
             <div class="appearance-pickers">
               <label for="appearance-state">Physical appearance <select id="appearance-state" aria-label="Physical appearance"></select></label>
               <label for="model-version">Artwork edition <select id="model-version" aria-label="Artwork edition"></select></label>
@@ -171,7 +171,6 @@
             </div>
             <p id="appearance-status" role="status"></p>
             <p id="appearance-story"></p>
-            <details><summary>Recorded selection changes</summary><ol id="appearance-events"></ol></details>
             <div id="appearance-downloads" class="appearance-pickers" aria-label="Download selected appearances"></div>
             <img id="portrait-version-preview" class="portrait-version-preview" alt="" hidden>
           </section>
@@ -233,9 +232,9 @@
               </dl>
             </aside>
           </div>
-          </div>
-          <section id="character-assets" aria-label="Assets featuring this character" hidden>
-            <div class="explorer-heading"><h2>Featuring this character</h2><button id="character-assets-refresh" class="quiet-button" type="button" hidden>Refresh assets</button></div>
+          </section>
+          <section id="character-assets" aria-label="References">
+            <div class="explorer-heading"><h2>References</h2><button class="quiet-button" type="button" data-character-upload="reference">Upload reference</button></div><input id="character-reference-file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div id="character-reference-empty" class="character-reference-empty" hidden></div>
             <p id="character-assets-status" role="status"></p>
             <ul id="character-assets-list"></ul>
           </section>
@@ -246,7 +245,6 @@
         <div class="explorer-heading">
           <div><h1>Novel</h1></div>
           <button class="quiet-button" id="novel-refresh" type="button" hidden>Refresh chapters</button>
-          <details class="chapter-secondary-actions"><summary>More</summary><button class="quiet-button" id="manual-chapter-create" type="button">Write chapter</button></details>
         </div>
         <form id="manual-chapter-form" class="character-edit-form" hidden></form>
         <p id="novel-status" class="status" role="status"></p>

@@ -238,7 +238,7 @@ test('explicit novel references can preview and open same-game video collections
   expect(requested).not.toContain('other');
   await preview.getByRole('link',{name:'Open linked page'}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
-  await page.getByText('Filters and clip collections',{exact:true}).click();await expect(page.getByLabel('Clip collection',{exact:true})).toHaveValue('favorites');
+  await page.getByText('Clip collections',{exact:true}).click();await expect(page.getByLabel('Clip collection',{exact:true})).toHaveValue('favorites');
 });
 
 for(const width of [1280,390]) test(`novel hover previews show summaries and images without obscuring controls at ${width}`,async({page})=>{
@@ -430,14 +430,14 @@ for (const width of [1280,390]) test(`typed narrative links and character appear
   await prose.getByRole('link',{name:'The navigator',exact:true}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-name')).toHaveText('Mira Vale');
-  await page.getByRole('button',{name:'Media & references',exact:true}).click();
+  await expect(page.locator('#character-assets')).toBeVisible();
   const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
   await appearance.scrollIntoViewIfNeeded();
   await accessibleInViewport(appearance,width);
   await page.screenshot({path:test.info().outputPath(`character-assets-${width}.png`),fullPage:true});
   await appearance.click(); await expect(page.locator('#preview-body img')).toBeVisible();
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click(); await expect(appearance).toBeVisible();
+  await page.reload();await expect(page.locator("#character-assets")).toBeVisible(); await expect(appearance).toBeVisible();
 });
 
 test('ambiguous titles, explicit disambiguation, missing and hostile targets are safe',async({page})=>{
@@ -485,14 +485,14 @@ test('character assets use tags across kinds, not names or provenance; refresh e
     {...base,key:'games/campaign-a/assets/c/original/video.mp4',metadata:{title:'Untagged derived video'},sourceKeys:['games/campaign-a/assets/a/original/video.mp4']},
   ];
   await page.route(`${api}/assets*`,route=>broken?route.fulfill({headers,status:503,json:{error:'Unavailable'}}):route.fulfill({headers,json:{assets,cursor:null}}));
-  await page.goto(`${origin}/games/campaign-a/characters/mira`);await page.getByRole("button",{name:"Media & references",exact:true}).click();
+  await page.goto(`${origin}/games/campaign-a/characters/mira`);await expect(page.locator("#character-assets")).toBeVisible();
   await expect(page.locator('#character-assets-status')).toContainText('Unavailable');
-  broken=false; await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click();
+  broken=false; await page.reload();await expect(page.locator("#character-assets")).toBeVisible();
   await expect(page.locator('#character-assets-list a')).toHaveCount(1);
   await expect(page.locator('#character-assets-list')).toContainText('Tagged video');
   let release, arrived; const waiting=new Promise(r=>{arrived=r;});
   await page.route(`${api}/assets*`,async route=>{arrived(); await new Promise(r=>{release=r;}); await route.fulfill({headers,json:{assets,cursor:null}});});
-  await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click(); await waiting;
+  await page.reload();await expect(page.locator("#character-assets")).toBeVisible(); await waiting;
   await selectGame(page,'test-b'); release();
   await expect(page).toHaveURL(`${origin}/games/test-b/characters`);
   await expect(page.locator('#character-profile')).not.toBeVisible();
@@ -506,9 +506,9 @@ test('migrated metadata refreshes character associations without changing the fi
     key, name:'map.png', contentType:'image/png', kind:'map', sourceKeys:[], lastModified:'2026-01-01T00:00:00Z',
     metadata:{schemaVersion:1,title:'Harbor chart',category:'reference',characterIds:migrated?['mira']:[],tags:[],sourceKeys:[],extra:{relationshipRole:'finished'}}
   }],cursor:null}}));
-  await page.goto(`${origin}/games/campaign-a/characters/mira`);await page.getByRole("button",{name:"Media & references",exact:true}).click();
+  await page.goto(`${origin}/games/campaign-a/characters/mira`);await expect(page.locator("#character-assets")).toBeVisible();
   await expect(page.locator('#character-assets-list a')).toHaveCount(0);
-  migrated=true; await page.reload();await page.getByRole("button",{name:"Media & references",exact:true}).click();
+  migrated=true; await page.reload();await expect(page.locator("#character-assets")).toBeVisible();
   const link=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute('href',`/games/campaign-a/media?asset=${encodeURIComponent(key)}`);
@@ -538,12 +538,14 @@ for(const width of [1280,390]) test(`manually add a chapter and preserve its ear
     return record?route.fulfill({headers,json:record}):route.fallback();
   });
   await page.goto(`${origin}/games/campaign-a/novel`);
-  await page.locator('#novel .chapter-secondary-actions summary').click();
-  await page.getByRole('button',{name:'Write chapter',exact:true}).click();
+  await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+  await page.getByRole('button',{name:'Write manually',exact:true}).click();
   const form=page.locator('#manual-chapter-form');
+  await expect(page.getByRole('button',{name:'Generate chapter',exact:true})).toBeHidden();
+  await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
   await form.getByLabel('Chapter title').fill('The River');
   await form.getByLabel('Chapter text').fill('An explicitly authored story.');
-  await form.getByRole('button',{name:'Add chapter'}).click();
+  await form.getByRole('button',{name:'Save chapter'}).click();
   await expect(page.locator('#novel-prose')).toContainText('An explicitly authored story.');
   await page.getByRole('button',{name:'Edit chapter',exact:true}).click();
   await form.getByLabel('Chapter text').fill('A revised authored story.');

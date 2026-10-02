@@ -151,7 +151,8 @@ for(const width of [1280,390])test(`Novel has one prompt action and supports a c
  const action=page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true});
  await expect(action).toBeVisible();await expect(action).toBeInViewport();
  expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
- await expect(page.getByRole('button',{name:'Write chapter',exact:true})).toBeHidden();
+ await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Write manually',exact:true})).toHaveCount(0);
  await action.click();const composer=page.locator('#editorial-novel-composer');
  await expect(composer.locator('textarea')).toHaveCount(1);await expect(composer.getByLabel('Title',{exact:true})).toHaveCount(0);
  await composer.getByLabel('Prompt',{exact:true}).fill('Describe a fictional sunrise over the harbor.');
@@ -178,4 +179,26 @@ test('An uncertain summary regeneration retries the same operation',async({page,
  await page.getByRole('button',{name:'Review First session',exact:true}).click();const dialog=page.getByRole('dialog');
  await dialog.getByRole('button',{name:'Regenerate summary',exact:true}).click();await dialog.getByRole('button',{name:'Retry summary',exact:true}).click();
  expect(operations).toHaveLength(2);expect(operations[0]).toMatch(/^[a-f0-9]{32}$/);expect(operations[1]).toBe(operations[0]);
+});
+
+for(const width of [1280,390]) test(`Chapter progress shows real activity and actionable failure at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});await fixture(context);let status='RUNNING';
+ await page.route('**/editorial-jobs?*',route=>{
+  if(!new URL(route.request().url()).searchParams.has('jobId'))return route.fallback();
+  return route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{job:{jobId:'a'.repeat(64),status,creation:{title:'A river crossing',brief:'Follow the party across the river.'},...(status==='FAILED'?{message:'The worker stopped before finishing. Start the worker to continue.'}:{})},tasks:status==='FAILED'?[]:[{stage:'novel-draft',status:'RUNNING'}]}});
+ });
+ await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ const composer=page.locator('#editorial-novel-composer');await composer.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await composer.locator('form').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await expect(composer.getByRole('progressbar',{name:'Generation stages'})).toBeVisible();await expect(composer.getByRole('progressbar')).not.toHaveAttribute('value');
+ expect(await composer.getByRole('progressbar').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-pulse');
+ await page.screenshot({path:test.info().outputPath(`chapter-active-progress-${width}.png`),fullPage:true});
+ await composer.locator('summary').filter({hasText:/^Prompt$/}).click();await expect(composer).toContainText('Follow the party across the river.');
+ status='FAILED';await expect(composer).toContainText('Generation failed',{timeout:10000});await expect(composer.getByRole('alert')).toContainText('Start the worker');
+ await expect(composer.locator('summary').filter({hasText:/^Stages$/})).toHaveCount(0);await expect(composer.locator('summary').filter({hasText:'Processing details'})).toHaveCount(0);
+ await expect(composer.locator('details[open]')).toContainText('Follow the party across the river.');
+ await expect(page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true})).toBeVisible();
+ await page.locator('#novel .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await expect(composer.getByLabel('Prompt',{exact:true})).toBeVisible();
+ await expect(composer.getByLabel('Prompt',{exact:true})).toHaveValue('');
+ await expect(composer.getByRole('alert')).toHaveCount(0);
 });

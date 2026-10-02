@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "purpose": "UI visual style previews; fictional subjects, no campaign data",
+  "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+  "previews": [
+    {
+      "id": "photorealistic",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Photorealistic cinematic fantasy photograph, natural human proportions, convincing real materials and subtle film lighting.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Photorealistic cinematic fantasy photograph, natural human proportions, convincing real materials and subtle film lighting.",
+      "file": "photorealistic.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "146361a6163c562766c9d33a564cf64a9159461b40b9c16f7790551c12bf6f90",
+      "sha256": "08ea38f29144ea67d0ced3ddfa33e450e75932af812a1dcfa26883e93b883426",
+      "sourceFile": "exec-2b55fe83-3fa2-461a-938b-a90ee2cb2cdb.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "anime",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Anime fantasy illustration with clean ink linework, expressive character faces and rich cel shading.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Anime fantasy illustration with clean ink linework, expressive character faces and rich cel shading.",
+      "file": "anime.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "c0b3bacef77bb76ff6f18915a5a89eb581b294255a1a0c7c8fe259e5596a934e",
+      "sha256": "c6e55ede3bb96284e75c3df82fdea0cb26e86043e12eca230c548e5245464e3e",
+      "sourceFile": "exec-61e2d9e6-9497-4cfa-93de-76d1a7129ade.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "illustrated-fantasy",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Illustrated fantasy book cover art with richly painted detail and dramatic atmospheric depth.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Illustrated fantasy book cover art with richly painted detail and dramatic atmospheric depth.",
+      "file": "illustrated-fantasy.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "02ebbf91f74329ca5a6acb09f38a2351c59dab40fbb4d5fc3824628db460521e",
+      "sha256": "957a40226380630e76eec133912fea1a33c4d341e2fefecf6fd465e12d84aa90",
+      "sourceFile": "exec-1b4e23ba-912c-4fd7-a96e-b098f3a835fb.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "comic-book",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Comic book illustration with confident ink outlines, bold graphic shapes and crisp halftone shading.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Comic book illustration with confident ink outlines, bold graphic shapes and crisp halftone shading.",
+      "file": "comic-book.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "94a7dc9258b14513e2bfdbd53ffebe8eabab07ab2a3023bcf4fc2e0877cf9ecb",
+      "sha256": "4cbb6e6135bb9a09432b39e1667d99606e1f1133cb7e3c394405738f921220ba",
+      "sourceFile": "exec-d827c642-8e19-4c11-b847-9cefa88d6eec.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "watercolor",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Traditional watercolor painting with translucent washes, soft pigment blooms and visible textured paper.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Traditional watercolor painting with translucent washes, soft pigment blooms and visible textured paper.",
+      "file": "watercolor.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "cc174e36528074af7f4ccf813d5376eb67eaf7bd043122b442a7fad02fc050b4",
+      "sha256": "c7e566cb1a189f540a8ab57ccee9dc0265e44cc3c71eee097356775dcde12c73",
+      "sourceFile": "exec-f8580d6f-8ac1-454f-aedc-a91fa2e46a08.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "oil-painting",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Traditional oil painting with visible brushwork, rich layered paint and classical chiaroscuro.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Traditional oil painting with visible brushwork, rich layered paint and classical chiaroscuro.",
+      "file": "oil-painting.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "8a4a0c0b9016f270b95121be02c9c4525a371f09222260bed0611a086a471947",
+      "sha256": "d033f3c5fa405ad5f16d06963088592f82f1bac22b98219e64a97f7f0dd6a214",
+      "sourceFile": "exec-bbe8c6a5-e285-4ac3-9ab8-ced3245c03c7.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "stylized-3d",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Stylized 3D animated feature render with sculpted character forms, tactile materials and cinematic lighting.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Stylized 3D animated feature render with sculpted character forms, tactile materials and cinematic lighting.",
+      "file": "stylized-3d.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "08b8d3843ae4cb984c551e41400e2a56f44150a1045fa42d5f4a6565deba0317",
+      "sha256": "588524ec8fc1834d27e452ce8fedeeedb50aa666d28cac510ba46b7e67e9c467",
+      "sourceFile": "exec-a173b9e3-a6df-4ffc-8b22-a694fb0eae62.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    },
+    {
+      "id": "pixel-art",
+      "basePrompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.",
+      "stylePrompt": "Pixel art fantasy scene with crisp visible square pixels, a deliberate limited palette and readable character silhouettes.",
+      "prompt": "Create a landscape image showing the full group of four fictional fantasy adventurers: an armored human swordswoman, a dwarf explorer, an elf mage, and a halfling archer. They stand together in a lantern-lit stone courtyard, with distant mountains and a castle visible behind them. Keep all four characters fully visible in one coherent scene. No text, logos, borders or watermark.\nStyle/medium: Pixel art fantasy scene with crisp visible square pixels, a deliberate limited palette and readable character silhouettes.",
+      "file": "pixel-art.webp",
+      "width": 1536,
+      "height": 1024,
+      "sourceSha256": "765b95585346fb6e40038e081d370157d191469873df7b41f3d1250787df14cd",
+      "sha256": "397daa26b8ca04f562b195e3fd418b89bcf08b534a8dcb61d442b77246c6c6ec",
+      "sourceFile": "exec-7856a838-ffe2-40a0-a9ac-eea29ab3713d.png",
+      "generation": {
+        "schemaVersion": 1,
+        "method": "ai-assisted",
+        "provider": "OpenAI",
+        "inference": "remote",
+        "execution": "local",
+        "tool": "image_gen.imagegen",
+        "cost": {
+          "status": "unknown"
+        }
+      },
+      "conversion": {
+        "tool": "cwebp",
+        "quality": 88,
+        "resize": false,
+        "version": "1.6.0"
+      },
+      "inspection": {
+        "completeGroup": true,
+        "landscape": true,
+        "noTextOrLogo": true
+      },
+      "modelStatus": "unknown: tool did not report model identity/version"
+    }
+  ]
+}

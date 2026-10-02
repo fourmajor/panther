@@ -768,3 +768,8 @@ test("transcript summaries use authenticated source-pinned subscription worker r
   const fn = (Object.values(template.findResources("AWS::Lambda::Function")) as any[]).find(fn=>fn.Properties.Handler==="transcript_summaries.handler");
   assert.equal(fn.Properties.Environment.Variables.OPENAI_API_KEY,undefined);
 });
+
+test("actual raster style previews are packaged separately from private game assets", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("Custom::CDKBucketDeployment", {DestinationBucketKeyPrefix:"style-previews",Prune:false,DistributionPaths:["/style-previews/*"],SystemMetadata:Match.objectLike({"cache-control":"public,max-age=3600"})});
+});
