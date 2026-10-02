@@ -24,6 +24,24 @@
 @media(prefers-reduced-motion:reduce) { .loading-spinner { animation:none; border-style:dotted; } }
 .movie-frame > .loading-state,.movie-portrait > .loading-state { padding:1rem; }
 
+/* Page activity stays outside the document flow so navigation never inserts a row. */
+#page-loading,
+:is(#characters-status, #novel-status, #library-status, #status):has(> .loading-state) {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  width: min(24rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  box-shadow: 0 0.5rem 2rem rgb(0 0 0 / 20%);
+  pointer-events: none;
+}
+
 /* The cutting room: cinematic reference board, quiet paper screenplay, explicit spend gate. */
 #movie-workspace { margin-bottom: 3rem; font-family:Arial,Helvetica,sans-serif; }
 main:has(.movie-hero) { padding-top:2rem; }

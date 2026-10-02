@@ -5,6 +5,70 @@ const { MODEL_VIEWER_BUNDLE_PATH } = require('../dist/lib/panther-media-explorer
 
 const games = [{ id: 'campaign-a', name: 'Campaign A', purpose: 'campaign', ruleset: null }, { id: 'test-b', name: 'A Long Test Game Name', purpose: 'test', ruleset: 'Synthetic System (First Edition)' }];
 const jsonHeaders = { 'access-control-allow-origin': 'https://panther.place' };
+
+for(const width of [1280,390]) {
+  test(`navigation and headings stay still while pages load at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});
+    await fixture(page);
+    let pendingPath, release;
+    let pending = Promise.resolve();
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',async route=>{
+      const pathname=new URL(route.request().url()).pathname;
+      if(pathname===pendingPath) await pending;
+      const bodies={
+        '/assets':{assets:[],cursor:null}, '/novel':{chapters:[],cursor:null},
+        '/novel-stories':{records:[],cursor:null}, '/novel-books':{records:[],cursor:null},
+        '/tv-series':{records:[],cursor:null}, '/tv-episodes':{records:[],cursor:null},
+        '/video-collections':{collections:[],cursor:null},
+      };
+      if(bodies[pathname]) return route.fulfill({json:bodies[pathname],headers:jsonHeaders});
+      return route.fallback();
+    });
+    await page.goto('https://panther.place/media');
+    await expect(page.getByText('campaign-only.flac',{exact:true})).toBeVisible();
+    await expect(page.locator('#status')).not.toBeVisible();
+    const toolbar=page.locator('#game-toolbar');
+    const baseline=(await toolbar.boundingBox()).y;
+    // Observe the brief sign-in spinner too, before cached navigation resolves.
+    await page.evaluate(()=>{
+      window.toolbarPositions=[];
+      window.navigationObserver=new MutationObserver(()=>{
+        const toolbar=document.getElementById('game-toolbar');
+        if(!toolbar.hidden) window.toolbarPositions.push(toolbar.getBoundingClientRect().y);
+      });
+      window.navigationObserver.observe(document.querySelector('main'),{subtree:true,childList:true,attributes:true});
+    });
+    for(const [name,path,status,heading] of [
+      ['Characters','/characters','#characters-status','#characters h1'],
+      ['Audio','/assets','#library-status','#library-title'],
+      ['Transcripts','/assets','#library-status','#library-title'],
+      ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
+      ['Videos','/assets','#library-status','#library-title'],
+      ['Media','/objects','#status','#explorer h1'],
+    ]) {
+      // Media is cached on return; refresh exercises its loading state.
+      pendingPath=path; pending=new Promise(resolve=>{release=resolve;});
+      await page.locator('#primary-nav').getByRole('link',{name,exact:true}).click();
+      if(name==='Media') await page.getByRole('button',{name:'Refresh',exact:true}).click();
+      const activity=page.locator(status).locator('.loading-state');
+      await expect(activity).toBeVisible();
+      await expect(activity).toBeInViewport();
+      const title=page.locator(heading);
+      await expect(title).toBeVisible();
+      const loadingTop=(await title.boundingBox()).y;
+      expect((await toolbar.boundingBox()).y).toBeCloseTo(baseline,1);
+      await page.screenshot({path:test.info().outputPath(`navigation-${name.toLowerCase()}-loading-${width}.png`)});
+      release(); pendingPath=null;
+      await expect(activity).toHaveCount(0);
+      expect((await title.boundingBox()).y).toBeCloseTo(loadingTop,1);
+      expect((await toolbar.boundingBox()).y).toBeCloseTo(baseline,1);
+    }
+    const positions=await page.evaluate(()=>{window.navigationObserver.disconnect();return window.toolbarPositions;});
+    expect(positions.length).toBeGreaterThan(0);
+    for(const y of positions) expect(y).toBeCloseTo(baseline,1);
+  });
+}
+
 async function fixture(page) {
   const requests = [];
   const styles = new Map(games.map(g => [g.id, 'photorealistic']));
