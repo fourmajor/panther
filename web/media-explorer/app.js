@@ -272,7 +272,7 @@ async function completeLogin() {
   markLogout(false);
   storeTokens(tokens);
   sessionStorage.removeItem("panther.oauth");
-  window.history.replaceState({}, "", saved.returnPath || "/media");
+  window.history.replaceState({}, "", saved.returnPath || "/dashboard");
 }
 
 async function logout() {

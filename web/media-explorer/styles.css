@@ -93,7 +93,7 @@ main:has(.movie-hero) { padding-top:2rem; }
 .movie-shot-meta .movie-footage-plan { border-top:1px solid #45463b; padding-top:.75rem; font-size:.8rem; line-height:1.5; }
 @media(max-width:600px) { .movie-shot-grid { grid-template-columns:1fr; } }
 .movie-shot-state { display:inline-block; font-size:.7rem; color:#d9c192; }
-.movie-inspector { margin-top:1.5rem; padding:1.5rem; border:1px solid var(--line); border-radius:.8rem; background:var(--panel); }
+.movie-inspector { min-height:calc(100svh - 3rem); box-sizing:border-box; scroll-margin-top:1rem; margin-top:1.5rem; padding:1.5rem; border:1px solid var(--line); border-radius:.8rem; background:var(--panel); }
 .movie-inspector h3 { font:400 1.6rem Georgia,serif; margin:.5rem 0 1rem; }
 .movie-inspector > p { line-height:1.65; }
 .movie-shot-facts > div { display:grid; grid-template-columns:6.5rem minmax(0,1fr); gap:1rem; padding:.75rem 0; border-top:1px solid var(--line); font-size:.88rem; line-height:1.6; }

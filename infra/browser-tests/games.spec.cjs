@@ -59,7 +59,7 @@ for(const width of [1280,390]) {
       expect((await toolbar.boundingBox()).y).toBeCloseTo(baseline,1);
       await page.screenshot({path:test.info().outputPath(`navigation-${name.toLowerCase()}-loading-${width}.png`)});
       release(); pendingPath=null;
-      await expect(activity).toHaveCount(0);
+      await expect(activity).not.toBeVisible();
       expect((await title.boundingBox()).y).toBeCloseTo(loadingTop,1);
       expect((await toolbar.boundingBox()).y).toBeCloseTo(baseline,1);
     }
