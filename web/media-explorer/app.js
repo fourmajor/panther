@@ -4344,8 +4344,8 @@ function renderEditorialComposer(target, epoch) {
   const projects=document.createElement('div');projects.className='editorial-existing-projects';host.append(projects);
   const loadProjects=async(cursor)=>{
     try {const result=await api('/editorial-jobs',{gameId,cursor});if(!current())return;
-      for(const job of result.jobs||[])if(job.creation?.target===target){
-        const button=document.createElement('button');button.type='button';button.className='quiet-button';button.textContent=job.creation.title;
+      for(const job of result.jobs||[])if(!job.creation||job.creation.target===target){
+        const button=document.createElement('button');button.type='button';button.className='quiet-button';button.textContent=job.creation?.title||`Session ${job.sessionId||'adaptation'} · automatic`;
         button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
       }
       if(result.cursor){const more=document.createElement('button');more.type='button';more.className='text-link-button';more.textContent='More projects';more.onclick=()=>{more.remove();void loadProjects(result.cursor);};projects.append(more);}
@@ -4395,9 +4395,9 @@ async function showEditorialProgress(jobId, host, gameId, target) {
   try {
     const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
     const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
-    heading.textContent=result.job.creation?.title||'Editorial project';
+    heading.textContent=result.job.creation?.title||`Session ${result.job.sessionId||'adaptation'} · automatic`;
     const terminal=['FAILED','NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
-    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Planning ready':result.job.status==='FAILED'?'Processing failed':'Processing';
+    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Storyboard ready · awaiting your approval before video generation':result.job.status==='FAILED'?'Processing failed':'Processing';
     const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Processing details';activity.append(summary,stages);
     host.replaceChildren(heading,copy,activity);
     for(const task of result.tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
