@@ -328,6 +328,35 @@ h1 {
   line-height: 1.65;
 }
 
+.sign-in-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+}
+
+.text-link-button {
+  min-height: 44px;
+  padding: 0.5rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.text-link-button:hover,
+.text-link-button:focus-visible {
+  color: var(--accent);
+}
+
+.text-link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
 .primary-button,
 .quiet-button,
 .load-more,
