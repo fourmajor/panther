@@ -19,15 +19,9 @@ export class TVLibrary extends Construct {
         CATALOG_TABLE:props.catalogTable.tableName,MODEL_PUBLISHERS:props.publishers},memorySize:256,timeout:Duration.seconds(30),
       logGroup:new logs.LogGroup(this,"Logs",{retention:logs.RetentionDays.ONE_MONTH})});
     props.browseTable.grant(fn,"dynamodb:GetItem","dynamodb:Query","dynamodb:BatchGetItem");
-    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["tv-library#*","tv-library-history#*","tv-library-ops#*","tv-library-order#*"]}}}));
-    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:DeleteItem"],resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["tv-library-order#*"]}}}));
-    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["tv-library#series#*","v3#*#all"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"],resources:[props.catalogTable.tableArn],
       conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["GAMES"]}}}));
     const integration=new integrations.HttpLambdaIntegration("Integration",fn);
-    for(const route of ["/tv-series","/tv-episodes"])props.api.addRoutes({path:route,methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration,authorizer:props.authorizer});
+    for(const route of ["/tv-series","/tv-episodes"])props.api.addRoutes({path:route,methods:[api.HttpMethod.GET],integration,authorizer:props.authorizer});
   }
 }

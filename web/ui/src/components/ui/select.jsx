@@ -4,10 +4,10 @@ import { Check, ChevronDown } from "lucide-react";
 
 // Radix primitives, styled with the shadcn Select composition. The popup is
 // portalled so header overflow and small-screen navigation cannot clip it.
-export function GameSelect({ games, value, disabled, onChange }) {
+export function GameSelect({ games, value, disabled, onChange, label="Current game", id="game-select-trigger", placeholder="Choose game" }) {
   return <Primitive.Root value={value || undefined} onValueChange={onChange} disabled={disabled}>
-    <Primitive.Trigger id="game-select-trigger" aria-label="Current game" className="panther-select-trigger flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50">
-      <Primitive.Value placeholder="Choose game" />
+    <Primitive.Trigger id={id} aria-label={label} className="panther-select-trigger flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50">
+      <Primitive.Value placeholder={placeholder} />
       <Primitive.Icon><ChevronDown className="h-4 w-4 opacity-60" aria-hidden="true" /></Primitive.Icon>
     </Primitive.Trigger>
     <Primitive.Portal>

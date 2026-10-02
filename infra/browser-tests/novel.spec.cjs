@@ -238,7 +238,7 @@ test('explicit novel references can preview and open same-game video collections
   expect(requested).not.toContain('other');
   await preview.getByRole('link',{name:'Open linked page'}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
-  await expect(page.getByLabel('Scene',{exact:true})).toHaveValue('favorites');
+  await page.getByText('Filters and clip collections',{exact:true}).click();await expect(page.getByLabel('Clip collection',{exact:true})).toHaveValue('favorites');
 });
 
 for(const width of [1280,390]) test(`novel hover previews show summaries and images without obscuring controls at ${width}`,async({page})=>{

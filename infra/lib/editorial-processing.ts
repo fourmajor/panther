@@ -34,7 +34,7 @@ export class EditorialProcessing extends Construct {
     const environment = { ASSET_BUCKET_NAME: props.bucket.bucketName,
       CATALOG_READERS: props.accessEnvironment.CATALOG_READERS,
       MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS,
-      EDITORIAL_TABLE: table.tableName, EDITORIAL_PLAN: JSON.stringify(plan), ASSET_BROWSE_TABLE: props.browseTable.tableName };
+      CATALOG_TABLE: props.catalogTable.tableName, EDITORIAL_TABLE: table.tableName, EDITORIAL_PLAN: JSON.stringify(plan), ASSET_BROWSE_TABLE: props.browseTable.tableName };
     const fn = new lambda.Function(this, "Broker", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
       handler: "editorial_jobs.handler", code, environment,
@@ -43,6 +43,7 @@ export class EditorialProcessing extends Construct {
     });
     table.grantReadWriteData(fn);
     props.browseTable.grant(fn, "dynamodb:Query", "dynamodb:GetItem");
+    props.catalogTable.grant(fn, "dynamodb:GetItem");
     props.bucket.grantRead(fn, "games/*");
     const failed = new tasks.LambdaInvoke(this, "RecordFailure", {
       lambdaFunction: fn, payload: sfn.TaskInput.fromObject({ operation: "fail", "jobId.$": "$.jobId" }),
@@ -70,8 +71,11 @@ export class EditorialProcessing extends Construct {
       .otherwise(sequence(plan.video));
     const branches = new sfn.Parallel(this, "Adaptations", { resultPath: sfn.JsonPath.DISCARD })
       .branch(novelBranch.afterwards(), videoBranch.afterwards());
+    const correction = new sfn.Choice(this, "TranscriptCorrectionRequired")
+      .when(sfn.Condition.stringEquals("$.sourceMode", "prompt"), new sfn.Pass(this, "SkipTranscriptCorrection"))
+      .otherwise(sequence(plan.correction.slice(1)));
     const pipeline = new sfn.Parallel(this, "ProtectedPipeline", { resultPath: sfn.JsonPath.DISCARD })
-      .branch(sequence(plan.correction).next(branches));
+      .branch(stage(plan.correction[0]).next(correction.afterwards()).next(branches));
     pipeline.addCatch(failed, { resultPath: "$.failure" });
     const finish = new tasks.LambdaInvoke(this, "ReadyForVideoDiscussion", {
       lambdaFunction: fn, payload: sfn.TaskInput.fromObject({ operation: "finish", "jobId.$": "$.jobId" }),

@@ -105,6 +105,46 @@ class Store:
             db.execute("INSERT INTO records VALUES ('history',?,?,?)", (key + ":" + updated["revision"], key, json.dumps(history)))
         return {"character": updated}
 
+    def save_story_entity(self, kind, body):
+        game, identity, operation = body["gameId"], body["id"], body["operationId"]
+        self.game(game)
+        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type"} if kind == "scene" else set())
+        if set(body) != expected_fields:
+            raise ValueError("Invalid episode or scene edit")
+        if kind not in ("episode", "scene") or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity) or not re.fullmatch(r"[a-f0-9]{32}", operation):
+            raise ValueError("Invalid episode, scene or operation ID")
+        if not isinstance(body.get("name"), str) or not 1 <= len(body["name"].strip()) <= 160 or not isinstance(body.get("description", ""), str) or len(body.get("description", "")) > 4000:
+            raise ValueError("Enter a title and a description under 4000 characters")
+        episode_id = body.get("episodeId") if kind == "scene" else None
+        if kind == "scene" and (not isinstance(episode_id, str) or not self.get("episode", game + ":" + episode_id) or body.get("type") not in {"general", "opener", "travel", "action", "dialogue"}):
+            raise ValueError("Choose an episode in this game and a valid scene type")
+        key = game + ":" + ((episode_id + ":") if episode_id else "") + identity
+        payload = json.dumps(body, sort_keys=True)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous_operation = db.execute("SELECT payload,response FROM operations WHERE id=?", (operation,)).fetchone()
+            if previous_operation:
+                if previous_operation[0] != kind + ":" + payload:
+                    raise FileExistsError("Operation reused with different content")
+                return json.loads(previous_operation[1])
+            row = db.execute("SELECT payload FROM records WHERE kind=? AND id=?", (kind, key)).fetchone()
+            previous = json.loads(row[0]) if row else None
+            if body.get("expectedRevision") != (previous["revision"] if previous else None):
+                raise FileExistsError("This record changed. Reopen it before saving.")
+            record = {"schemaVersion": 1, "entityType": "Episode" if kind == "episode" else "Scene", "gameId": game, "id": identity, "name": body["name"].strip(), "description": body.get("description", "").strip(), "revision": uuid.uuid4().hex, "updatedAt": datetime.now(timezone.utc).isoformat()}
+            record["createdAt"] = previous["createdAt"] if previous else record["updatedAt"]
+            if kind == "episode":
+                record["position"] = previous["position"] if previous else int(time.time() * 1000)
+            if kind == "scene":
+                count = db.execute("SELECT count(*) FROM records WHERE kind='scene' AND game=? AND json_extract(payload,'$.episodeId')=?", (game, episode_id)).fetchone()[0]
+                record.update(episodeId=episode_id, type=body["type"], position=previous["position"] if previous else count)
+            db.execute("INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload", (kind, key, game, json.dumps(record)))
+            history = {"record": record, "previousRecord": previous, "recordedAt": record["updatedAt"]}
+            db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind + "-history", key + ":" + record["revision"], game, json.dumps(history)))
+            response = {"record": record}
+            db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, kind + ":" + payload, json.dumps(response)))
+        return response
+
     def objects(self, game):
         with self.connect() as db:
             rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? ORDER BY created DESC", (game,)).fetchall()
@@ -174,6 +214,17 @@ class Handler(BaseHTTPRequestHandler):
                 for values in groups.values():
                     values.sort(key=lambda value: str(value.get("updatedAt", value.get("publishedAt", value.get("lastModified", "")))), reverse=True)
                 result = {"complete": True, "groups": {k: v[:5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
+            elif path in ("/episodes", "/scenes"):
+                store.game(game)
+                kind = "episode" if path == "/episodes" else "scene"
+                if kind == "scene":
+                    if not store.get("episode", game + ":" + q.get("episodeId", "")):
+                        raise LookupError("Episode not found in this game")
+                    records = [r for r in store.list(kind, game) if r["episodeId"] == q["episodeId"]]
+                    records.sort(key=lambda record: record["position"])
+                else:
+                    records = store.list(kind, game)
+                result = {"records": records, "cursor": None}
             elif path == "/characters":
                 result = {"characters": store.list("character", game), "cursor": None}
             elif path in ("/character", "/character-details", "/character-details/history"):
@@ -271,6 +322,8 @@ class Handler(BaseHTTPRequestHandler):
             if body["action"] == "get":
                 return self.send(profile)
             return self.send({"error": "Security settings require a Panther account on the live service."}, status=501)
+        if path in ("/episodes", "/scenes"):
+            return self.send(store.save_story_entity("episode" if path == "/episodes" else "scene", body))
         if path == "/game/characters":
             return self.send(store.create_character(body), status=201)
         if path == "/character-details":
@@ -307,14 +360,30 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/editorial-jobs":
             game, creation = body["gameId"], body["creation"]
             store.game(game)
-            if creation.get("schemaVersion") != 1 or creation.get("target") not in ("novel", "video") or not 1 <= len(creation["sourceKeys"]) <= 8:
+            video = creation.get("schemaVersion") == 2 and creation.get("target") == "video"
+            if not video and (creation.get("schemaVersion") != 1 or creation.get("target") != "novel" or not 1 <= len(creation["sourceKeys"]) <= 8):
                 raise ValueError("Choose completed transcripts")
+            if video:
+                if not isinstance(creation.get("brief", ""), str) or len(creation.get("brief", "")) > 4000 or any(not isinstance(creation.get(field), list) or len(creation[field]) > limit or any(not isinstance(value, str) for value in creation[field]) or len(set(creation[field])) != len(creation[field]) for field, limit in (("sourceKeys", 8), ("characterIds", 12), ("contextKeys", 12))):
+                    raise ValueError("Enter a prompt and choose up to 12 characters")
+                for character in creation["characterIds"]:
+                    if not store.get("character", game + ":" + character):
+                        raise ValueError("Choose same-game characters")
+                reference = creation.get("sceneRef")
+                if not isinstance(reference, dict) or set(reference) != {"episodeId", "sceneId", "revision"}:
+                    raise ValueError("Choose a scene")
+                history_key = game + ":" + str(reference["episodeId"]) + ":" + str(reference["sceneId"]) + ":" + str(reference["revision"])
+                history = store.get("scene-history", history_key)
+                scene = history.get("record") if history else None
+                if not store.get("episode", game + ":" + str(reference["episodeId"])) or not scene or scene["gameId"] != game or scene["episodeId"] != reference["episodeId"] or scene["id"] != reference["sceneId"]:
+                    raise ValueError("Scene revision not found")
+                creation = dict(creation, title=creation.get("title") or scene["name"], brief=creation.get("brief") or scene["name"])
             for key in creation["sourceKeys"] + creation["contextKeys"]:
                 if not key.startswith(f"games/{game}/assets/"):
                     raise ValueError("Choose same-game sources")
                 store.object(key)
             identity = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 3, "status": "SUBMITTED", "createdAt": int(time.time()), "videoGenerationAuthorized": False}
+            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 4 if video else 3, "status": "SUBMITTED", "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "sourceMode": "transcript" if creation["sourceKeys"] else "prompt"} if video else {})}
             store.put("editorial", identity, job, game)
             return self.send(job)
         if path == "/novel-chapters":

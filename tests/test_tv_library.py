@@ -34,6 +34,13 @@ def tv(library):  # noqa: F811
 
 
 def call(tv, kind="series", body=None, **q):
+    # Retained legacy-format validation supplies historical fixtures only. Public
+    # POST routes are retired; application writes use Episode/Scene endpoints.
+    if body is not None:
+        try:
+            return tv[0].save(tv[1], body, {"sub": "fictional-owner"}, kind)
+        except (ValueError, TypeError, KeyError):
+            return tv[1]._response(400, {"error": "Invalid historical fixture"})
     return tv[0].handle(
         {
             "routeKey": ("POST " if body else "GET ")
@@ -50,6 +57,16 @@ def call(tv, kind="series", body=None, **q):
         },
         tv[1],
     )
+
+
+def test_public_legacy_writes_are_retired(tv):
+    response = tv[0].handle({
+        "routeKey": "POST /tv-episodes", "body": "{}",
+        "requestContext": {"authorizer": {"jwt": {"claims": {
+            "sub": "fictional-owner", "cognito:username": "example-operator",
+        }}}},
+    }, tv[1])
+    assert response["statusCode"] == 410
 
 
 def envelope(**changes):

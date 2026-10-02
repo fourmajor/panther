@@ -44,6 +44,7 @@ async function fixture(page) {
     if(u.pathname==='/games') body={games};
     if(u.pathname==='/game') body={game:games.find(g=>g.id===game),players:[],memberships:[],characters:[]};
     if(u.pathname==='/assets') body=game==='test-game'?{assets,cursor:null}:{assets:[],cursor:null};
+    if(['/episodes','/scenes'].includes(u.pathname))body={records:[],cursor:null};
     if(u.pathname==='/objects') body={prefixes:[],objects:[],nextCursor:null};
     if(u.pathname==='/object-url') body={...assets.find(a=>a.key===key),url:`https://audio.example/${key.split('/').at(-1)}`,expiresIn:300};
     if(u.pathname==='/asset-document') {
@@ -54,75 +55,34 @@ async function fixture(page) {
   });
 }
 
-async function tvFixture(page,{missing=false}={}) {
-  await fixture(page);
-  const poster=prefix+'episode-poster/original/poster.png',caption=prefix+'episode-caption/original/captions.vtt';
-  const clip={key:video,kind:'episode-video',name:'take.webm',contentType:'video/webm',size:100,lastModified:'2026-01-01T00:00:00Z',sourceKeys:[corrected],
-    metadata:{title:'Synthetic browser cut',category:'creative-reimagining',extra:{relationshipRole:'finished'}}};
-  const captions={key:caption,kind:'video-captions',name:'captions.vtt',contentType:'text/vtt',size:80,sourceKeys:[],metadata:{title:'Episode captions'}};
-  const parent={schemaVersion:1,entityType:'TVSeries',id:'harbor-tales',gameId:'test-game',title:'Harbor Tales',synopsis:'An explicitly organized synthetic adventure.',revision:'a'.repeat(32),
-    seasons:[{id:'season-one',number:1,title:'The Lantern',synopsis:'The first synthetic season.'}]};
-  const episodes=[1,2].map(number=>({schemaVersion:1,entityType:'TVEpisode',id:`episode-${number}`,gameId:'test-game',seriesId:parent.id,seasonId:'season-one',number,
-    title:number===1?'The Lantern Room':'Beyond the Harbor',synopsis:'A synthetic episodic reimagining, not source canon.',status:number===1?'approved':'draft',revision:(number===1?'b':'c').repeat(32),previousRevision:number===1?'d'.repeat(32):null,
-    cuts:[{id:'browser-cut',title:'Browser edition',assetKey:video,durationSeconds:1.2,durationEvidence:'Synthetic recording measurement'},{id:'alternate-cut',title:'Alternate cut',assetKey:prefix+'alternate/original/take.webm',durationSeconds:null,durationEvidence:null}],selectedCutId:'browser-cut',posterAssetKey:poster,captionAssetKeys:[caption],
-    credits:[{role:'Editor',name:'Example Editor'}],sourceAssetKeys:[corrected],relatedAssetKeys:[raw],preparationAssetKeys:[prefix+'plan/original/storyboards.json']}));
-  const source=assets.find(a=>a.key===corrected),original=assets.find(a=>a.key===raw),plan={key:episodes[0].preparationAssetKeys[0],kind:'video-storyboards',name:'storyboards.json',contentType:'application/json',size:10,sourceKeys:[],metadata:{title:'Synthetic storyboard'}};
-  await page.route(`${api}/tv-series*`,route=>route.fulfill({headers,json:{records:[parent],cursor:null}}));
-  await page.route(`${api}/tv-episodes*`,route=>{const u=new URL(route.request().url()),id=u.searchParams.get('id'),revision=u.searchParams.get('revision'),record=episodes.find(e=>e.id===id);
-    return route.fulfill({headers,json:id?{record:{...record,revision:revision||record.revision,status:revision===record.previousRevision?'draft':record.status},assets:[...(missing?[]:[clip]),captions,source,original,plan],warnings:missing?[{key:video,reason:'Pinned asset unavailable'}]:[]}:{records:episodes,cursor:null}});});
-  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
-  await page.route(`${api}/image-links`,route=>route.fulfill({headers,json:{images:{[poster]:{url:'https://audio.example/tv-poster.png'}},expiresIn:300}}));
-  await page.route('https://audio.example/tv-poster.png',route=>route.fulfill({contentType:'image/png',body:png}));
-  await page.route(`${api}/assets?**`,route=>route.fulfill({headers,json:{assets:[clip,source,original,plan],cursor:null}}));
-  await page.route(`${api}/video-collections?**`,route=>route.fulfill({headers,json:{collections:[],cursor:null}}));
-  await page.route(`${api}/object-url?**`,route=>{const key=new URL(route.request().url()).searchParams.get('key');return route.fulfill({headers,json:{...(key===caption?captions:clip),url:key===caption?'https://audio.example/tv-captions.vtt':'https://audio.example/tv-cut.webm',expiresIn:300}});});
-  await page.route('https://audio.example/tv-captions.vtt',route=>route.fulfill({headers,contentType:'text/vtt',body:'WEBVTT\n\n00:00.000 --> 00:01.000\nSynthetic episode speech\n'}));
-  return {episodes,caption};
-}
-
-for(const width of [1280,390])test(`TV seasons, cuts, provenance and caption playback at ${width}`,async({page})=>{
-  await page.setViewportSize({width,height:1000});await tvFixture(page);
-  await page.goto(`${origin}/games/test-game/videos?view=episodes`);
-  await expect(page.getByRole('heading',{name:'Season 1 · The Lantern'})).toBeVisible();
-  await expect(page.locator('.tv-episode-card')).toHaveCount(2);
-  const title=page.getByRole('link',{name:'The Lantern Room',exact:true});
-  for(let i=0;i<5 && (await title.boundingBox()).y>900;i++){const before=(await title.boundingBox()).y;await page.mouse.wheel(0,Math.min(300,before-750));await expect.poll(async()=>(await title.boundingBox()).y).toBeLessThan(before-1);}
-  await expect(title).toBeVisible();const box=await title.boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);
-  expect(await title.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.screenshot({path:test.info().outputPath(`tv-series-${width}.png`),fullPage:true});
-  await title.click();await expect(page.getByLabel('Episode cut')).toBeVisible();
-  await expect(page.locator('.tv-library')).toContainText('Approved private selection');
-  await expect(page.locator('.tv-library')).toContainText('Source sessions recorded in asset metadata: session-one');
-  await expect(page.getByRole('heading',{name:'Credits',exact:true})).toBeVisible();
-  await page.getByLabel('Episode cut').selectOption('alternate-cut');await expect(page.getByRole('button',{name:'Play selected cut'})).toBeDisabled();
-  await page.getByLabel('Episode cut').selectOption('browser-cut');
-  // Real synthetic motion, generated only inside the isolated runner.
-  const bytes=await page.evaluate(async()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;const stream=canvas.captureStream(10),recorder=new MediaRecorder(stream,{mimeType:'video/webm'}),parts=[];recorder.ondataavailable=e=>parts.push(e.data);const done=new Promise(r=>recorder.onstop=r);recorder.start();for(let i=0;i<12;i++){canvas.getContext('2d').fillRect(0,0,160,90);await new Promise(r=>setTimeout(r,100));}recorder.stop();await done;stream.getTracks().forEach(t=>t.stop());return Array.from(new Uint8Array(await new Blob(parts).arrayBuffer()));});
-  await page.route('https://audio.example/tv-cut.webm',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
-  await page.getByRole('button',{name:'Play selected cut'}).click();
-  await expect(page.locator('#preview-body video')).toBeVisible();await expect(page.locator('#preview-body')).toContainText('Harbor Tales · Episode 1');
-  await page.locator('#preview-body').getByText('Caption tracks',{exact:true}).click();
-  await page.locator('#preview-body').getByRole('button',{name:'Load selected captions'}).click();
-  await expect(page.locator('#preview-body')).toContainText('Selected captions loaded');
-  await expect(page.locator('#preview-body').getByRole('button',{name:'Previous episode',exact:true})).toBeDisabled();
-  await page.locator('#preview-body').getByRole('button',{name:'Next episode',exact:true}).click();
-  await expect(page.locator('#preview-title')).toContainText('Beyond the Harbor');
-  await expect(page.locator('#preview-body')).toContainText('Private draft');
+for(const width of [1280,390])test(`episode-owned scenes can be created without finished clips at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page);const episodes=[],scenes=[],writes=[];
+ await page.route(`${api}/episodes*`,route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);const record={...body,revision:'a'.repeat(32),position:0};episodes.push(record);return route.fulfill({headers,json:{record}});}return route.fulfill({headers,json:{records:episodes,cursor:null}});});
+ await page.route(`${api}/scenes*`,route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);const record={...body,revision:'b'.repeat(32),position:0};scenes.push(record);return route.fulfill({headers,json:{record}});}return route.fulfill({headers,json:{records:scenes,cursor:null}});});
+ await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[],cursor:null}}));
+ await page.goto(`${origin}/games/test-game/videos`);
+ await expect(page.getByRole('button',{name:'TV episodes',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Generate video',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Create episode',exact:true}).click();await page.getByLabel('Episode title',{exact:true}).fill('The crossing');
+ await page.getByRole('form',{name:'Episode editor'}).getByRole('button',{name:'Create episode',exact:true}).click();
+ await page.getByRole('button',{name:'Add scene',exact:true}).click();await page.getByLabel('Scene title',{exact:true}).fill('Lanterns on the river');
+ await page.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'Action',exact:true}).click();
+ await page.getByRole('form',{name:'Scene editor'}).getByRole('button',{name:'Add scene',exact:true}).click();
+ const workspace=page.locator('#episode-workspace');await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
+ expect(writes).toHaveLength(2);expect(writes[1].episodeId).toBe(writes[0].id);expect(writes[1].type).toBe('action');expect(writes[1]).not.toHaveProperty('assetKeys');
+ const generate=workspace.getByRole('button',{name:'Generate video',exact:true});await generate.scrollIntoViewIfNeeded();await expect(generate).toBeInViewport();await generate.click();
+ await expect(workspace.getByLabel('Prompt',{exact:true})).toHaveValue('Lanterns on the river');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:test.info().outputPath(`episodes-scenes-${width}.png`),fullPage:true});
+ await page.reload();await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
 });
-
-test('TV failures are recoverable without blocking the ordinary video library',async({page})=>{
-  await tvFixture(page,{missing:true});
-  let fail=true;await page.route(`${api}/tv-series*`,route=>fail?route.fulfill({status:503,headers,json:{error:'Synthetic outage'}}):route.fallback());
-  await page.goto(`${origin}/games/test-game/videos?view=episodes`);
-  await expect(page.locator('.tv-library')).toContainText('ordinary video library remains usable');
-  await expect(page.locator('.tv-library .loading-skeleton')).toHaveCount(0);
-  fail=false;await page.getByRole('button',{name:'Retry TV library'}).click();
-  await page.getByRole('link',{name:'The Lantern Room',exact:true}).click();
-  await expect(page.getByRole('button',{name:'Play selected cut'})).toBeDisabled();
-  await expect(page.locator('.tv-library')).toContainText('No newer version was substituted');
-  await page.getByRole('button',{name:'Video library',exact:true}).click();
-  await expect(page.getByLabel('Search loaded videos')).toBeVisible();
+for(const status of [403,503])test(`episode creation remains available when finished videos fail with ${status}`,async({page})=>{
+ await fixture(page);await page.route(`${api}/assets*`,route=>route.fulfill({status,headers,json:{error:'Synthetic catalog failure'}}));
+ await page.goto(`${origin}/games/test-game/videos?view=episodes&episode=old-unmigrated`);
+ await expect(page.locator('#library-status')).toContainText(status===403?'cannot access finished videos':'Finished videos unavailable');
+ await expect(page.locator('#episode-workspace')).toContainText('This episode is unavailable');
+ await page.getByRole('button',{name:'Create episode',exact:true}).click();await expect(page.getByLabel('Episode title',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'TV episodes',exact:true})).toHaveCount(0);
 });
 
 for(const width of [1280,390]) test(`playful video filters, ordered collections and captions at ${width}`,async({page})=>{
@@ -156,6 +116,7 @@ for(const width of [1280,390]) test(`playful video filters, ordered collections 
   await page.route('https://audio.example/test.webm',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
   const cards=page.locator('.video-card');await expect(cards).toHaveCount(2);
   await expect(cards.first().locator('img')).toBeVisible();expect(galleryRequests).toBe(1);
+  await page.getByText('Filters and clip collections',{exact:true}).click();
   await page.getByLabel('Relationship to the game').selectOption('playful-derivative');await expect(cards).toHaveCount(1);
   await expect(cards.first()).toHaveClass(/playful-video/);
   await page.getByLabel('Search loaded videos').fill('practice');await expect(cards).toHaveCount(1);
@@ -164,7 +125,7 @@ for(const width of [1280,390]) test(`playful video filters, ordered collections 
   await page.getByLabel('Tag',{exact:true}).selectOption('experiment');await expect(cards).toHaveCount(1);
   await page.getByLabel('Tag',{exact:true}).selectOption('');
   expect(galleryRequests).toBe(1); // Filtering does not re-sign every thumbnail.
-  await page.getByLabel('Scene',{exact:true}).selectOption('favorites');
+  if(await page.locator('.video-library-details').getAttribute('open')===null)await page.getByText('Filters and clip collections',{exact:true}).click();await page.getByLabel('Clip collection',{exact:true}).selectOption('favorites');
   await expect(cards.first()).toContainText('Scene test');await expect(cards).toHaveCount(2);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`video-collections-${width}.png`),fullPage:true});
@@ -196,10 +157,10 @@ test('unavailable collection never substitutes library videos',async({page})=>{
   await page.route(`${api}/video-collections?**`,route=>new URL(route.request().url()).searchParams.get('id')
     ?route.fulfill({status:503,headers,json:{error:'Try later'}}):route.fulfill({headers,json:{collections:[{id:'favorites',name:'Favorites',assetKeys:[video]}],cursor:null}}));
   await page.goto(`${origin}/games/test-game/videos`);
-  await page.getByLabel('Scene',{exact:true}).selectOption('favorites');
+  if(await page.locator('.video-library-details').getAttribute('open')===null)await page.getByText('Filters and clip collections',{exact:true}).click();await page.getByLabel('Clip collection',{exact:true}).selectOption('favorites');
   await expect(page.locator('#library-list')).toContainText('Collection not loaded; no partial playlist');
   await expect(page.locator('.video-card')).toHaveCount(0);
-  await page.getByLabel('Scene',{exact:true}).selectOption('');await expect(page.locator('.video-card')).toHaveCount(1);
+  await page.getByLabel('Clip collection',{exact:true}).selectOption('');await expect(page.locator('.video-card')).toHaveCount(1);
 });
 
 for (const width of [1280,390]) test(`transcript search, versions, canonical choice and continuous source at ${width}`,async({page})=>{
@@ -665,23 +626,34 @@ for(const width of [1280,390])test(`assemble clips into a guarded scene at ${wid
     return route.fulfill({headers,json:id?{collection:saved,assets:saved.assetKeys.map(key=>clips.find(a=>a.key===key)),warnings:[]}:{collections:saved?[saved]:[],cursor:null}});
   });
   await page.goto(`${origin}/games/test-game/videos`);
-  await page.getByRole('button',{name:'Create scene',exact:true}).click();
+  await page.getByText('Filters and clip collections',{exact:true}).click();await page.getByRole('button',{name:'Create collection',exact:true}).click();
   const form=page.locator('.scene-edit-form');
-  await form.getByLabel('Scene title').fill('Arrival at the harbor');
-  await form.getByLabel('Scene description').fill('Two selected clips.');
+  await form.getByLabel('Collection title').fill('Arrival at the harbor');
+  await form.getByLabel('Collection description').fill('Two selected clips.');
   await form.getByRole('checkbox',{name:'Harbor arrival'}).check();
   await form.getByRole('checkbox',{name:'Lantern close-up'}).check();
   await form.getByRole('button',{name:'Move up Lantern close-up',exact:true}).click();
   await page.screenshot({path:testInfo.outputPath(`scene-editor-${width}.png`),fullPage:true});
-  await form.getByRole('button',{name:'Save scene',exact:true}).click();
+  await form.getByRole('button',{name:'Save collection',exact:true}).click();
   await expect(page.locator('.video-card').first()).toContainText('Lantern close-up');
   expect(writes[0].assetKeys).toEqual([clips[1].key,clips[0].key]);
   expect(writes[0].expectedRevision).toBeNull();
-  await page.getByRole('button',{name:'Edit scene',exact:true}).click();
+  await page.getByRole('button',{name:'Edit collection',exact:true}).click();
   await form.getByRole('button',{name:'Remove Harbor arrival',exact:true}).click();
-  await form.getByRole('button',{name:'Save scene',exact:true}).click();
+  await form.getByRole('button',{name:'Save collection',exact:true}).click();
   await expect(page.locator('.video-card')).toHaveCount(1);
   expect(writes[1].expectedRevision).toBe('a'.repeat(32));
   expect(writes[1].assetKeys).toEqual([clips[1].key]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+});
+
+test('leaving a scene editor removes the open Select portal',async({page})=>{
+ await fixture(page);
+ await page.route(`${api}/episodes*`,route=>route.fulfill({headers,json:{records:[{id:'opening',gameId:'test-game',name:'Opening',description:'',revision:'a'.repeat(32)}],cursor:null}}));
+ await page.goto(`${origin}/games/test-game/dashboard`);
+ await page.locator('#primary-nav').getByRole('link',{name:'Videos',exact:true}).click();
+ await page.getByRole('button',{name:'Opening',exact:true}).click();await page.getByRole('button',{name:'Add scene',exact:true}).click();
+ await page.getByRole('combobox',{name:'Scene type',exact:true}).click();await expect(page.getByRole('option',{name:'Action',exact:true})).toBeVisible();
+ await page.goBack();await expect(page).toHaveURL(/\/dashboard$/);await expect(page.getByRole('option',{name:'Action',exact:true})).toHaveCount(0);
+ await expect(page.locator('[data-radix-select-viewport]')).toHaveCount(0);
 });

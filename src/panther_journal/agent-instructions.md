@@ -654,23 +654,15 @@ this does not change its official portrait/model selection or create session rec
 in Videos regardless of kind. Novel readers link exact unambiguous character names and asset titles
 without changing the stored prose; aliases require explicit typed references in the chapter artifact.
 
-## TV episode organization
+## Historical TV episode organization
 
-Use `panther videos series/episodes --game GAME` to list structured records; add `--id ID`
-and optionally `--revision REVISION` for exact history. Save private JSON outside Git with
-`panther videos save-series FILE` or `panther videos save-episode FILE`. These plural commands
-organize existing media, unlike singular `panther video` paid production.
-Both envelopes require gameId, id, title, synopsis, reason, operationId and expectedRevision
-(null for creation; exact current revision for edits). Retain identical requests for retries.
-Series require seasons with distinct id/number and title/synopsis; do not remove existing seasons.
-Episodes require seriesId, seasonId, number, status (draft/approved), cuts, selectedCutId,
-posterAssetKey (nullable), captionAssetKeys, credits, sourceAssetKeys, relatedAssetKeys and
-preparationAssetKeys. Each cut has id/title/assetKey/durationSeconds/durationEvidence; unknown
-duration and evidence are both null, never guessed. Credits contain role/name. Empty arrays
-are valid. Cuts and finished references are exact same-game assets; captions are genuine
-WebVTT and posters supported browser images. Preparation references stay separate from
-finished Inputs/Outputs. Private approval does not publish, assert canon or authorize spending.
-Missing editions must remain explicit, never silently substituted. See docs/tv-library.md.
+Use `panther videos series/legacy-episodes --game GAME` to read archived structured records;
+add `--id ID` and optionally `--revision REVISION` for exact history. The legacy
+write commands and API routes are retired. New work uses Episodes containing Scenes
+in the Videos workspace; `panther videos episodes --game GAME` reads current Episodes. Run the authenticated workspace migration described below
+before treating an existing deployment's episode inventory as fully migrated.
+Original cuts, credits, source references and revision histories remain recoverable.
+Missing editions remain explicit, never silently substituted. See docs/tv-library.md.
 
 ## Reliability and reporting
 
@@ -728,3 +720,23 @@ the worker's bundle records each segment's exact source asset and index. Each ad
 all raw inputs. Update the subscription worker before processing version 3 jobs; preserve
 older executions and outputs under their original version. Video creation plans scripts,
 shots and schematic storyboards only; it never authorizes or submits paid generation.
+
+Workflow version 4 supports scene-owned video creation schema 2. Pin the same-game episode,
+scene revision and selected character details/artwork references. Transcripts are optional:
+no transcript means no correction artifact or fabricated raw speech. When present, correction
+precedes source-brief extraction; compose screen prompts from the clean source brief and cast,
+not audit or provenance documents. Creative context admits positive narrative kinds or explicit
+`extra.contextUse: creative-evidence`; a generic reference category is insufficient. Technical,
+intermediate, hold-out and adaptation inputs stay excluded without deleting their source assets.
+Video creation remains planning only and does not authorize paid rendering.
+
+Episode workspace migration uses Panther authentication:
+`panther videos migrate-workspace` inventories all registered games and exact legacy
+TVEpisode revisions/history without writes. Keep its private output outside Git.
+Review the inventory, then apply with `panther videos migrate-workspace --apply
+--inventory-hash HASH` as an authorized migration account. Imports preserve IDs,
+title/synopsis and exact snapshots/hashes in immutable history/audit, never overwrite
+existing destinations, and resume safely after interruption. Verify a new complete dry
+run reports every legacy episode already migrated before workspace cutover. No scenes
+or footage ownership can be inferred from alternate cuts; clip collections remain
+collections. Bounds or unresolved history/conflicts block migration, never exempt data.

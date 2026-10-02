@@ -34,6 +34,7 @@ import { Construct } from "constructs";
 import { ModelProcessing } from "./model-processing";
 import { GameCatalog } from "./game-catalog";
 import { TVLibrary } from "./tv-library";
+import { VideoScenes } from "./video-scenes";
 import { CharacterAppearances } from "./character-appearances";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
@@ -477,6 +478,8 @@ export class PantherMediaExplorerStack extends Stack {
       browseTable:assetBrowse.table,catalogTable:gameCatalog.table,accessEnvironment});
     new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
       catalogTable:gameCatalog.table,publishers:accessEnvironment.MODEL_PUBLISHERS});
+    new VideoScenes(this,"VideoScenes",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
+      catalogTable:gameCatalog.table,accessEnvironment});
     new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});

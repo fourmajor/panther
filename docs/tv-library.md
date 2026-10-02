@@ -1,15 +1,18 @@
-# TV episode library
+# Historical TV organization
 
-The Videos section offers a separate TV episodes view. Series, seasons and episodes are
-structured private organization records, not generated files or public sharing grants.
-Normal video browsing remains available if episode organization cannot load.
+The contract below describes retained historical records. New work uses Episodes
+containing Scenes in the Videos workspace; see
+[the episode migration](editorial-workflows.md#episode-workspace-migration-version-1).
+Legacy TV API endpoints are read-only, and the CLI no longer registers
+`save-series` or `save-episode`. Existing cuts, series organization and exact
+revision history remain recoverable; they are not inferred into narrative scenes.
 
-Use `panther videos series` or `panther videos episodes` with `--game GAME` to list records.
-Add `--id ID` and optionally `--revision REVISION` to read an exact saved organization revision.
-Use `panther videos save-series /private/path/series.json` and
-`panther videos save-episode /private/path/episode.json` for changes. Keep actual manifests
-outside Git. The plural `videos` commands organize media; the singular `video` commands
-control separately authorized paid production.
+## Retained TV record format
+
+Use `panther videos series` or `panther videos legacy-episodes` with `--game GAME` to read
+archived records. `panther videos episodes` reads the current workspace instead. Add `--id ID` and optionally `--revision REVISION` for exact history.
+
+The following envelopes document the retired format for migration and recovery.
 
 ## Guarded records
 
@@ -54,11 +57,10 @@ organization revisions. URLs pin the organization revision. Previous/next naviga
 the next cut paused, never autoplaying it. Official caption selection does not automatically
 apply the official cut's captions to an alternate cut.
 
-## Deployment
+## Deployment and recovery
 
-CDK supplies JWT-protected routes and narrow permissions on existing on-demand tables.
-There is no always-on compute, S3 source scanning, public publication, generation trigger or
-new capability assignment. Existing media receives no guessed series/episode assignments;
-there are no older typed episode records requiring conversion. Deploy the merged stack and
-complete the catalog-v3 all-game rebuild, verification and activation before declaring the
-production library upgraded. Keep migration reports and private inventories outside Git.
+CDK retains authenticated read routes without write permissions. Perform the all-game
+Episode workspace migration and verification before claiming the rollout complete.
+Original TV records and their immutable revisions remain archived; new episode and
+scene writes use the current workspace contract. Keep migration reports and private
+inventories outside Git.

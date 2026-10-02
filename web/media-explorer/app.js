@@ -418,6 +418,7 @@ function mutationReadPaths(path) {
   if (path.startsWith("/game/") && path !== "/game/characters") return ["/games", "/game", "/dashboard-recent"];
   if (path === "/game/characters" || path.startsWith("/character-")) return ["/game", "/characters", "/character", "/character-details", "/character-details/history", "/character-versions", "/dashboard-recent"];
   if (path === "/novel-chapters") return ["/novel", "/novel-chapter", "/assets", "/objects", "/dashboard-recent"];
+  if (["/episodes", "/scenes"].includes(path)) return ["/episodes", "/scenes", "/assets", "/dashboard-recent"];
   if (path === "/video-collections") return ["/video-collections", "/dashboard-recent"];
   if (path === "/editorial-jobs") return ["/editorial-jobs"];
   if (path === "/transcript-selection") return ["/transcript-selection", "/assets", "/dashboard-recent"];
@@ -470,7 +471,7 @@ async function revalidateForeground() {
   if (section === "novel") paths.push("/novel", "/novel-stories", "/novel-books");
   if (["audio", "transcripts", "videos"].includes(section)) {
     paths.push("/assets"); filters["/assets"] = {section};
-    if (section === "videos") paths.push("/video-collections", "/tv-series", "/tv-episodes");
+    if (section === "videos") paths.push("/video-collections", "/episodes", "/scenes");
   }
   foregroundRefresh = (async () => {
     const changed = await window.PantherUI.revalidate({scope, paths, gameId, filters});
@@ -2662,7 +2663,7 @@ function sameGameKey(key) {
 }
 
 function clearLibrary() {
-  currentTVEpisode = null;
+  for(const native of document.querySelectorAll('#episode-workspace select[data-react-select]'))window.PantherUI.destroySelect(native);
   document.getElementById("movie-workspace").replaceChildren();
   document.getElementById("movie-workspace").hidden = true;
   document.getElementById("session-library").hidden = true;
@@ -2714,96 +2715,63 @@ function assetLink(asset, label) {
 
 let videoLibraryView = {gameId:null, search:"", category:"all", tag:"", character:"", collection:""};
 let videoPlaylist = null;
-let currentTVEpisode = null;
-
-function setupTVLibrary(list,status,current,videoHost) {
-  const gameId=state.gameId, nav=document.createElement("nav"), host=document.createElement("section");
-  nav.className="novel-tabs";nav.setAttribute("aria-label","Video library views");host.className="tv-library";host.setAttribute("aria-label","TV episode library");
-  const all=document.createElement("button"), tv=document.createElement("button");
-  all.type=tv.type="button";all.className=tv.className="quiet-button";all.textContent="Video library";tv.textContent="TV episodes";
-  nav.append(all,tv);list.append(nav,host,videoHost);
-  let loaded=false,series=[],episodes=[],sequence=0;
-  const alive=()=>current() && host.isConnected;
+function renderEpisodeWorkspace(epoch) {
+  const gameId=state.gameId, parent=document.getElementById('session-library');
+  let host=document.getElementById('episode-workspace');
+  if(!host){host=document.createElement('section');host.id='episode-workspace';host.setAttribute('aria-label','Episodes and scenes');parent.querySelector('.explorer-heading').after(host);}
+  host.hidden=false;
+  if(host.dataset.key===`${gameId}:${epoch}`)return;
+  for(const native of host.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);host.dataset.key=`${gameId}:${epoch}`;host.replaceChildren();
+  const current=()=>state.gameId===gameId&&epoch===routeEpoch&&host.isConnected;
+  const button=(text,action,primary=false)=>{const node=document.createElement('button');node.type='button';node.textContent=text;node.className=primary?'primary-button':'quiet-button';node.onclick=action;return node;};
+  const episodes=[],scenes=[];let selectedEpisode=null,selectedScene=null,sceneGeneration=0;
+  const toolbar=document.createElement('div'),heading=document.createElement('h2'),episodeCards=document.createElement('div'),episodeStatus=document.createElement('p'),editor=document.createElement('div'),detail=document.createElement('section');
+  toolbar.className='episode-toolbar';heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');detail.className='episode-detail';detail.hidden=true;
+  const create=button('Create episode',()=>edit('episode'),true);toolbar.append(heading,create);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
   const params=()=>new URLSearchParams(location.search);
-  const url=(changes)=>{const next=new URL(location.href);for(const [key,value] of Object.entries(changes))if(value)next.searchParams.set(key,value);else next.searchParams.delete(key);history.replaceState(null,"",next);};
-  const active=()=>!host.hidden;
-  const ordered=(id)=>{const parent=series.find(s=>s.id===id),numbers=new Map(parent?.seasons.map(s=>[s.id,s.number]) || []);
-    return episodes.filter(e=>e.seriesId===id).sort((a,b)=>(numbers.get(a.seasonId) || 10001)-(numbers.get(b.seasonId) || 10001)||a.number-b.number||a.id.localeCompare(b.id));};
-  const setMode=(value)=>{host.hidden=!value;videoHost.hidden=value;status.hidden=value;all.setAttribute("aria-pressed",String(!value));tv.setAttribute("aria-pressed",String(value));};
-  const paged=async(path)=>{const records=[],seen=new Set();let cursor;
-    do{const page=await api(path,{gameId,cursor});if(!alive())return null;if(!Array.isArray(page.records))throw new Error("Episode catalog response is incomplete");records.push(...page.records);cursor=page.cursor;
-      if(records.length>5000 || seen.size>=200 || (cursor && seen.has(cursor)))throw new Error("Episode catalog exceeds its reader limit or returned a repeated cursor; no partial catalog is shown");if(cursor)seen.add(cursor);
-    }while(cursor);return records;};
-  const episodeHref=(record,revision=record.revision)=>gamePath("videos")+`?view=episodes&series=${encodeURIComponent(record.seriesId)}&episode=${encodeURIComponent(record.id)}&episodeRevision=${encodeURIComponent(revision)}`;
-  function references(parent,label,keys,byKey) {
-    if(!keys.length)return;const heading=document.createElement("h3"),links=document.createElement("ul");heading.textContent=label;
-    for(const key of keys){const item=document.createElement("li"),asset=byKey.get(key);if(asset)item.append(assetLink(asset));else item.textContent="Pinned reference unavailable";links.append(item);}parent.append(heading,links);
+  const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);for(const [name,value] of Object.entries({episode:episodeId,scene:sceneId,view:null,series:null,episodeRevision:null})){if(value)url.searchParams.set(name,value);else url.searchParams.delete(name);}history.replaceState(null,'',url);};
+  const clearEditor=()=>{for(const native of editor.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);editor.replaceChildren();};
+  function edit(kind,record=null){
+    const parentEpisode=selectedEpisode;clearEditor();const form=document.createElement('form');form.className='episode-editor';form.setAttribute('aria-label',kind==='episode'?'Episode editor':'Scene editor');
+    const label=(text,node)=>{const wrapper=document.createElement('label');wrapper.append(document.createTextNode(text),node);form.append(wrapper);return node;};
+    const name=label(kind==='episode'?'Episode title':'Scene title',document.createElement('input'));name.required=true;name.maxLength=160;name.value=record?.name||'';
+    const description=label('Description',document.createElement('textarea'));description.maxLength=4000;description.value=record?.description||'';
+    let type;if(kind==='scene'){type=label('Scene type',document.createElement('select'));for(const [value,text] of [['general','General'],['opener','Opener'],['travel','Travel'],['action','Action'],['dialogue','Dialogue']])type.add(new Option(text,value));type.value=record?.type||'general';window.PantherUI.enhanceSelect(type,'Scene type');}
+    const actions=document.createElement('div'),save=button(record?'Save changes':kind==='episode'?'Create episode':'Add scene',null,true),cancel=button('Cancel',()=>clearEditor()),status=document.createElement('p');save.type='submit';status.setAttribute('role','status');actions.append(save,cancel);form.append(actions,status);editor.append(form);name.focus();let pending=null;
+    form.onsubmit=async event=>{event.preventDefault();pending||={gameId,id:record?.id||`${kind}-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),expectedRevision:record?.revision||null,operationId:crypto.randomUUID().replaceAll('-',''),...(kind==='scene'?{episodeId:parentEpisode.id,type:type.value}:{})};save.disabled=true;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=true;
+      try{const response=await api(kind==='episode'?'/episodes':'/scenes',{},{body:pending});if(!current()||!form.isConnected||(kind==='scene'&&selectedEpisode?.id!==parentEpisode?.id))return;const saved=response.record;clearEditor();
+        if(kind==='episode'){const index=episodes.findIndex(item=>item.id===saved.id);if(index<0)episodes.unshift(saved);else episodes[index]=saved;drawEpisodes();await chooseEpisode(saved);}
+        else {const index=scenes.findIndex(item=>item.id===saved.id);if(index<0)scenes.push(saved);else scenes[index]=saved;drawScenes();chooseScene(saved);}
+      }catch(error){if(current()){status.textContent=error.message;save.disabled=error.status===409;if(error.status===400){pending=null;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=false;}save.textContent=error.status===409?'Reopen to edit':'Retry save';}}
+    };
   }
-  async function posters() {
-    const images=[...host.querySelectorAll('[data-tv-poster]')],keys=[...new Set(images.map(i=>i.dataset.tvPoster))];
-    for(let offset=0;offset<keys.length;offset+=60){if(!alive())return;const batch=keys.slice(offset,offset+60);
-      try{const result=await api("/image-links",{},{body:{gameId,keys:batch}});if(!alive())return;for(const image of images.filter(i=>batch.includes(i.dataset.tvPoster))){const item=result.images?.[image.dataset.tvPoster];if(item?.url)image.src=item.url;else image.remove();}}
-      catch{if(alive())for(const image of images.filter(i=>batch.includes(i.dataset.tvPoster)))image.remove();}}
+  function drawEpisodes(){if(episodes.length&&episodeStatus.textContent==='No episodes yet.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
+  let sceneCards,sceneStatus,sceneDetail,sceneMore;
+  const drawOutputs=()=>{const output=sceneDetail?.querySelector('.scene-output-list');if(!output||!selectedScene)return;output.replaceChildren();
+    const assets=(host.sceneAssets||[]).filter(asset=>{const ref=asset.metadata?.extra?.sceneRef;return sameGameKey(asset.key)&&ref?.episodeId===selectedEpisode.id&&ref?.sceneId===selectedScene.id;});
+    if(!assets.length)return;const heading=document.createElement('h4');heading.textContent='Videos';output.append(heading);
+    for(const asset of assets){const row=document.createElement('p');row.append(assetLink(asset));if(asset.metadata.extra.sceneRef.revision!==selectedScene.revision){const note=document.createElement('small');note.textContent=' · Earlier scene version';row.append(note);}output.append(row);}
+  };
+  host.updateOutputs=assets=>{host.sceneAssets=assets;drawOutputs();};
+  function drawScenes(){sceneCards.replaceChildren();for(const scene of [...scenes].sort((a,b)=>a.position-b.position)){const card=button(scene.name,()=>chooseScene(scene));card.className='scene-card';card.setAttribute('aria-pressed',String(selectedScene?.id===scene.id));sceneCards.append(card);}if(!scenes.length){const empty=document.createElement('p');empty.textContent='No scenes yet.';sceneCards.append(empty);}}
+  function chooseScene(scene){clearEditor();selectedScene=scene;updateURL(selectedEpisode.id,scene.id);drawScenes();sceneDetail.replaceChildren();const heading=document.createElement('h3');heading.textContent=scene.name;const description=document.createElement('p');description.textContent=scene.description;description.hidden=!scene.description;
+    const actions=document.createElement('div');actions.className='scene-actions';actions.append(button('Generate video',()=>openSceneVideoComposer(scene,epoch),true),button('Edit scene',()=>edit('scene',scene)));const composer=document.createElement('section');composer.id='scene-video-composer';const work=document.createElement('section'),outputs=document.createElement('div');work.id='scene-work-progress';outputs.className='scene-output-list';sceneDetail.append(heading,description,actions,composer,work,outputs);drawOutputs();
+    void restoreSceneVideoProgress(scene,work,gameId,epoch);
   }
-  function browse() {
-    if(!alive())return;currentTVEpisode=null;host.replaceChildren();
-    const heading=document.createElement("h2"),notice=document.createElement("p");heading.textContent="TV episodes";notice.textContent="Creative episodic reimaginings · private drafts and approved selections, not canonical session records.";host.append(heading,notice);
-    if(!series.length){const empty=document.createElement("p");empty.textContent="No series organized yet. Panther CLI can create a series and explicitly select finished episode cuts.";host.append(empty);return;}
-    const label=document.createElement("label"),select=document.createElement("select");label.textContent="Series";select.id="tv-series-select";label.htmlFor=select.id;
-    for(const record of series)select.add(new Option(record.title,record.id));
-    const selected=params().get("series") || series[0].id;
-    if(!series.some(s=>s.id===selected))throw new Error("Selected series unavailable");select.value=selected;
-    select.onchange=()=>{url({series:select.value,episode:null,episodeRevision:null});browse();};host.append(label,select);
-    const parent=series.find(s=>s.id===selected),synopsis=document.createElement("p");synopsis.textContent=parent.synopsis || "No series synopsis supplied.";host.append(synopsis);
-    const entries=ordered(selected);
-    if(entries.some(e=>!parent.seasons.some(s=>s.id===e.seasonId)))throw new Error("An episode's season is unavailable; no incomplete series is shown");
-    for(const season of parent.seasons){const section=document.createElement("section"),title=document.createElement("h3"),description=document.createElement("p"),cards=document.createElement("div");title.textContent=`Season ${season.number} · ${season.title}`;description.textContent=season.synopsis;cards.className="tv-episode-cards";section.append(title,description,cards);
-      for(const episode of entries.filter(e=>e.seasonId===season.id)){const card=document.createElement("article");card.className="novel-card tv-episode-card";
-        if(episode.posterAssetKey){const image=document.createElement("img");image.alt=`Episode poster for ${episode.title}`;image.dataset.tvPoster=episode.posterAssetKey;image.className="tv-poster";image.addEventListener("error",()=>image.remove());card.append(image);}
-        const meta=document.createElement("p"),h=document.createElement("h4"),link=document.createElement("a"),summary=document.createElement("p"),runtime=document.createElement("p");meta.className="eyebrow";meta.textContent=`Episode ${episode.number} · ${episode.status === "approved" ? "Approved private selection" : "Private draft"}`;
-        link.textContent=episode.title;link.href=episodeHref(episode);link.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();void choose(episode.id,episode.revision);};h.append(link);summary.textContent=episode.synopsis || "No episode synopsis supplied.";
-        const cut=episode.cuts.find(c=>c.id===episode.selectedCutId);runtime.textContent=cut?.durationSeconds ? `Reported runtime: ${cut.durationSeconds}s · ${episode.cuts.length} cut${episode.cuts.length===1?"":"s"}` : `Runtime not recorded · ${episode.cuts.length} cut${episode.cuts.length===1?"":"s"}`;card.append(meta,h,summary,runtime);cards.append(card);}
-      if(!cards.childNodes.length){const empty=document.createElement("p");empty.textContent="No episodes organized in this season yet.";cards.append(empty);}host.append(section);}
-    void posters();
+  async function chooseEpisode(episode,restoreScene=null){clearEditor();selectedEpisode=episode;selectedScene=null;const generation=++sceneGeneration;scenes.length=0;updateURL(episode.id,restoreScene);drawEpisodes();detail.hidden=false;detail.replaceChildren();
+    const toolbar=document.createElement('div'),title=document.createElement('h2'),description=document.createElement('p');toolbar.className='episode-toolbar';title.textContent=episode.name;toolbar.append(title,button('Add scene',()=>edit('scene'),true),button('Edit episode',()=>edit('episode',episode)));description.textContent=episode.description;description.hidden=!episode.description;
+    sceneCards=document.createElement('div');sceneCards.className='scene-cards';sceneStatus=document.createElement('p');sceneStatus.setAttribute('role','status');sceneDetail=document.createElement('section');sceneDetail.className='selected-scene';sceneMore=document.createElement('div');detail.append(toolbar,description,sceneStatus,sceneCards,sceneMore,sceneDetail);
+    const page=async cursor=>{showLoading(sceneStatus,'Loading scenes…');try{const result=await api('/scenes',{gameId,episodeId:episode.id,cursor});if(!current()||generation!==sceneGeneration)return;if(!Array.isArray(result.records))throw new Error('Scenes unavailable');scenes.push(...result.records);sceneStatus.textContent='';drawScenes();sceneMore.replaceChildren();if(result.cursor)sceneMore.append(button('More scenes',()=>void page(result.cursor)));if(restoreScene){const scene=scenes.find(item=>item.id===restoreScene);if(scene){chooseScene(scene);restoreScene=null;}else if(!result.cursor){sceneStatus.textContent='This scene is unavailable.';updateURL(episode.id,null);}}}catch(error){if(current()&&generation===sceneGeneration)sceneStatus.textContent=error.status===403?'You cannot access scenes in this game.':`Scenes unavailable: ${error.message}`;}};
+    await page();
   }
-  async function choose(id,revision=null,play=false) {
-    const generation=++sequence;host.replaceChildren();const loading=document.createElement("p");host.append(loading);const progress=showLoading(loading,"Reading the exact episode and pinned representations…");
-    try{const result=await api("/tv-episodes",{gameId,id,revision});if(!alive() || generation!==sequence || !active())return;
-      const episode=result.record,byKey=new Map(result.assets.map(a=>[a.key,a])),parent=series.find(s=>s.id===episode.seriesId);
-      if(episode.gameId!==gameId || !parent || !parent.seasons.some(s=>s.id===episode.seasonId))throw new Error("Episode parent organization unavailable");
-      url({view:"episodes",series:episode.seriesId,episode:episode.id,episodeRevision:episode.revision});host.replaceChildren();
-      const back=document.createElement("button");back.type="button";back.className="back-button";back.textContent="← All episodes";back.onclick=()=>{sequence++;url({episode:null,episodeRevision:null});browse();};
-      const title=document.createElement("h2"),notice=document.createElement("p"),synopsis=document.createElement("p");title.textContent=episode.title;notice.className="novel-notice";notice.textContent=`${parent.title} · Episode ${episode.number} · ${episode.status==="approved"?"Approved private selection":"Private draft"}. Creative reimagining, not a canonical session record.`;synopsis.textContent=episode.synopsis;host.append(back,title,notice,synopsis);
-      if(result.warnings.length){const warning=document.createElement("p");warning.textContent=`${result.warnings.length} pinned assets are unavailable. No newer version was substituted.`;host.append(warning);}
-      const label=document.createElement("label"),cuts=document.createElement("select"),button=document.createElement("button"),cutStatus=document.createElement("p");label.textContent="Episode cut";cuts.id="tv-cut-select";label.htmlFor=cuts.id;for(const cut of episode.cuts)cuts.add(new Option(cut.title+(cut.id===episode.selectedCutId?" · selected edition":""),cut.id));cuts.value=episode.selectedCutId;
-      button.type="button";button.className="quiet-button";button.textContent="Play selected cut";cutStatus.setAttribute("role","status");
-      const selected=()=>episode.cuts.find(c=>c.id===cuts.value);
-      const update=()=>{const cut=selected();button.disabled=!byKey.has(cut.assetKey);cutStatus.textContent=button.disabled?"This pinned video is unavailable; no alternative was selected.":cut.durationSeconds?`Reported runtime ${cut.durationSeconds}s. Evidence: ${cut.durationEvidence}`:"Runtime is unknown until measured or played.";};
-      const context={gameId,record:episode,assets:byKey,series:parent,episodes:ordered(parent.id),activate:choose};
-      button.onclick=()=>{if(alive()){currentTVEpisode=context;videoPlaylist=null;const asset=byKey.get(selected().assetKey);if(asset)void previewFile({...asset,name:episode.title+" · "+selected().title});}};cuts.onchange=update;update();host.append(label,cuts,button,cutStatus);
-      const history=document.createElement("p");history.textContent=`Organization revision ${episode.revision.slice(0,8)}. `;if(episode.previousRevision){const previous=document.createElement("a");previous.textContent="Previous episode revision";previous.href=episodeHref(episode,episode.previousRevision);previous.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();void choose(episode.id,episode.previousRevision);};history.append(previous);}host.append(history);
-      references(host,"Source references",episode.sourceAssetKeys,byKey);const sessions=[...new Set(episode.sourceAssetKeys.map(k=>byKey.get(k)?.metadata?.sessionId).filter(Boolean))];if(sessions.length){const session=document.createElement("p");session.textContent=`Source sessions recorded in asset metadata: ${sessions.join(", ")}`;host.append(session);}
-      references(host,"Related finished media",episode.relatedAssetKeys,byKey);
-      if(episode.preparationAssetKeys.length){const preparation=document.createElement("details"),summary=document.createElement("summary");summary.textContent="Production preparation · not finished Inputs/Outputs";preparation.append(summary);references(preparation,"Scripts, storyboards and planning references",episode.preparationAssetKeys,byKey);host.append(preparation);}
-      const credits=document.createElement("section"),creditTitle=document.createElement("h3"),creditList=document.createElement("ul");creditTitle.textContent="Credits";for(const credit of episode.credits){const item=document.createElement("li");item.textContent=`${credit.role}: ${credit.name}`;creditList.append(item);}if(!episode.credits.length){const empty=document.createElement("li");empty.textContent="Credits not supplied.";creditList.append(empty);}credits.append(creditTitle,creditList);host.append(credits);
-      currentTVEpisode=context;
-      if(play && !button.disabled)button.click();
-    }catch(error){if(alive() && generation===sequence){currentTVEpisode=null;loading.textContent=`${error.message}. Return to the video library or retry.`;const retry=document.createElement("button");retry.type="button";retry.textContent="Retry episode";retry.className="quiet-button";retry.onclick=()=>void choose(id,revision,play);host.append(retry);}}
-  }
-  async function load() {
-    const loading=document.createElement("p");host.replaceChildren(loading);const progress=showLoading(loading,"Reading series and episode organization…");
-    try{if(!loaded){series=await paged("/tv-series");episodes=await paged("/tv-episodes");if(!alive() || !series || !episodes)return;series.sort((a,b)=>a.title.localeCompare(b.title));loaded=true;}
-      if(!active())return;if(params().get("episode"))await choose(params().get("episode"),params().get("episodeRevision"));else browse();
-    }catch(error){if(alive()){loaded=false;host.replaceChildren(loading);loading.textContent=`${error.message}. The ordinary video library remains usable.`;const retry=document.createElement("button");retry.type="button";retry.className="quiet-button";retry.textContent="Retry TV library";retry.onclick=()=>void load();host.append(retry);}}
-  }
-  all.onclick=()=>{sequence++;currentTVEpisode=null;setMode(false);url({view:null,series:null,episode:null,episodeRevision:null});};
-  tv.onclick=()=>{setMode(true);url({view:"episodes"});void load();};
-  const requested=params().get("view")==="episodes" || params().has("series") || params().has("episode");setMode(requested);if(requested)void load();
+  const load=async cursor=>{showLoading(episodeStatus,'Loading episodes…');try{const result=await api('/episodes',{gameId,cursor});if(!current())return;if(!Array.isArray(result.records))throw new Error('Episodes unavailable');episodes.push(...result.records);episodeStatus.textContent=episodes.length?'':'No episodes yet.';drawEpisodes();host.querySelector('.episodes-more')?.remove();if(result.cursor){const more=button('More episodes',()=>{more.remove();void load(result.cursor);});more.classList.add('episodes-more');episodeCards.after(more);}
+      const requested=params().get('episode');if(requested&&!selectedEpisode){const selected=episodes.find(item=>item.id===requested);if(selected)await chooseEpisode(selected,params().get('scene'));else if(!result.cursor){episodeStatus.textContent='This episode is unavailable.';updateURL(null,null);}}
+    }catch(error){if(current()){episodeStatus.textContent=error.status===403?'You cannot access episodes in this game.':`Episodes unavailable: ${error.message}`;if(error.status===403)create.disabled=true;}}};void load();
 }
 
 function renderVideoLibrary(assets, list, status, current, loadMore) {
   const gameId = state.gameId;
-  const videoHost=document.createElement("div");setupTVLibrary(list,status,current,videoHost);
+  const videoHost=document.createElement("div");list.append(videoHost);
   if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",category:"all",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
   const view = videoLibraryView;
   view.collection=new URLSearchParams(location.search).get("collection") || "";
@@ -2821,14 +2789,17 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   const character = field("Featuring character",document.createElement("select"),"video-character"); character.add(new Option("All characters",""));
   for (const c of state.gameDetail?.characters || []) character.add(new Option(c.name,c.id));
   character.value = view.character;
-  const collection = field("Scene",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
+  const collection = field("Clip collection",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
   const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
-  controls.append(collectionsStatus,retry,summary); videoHost.append(controls,cards);
+  controls.append(collectionsStatus,retry,summary);
+  const libraryDetails=document.createElement("details"), librarySummary=document.createElement("summary"), galleryHeading=document.createElement("h2");
+  libraryDetails.className="video-library-details";librarySummary.textContent="Filters and clip collections";galleryHeading.textContent="Finished videos";
+  libraryDetails.append(librarySummary,controls);videoHost.append(galleryHeading,libraryDetails,cards);
   let displayed = assets, chosen = null, sequence = 0;
   const sceneActions = document.createElement("div"); sceneActions.className = "model-control-row";
   const createScene = document.createElement("button"), editScene = document.createElement("button"), sceneForm = document.createElement("form");
   createScene.type = editScene.type = "button"; createScene.className = editScene.className = "quiet-button";
-  createScene.textContent = "Create scene"; editScene.textContent = "Edit scene"; editScene.disabled = true;
+  createScene.textContent = "Create collection"; editScene.textContent = "Edit collection"; editScene.disabled = true;
   sceneForm.className = "scene-edit-form character-edit-form"; sceneForm.hidden = true;
   sceneActions.append(createScene,editScene); controls.append(sceneActions); videoHost.insertBefore(sceneForm,cards);
   let sceneGeneration = 0;
@@ -2845,10 +2816,10 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
       const name = document.createElement("input"), description = document.createElement("input"), picker = document.createElement("fieldset"), order = document.createElement("ol");
       name.required = true; name.maxLength = 120; name.value = existing?.name || ""; description.maxLength = 1000; description.value = existing?.description || "";
       const nameLabel = document.createElement("label"), descriptionLabel = document.createElement("label"), legend = document.createElement("legend"), orderHeading = document.createElement("h3");
-      nameLabel.textContent = "Scene title"; descriptionLabel.textContent = "Scene description"; nameLabel.append(name); descriptionLabel.append(description); legend.textContent = "Clips"; picker.append(legend); orderHeading.textContent = "Clip order";
+      nameLabel.textContent = "Collection title"; descriptionLabel.textContent = "Collection description"; nameLabel.append(name); descriptionLabel.append(description); legend.textContent = "Clips"; picker.append(legend); orderHeading.textContent = "Clip order";
       const checks = new Map(); const title = key => byKey.get(key)?.metadata?.title || byKey.get(key)?.name || "Unavailable clip";
       const save = document.createElement("button"), cancel = document.createElement("button"), message = document.createElement("p"), actions = document.createElement("div");
-      save.type = "submit"; save.className = "primary-button"; save.textContent = "Save scene"; cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; message.setAttribute("role","status"); actions.className = "model-control-row";actions.append(save,cancel);
+      save.type = "submit"; save.className = "primary-button"; save.textContent = "Save collection"; cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; message.setAttribute("role","status"); actions.className = "model-control-row";actions.append(save,cancel);
       const drawOrder = () => {
         order.replaceChildren();
         for(const [index,key] of ordered.entries()) {
@@ -2990,7 +2961,7 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
         cursor=result.cursor;
         if(cursor && seen.has(cursor)) throw new Error("Repeated collection cursor"); if(cursor)seen.add(cursor);
         collection.disabled=false;
-        collectionsStatus.textContent=count ? `${count} scenes` : "";
+        collectionsStatus.textContent=count ? `${count} collections` : "";
         collectionMore.hidden=!cursor; collectionMore.disabled=false;
       };
       const collectionMore=document.createElement("button"); collectionMore.type="button"; collectionMore.className="quiet-button"; collectionMore.textContent="Load more collections"; collectionMore.hidden=true; controls.append(collectionMore);
@@ -3008,11 +2979,6 @@ function configureVideoPreview(asset, video, epoch) {
   const notice=document.createElement("p"); notice.textContent=`${(asset.metadata?.category || "unclassified").replaceAll("-"," ")} · Classification and provenance remain as recorded. A dramatization or playful derivative is not a canonical session transcript.`; host.append(notice);
   const preview=asset.metadata?.extra?.preview;
   if(preview?.schemaVersion===1 && sameGameKey(preview.imageKey)) void api("/image-links",{},{body:{gameId,keys:[preview.imageKey]}}).then(result=>{if(current() && result.images?.[preview.imageKey]?.url)video.poster=result.images[preview.imageKey].url;}).catch(()=>{});
-  const episode=currentTVEpisode?.gameId===gameId && currentTVEpisode.record.cuts.some(c=>c.assetKey===asset.key)?currentTVEpisode:null;
-  if(episode){const heading=document.createElement("h3"),label=document.createElement("p"),navigation=document.createElement("nav");heading.textContent=episode.record.title;label.textContent=`${episode.series.title} · Episode ${episode.record.number} · ${episode.record.status==="approved"?"Approved private selection":"Private draft"}. No automatic playback.`;navigation.setAttribute("aria-label","Episode playback");
-    const index=episode.episodes.findIndex(e=>e.id===episode.record.id);for(const [name,position] of [["Previous episode",index-1],["Next episode",index+1]]){const button=document.createElement("button");button.type="button";button.className="quiet-button";button.textContent=name;button.disabled=position<0 || position>=episode.episodes.length;button.onclick=()=>{if(current()){closePreview();void episode.activate(episode.episodes[position].id,episode.episodes[position].revision,true);}};navigation.append(button);}host.append(heading,label,navigation);
-    if(episode.record.posterAssetKey)void api("/image-links",{},{body:{gameId,keys:[episode.record.posterAssetKey]}}).then(result=>{if(current() && result.images?.[episode.record.posterAssetKey]?.url)video.poster=result.images[episode.record.posterAssetKey].url;}).catch(()=>{});
-  }
   const playlist=videoPlaylist?.gameId===gameId ? videoPlaylist : null;
   const index=playlist?.assets.findIndex(a=>a.key===asset.key) ?? -1;
   if(index>=0) {
@@ -3028,12 +2994,11 @@ function configureVideoPreview(asset, video, epoch) {
   video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
   void(async()=>{
     try {
-      const assets=episode ? [...episode.assets.values()] : await allAssets(gameId);if(!current())return;
+      const assets=await allAssets(gameId);if(!current())return;
       const directory=asset.key.slice(0,asset.key.lastIndexOf("/")+1);
       const tracks=assets.filter(a=>a.kind==="video-captions" && a.key.endsWith(".vtt") && sameGameKey(a.key)
-        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)
-          || (episode?.record.cuts.find(c=>c.id===episode.record.selectedCutId)?.assetKey===asset.key && episode.record.captionAssetKeys.includes(a.key))));
-      if(!tracks.length){captionStatus.textContent=episode?"No caption export is registered for this episode cut. Other exports may be available on its asset page; burned-in subtitles remain in the original.":"No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
+        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)));
+      if(!tracks.length){captionStatus.textContent="No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
       const label=document.createElement("label"), select=document.createElement("select"), load=document.createElement("button");
       label.textContent="Caption export";select.id="video-caption-export";label.htmlFor=select.id;
       select.add(new Option("Choose a recorded caption track",""));for(const track of tracks)select.add(new Option(track.metadata?.title || track.name,track.key));
@@ -3075,7 +3040,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
-  if(section === "videos") renderEditorialComposer("video",epoch);
+  if(section === "videos") renderEpisodeWorkspace(epoch);else {const workspace=document.getElementById("episode-workspace");if(workspace)workspace.hidden=true;}
   const videoComposer=document.getElementById("editorial-video-composer");
   if(videoComposer)videoComposer.hidden=section!=="videos";
   document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section) || (!liveRecords.length && !liveFailure);
@@ -3095,7 +3060,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     if (!current()) return;
     list.replaceChildren();
     loading.update("Organizing recordings, transcripts and videos…");
-    if (section === "videos") await loadMovies(assets, epoch);
+    if (section === "videos" && new URLSearchParams(location.search).has("project")) await loadMovies(assets, epoch);
     if (!current()) return;
     status.hidden = section === "videos" && new URLSearchParams(location.search).has("project");
     list.hidden = status.hidden;
@@ -3110,6 +3075,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     status.dataset.empty=String(!selected.length);
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     if (section === "videos") {
+      document.getElementById('episode-workspace')?.updateOutputs?.(selected);
       renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
       return;
     }
@@ -3157,7 +3123,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       if (!selected.length) status.textContent = `No ${section} to display in these entries. More entries are available.`;
     }
   } catch (error) {
-    if (current()) status.textContent = `${error.message}. Reload the page to try again.`;
+    if (current()) status.textContent = section === "videos" ? (error.status===403?"You cannot access finished videos in this game.":`Finished videos unavailable: ${error.message}`) : `${error.message}. Reload the page to try again.`;
   }
 }
 
@@ -3335,28 +3301,7 @@ async function loadMovies(assets, epoch) {
   host.hidden = false; host.replaceChildren();
   const plans = assets.filter(a => a.kind === "movie-review-plan" && sameGameKey(a.key));
   const key = new URLSearchParams(location.search).get("project");
-  if (!key) {
-    // Do not push existing playable videos below the fold with an empty planning feature.
-    if (!plans.length) { host.hidden = true; return; }
-    const intro = movieNode("div", undefined, "movie-intro");
-    const text = movieNode("div"); text.append(movieNode("p", "THE CUTTING ROOM", "eyebrow"),
-      movieNode("h2", "A good film starts before the first frame."),
-      movieNode("p", "Review the story, cast and shot-by-shot budget. Nothing generates until you approve.", "movie-muted"));
-    intro.append(text, movieNode("span", "Planning costs ≠ generation spend", "movie-tag")); host.append(intro);
-    const grid = movieNode("div", undefined, "movie-projects");
-    for (const asset of plans.sort((a,b) => b.lastModified.localeCompare(a.lastModified))) {
-      const card = movieNode("article", undefined, "movie-project-card");
-      card.append(movieNode("p", "MOVIE PLAN · REVIEW BEFORE GENERATION", "eyebrow"),
-        movieNode("h3", asset.metadata?.title || asset.name),
-        movieNode("p", asset.metadata?.description || "Open the screenplay, planned shots and budget.", "movie-muted"));
-      const link = movieNode("a", "Open review workspace →", "movie-open");
-      link.href = `${gamePath("videos")}?project=${encodeURIComponent(asset.key)}`;
-      link.onclick = event => { if (!event.metaKey && !event.ctrlKey) { event.preventDefault(); navigate(link.href); } };
-      card.append(link); grid.append(card);
-    }
-    if (!plans.length) grid.append(movieNode("p", "No movie plans yet. A prepared plan will appear here before any paid generation.", "movie-empty"));
-    host.append(grid, movieNode("h2", "Video library", "movie-library-heading")); return;
-  }
+  if (!key) {host.hidden=true;return;}
   showLoading(host, "Reading the screenplay, shots and budget review…");
   try {
     if (!sameGameKey(key)) throw new Error("This movie plan does not belong to the selected game");
@@ -4317,12 +4262,28 @@ async function start() {
 // Creation requests select immutable sources; subscription workers own every editorial stage.
 const editorialComposers = new Map();
 const editorialPolls = new WeakMap();
-function renderEditorialComposer(target, epoch) {
-  const gameId=state.gameId, key=`${gameId}:${target}`;
+async function restoreSceneVideoProgress(scene,host,gameId,epoch) {
+  const current=()=>state.gameId===gameId&&routeEpoch===epoch&&host.isConnected;
+  try{const result=await api('/editorial-jobs',{gameId});if(!current())return;
+    const matches=(result.jobs||[]).filter(job=>job.creation?.target==='video'&&job.creation.sceneRef?.episodeId===scene.episodeId&&job.creation.sceneRef?.sceneId===scene.id);
+    matches.sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
+    const exact=matches.find(job=>job.creation.sceneRef.revision===scene.revision),job=exact||matches[0];if(!job)return;
+    if(!exact){const note=document.createElement('p');note.textContent='Earlier scene version';host.append(note);}
+    const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label','Video progress');host.append(progress);await showEditorialProgress(job.jobId,progress,gameId,'video');
+  }catch{/* A bounded page that cannot be read is not evidence that no generation exists. */}
+}
+
+function openSceneVideoComposer(scene, epoch) {
+  renderEditorialComposer('video', epoch, scene);
+}
+function renderEditorialComposer(target, epoch, scene = null) {
+  if(target==='video'&&!scene){const old=document.getElementById('editorial-video-composer');if(old)old.hidden=true;return;}
+  const gameId=state.gameId, key=`${gameId}:${target}:${scene?.sceneId||scene?.id||''}`;
   let host=document.getElementById(`editorial-${target}-composer`);
   if(!host) {host=document.createElement('section');host.id=`editorial-${target}-composer`;host.className='editorial-composer';}
-  const parent=document.getElementById(target==='novel'?'novel':'session-library');
-  parent.querySelector('.explorer-heading').after(host);
+  const parent=target==='novel'?document.getElementById('novel'):(scene.host||document.getElementById('scene-video-composer'));
+  if(!parent)return;
+  if(target==='novel')parent.querySelector('.explorer-heading').after(host);else parent.append(host);
   host.hidden=target==='novel'&&Boolean(currentChapter);
   if(host.dataset.key===key) {
     const existing=editorialComposers.get(key);
@@ -4331,7 +4292,7 @@ function renderEditorialComposer(target, epoch) {
   }
   host.dataset.key=key;host.replaceChildren();
   const current=()=>state.gameId===gameId&&host.dataset.key===key&&host.isConnected;
-  const open=document.createElement('button');open.type='button';open.className='primary-button';open.textContent=target==='novel'?'Generate chapter':'Create video project';host.append(open);
+  const open=document.createElement('button');open.type='button';open.className='primary-button';open.textContent=target==='novel'?'Generate chapter':'Generate video';host.append(open);
   const panel=document.createElement('div');panel.className='editorial-creation-panel';panel.hidden=true;host.append(panel);
   const projects=document.createElement('div');projects.className='editorial-existing-projects';host.append(projects);
   const loadProjects=async(cursor)=>{
@@ -4343,42 +4304,66 @@ function renderEditorialComposer(target, epoch) {
       if(result.cursor){const more=document.createElement('button');more.type='button';more.className='text-link-button';more.textContent='More projects';more.onclick=()=>{more.remove();void loadProjects(result.cursor);};projects.append(more);}
     }catch{/* Creation remains available if the optional project list is unavailable. */}
   };
-  void loadProjects();
+  if(target==='novel')void loadProjects();
   open.onclick=async()=>{
     if(panel.dataset.project==='true'){panel.replaceChildren();panel.dataset.project='false';panel.hidden=true;}
     panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
     if(panel.hidden||panel.childNodes.length)return;
     const form=document.createElement('form'), fields=document.createElement('div'), status=document.createElement('p');status.setAttribute('role','status');
     const field=(label,multiline=false)=>{const wrapper=document.createElement('label'), caption=document.createElement('span'), input=document.createElement(multiline?'textarea':'input');caption.textContent=label;wrapper.append(caption,input);fields.append(wrapper);return input;};
-    const title=field('Title');title.required=true;title.maxLength=160;
-    const brief=field('Direction',true);brief.maxLength=4000;brief.placeholder=target==='novel'?'Tone, point of view, and what to focus on':'Story, tone, and visual direction';
+    const isVideo=target==='video';
+    const title=isVideo?null:field('Title');if(title){title.required=true;title.maxLength=160;}
+    const brief=field(isVideo?'Prompt':'Direction',true);brief.maxLength=4000;brief.required=isVideo;
+    brief.placeholder=isVideo?'Describe the scene you want to create…':'Tone, point of view, and what to focus on';
+    if(isVideo)brief.value=[scene.name||scene.title,scene.description].filter(Boolean).join('\n\n');
+    const selected=new Set(), selectedContext=new Set(), selectedCharacters=new Set();
+    const cast=document.createElement('fieldset'),castLegend=document.createElement('legend'),castOptions=document.createElement('div'),castPreview=document.createElement('p');
+    castLegend.textContent='Characters';castOptions.className='editorial-cast-options';castPreview.className='editorial-cast-preview';castPreview.setAttribute('aria-live','polite');cast.append(castLegend,castOptions,castPreview);
     const sources=document.createElement('fieldset'), legend=document.createElement('legend');legend.textContent='Transcripts';sources.append(legend);
-    const references=document.createElement('details'), summary=document.createElement('summary'), contexts=document.createElement('div');summary.textContent='Add context';references.append(summary,contexts);
-    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=target==='novel'?'Generate chapter':'Create project';submit.disabled=true;
-    form.append(fields,sources,references,submit,status);panel.append(form);
-    const selected=new Set(), selectedContext=new Set();
-    const choices=(assets,destination,set)=>{for(const asset of assets){const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);submit.disabled=!selected.size;};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
+    const references=document.createElement('details'), summary=document.createElement('summary'), contexts=document.createElement('div');summary.textContent=isVideo?'Sources':'Add context';references.append(summary,isVideo?sources:contexts);
+    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=isVideo?'Generate':'Generate chapter';submit.disabled=true;
+    const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
+    if(isVideo)form.append(cast,fields,references,submit,note,status);else form.append(fields,sources,references,submit,status);
+    panel.append(form);
+    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim():!selected.size;};brief.addEventListener('input',updateSubmit);
+    const choices=(assets,destination,set)=>{for(const asset of assets){const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
       showLoading(status,'Loading sources…');
       try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
         choices(result.assets.filter(predicate),destination,set);status.textContent='';
         if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='Load more';more.onclick=()=>{more.remove();void page(section,destination,set,predicate,result.cursor);};destination.append(more);}
-        if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed raw transcripts yet.':'No context sources yet.';destination.append(empty);}
+        if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No context sources yet.';destination.append(empty);}
       }catch(error){if(current())status.textContent=error.message;}
     };
-    await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
-    references.addEventListener('toggle',()=>{if(references.open&&!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout'].includes(a.kind)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='evidence'||['canonical-source','reference'].includes(a.metadata?.category)||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));},{once:true});
+    const loadCast=async(cursor)=>{
+      try{const result=await api('/characters',{gameId,cursor});if(!current())return;
+        for(const character of result.characters||[]){const id=character.characterId||character.id;if(!id)continue;
+          const label=document.createElement('label'),input=document.createElement('input'),name=document.createElement('span');label.className='editorial-source-choice editorial-character-choice';input.type='checkbox';input.value=id;name.textContent=character.name;
+          input.onchange=()=>{input.checked?selectedCharacters.add(id):selectedCharacters.delete(id);label.dataset.selected=String(input.checked);castPreview.textContent=[...castOptions.querySelectorAll('input:checked')].map(input=>input.nextElementSibling.textContent).join(' · ');};if(scene.characterIds?.includes(id)){input.checked=true;selectedCharacters.add(id);label.dataset.selected='true';}
+          label.append(input,name);castOptions.append(label);castPreview.textContent=[...castOptions.querySelectorAll('input:checked')].map(input=>input.nextElementSibling.textContent).join(' · ');
+        }
+        if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='More characters';more.onclick=()=>{more.remove();void loadCast(result.cursor);};castOptions.append(more);}
+        if(!castOptions.childNodes.length){const empty=document.createElement('p');empty.textContent='No characters yet.';castOptions.append(empty);}
+      }catch(error){if(current())status.textContent=error.message;}
+    };
+    if(isVideo){updateSubmit();void loadCast();references.addEventListener('toggle',()=>{if(references.open&&!sources.querySelector('label,p'))void page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));});}
+    else {
+      await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
+      references.addEventListener('toggle',()=>{if(references.open&&!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout','provenance','migration-report','audit-report','generation-metadata'].includes(a.kind)&&!/(?:^|[\/_-])(audit|migration|provenance|manifest|processing)(?:[\/_.-]|$)/i.test(a.key)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='creative-evidence'||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));});
+    }
     form.onsubmit=async event=>{
-      event.preventDefault();if(!selected.size)return;
-      if(selected.size>8||selectedContext.size>12){status.textContent='Choose up to 8 transcripts and 12 context sources.';return;}
-      submit.disabled=true;status.textContent=target==='novel'?'Starting chapter…':'Starting project…';
-      try {const job=await api('/editorial-jobs',{}, {body:{gameId,creation:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]}}});
-        if(!current())return;form.hidden=true;open.hidden=true;
-        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',target==='novel'?'Chapter progress':'Video project progress');panel.append(progress);
+      event.preventDefault();if(isVideo?!brief.value.trim():!selected.size)return;
+      if(selected.size>8||selectedContext.size>12||selectedCharacters.size>12){status.textContent='Choose up to 8 transcripts and 12 characters.';return;}
+      submit.disabled=true;status.textContent=isVideo?'Preparing video…':'Starting chapter…';
+      const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
+      try {const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
+        if(!current())return;form.hidden=true;open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
+        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);
         editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
-      }catch(error){if(current()){status.textContent=error.message;submit.disabled=false;}}
+      }catch(error){if(current()){status.textContent=error.message;updateSubmit();}}
     };
   };
+  if(target==='video'){open.hidden=true;void open.onclick();}
 }
 
 async function showEditorialProgress(jobId, host, gameId, target) {
@@ -4387,11 +4372,12 @@ async function showEditorialProgress(jobId, host, gameId, target) {
   try {
     const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
     const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
-    heading.textContent=result.job.creation?.title||'Editorial project';
+    heading.textContent=result.job.creation?.title||(target==='video'?'Video':'Chapter');
     const terminal=['FAILED','NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
-    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Planning ready':result.job.status==='FAILED'?'Processing failed':'Processing';
+    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':result.job.status==='FAILED'?'Processing failed':'Processing';
     const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Processing details';activity.append(summary,stages);
     host.replaceChildren(heading,copy,activity);
+    if(target==='video'&&result.job.status==='READY_FOR_VIDEO_DISCUSSION'){const note=document.createElement('p');note.className='editorial-generation-note';note.textContent='Prompts prepared. Rendering requires approval.';host.append(note);}
     for(const task of result.tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
       if(task.status==='DONE'&&task.output?.key){const link=document.createElement('a');link.textContent='View';link.href=`/games/${gameId}/media?asset=${encodeURIComponent(task.output.key)}`;item.append(' ',link);}stages.append(item);}
     if(target==='video'&&result.tasks.some(t=>t.stage==='video-storyboards'&&t.status==='DONE')) {

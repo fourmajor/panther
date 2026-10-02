@@ -1454,3 +1454,31 @@ body { padding-bottom:6rem; }
 @media(prefers-reduced-motion:reduce) {
   .design-atlas *, .design-dock * { animation:none !important; transition:none !important; }
 }
+
+.editorial-cast-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:8px; }
+.editorial-creation-panel .editorial-character-choice { padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+.editorial-character-choice[data-selected="true"] { border-color:var(--gold); background:var(--panel-raised); }
+.editorial-cast-preview:empty { display:none; }
+.editorial-cast-preview { margin:12px 0 0; color:var(--gold); font-size:.9rem; }
+.editorial-generation-note { color:var(--muted); font-size:.85rem; }
+.editorial-creation-panel summary { cursor:pointer; padding:8px 0; }
+.editorial-creation-panel details[open]>fieldset { margin-top:12px; }
+
+#scene-video-composer .editorial-composer { padding-bottom:80px; }
+
+#episode-workspace { margin:0 0 32px; }
+.episode-toolbar,.scene-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:0 0 16px; }
+.episode-toolbar h2 { flex:1; margin:0; }
+.episode-cards,.scene-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)); gap:12px; margin:16px 0; }
+.episode-card,.scene-card { text-align:left; min-height:56px; border:1px solid var(--line); border-radius:10px; padding:16px; background:var(--panel); }
+:is(.episode-card,.scene-card)[aria-pressed="true"] { border-color:var(--gold); background:var(--panel-raised); }
+.episode-detail { padding:20px; border:1px solid var(--line); border-radius:12px; }
+.episode-editor { display:grid; gap:16px; background:var(--panel); padding:20px; margin:16px 0; border-radius:12px; }
+.episode-editor label { display:grid; gap:8px; }
+.episode-editor input,.episode-editor textarea,.episode-editor select { width:100%; min-height:44px; padding:12px; box-sizing:border-box; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:8px; }
+.episode-editor textarea { min-height:88px; }
+.episode-editor>div { display:flex; gap:12px; flex-wrap:wrap; }
+.selected-scene { margin-top:24px; }
+.video-library-details { margin:12px 0 20px; }
+.video-library-details>summary { padding:12px 0; cursor:pointer; }
+@media(max-width:600px) { .episode-detail { padding:16px; } .episode-toolbar h2 { flex-basis:100%; } }

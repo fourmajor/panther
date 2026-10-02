@@ -152,7 +152,7 @@ def test_novel_cli_lists_all_pages_and_preserves_exact_edit_envelope(setup, monk
     )
 
 
-def test_tv_cli_keeps_guarded_private_metadata_operations_exact(setup, monkeypatch, tmp_path):
+def test_tv_cli_reads_history_and_retires_legacy_writes(setup, monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
         cloud,
@@ -163,6 +163,10 @@ def test_tv_cli_keeps_guarded_private_metadata_operations_exact(setup, monkeypat
     )
     assert CliRunner().invoke(main, ["videos", "series", "--game", "test-game"]).exit_code == 0
     assert calls[-1] == ("GET", "/tv-series", {"params": {"gameId": "test-game"}})
+    assert CliRunner().invoke(main, ["videos", "episodes", "--game", "test-game"]).exit_code == 0
+    assert calls[-1] == ("GET", "/episodes", {"params": {"gameId": "test-game"}})
+    assert CliRunner().invoke(main, ["videos", "legacy-episodes", "--game", "test-game"]).exit_code == 0
+    assert calls[-1] == ("GET", "/tv-episodes", {"params": {"gameId": "test-game"}})
     file = tmp_path / "episode.json"
     body = {
         "gameId": "test-game",
@@ -172,8 +176,8 @@ def test_tv_cli_keeps_guarded_private_metadata_operations_exact(setup, monkeypat
     }
     file.write_text(json.dumps(body))
     result = CliRunner().invoke(main, ["videos", "save-episode", str(file)])
-    assert result.exit_code == 0 and calls[-1] == ("POST", "/tv-episodes", {"json": body})
-    assert "a" * 32 in result.output
+    assert result.exit_code != 0
+    assert all(method == "GET" for method, _, _ in calls)
 
 
 def test_transcript_selection_cli_preserves_guard_and_retry_identity(setup, monkeypatch):

@@ -94,3 +94,18 @@ def save_collection(file, operation_id):
             indent=2,
         )
     )
+
+
+@videos.command("migrate-workspace")
+@click.option("--apply", is_flag=True, help="Apply the reviewed all-game inventory; default is a dry run.")
+@click.option("--inventory-hash", help="Exact inventoryHash from a reviewed dry run; required with --apply.")
+def migrate_workspace(apply, inventory_hash):
+    """Import explicit legacy episodes without inventing scenes or changing media."""
+    if apply and (not inventory_hash or len(inventory_hash) != 64 or any(c not in "0123456789abcdef" for c in inventory_hash)):
+        raise click.ClickException("--apply requires the reviewed --inventory-hash (64 lowercase hex characters)")
+    if not apply and inventory_hash:
+        raise click.ClickException("--inventory-hash is only used with --apply")
+    body = {"schemaVersion": 1, "apply": apply}
+    if apply:
+        body["expectedInventoryHash"] = inventory_hash
+    click.echo(json.dumps(cloud.api(cloud.configuration(), "POST", "/video-workspace/migrate", json=body), indent=2))

@@ -9,6 +9,7 @@ PLAN = json.loads(files("panther_journal").joinpath("editorial-plan.json").read_
 STAGES = [s for branch in ("correction", "novel", "video") for s in PLAN[branch]]
 
 BRIEFS = {
+    "video-source-brief": "Preprocess optional transcript sources against the user's creative brief and pinned cast. Select only story-relevant events, dialogue, character actions, setting and explicit continuity facts; exclude table chatter, irrelevant rules discussions and audit/provenance documents. Return sourceFacts with exact sourceKey and source-local segmentIndex for each extracted fact plus explicit uncertainty; quote dialogue only when that source actually contains it. Keep factual evidence, creative direction and proposed inventions distinct. With no transcripts, sourceFacts MUST be empty: work from the creative brief and explicit character/background references, without fabricating a transcript, recording session or supposed dialogue evidence. Describe the coherent proposed scene, cast and factual gaps in markdown. Do not generate media or authorize spending.",
     "video-voice-casting": "Create separate player and character voice casting plans tied to stable entity IDs, plus an independent narrator. A real player's cloned voice requires that person's explicit scoped permission and suitable licensed/consented samples; recording consent is not cloning consent. Character voices may be independently designed and must not silently impersonate a player, celebrity or another real person. Describe timbre, range, accent intent, rhythm, emotion/performance direction and pronunciation lexicon. Specify clean enrollment sample requirements, ownership, revocation, usage scope, versioning and an original non-impersonating fallback where permission is absent. Plan dialogue alignment/lip-sync and consistency testing without training, cloning, generating audio or selecting a paid provider. All profiles remain proposals with no model reference or generation authorization.",
     "novel-options": "Develop three genuinely distinct narrative approaches within the brief (POV, opening, emphasis, structure), compare tradeoffs, and choose one against explicit craft criteria. Create an original voice/style bible and a fact-versus-invention ledger. Do not average options into generic prose or imitate a named living writer. This is creative exploration, not factual correction.",
     "novel-continuity": "Audit the revised chapter against the corrected transcript and pinned game evidence: names, character knowledge, geography, chronology, possessions, injuries, goals and consequential events. Check distinct character voices, POV drift, cliches, repetitive AI phrasing and overexplained themes. Produce a concrete continuity/style ledger and targeted copyedit instructions; don't erase deliberate creative choices merely for uniformity.",
@@ -106,3 +107,18 @@ def voice_profile_proposals(catalog):
         )
         for person in people
     ]
+
+BRIEFS["video-source-brief"] += (
+    " Use the pinned scene's name, description and type as the baseline and the explicit creative brief as direction."
+    " Scene types: opener (title/establishing), travel (map/location journey), action, dialogue, general."
+    " For travel, retain actual map/location evidence and label unknown geography; prefer deterministic map composition where appropriate."
+    " Scene type is a planning choice, never spending authorization."
+)
+BRIEFS["video-generation-packets"] += (
+    " Include coherent structured scene and cast information from the pinned revisions in each packet."
+    " Keep the same character identity, appearance selection and wardrobe across shots unless an explicit source supports a change."
+    " Recommend the standing production profile per shot: action Kling 3 Pro, dialogue MiniMax H3 Max (not Turbo),"
+    " otherwise Veo 3.1 Fast for city/opener shots; action takes precedence over city setting."
+    " Travel/map shots must cite actual map and location references, not invented geography."
+    " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
+)

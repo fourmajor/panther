@@ -110,32 +110,184 @@ def validate_raw(raw, game):
             raise ValueError("Invalid transcript timing")
 
 
+def pin_cast(game, ids):
+    import character_appearances as looks
+    import character_details
+
+    pins = []
+    for identity in ids:
+        _, _, registered = looks.character(game, identity)
+        decoded = character_details.decode(registered)
+        db = looks.browse_index.table()
+        marker = db.get_item(
+            Key={"pk": f"{looks.PREFIX}-migration#{game}#{identity}", "sk": "complete"},
+            ConsistentRead=True,
+        ).get("Item")
+        if not marker:
+            raise ValueError("Selected character appearance migration is incomplete")
+        activation = db.get_item(
+            Key=looks.records.pointer(
+                looks.PREFIX, game, looks.kind("activation", identity), "current"
+            ),
+            ConsistentRead=True,
+        ).get("Item")
+        appearance, refs = None, []
+        if activation:
+            current, physical, selection, _ = looks.resolve(game, identity)
+            if current["detailsRevision"] != registered["detailsRevision"]:
+                raise ValueError("Selected character changed; retry the request")
+            appearance = {"appearance": physical, "selection": selection}
+            for key, maximum, types in [
+                (
+                    selection["portraitKey"],
+                    media.MAX_POSTER_BYTES,
+                    {"image/png", "image/jpeg", "image/webp", "image/avif"},
+                ),
+                (
+                    selection.get("modelKey"),
+                    media.MAX_MODEL_BYTES,
+                    {"model/gltf-binary", "application/octet-stream"},
+                ),
+            ]:
+                if key is None:
+                    continue
+                if (
+                    not isinstance(key, str)
+                    or not key.startswith(f"games/{game}/assets/")
+                    or not media._valid_key(key)
+                ):
+                    raise ValueError("Invalid selected appearance reference")
+                head = media.s3.head_object(
+                    Bucket=media.BUCKET_NAME, Key=key, ChecksumMode="ENABLED"
+                )
+                metadata = json.loads(
+                    base64.b64decode(head.get("Metadata", {}).get("panther", "e30="))
+                )
+                if (
+                    not isinstance(metadata.get("characterIds"), list)
+                    or identity not in metadata["characterIds"]
+                    or head.get("ContentType") not in types
+                    or not 0 < head["ContentLength"] <= maximum
+                    or not head.get("ChecksumSHA256")
+                ):
+                    raise ValueError(
+                        "Selected appearance does not explicitly depict this character"
+                    )
+                refs.append(
+                    {
+                        "key": key,
+                        "sha256": head["ChecksumSHA256"],
+                        "size": head["ContentLength"],
+                        "contentType": head["ContentType"],
+                    }
+                )
+        pins.append(
+            {
+                "characterId": identity,
+                "name": decoded["name"],
+                "detailsRevision": decoded["revision"],
+                "details": decoded["details"],
+                "appearance": appearance,
+                "appearanceAssets": refs,
+            }
+        )
+    return pins
+
+
+def pin_game(game):
+    db = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
+    record = db.get_item(Key={"pk": "GAMES", "sk": game}, ConsistentRead=True).get("Item")
+    if not record:
+        raise ValueError("Game not found")
+    from visual_styles import STYLES
+
+    facts = {
+        key: record[key]
+        for key in ("id", "name", "ruleset", "purpose", "description", "visualStyle")
+        if key in record
+    }
+    return {
+        "game": facts,
+        "visualStyles": [style for style in STYLES if style["id"] == facts.get("visualStyle")],
+    }
+
+
 def submit(body):
     legacy = set(body) == {"gameId", "rawKey"}
     if not legacy and set(body) != {"gameId", "creation"}:
         raise ValueError("Expected gameId and rawKey or a creation request")
     if not media._valid_slug(body["gameId"]):
         raise ValueError("Invalid game")
-    creation = None
+    creation, selected_scene = None, None
     if legacy:
         source_keys, context_keys = [body["rawKey"]], []
     else:
         creation = body["creation"]
+        version = creation.get("schemaVersion") if isinstance(creation, dict) else None
+        fields = {"schemaVersion", "target", "title", "brief", "sourceKeys", "contextKeys"}
+        if version == 2:
+            required = {
+                "schemaVersion",
+                "target",
+                "sceneRef",
+                "characterIds",
+                "sourceKeys",
+                "contextKeys",
+            }
+            if not required <= set(creation) or not set(creation) <= required | {"title", "brief"}:
+                raise ValueError("Expected a scene-owned video creation request")
+            ref = creation["sceneRef"]
+            if (
+                not isinstance(ref, dict)
+                or set(ref) != {"episodeId", "sceneId", "revision"}
+                or not media._valid_slug(ref["episodeId"])
+                or not media._valid_slug(ref["sceneId"])
+                or not isinstance(ref["revision"], str)
+                or not re.fullmatch(r"[a-f0-9]{32}", ref["revision"])
+            ):
+                raise ValueError("Invalid scene reference")
+            import video_scenes
+
+            selected_scene = video_scenes.pin_scene(body["gameId"], ref)
+            prompt = creation.get("brief", "")
+            if not isinstance(prompt, str):
+                raise ValueError("Expected a scene prompt")
+            creation = {
+                **creation,
+                "brief": prompt if prompt.strip() else selected_scene["name"],
+                "title": creation.get("title", selected_scene["name"][:160]),
+            }
+            fields.update({"characterIds", "sceneRef"})
         if (
             not isinstance(creation, dict)
-            or set(creation)
-            != {"schemaVersion", "target", "title", "brief", "sourceKeys", "contextKeys"}
-            or type(creation["schemaVersion"]) is not int
-            or creation["schemaVersion"] != 1
+            or set(creation) != fields
+            or type(version) is not int
+            or version not in {1, 2}
             or creation["target"] not in {"novel", "video"}
+            or version == 2
+            and creation["target"] != "video"
             or not isinstance(creation["title"], str)
             or not 1 <= len(creation["title"].strip()) <= 160
             or not isinstance(creation["brief"], str)
             or len(creation["brief"]) > 4000
+            or version == 2
+            and not creation["brief"].strip()
         ):
             raise ValueError("Invalid creation request")
+        if version == 2:
+            ids = creation["characterIds"]
+            if (
+                not isinstance(ids, list)
+                or len(ids) > 12
+                or any(not media._valid_slug(i) for i in ids)
+                or len(ids) != len(set(ids))
+            ):
+                raise ValueError("Invalid selected characters")
         source_keys, context_keys = creation["sourceKeys"], creation["contextKeys"]
-        for keys, minimum, maximum in [(source_keys, 1, 8), (context_keys, 0, 12)]:
+        for keys, minimum, maximum in [
+            (source_keys, 0 if version == 2 else 1, 8),
+            (context_keys, 0, 12),
+        ]:
             if (
                 not isinstance(keys, list)
                 or not minimum <= len(keys) <= maximum
@@ -162,25 +314,27 @@ def submit(body):
         ref, head = asset(key, body["gameId"])
         stored = head.get("Metadata", {})
         details = json.loads(base64.b64decode(stored.get("panther", "e30=")))
-        if (
-            details.get("extra", {}).get("contextUse") == "exclude"
-            or stored.get("kind") in {"reading-script", "test-script", "holdout"}
-            or details.get("category")
-            in {"grounded-adaptation", "creative-reimagining", "playful-derivative"}
-        ):
-            raise ValueError("Selected context is not source evidence")
-        if not (
-            stored.get("kind")
-            in {"corrected-transcript", "character-profile", "lore", "game-context"}
-            or details.get("extra", {}).get("contextUse") == "evidence"
-            or details.get("category") in {"canonical-source", "reference"}
-        ):
-            raise ValueError("Selected context is not eligible evidence")
+        from creative_context import eligible
+
+        if not eligible(stored.get("kind", ""), details):
+            raise ValueError("Selected context is not eligible creative evidence")
         contexts.append({**ref, "kind": stored.get("kind", ""), "metadata": details})
-    if creation and sum(ref["size"] for ref in [*references, *contexts]) > 512 * 1024:
+    cast = (
+        pin_cast(body["gameId"], creation["characterIds"])
+        if creation and creation["schemaVersion"] == 2
+        else []
+    )
+    game_context = pin_game(body["gameId"]) if creation and creation["schemaVersion"] == 2 else None
+    snapshot_size = len(json.dumps([cast, game_context, selected_scene], default=str).encode())
+    if snapshot_size > 256 * 1024:
+        raise ValueError("Selected character snapshots exceed the durable job limit")
+    if (
+        creation
+        and sum(ref["size"] for ref in [*references, *contexts]) + snapshot_size > 512 * 1024
+    ):
         raise ValueError("Selected input bundle exceeds the stage context limit")
     identity = (
-        [references, contexts, creation, PLAN["version"]]
+        [references, contexts, creation, cast, game_context, selected_scene, PLAN["version"]]
         if creation
         else [references[0], PLAN["version"]]
     )
@@ -190,16 +344,26 @@ def submit(body):
         "sk": job_id,
         "jobId": job_id,
         "gameId": body["gameId"],
-        "sessionId": raws[0]["sessionId"] if len(raws) == 1 else "collection-" + job_id[:16],
-        "raw": references[0],
+        "sessionId": raws[0]["sessionId"] if len(raws) == 1 else "collection-" + job_id[:16] if raws else None,
+        "raw": references[0] if references else None,
+        "sourceMode": "transcript" if references else "prompt",
         "workflowVersion": PLAN["version"],
         "status": "SUBMITTED",
         "createdAt": int(time.time()),
-        "contextCutoff": int(max(media._asset_created_at(h).timestamp() for h in heads)),
+        "contextCutoff": int(
+            max((media._asset_created_at(h).timestamp() for h in heads), default=time.time())
+        ),
         "videoGenerationAuthorized": False,
     }
     if creation:
-        job.update(creation=creation, rawSources=references, selectedContext=contexts)
+        job.update(
+            creation=creation,
+            rawSources=references,
+            selectedContext=contexts,
+            selectedCharacters=cast,
+            gameContext=game_context,
+            selectedScene=selected_scene,
+        )
     try:
         table.put_item(Item=job, ConditionExpression="attribute_not_exists(pk)")
     except ClientError as exc:
@@ -219,30 +383,19 @@ def context_page(game, cursor, cutoff):
         key = item["key"]
         if not key.endswith((".json", ".md", ".txt")) or not 0 < item.get("size", 0) <= 256 * 1024:
             continue
+        details = item.get("metadata", {})
+        kind = item.get("kind", "")
+        from creative_context import eligible
+
+        if not eligible(kind, details):
+            continue
         ref, head = asset(key, game)
         if media._asset_created_at(head).timestamp() > cutoff:
             continue
-        details = item.get("metadata", {})
-        extra, kind = details.get("extra", {}), item.get("kind", "")
-        if (
-            extra.get("contextUse") == "exclude"
-            or kind
-            in {
-                "reading-script",
-                "test-script",
-                "holdout",
-                "raw-transcript",
-                "editorial-failed-candidate",
-            }
-            or details.get("category")
-            in {"grounded-adaptation", "creative-reimagining", "playful-derivative"}
-        ):
-            continue
-        if (
-            kind in {"corrected-transcript", "character-profile", "lore", "game-context"}
-            or extra.get("contextUse") == "evidence"
-            or details.get("category") in {"canonical-source", "reference"}
-        ):
+        stored = head.get("Metadata", {})
+        kind = stored.get("kind", kind)
+        details = json.loads(base64.b64decode(stored.get("panther", "e30=")))
+        if eligible(kind, details):
             items.append(
                 {
                     **ref,
@@ -511,8 +664,13 @@ def handler(event, _context):
         if operation not in {"heartbeat", "defer", "complete"}:
             return response(404, {"error": "Unknown operation"})
         return response(200, update(owned(body, claims["sub"]), body, operation))
-    except (ValueError, TypeError, KeyError):
-        return response(400, {"error": "Invalid artifact, context request, or stage lease"})
+    except (ValueError, TypeError, KeyError) as error:
+        message = (
+            str(error)
+            if event.get("routeKey") == "POST /editorial-jobs" and type(error) is ValueError
+            else "Invalid artifact, context request, or stage lease"
+        )
+        return response(400, {"error": message})
     except ClientError as exc:
         return response(
             409 if exc.response["Error"]["Code"] == "ConditionalCheckFailedException" else 503,
@@ -539,6 +697,7 @@ def stream(event, _context):
                             {
                                 "jobId": new["jobId"],
                                 "target": new.get("creation", {}).get("target", "both"),
+                                "sourceMode": new.get("sourceMode", "transcript"),
                             }
                         ),
                     )
