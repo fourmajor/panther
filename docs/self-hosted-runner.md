@@ -4,8 +4,15 @@
 
 Kiwi runs a persistent, repository-scoped runner in a restricted Docker
 container. It provides CI compute after host restarts without Dandelion. The
-Panther workflow still accepts only owner-dispatched jobs on reviewed `main`
-or `codex/` branches. The container has two CPUs, 4 GiB RAM, no host mounts,
+Panther workflow accepts only manual dispatches by the owner or explicitly
+owner-approved contributors on reviewed `main` or `codex/` branches. Configure
+approved identities outside source in the repository Actions variable
+`CI_TRUSTED_ACTORS`, a JSON array (fictional example: `["example-contributor"]`).
+Missing configuration permits only the owner. Both the original dispatcher and
+rerun actor must be authorized; ordinary repository write access alone is not
+runner authorization. Review the branch diff before dispatch. This grants code
+execution on owned compute, not AWS access. Never run untrusted forks or enable
+automatic PR execution. The container has two CPUs, 4 GiB RAM, no host mounts,
 no Docker socket, no AWS credentials, and no private game files. Its registration
 credential remains inside the container; a new registration is required if
 that container is removed.
