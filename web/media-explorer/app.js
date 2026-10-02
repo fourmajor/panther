@@ -335,6 +335,9 @@ function showWelcome(message = "") {
   elements.explorer.hidden = true;
   elements.characters.hidden = true;
   elements.novel.hidden = true;
+  document.getElementById("dashboard").hidden = true;
+  document.getElementById("game-settings").hidden = true;
+  document.getElementById("game-context").hidden = true;
   elements.account.hidden = true;
   elements.primaryNav.hidden = true;
   elements.authError.textContent = message;
@@ -426,6 +429,7 @@ async function selectGame(requested, epoch) {
   const selected = requested || state.gameId || remembered || state.games[0]?.id;
   if (!state.games.some(g => g.id === selected)) throw new Error("Game not found. Choose an available game.");
   elements.gameToolbar.hidden = false;
+  document.getElementById("game-context").hidden = false;
   if (selected !== state.gameId) {
     resetLive();
     state.gameId = selected;
@@ -452,19 +456,97 @@ async function selectGame(requested, epoch) {
     const detail = await api("/game", { gameId: selected });
     if (epoch !== routeEpoch || state.gameId !== selected) return false;
     state.gameDetail = detail;
-    for (const member of detail.memberships) {
-      const person = detail.players.find(p => p.id === member.playerId);
-      const names = member.characterIds.map(id => detail.characters.find(c => c.id === id)?.name || id);
-      const li = document.createElement("li");
-      li.textContent = `${person?.name || member.playerId} — ${member.role === "dungeon-master" ? "Dungeon Master" : names.join(", ") || "Player"}`;
-      elements.playerRoster.append(li);
-    }
+
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
   elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
   renderGameStyle();
   if (liveGame !== selected) { liveGame = selected; void refreshLive(); }
   return true;
+}
+
+function gameLink(link, section) {
+  link.href = gamePath(section);
+  link.onclick = event => {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); navigate(link.getAttribute("href"));
+  };
+}
+
+function renderDashboard() {
+  const {game, players, memberships, characters} = state.gameDetail;
+  document.getElementById("dashboard-name").textContent = game.name;
+  document.getElementById("dashboard-purpose").textContent = game.purpose === "test" ? "Test game" : "Your campaign";
+  document.getElementById("dashboard-description").textContent = state.gameDetail.gameSettings?.description || "This game’s source material and stories, together in one place.";
+  const facts = document.getElementById("dashboard-facts"); facts.replaceChildren();
+  for (const text of [game.ruleset || "System not set", `${players.length} ${players.length === 1 ? "player" : "players"} in the roster`, `${characters.length} ${characters.length === 1 ? "character" : "characters"}`]) {
+    const fact = document.createElement("span"); fact.textContent = text; facts.append(fact);
+  }
+  const sections = [
+    ["characters", "Characters", "Meet the characters and explore their portraits, appearances and stories."],
+    ["audio", "Audio", "Listen to session recordings and return to the moments that mattered."],
+    ["transcripts", "Transcripts", "Read the session record, with speakers and saved versions preserved."],
+    ["novel", "Novel", "Explore narrative retellings, chapters and books from your game."],
+    ["videos", "Videos", "Watch episodes, trailers and other creative reimaginings."],
+    ["media", "Media", "Browse the full archive of images, maps, models and other assets."],
+  ];
+  const cards = document.getElementById("dashboard-sections"); cards.replaceChildren();
+  for (const [index, [section, label, description]] of sections.entries()) {
+    const card = document.createElement("a"); card.className = "dashboard-card"; gameLink(card, section);
+    const top = document.createElement("span"); top.className = "dashboard-card-top";
+    const number = document.createElement("span"); number.className = "dashboard-card-number"; number.textContent = String(index + 1).padStart(2,"0"); number.setAttribute("aria-hidden","true");
+    const arrow = document.createElement("span"); arrow.className = "dashboard-card-arrow"; arrow.textContent = "↗"; arrow.setAttribute("aria-hidden","true"); top.append(number, arrow);
+    const copy = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p"); title.textContent = label; detail.textContent = description; copy.append(title, detail); card.append(top, copy); cards.append(card);
+  }
+  elements.playerRoster.replaceChildren();
+  for (const player of players) {
+    const member = memberships.find(m => m.playerId === player.id);
+    const row = document.createElement("li"), initial = document.createElement("span"), copy = document.createElement("span"), title = document.createElement("strong"), role = document.createElement("small");
+    initial.className = "crew-initial"; initial.textContent = player.name.split(/\s+/).map(v=>v[0]).join("").slice(0,2); initial.setAttribute("aria-hidden","true");
+    copy.className = "crew-copy"; title.textContent = player.name;
+    role.textContent = member?.role === "dungeon-master" ? "Dungeon Master" : member?.role === "player" ? "Player" : "Role not recorded";
+    copy.append(title, role); row.append(initial, copy); elements.playerRoster.append(row);
+  }
+  if (!players.length) { const row = document.createElement("li"); row.textContent = "No player roster has been recorded for this game yet."; elements.playerRoster.append(row); }
+  for (const link of document.querySelectorAll("[data-game-section]")) gameLink(link, link.dataset.gameSection);
+}
+
+function applyGameDetail(detail) {
+  state.gameDetail = detail;
+  const entry = state.games.find(g => g.id === state.gameId); if (entry) Object.assign(entry, detail.game);
+  const option = Array.from(elements.gameSelector.options).find(o => o.value === state.gameId);
+  if (option) option.textContent = detail.game.name + (detail.game.purpose === "test" ? " (Test)" : "");
+  elements.gameRuleset.textContent = detail.game.ruleset ? `System: ${detail.game.ruleset}` : "System not set";
+}
+
+function renderGameSettings() {
+  const detail = state.gameDetail, gameId = state.gameId, epoch = routeEpoch, canEdit = detail.canEditGame === true;
+  const form = document.getElementById("game-settings-form"), status = document.getElementById("game-settings-status"), button = form.querySelector("button");
+  const fields = {name: document.getElementById("game-name"), description: document.getElementById("game-description"), ruleset: document.getElementById("game-system")};
+  fields.name.value = detail.game.name; fields.description.value = detail.gameSettings?.description || ""; fields.ruleset.value = detail.game.ruleset || "";
+  for (const field of Object.values(fields)) field.readOnly = !canEdit;
+  button.disabled = !canEdit; status.textContent = ""; delete status.dataset.state;
+  const notice = document.getElementById("game-settings-access"); notice.hidden = canEdit;
+  notice.textContent = "You can view this game’s settings. A publisher can edit game details and generation defaults.";
+  let pending = null;
+  form.onsubmit = async event => {
+    event.preventDefault(); if (!canEdit || button.disabled) return;
+    const edits = {name: fields.name.value.trim(), description: fields.description.value.trim() || null, ruleset: fields.ruleset.value.trim() || null};
+    if (!pending || JSON.stringify(pending.edits) !== JSON.stringify(edits)) pending = {edits, operationId: crypto.randomUUID()};
+    button.disabled = true; button.textContent = "Saving…"; status.textContent = "Saving game details…"; delete status.dataset.state;
+    try {
+      const updated = await api("/game/settings", {}, {body: {gameId, ...edits, expectedName: detail.game.name, expectedRuleset: detail.game.ruleset || null, expectedDescriptionRevision: detail.gameSettings?.descriptionRevision || null, operationId: pending.operationId}});
+      if (state.gameId !== gameId || routeEpoch !== epoch) return;
+      applyGameDetail(updated); renderGameSettings(); status.textContent = "Game details saved.";
+    } catch (error) {
+      if (state.gameId !== gameId || routeEpoch !== epoch) return;
+      status.textContent = error.status === 409 ? "Someone changed these settings. Reload the page to review the latest values before saving." : `Could not save. ${error.message} You can retry this save.`;
+      status.dataset.state = "error";
+    } finally {
+      if (state.gameId === gameId && routeEpoch === epoch) { button.disabled = !canEdit; button.textContent = "Save game details"; }
+    }
+  };
+  renderGameStyle();
 }
 
 function renderGameStyle() {
@@ -489,8 +571,9 @@ function renderGameStyle() {
     unset.disabled = true;
     select.prepend(unset);
   } else select.value = expectedStyle;
-  select.disabled = false;
-  form.querySelector("button").disabled = false;
+  const canEdit = detail.canEditGame === true;
+  select.disabled = !canEdit;
+  form.querySelector("button").disabled = !canEdit;
   status.textContent = "";
   form.onsubmit = async event => {
     event.preventDefault();
@@ -540,7 +623,10 @@ function renderCharacterCard(character) {
   name.textContent = character.name;
   const title = document.createElement("small");
   title.textContent = character.detailsSubtitle || character.title || "Character";
+  const member = state.gameDetail?.memberships?.find(m => m.characterIds.includes(character.id));
+  const player = state.gameDetail?.players?.find(p => p.id === member?.playerId);
   copy.append(name, title);
+  if (player) { const credit = document.createElement("small"); credit.className = "character-player"; credit.textContent = `Played by ${player.name}`; copy.append(credit); }
 
   const arrow = document.createElement("span");
   arrow.className = "entry-arrow";
@@ -1214,6 +1300,8 @@ async function renderRoute() {
   const epoch = ++routeEpoch;
   const pageLoading = document.getElementById("page-loading");
   pageLoading.hidden = false; showLoading(pageLoading, "Checking your sign-in…");
+  document.getElementById("dashboard").hidden = true;
+  document.getElementById("game-settings").hidden = true;
   clearLibrary();
   closePreview();
   elements.novel.hidden = true;
@@ -1221,7 +1309,7 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(media|characters|novel|audio|transcripts|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|audio|transcripts|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1240,6 +1328,14 @@ async function renderRoute() {
   }
   if (epoch !== routeEpoch) return;
   const section = gameRoute?.[2] || window.location.pathname.slice(1);
+  if (section === "dashboard" || location.pathname === "/") {
+    setActiveNavigation("dashboard"); elements.characters.hidden = true; elements.explorer.hidden = true;
+    document.getElementById("dashboard").hidden = false; renderDashboard(); return;
+  }
+  if (section === "settings") {
+    setActiveNavigation("settings"); elements.characters.hidden = true; elements.explorer.hidden = true;
+    document.getElementById("game-settings").hidden = false; renderGameSettings(); return;
+  }
   if (["audio", "transcripts", "videos"].includes(section)) {
     setActiveNavigation(section);
     elements.characters.hidden = true;
@@ -3273,7 +3369,7 @@ elements.previewDialog.addEventListener("click", (event) => {
 });
 elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
 elements.gameSelector.addEventListener("change", () => {
-  const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "media";
+  const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
   navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${section}`);
 });
 elements.modelLoad.addEventListener("click", loadCharacterModel);
@@ -3312,14 +3408,14 @@ elements.characterModel.addEventListener("error", () => {
 });
 elements.primaryNav.addEventListener("click", (event) => {
   const link = event.target.closest("a");
-  if (!link) return;
+  if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
   navigate(link.getAttribute("href"));
 });
 document.querySelector(".brand").addEventListener("click", (event) => {
-  if (!state.tokens) return;
+  if (!state.tokens || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  navigate(gamePath("media"));
+  navigate(gamePath("dashboard"));
 });
 window.addEventListener("popstate", renderRoute);
 window.addEventListener("storage", (event) => {
