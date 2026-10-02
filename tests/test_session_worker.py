@@ -33,18 +33,19 @@ def test_private_config_requires_activation_boundary_and_no_users(tmp_path):
         worker.settings(path)
 
 
-def test_download_pins_and_resume_header(tmp_path, monkeypatch):
+@pytest.mark.parametrize("version,extension", [(1, "flac"), (2, "wav")])
+def test_download_pins_and_resume_header(tmp_path, monkeypatch, version, extension):
     identity = "recording-" + "a" * 32
     prefix = f"games/synthetic-game/assets/{identity}/original/"
-    job = {"gameId": "synthetic-game", "chunkSetId": identity, "workflowVersion": 1,
-           "recording": {"key": prefix + "recording.json"}, "chunks": [{"key": prefix + "part-0000.flac"}]}
+    job = {"gameId": "synthetic-game", "chunkSetId": identity, "workflowVersion": version,
+           "recording": {"key": prefix + "recording.json"}, "chunks": [{"key": prefix + f"part-0000.{extension}"}]}
     source = tmp_path / "captures"
     source.mkdir()
     root = tmp_path / "work"
     root.mkdir()
     record = SimpleNamespace(id=identity, gameId="synthetic-game", sessionId="synthetic-session", startedAt="2026-01-01", device="synthetic")
     monkeypatch.setattr(worker.cloud, "configuration", lambda: {})
-    monkeypatch.setattr(worker.audio, "verified", lambda _: record)
+    monkeypatch.setattr(worker, "verified", lambda _: record)
     download = Mock()
     monkeypatch.setattr(worker, "download", download)
     folder = worker.local_recording(job, {"recordingsRoot": str(source)}, root)
@@ -63,8 +64,8 @@ def test_transcript_reuses_raw_and_checkpoint_without_repeating_inference(tmp_pa
     profiles = tmp_path / "profiles.json"
     profiles.write_text("{}")
     part = SimpleNamespace(file="part-0000.flac", start=0, duration=30, model_dump=lambda: {"file": "part-0000.flac", "sha256": "pinned"})
-    record = SimpleNamespace(id=folder.name, gameId="synthetic-game", sessionId="synthetic-session", parts=[part])
-    monkeypatch.setattr(worker.audio, "verified", lambda _: record)
+    record = SimpleNamespace(id=folder.name, gameId="synthetic-game", sessionId="synthetic-session", parts=[part], entityType="Recording")
+    monkeypatch.setattr(worker, "verified", lambda _: record)
     monkeypatch.setattr(worker, "audit", lambda _: {"warnings": ["capture warning"]})
     monkeypatch.setattr(worker.cloud, "configuration", lambda: {})
     monkeypatch.setattr(worker.cloud, "api", lambda *a, **k: {"players": [{"id": "example-player", "name": "Example Player"}]})
@@ -94,7 +95,8 @@ def test_transcript_reuses_raw_and_checkpoint_without_repeating_inference(tmp_pa
     monkeypatch.setattr(speaker_profiles, "SpeakerWorker", Analyzer)
     options = {"whisperModel": str(model), "speakerProfiles": str(profiles), "speakerModel": str(tmp_path), "speakerRuntime": str(tmp_path / "python")}
     job = {"jobId": "b" * 64, "chunkSetId": folder.name, "gameId": record.gameId}
-    report = Mock()
+    from unittest.mock import MagicMock
+    report = MagicMock()
     _, paths = worker.transcript(folder, job, options, tmp_path / "recognition", report)
     worker.transcript(folder, job, options, tmp_path / "recognition", report)
     assert reuse.call_count == 1 and Analyzer.calls == 1 and rerun.call_count == 0

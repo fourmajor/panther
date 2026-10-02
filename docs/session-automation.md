@@ -4,6 +4,8 @@ The reviewed laptop worker consumes the existing **server-verified COMPLETE chun
 not an individual upload, UI stop event, quiet period, or local filename. Completing capture
 and finishing its cloud sync is the trigger. The uploader remains independent of processing.
 AWS's completed-set record is the durable queue; sleeping/offline owned compute delays work.
+Both native FLAC and browser WAV completed sets use this owned-compute path; original formats
+and capture warnings remain unchanged. This does not enable or repeat paid browser ASR.
 No new always-on cloud compute or paid recognition provider is required.
 
 Run `panther recording automation worker --config PRIVATE_CONFIG --work-dir PRIVATE_DIRECTORY`.

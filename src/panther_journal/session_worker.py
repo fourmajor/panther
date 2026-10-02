@@ -17,6 +17,7 @@ import click
 from panther_journal import cloud, recording as audio, live_transcript as live
 from panther_journal.audio_storage import lock, write_json, flush_file, flush_directory
 from panther_journal.capture_audit import audit
+from panther_journal.browser_recording import verified
 from panther_journal.model_workflow import download
 from panther_journal.workflows import Reporter
 
@@ -101,20 +102,20 @@ def local_recording(job, config, root):
     for file in base.rglob("recording.json"):
         if file.parent.name == job["chunkSetId"] and audio.digest(file) == base64.b64decode(job["recording"]["sha256"]).hex():
             private_path(file)
-            audio.verified(file.parent)
+            verified(file.parent)
             return file.parent
     folder = root / job["chunkSetId"]
     folder.mkdir(mode=0o700, exist_ok=True)
     prefix = f"games/{job['gameId']}/assets/{job['chunkSetId']}/original/"
     connection = cloud.configuration()
-    if job["workflowVersion"] != 1:
-        raise click.ClickException("This local finalizer currently requires FLAC source sets")
+    if job["workflowVersion"] not in {1, 2}:
+        raise click.ClickException("Unsupported completed recording protocol")
     for index, ref in enumerate([job["recording"], *job["chunks"]]):
-        name = "recording.json" if index == 0 else f"part-{index - 1:04d}.flac"
+        name = "recording.json" if index == 0 else f"part-{index - 1:04d}.{'wav' if job['workflowVersion'] == 2 else 'flac'}"
         if ref["key"] != prefix + name:
             raise click.ClickException("Invalid completed-set input path")
         download(connection, ref, folder / name)
-    record = audio.verified(folder)
+    record = verified(folder)
     header = {k: getattr(record, k) for k in ("id", "gameId", "sessionId", "startedAt", "device")}
     if not (folder / "capture.json").exists():
         write_json(folder / "capture.json", header)
@@ -126,7 +127,7 @@ def local_recording(job, config, root):
 def transcript(folder, job, options, target, report):
     """Reuse verified live ASR; recognize only absent or gapped chunks. Never use context."""
     from panther_journal import speaker_profiles as speakers
-    record = audio.verified(folder)
+    record = verified(folder)
     if record.id != job["chunkSetId"] or record.gameId != job["gameId"]:
         raise click.ClickException("Recording identity differs from verified completion")
     model = Path(options["whisperModel"])
@@ -138,6 +139,7 @@ def transcript(folder, job, options, target, report):
     if not {p["playerId"] for p in profiles["profiles"]} <= ids:
         raise click.ClickException("Enrolled speakers are not in this game")
     raw, attributed, evidence = [], [], []
+    started = time.monotonic()
     target.mkdir(mode=0o700, exist_ok=True)
     with speakers.SpeakerWorker(target, Path(options["speakerModel"]), Path(options["speakerRuntime"])) as analyzer:
         for index, part in enumerate(record.parts):
@@ -151,6 +153,8 @@ def transcript(folder, job, options, target, report):
             else:
                 working = target / f"part-{index:04d}-working.json"
                 prior = checkpoint_read(working) if working.exists() else None
+                if prior and (prior["part"] != part.model_dump() or prior["modelSha256"] != model_hash):
+                    raise click.ClickException("Partial recognition input changed")
                 attempt = target / (prior["attempt"] if prior else f"part-{index:04d}-evidence-{uuid.uuid4().hex}")
                 if attempt.parent != target or attempt.is_symlink():
                     raise click.ClickException("Invalid evidence directory")
@@ -175,7 +179,7 @@ def transcript(folder, job, options, target, report):
                     line.pop("sourcePart", None)
                     line["sourceParts"] = [part.file]
                 if not prior:
-                    checkpoint_write(working, {"attempt": attempt.name, "raw": clean, "evidence": pins})
+                    checkpoint_write(working, {"attempt": attempt.name, "part": part.model_dump(), "modelSha256": model_hash, "raw": clean, "evidence": pins})
                 wav = attempt / "speaker-input.wav"
                 if not wav.exists():
                     live.run_process([audio.executable("ffmpeg"), "-v", "error", "-nostdin", "-n", "-i", str(folder / part.file), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], attempt, "speaker-decode.log")
@@ -183,6 +187,8 @@ def transcript(folder, job, options, target, report):
                 speaker_attempt.mkdir(mode=0o700)
                 result_file = speaker_attempt / "speaker-result.json"
                 result = analyzer.analyze(wav, speaker_attempt)
+                if any(turn["start"] < 0 or turn["end"] < turn["start"] or turn["end"] > part.duration + 0.1 for turn in result["turns"]):
+                    raise click.ClickException("Speaker timestamps exceed verified source chunk")
                 assigned = speakers.label_lines(clean, result, profiles["profiles"], part.start)
                 value = {"part": part.model_dump(), "modelSha256": model_hash, "profilesSha256": profiles_hash, "raw": clean, "attributed": assigned, "evidence": pins, "speakerResultPath": str(result_file.relative_to(target)), "speakerResultSha256": audio.digest(result_file)}
                 checkpoint_write(checkpoint, value)
@@ -193,12 +199,20 @@ def transcript(folder, job, options, target, report):
             raw.extend(value["raw"])
             attributed.extend(value["attributed"])
             evidence.append({"chunk": part.file, "checkpointSha256": audio.digest(checkpoint)})
-            write_json(target / "progress.json", {"stage": "recognition-and-attribution", "completed": index + 1, "total": len(record.parts), "percent": round(100 * (index + 1) / len(record.parts), 1), "updatedAt": time.time()}, replace=True)
+            elapsed = time.monotonic() - started
+            percent = round(100 * (index + 1) / len(record.parts), 1)
+            write_json(target / "progress.json", {"stage": "recognition-and-attribution", "completed": index + 1, "total": len(record.parts), "percent": percent, "elapsedSeconds": elapsed,
+                "estimatedRemainingSeconds": elapsed / (index + 1) * (len(record.parts) - index - 1), "estimateScope": "This local chunk pass only; excludes editorial stages and may change", "updatedAt": time.time()}, replace=True)
+            with report.mutex:
+                for stage in report.stages:
+                    if stage["id"] == "match-players":
+                        stage["label"] = f"Recognize & match players · {index + 1}/{len(record.parts)} chunks ({percent}%)"
+                report.send()
     if audio.digest(model) != model_hash or speakers.model_pin(Path(options["speakerModel"])) != profiles["modelFiles"]:
         raise click.ClickException("Recognition model weights changed during processing")
     base = {"schemaVersion": 1, "entityType": "PlayerTranscript", "artifactType": "raw-transcript", "gameId": record.gameId,
             "sessionId": record.sessionId, "recordingId": record.id, "sourceParts": [p.model_dump() for p in record.parts],
-            "captureIntegrity": audit(folder), "engine": "whisper.cpp", "modelSha256": model_hash, "players": game["players"],
+            "captureIntegrity": {"status": "unverified", "warnings": record.captureWarnings} if record.entityType == "BrowserRecording" else audit(folder), "engine": "whisper.cpp", "modelSha256": model_hash, "players": game["players"],
             "reviewStatus": "unreviewed", "speakerMethod": "unassigned", "finalizationEvidence": evidence}
     raw_id = "transcript-" + hashlib.sha256((job["jobId"] + model_hash + "raw-v1").encode()).hexdigest()[:32]
     assigned_id = "transcript-" + hashlib.sha256((job["jobId"] + profiles_hash + model_hash + "attributed-v1").encode()).hexdigest()[:32]

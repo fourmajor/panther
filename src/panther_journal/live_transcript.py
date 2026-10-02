@@ -204,6 +204,9 @@ def run_process(command, attempt, log_name, *, timeout=180):
 
 def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
     source = check_part(folder, part)
+    source_format = source.suffix.removeprefix('.')
+    if source_format not in {'flac', 'wav'}:
+        raise click.ClickException('Unsupported verified recognition source format')
     wav = attempt / "input.wav"
     run_process(
         [
@@ -221,7 +224,7 @@ def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
             "-protocol_whitelist",
             "file,pipe",
             "-f",
-            "flac",
+            source_format,
             "-i",
             str(source),
             "-map",
