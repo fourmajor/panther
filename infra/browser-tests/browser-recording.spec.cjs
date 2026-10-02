@@ -20,7 +20,7 @@ test.beforeAll(async()=>{
   server=http.createServer((request,response)=>{
     const name=new URL(request.url,origin || 'http://localhost').pathname;
     if(name==='/config.js') {response.setHeader('Content-Type','application/javascript');response.end(`window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"${origin}/"};`);return;}
-    const file=name==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/pcm-capture-v1.js'].includes(name)?name.slice(1):'index.html');
+    const file=name==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css','/pcm-capture-v1.js'].includes(name)?name.slice(1):'index.html');
     response.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html');response.end(fs.readFileSync(file));
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${server.address().port}`;headers['access-control-allow-origin']=origin;
@@ -148,4 +148,20 @@ test('failed full-pass request reuses immutable interrupted manifest',async({pag
   await expect(page.locator('#room-final-link')).toBeVisible();
   expect(files.get('recording.json').raw.equals(original)).toBe(true);
   expect(posts.filter(p=>p.name==='/browser-transcriptions' && p.body.mode==='final')).toHaveLength(2);
+});
+
+test('recording remains stoppable on the Account page and processes directly below',async({page})=>{
+  await fixture(page,false);
+  await page.locator('#room-start').click();
+  await expect(page.locator('#room-state')).toBeVisible();
+  await expect.poll(()=>page.locator('#room-level').evaluate(element=>element.value)).toBeGreaterThan(0);
+  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.locator('#account-page')).toBeVisible();
+  const stop=page.locator('#room-stop');await expect(stop).toBeInViewport();
+  const rectangle=await stop.boundingBox();
+  expect(await stop.evaluate((element,point)=>element.contains(document.elementFromPoint(point.x,point.y)),{x:rectangle.x+rectangle.width/2,y:rectangle.y+rectangle.height/2})).toBe(true);
+  await stop.click();await expect(page.locator('#room-result')).toBeVisible();
+  await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
+  expect((await page.locator('#room-result').boundingBox()).y).toBeGreaterThan((await page.locator('.room-controls').boundingBox()).y);
 });

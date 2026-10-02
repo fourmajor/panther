@@ -32,7 +32,7 @@ async function fixture(page) {
   await page.route(`${origin}/**`,route=>{
     const pathname=new URL(route.request().url()).pathname;
     if(pathname==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
-    const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+    const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   await page.route('https://audio.example/**',route=>route.fulfill({body:flac,contentType:'audio/flac',headers:{'accept-ranges':'bytes'}}));
@@ -116,7 +116,7 @@ test('TV failures are recoverable without blocking the ordinary video library',a
   let fail=true;await page.route(`${api}/tv-series*`,route=>fail?route.fulfill({status:503,headers,json:{error:'Synthetic outage'}}):route.fallback());
   await page.goto(`${origin}/games/test-game/videos?view=episodes`);
   await expect(page.locator('.tv-library')).toContainText('ordinary video library remains usable');
-  await expect(page.locator('.tv-library .loading-spinner')).toHaveCount(0);
+  await expect(page.locator('.tv-library .loading-skeleton')).toHaveCount(0);
   fail=false;await page.getByRole('button',{name:'Retry TV library'}).click();
   await page.getByRole('link',{name:'The Lantern Room',exact:true}).click();
   await expect(page.getByRole('button',{name:'Play selected cut'})).toBeDisabled();
@@ -164,7 +164,7 @@ for(const width of [1280,390]) test(`playful video filters, ordered collections 
   await page.getByLabel('Tag',{exact:true}).selectOption('experiment');await expect(cards).toHaveCount(1);
   await page.getByLabel('Tag',{exact:true}).selectOption('');
   expect(galleryRequests).toBe(1); // Filtering does not re-sign every thumbnail.
-  await page.getByLabel('Ordered collection').selectOption('favorites');
+  await page.getByLabel('Scene',{exact:true}).selectOption('favorites');
   await expect(cards.first()).toContainText('Scene test');await expect(cards).toHaveCount(2);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`video-collections-${width}.png`),fullPage:true});
@@ -196,10 +196,10 @@ test('unavailable collection never substitutes library videos',async({page})=>{
   await page.route(`${api}/video-collections?**`,route=>new URL(route.request().url()).searchParams.get('id')
     ?route.fulfill({status:503,headers,json:{error:'Try later'}}):route.fulfill({headers,json:{collections:[{id:'favorites',name:'Favorites',assetKeys:[video]}],cursor:null}}));
   await page.goto(`${origin}/games/test-game/videos`);
-  await page.getByLabel('Ordered collection').selectOption('favorites');
+  await page.getByLabel('Scene',{exact:true}).selectOption('favorites');
   await expect(page.locator('#library-list')).toContainText('Collection not loaded; no partial playlist');
   await expect(page.locator('.video-card')).toHaveCount(0);
-  await page.getByLabel('Ordered collection').selectOption('');await expect(page.locator('.video-card')).toHaveCount(1);
+  await page.getByLabel('Scene',{exact:true}).selectOption('');await expect(page.locator('.video-card')).toHaveCount(1);
 });
 
 for (const width of [1280,390]) test(`transcript search, versions, canonical choice and continuous source at ${width}`,async({page})=>{
@@ -291,11 +291,11 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   await page.goto(`${origin}/games/test-game/videos`);
   const status=page.locator('#library-status');
   await expect(status).toContainText('Fetching videos from the catalog');
-  await expect(status.locator('.loading-spinner')).toBeVisible();
-  expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-loading');
+  await expect(status.locator('.loading-skeleton')).toBeVisible();
+  expect(await status.locator('.loading-skeleton').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-pulse');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.clock.fastForward(16000);
-  await expect(status).toContainText('Taking longer than usual');
+  await expect(status.locator('.loading-skeleton')).toBeVisible();
   await expect(status).not.toContainText('%');
   await page.screenshot({path:test.info().outputPath(`loading-${width}.png`),fullPage:true});
   releaseFirst();
@@ -310,7 +310,7 @@ for (const width of [1280,390]) test(`loading feedback reports real catalog prog
   await expect(page.locator('.session-card')).toHaveCount(1);
   expect(await page.locator('.session-card').evaluate(node=>node.getBoundingClientRect().y+scrollY)).toBeCloseTo(cardTop,1);
   await page.emulateMedia({reducedMotion:'reduce'});
-  expect(await status.locator('.loading-spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
+  expect(await status.locator('.loading-skeleton').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   releaseSecond();
   await expect(status).toContainText('Episodes, experiments');
   await expect(status.locator('.loading-state')).toHaveCount(0);
@@ -340,7 +340,7 @@ test('failed catalog removes activity and offers recovery', async ({page}) => {
   await fixture(page);
   await page.route(`${api}/assets?**`,route=>route.fulfill({status:503,json:{error:'Temporarily unavailable'},headers}));
   await page.goto(`${origin}/games/test-game/videos`);
-  await expect(page.locator('#library-status')).toContainText('Use Refresh to retry');
+  await expect(page.locator('#library-status')).toContainText('Temporarily unavailable');
   await expect(page.locator('#library-status .loading-state')).toHaveCount(0);
 });
 
@@ -458,7 +458,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`transcript-${width}.png`),fullPage:true});
   await page.getByRole('button',{name:'Close preview'}).click();
-  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
+  await selectGame(page,'other-game');
   await expect(page.locator('#library-status')).toContainText('No transcripts yet');
   await expect(page.locator('#preview-body')).toBeEmpty();
   expect(errors).toEqual([]);
@@ -501,7 +501,7 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await page.keyboard.press('Escape'); expect(await page.evaluate(()=>window.previousVideo.paused)).toBe(true);
   await expect(page.locator('#asset-generation')).toBeEmpty();
   await page.reload(); await expect(page.locator('.session-card')).toHaveCount(1);
-  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
+  await selectGame(page,'other-game');
   await expect(page).toHaveURL(`${origin}/games/other-game/videos`);
   await expect(page.locator('#library-status')).toContainText('No videos yet');
 });
@@ -516,7 +516,7 @@ test('deep-linked transcript survives reload and expired authentication clears c
   await expect(page.locator('.session-card')).toHaveCount(1);
   await page.route(`${api}/assets*`,route=>route.fulfill({status:401,headers,json:{error:'Expired'}}));
   await page.route(`${origin}/auth/refresh`,route=>route.fulfill({status:401,json:{error:'Expired'}}));
-  await page.locator('#library-refresh').click();
+  await page.reload();
   await expect(page.getByRole('button',{name:'Sign in',exact:true})).toBeVisible();
   await expect(page.locator('#session-library')).not.toBeVisible();
   await expect(page.locator('#library-list')).toBeEmpty();
@@ -551,7 +551,7 @@ test('catalog errors are recoverable without silently claiming empty results',as
   await page.route(`${api}/assets*`,route=>broken?route.fulfill({status:503,headers,json:{error:'Storage unavailable'}}):route.fallback());
   await page.goto(`${origin}/games/test-game/transcripts`);
   await expect(page.locator('#library-status')).toContainText('Storage unavailable');
-  broken=false; await page.locator('#library-refresh').click();
+  broken=false; await page.reload();
   await expect(page.locator('.session-card')).toHaveCount(2);
 });
 
@@ -597,7 +597,7 @@ test('continuous playback refreshes expired links without changing to a source c
   const audio=page.locator('#preview-body audio');
   await expect.poll(()=>audio.evaluate(a=>a.readyState)).toBeGreaterThan(0);
   await audio.evaluate(a=>{a.currentTime=.7;a.dispatchEvent(new Event('error'));});
-  await page.getByRole('button',{name:'Refresh playback link'}).click();
+  await expect(page.getByRole('button',{name:'Refresh playback link'})).toHaveCount(0);
   await expect.poll(()=>links).toBe(2);
   await expect.poll(()=>audio.evaluate(a=>a.currentTime)).toBeCloseTo(.7,1);
 });
@@ -638,7 +638,50 @@ test('late catalog and document responses cannot populate a different game',asyn
     arrived(); await new Promise(resolve=>{release=resolve;}); await route.fulfill({headers,json:{assets,cursor:null}});
   });
   await page.goto(`${origin}/games/test-game/audio`); await waiting;
-  await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('other-game');
+  await selectGame(page,'other-game');
   await expect(page.locator('#library-status')).toContainText('No recordings yet'); release();
   await expect(page.locator('#library-list')).toBeEmpty();
+});
+
+// Exercise the visible Radix Select, including the portal and keyboard focus.
+async function selectGame(page,id) {
+  const name=await page.locator(`#game-selector option[value="${id}"]`).textContent();
+  await page.getByRole('combobox',{name:'Current game'}).click();
+  await page.getByRole('option',{name,exact:true}).click();
+}
+
+for(const width of [1280,390])test(`assemble clips into a guarded scene at ${width}px`,async({page},testInfo)=>{
+  await page.setViewportSize({width,height:1000});await fixture(page);
+  const clips=['Harbor arrival','Lantern close-up'].map((title,index)=>({key:`${prefix}scene-clip-${index}/original/take.mp4`,kind:'video',name:`clip-${index}.mp4`,contentType:'video/mp4',size:100,lastModified:'2026-10-01T12:00:00Z',metadata:{title,extra:{relationshipRole:'finished'}}}));
+  let saved=null;const writes=[];
+  await page.route(`${api}/assets?**`,route=>route.fulfill({headers,json:{assets:clips,cursor:null}}));
+  await page.route(`${api}/video-collections**`,route=>{
+    if(route.request().method()==='POST'){
+      const edit=route.request().postDataJSON();writes.push(edit);
+      saved={schemaVersion:1,entityType:'VideoCollection',...edit,revision:(writes.length===1?'a':'b').repeat(32)};
+      return route.fulfill({headers,json:{collection:saved}});
+    }
+    const id=new URL(route.request().url()).searchParams.get('id');
+    return route.fulfill({headers,json:id?{collection:saved,assets:saved.assetKeys.map(key=>clips.find(a=>a.key===key)),warnings:[]}:{collections:saved?[saved]:[],cursor:null}});
+  });
+  await page.goto(`${origin}/games/test-game/videos`);
+  await page.getByRole('button',{name:'Create scene',exact:true}).click();
+  const form=page.locator('.scene-edit-form');
+  await form.getByLabel('Scene title').fill('Arrival at the harbor');
+  await form.getByLabel('Scene description').fill('Two selected clips.');
+  await form.getByRole('checkbox',{name:'Harbor arrival'}).check();
+  await form.getByRole('checkbox',{name:'Lantern close-up'}).check();
+  await form.getByRole('button',{name:'Move up Lantern close-up',exact:true}).click();
+  await page.screenshot({path:testInfo.outputPath(`scene-editor-${width}.png`),fullPage:true});
+  await form.getByRole('button',{name:'Save scene',exact:true}).click();
+  await expect(page.locator('.video-card').first()).toContainText('Lantern close-up');
+  expect(writes[0].assetKeys).toEqual([clips[1].key,clips[0].key]);
+  expect(writes[0].expectedRevision).toBeNull();
+  await page.getByRole('button',{name:'Edit scene',exact:true}).click();
+  await form.getByRole('button',{name:'Remove Harbor arrival',exact:true}).click();
+  await form.getByRole('button',{name:'Save scene',exact:true}).click();
+  await expect(page.locator('.video-card')).toHaveCount(1);
+  expect(writes[1].expectedRevision).toBe('a'.repeat(32));
+  expect(writes[1].assetKeys).toEqual([clips[1].key]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 });

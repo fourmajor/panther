@@ -186,32 +186,52 @@ def save(media, body, claims, kind):
             raise ValueError("Pin the exact completed chapter edition")
         import novel
 
-        committed = novel.committed_records([summary])
-        task_key = {"pk": "TASKS", "sk": identity + ":novel-chapter"}
-        task = committed.get(("TASKS", task_key["sk"]))
-        job = committed.get(("RUNS", identity))
-        if (
-            not task
-            or task.get("status") != "DONE"
-            or task.get("output", {}).get("key") != chapter_key
-            or not job
-            or job.get("gameId") != game
-            or job.get("sessionId") != summary.get("sessionId")
-        ):
-            raise ValueError("An unfinished or foreign chapter cannot be illustrated")
-        guards.append(
-            {
-                "ConditionCheck": {
-                    "TableName": novel.jobs.table.name,
-                    "Key": encode(task_key),
-                    "ConditionExpression": "#s = :done AND #o = :output",
-                    "ExpressionAttributeNames": {"#s": "status", "#o": "output"},
-                    "ExpressionAttributeValues": encode(
-                        {":done": "DONE", ":output": task["output"]}
-                    ),
+        if summary.get("authorship") == "human":
+            import manual_chapters
+
+            authored = manual_chapters.record(game, identity)
+            if not authored or authored["assetKey"] != chapter_key:
+                raise ValueError("Authored chapter is not committed")
+            guards.append(
+                {
+                    "ConditionCheck": {
+                        "TableName": db.name,
+                        "Key": encode(manual_chapters.key(game, identity)),
+                        "ConditionExpression": "#s = :done AND payload = :p",
+                        "ExpressionAttributeNames": {"#s": "status"},
+                        "ExpressionAttributeValues": encode(
+                            {":done": "DONE", ":p": json.dumps(authored)}
+                        ),
+                    }
                 }
-            }
-        )
+            )
+        else:
+            committed = novel.committed_records([summary])
+            task_key = {"pk": "TASKS", "sk": identity + ":novel-chapter"}
+            task = committed.get(("TASKS", task_key["sk"]))
+            job = committed.get(("RUNS", identity))
+            if (
+                not task
+                or task.get("status") != "DONE"
+                or task.get("output", {}).get("key") != chapter_key
+                or not job
+                or job.get("gameId") != game
+                or job.get("sessionId") != summary.get("sessionId")
+            ):
+                raise ValueError("An unfinished or foreign chapter cannot be illustrated")
+            guards.append(
+                {
+                    "ConditionCheck": {
+                        "TableName": novel.jobs.table.name,
+                        "Key": encode(task_key),
+                        "ConditionExpression": "#s = :done AND #o = :output",
+                        "ExpressionAttributeNames": {"#s": "status", "#o": "output"},
+                        "ExpressionAttributeValues": encode(
+                            {":done": "DONE", ":output": task["output"]}
+                        ),
+                    }
+                }
+            )
         for entry in normalized:
             asset = assets[entry["assetKey"]]
             if (
@@ -321,6 +341,26 @@ def save(media, body, claims, kind):
 
         completed = novel.committed_records(summaries)
         for summary, key in zip(summaries, chapter_keys):
+            if summary.get("authorship") == "human":
+                import manual_chapters
+
+                authored = manual_chapters.record(game, summary["id"])
+                if not authored or authored["assetKey"] != key:
+                    raise ValueError("Authored chapter is not committed")
+                guards.append(
+                    {
+                        "ConditionCheck": {
+                            "TableName": db.name,
+                            "Key": encode(manual_chapters.key(game, summary["id"])),
+                            "ConditionExpression": "#s = :done AND payload = :p",
+                            "ExpressionAttributeNames": {"#s": "status"},
+                            "ExpressionAttributeValues": encode(
+                                {":done": "DONE", ":p": json.dumps(authored)}
+                            ),
+                        }
+                    }
+                )
+                continue
             task_key = {"pk": "TASKS", "sk": summary["id"] + ":novel-chapter"}
             task = completed.get((task_key["pk"], task_key["sk"]))
             job = completed.get(("RUNS", summary["id"]))

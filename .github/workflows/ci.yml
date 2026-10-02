@@ -29,6 +29,14 @@ jobs:
       - run: ruff check .
       - run: pytest -q
       - run: npm ci --no-audit --no-fund
+        working-directory: web/ui
+      - name: React UI build and data-layer checks
+        run: |
+          npm run build
+          npm test
+          git diff --exit-code -- ../media-explorer/ui-runtime.js ../media-explorer/ui-system.css
+        working-directory: web/ui
+      - run: npm ci --no-audit --no-fund
         working-directory: infra
       - run: npm test
         working-directory: infra

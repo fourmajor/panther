@@ -19,7 +19,7 @@ async function fixture(page) {
   await page.route(`${origin}/**`, route=>{
     const pathname = new URL(route.request().url()).pathname;
     if(pathname==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
-    const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+    const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   await page.route(`${api}/**`, route=>{
@@ -238,7 +238,7 @@ test('explicit novel references can preview and open same-game video collections
   expect(requested).not.toContain('other');
   await preview.getByRole('link',{name:'Open linked page'}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
-  await expect(page.getByLabel('Ordered collection')).toHaveValue('favorites');
+  await expect(page.getByLabel('Scene',{exact:true})).toHaveValue('favorites');
 });
 
 for(const width of [1280,390]) test(`novel hover previews show summaries and images without obscuring controls at ${width}`,async({page})=>{
@@ -297,7 +297,7 @@ test('late or failed previews never leak across games and never prevent navigati
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await expect(page.locator('#novel-prose a')).toHaveCount(3);
   await page.locator('#novel-prose').getByRole('link',{name:'Mira Vale'}).hover(); await waiting;
-  await page.getByRole('combobox',{name:'Game'}).selectOption('test-b');
+  await selectGame(page,'test-b');
   release(); await expect(page.getByRole('dialog',{name:'Link preview'})).not.toBeVisible();
   await expect(page.locator('body')).not.toContainText('STALE CHARACTER DESCRIPTION');
 });
@@ -346,7 +346,7 @@ for(const width of [1280,390]) {
     await page.reload(); await expect(page.locator('#novel-title')).toHaveText('The Earlier Lantern');
     await page.locator('#novel-pagination a').click();
     await expect(page.locator('#novel-title')).toHaveText('Beyond the Harbor');
-    await page.getByRole('combobox',{name:'Game'}).selectOption('test-b');
+    await selectGame(page,'test-b');
     await expect(page).toHaveURL(`${origin}/games/test-b/novel`);
     await expect(page.locator('#novel-status')).toContainText('No chapters yet');
     await expect(page.locator('#novel-prose')).toBeEmpty();
@@ -374,7 +374,7 @@ test('late chapter response cannot leak into another game', async({page})=>{
     await route.fulfill({headers,json:{...chapters[0],markdown:'STALE CHAPTER',details:{review:{},sourceKeys:[]}}});
   });
   await page.goto(`${origin}/games/campaign-a/novel/${first}`); await waiting;
-  await page.getByRole('combobox',{name:'Game'}).selectOption('test-b');
+  await selectGame(page,'test-b');
   await expect(page.locator('#novel-status')).toContainText('No chapters yet'); release();
   await expect(page.locator('#novel-prose')).toBeEmpty();
 });
@@ -388,12 +388,12 @@ test('errors are recoverable; expired authentication hides and clears the manusc
   });
   await page.goto(`${origin}/novel`);
   await expect(page.locator('#novel-status')).toContainText('Temporarily unavailable');
-  failed=false; await page.getByRole('button',{name:'Refresh chapters'}).click();
+  failed=false; await page.reload();
   await page.getByRole('link',{name:'The Lantern Room',exact:true}).click();
   await expect(page.locator('#novel-prose')).toContainText('amber light');
   await page.route(`${api}/novel*`,route=>route.fulfill({status:401,headers,json:{error:'Unauthorized'}}));
   await page.route(`${origin}/auth/refresh`,route=>route.fulfill({status:401,json:{error:'Expired'}}));
-  await page.getByRole('button',{name:'Refresh chapters'}).click();
+  await page.reload();
   await expect(page.getByRole('button',{name:'Sign in',exact:true})).toBeVisible();
   await expect(page.locator('#novel')).not.toBeVisible();
   await expect(page.locator('#novel-prose')).toBeEmpty();
@@ -456,7 +456,7 @@ test('ambiguous titles, explicit disambiguation, missing and hostile targets are
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await expect(page.locator('#novel-prose')).toContainText('Harbor chart');
   await expect(page.locator('#novel-prose a')).toHaveCount(0);
-  explicit=true; await page.getByRole('button',{name:'Refresh chapters'}).click();
+  explicit=true; await page.reload();
   await expect(page.locator('#novel-prose a')).toHaveCount(2);
   await expect(page.locator('#novel-prose').getByRole('link',{name:'Ren Vale'})).toHaveAttribute('href','/games/campaign-a/characters/ren-one');
 });
@@ -467,7 +467,7 @@ test('late link enrichment cannot repopulate another game; catalog outages keep 
   await page.route(`${api}/assets*`,async route=>{arrived(); await new Promise(resolve=>{release=resolve;}); await route.fulfill({headers,json:{assets:[],cursor:null}});});
   await page.goto(`${origin}/games/campaign-a/novel/${first}`); await waiting;
   await expect(page.locator('#novel-prose')).toContainText('amber light');
-  await page.getByRole('combobox',{name:'Game'}).selectOption('test-b'); release();
+  await selectGame(page,'test-b'); release();
   await expect(page.locator('#novel-prose')).toBeEmpty();
   await page.route(`${api}/assets*`,route=>route.fulfill({status:503,headers,json:{error:'Unavailable'}}));
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
@@ -486,13 +486,13 @@ test('character assets use tags across kinds, not names or provenance; refresh e
   await page.route(`${api}/assets*`,route=>broken?route.fulfill({headers,status:503,json:{error:'Unavailable'}}):route.fulfill({headers,json:{assets,cursor:null}}));
   await page.goto(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-assets-status')).toContainText('Unavailable');
-  broken=false; await page.getByRole('button',{name:'Refresh assets'}).click();
+  broken=false; await page.reload();
   await expect(page.locator('#character-assets-list a')).toHaveCount(1);
   await expect(page.locator('#character-assets-list')).toContainText('Tagged video');
   let release, arrived; const waiting=new Promise(r=>{arrived=r;});
   await page.route(`${api}/assets*`,async route=>{arrived(); await new Promise(r=>{release=r;}); await route.fulfill({headers,json:{assets,cursor:null}});});
-  await page.getByRole('button',{name:'Refresh assets'}).click(); await waiting;
-  await page.getByRole('combobox',{name:'Game'}).selectOption('test-b'); release();
+  await page.reload(); await waiting;
+  await selectGame(page,'test-b'); release();
   await expect(page).toHaveURL(`${origin}/games/test-b/characters`);
   await expect(page.locator('#character-profile')).not.toBeVisible();
   await expect(page.locator('#character-assets-list')).not.toContainText('Tagged video');
@@ -507,8 +507,51 @@ test('migrated metadata refreshes character associations without changing the fi
   }],cursor:null}}));
   await page.goto(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-assets-list a')).toHaveCount(0);
-  migrated=true; await page.getByRole('button',{name:'Refresh assets'}).click();
+  migrated=true; await page.reload();
   const link=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute('href',`/games/campaign-a/media?asset=${encodeURIComponent(key)}`);
+});
+
+// Exercise the visible Radix Select, including the portal and keyboard focus.
+async function selectGame(page,id) {
+  const name=await page.locator(`#game-selector option[value="${id}"]`).textContent();
+  await page.getByRole('combobox',{name:'Current game'}).click();
+  await page.getByRole('option',{name,exact:true}).click();
+}
+
+for(const width of [1280,390]) test(`manually add a chapter and preserve its earlier version at ${width}px`,async({page},testInfo)=>{
+  await page.setViewportSize({width,height:900}); await fixture(page);
+  const created=[],records=new Map();
+  await page.route(`${api}/novel-chapters`,route=>{
+    const request=route.request().postDataJSON(); created.push(request);
+    const id=(created.length===1?'d':'e').repeat(64),previous=records.get(request.previousChapterId);
+    const record={id,gameId:'campaign-a',title:request.title,markdown:request.markdown,sessionId:previous?.sessionId || 'chapter-authored',createdAt:1000+created.length,publishedAt:1000+created.length,
+      publicationStatus:'human-authored',reviewStatus:'not-reviewed',notice:'',assetKey:`games/campaign-a/assets/authored-${id}/original/chapter.json`,
+      details:{review:{},sourceKeys:request.sourceKeys,authorship:'human',previousChapterId:request.previousChapterId,artifact:{}}};
+    records.set(id,record); return route.fulfill({headers,json:{chapterId:id,assetKey:record.assetKey}});
+  });
+  await page.route(`${api}/novel?*`,route=>route.fulfill({headers,json:{chapters:[...records.values()],cursor:null}}));
+  await page.route(`${api}/novel-chapter?*`,route=>{
+    const record=records.get(new URL(route.request().url()).searchParams.get('chapterId'));
+    return record?route.fulfill({headers,json:record}):route.fallback();
+  });
+  await page.goto(`${origin}/games/campaign-a/novel`);
+  await page.getByRole('button',{name:'Add chapter',exact:true}).click();
+  const form=page.locator('#manual-chapter-form');
+  await form.getByLabel('Chapter title').fill('The River');
+  await form.getByLabel('Chapter text').fill('An explicitly authored story.');
+  await form.getByRole('button',{name:'Add chapter'}).click();
+  await expect(page.locator('#novel-prose')).toContainText('An explicitly authored story.');
+  await page.getByRole('button',{name:'Edit chapter',exact:true}).click();
+  await form.getByLabel('Chapter text').fill('A revised authored story.');
+  await page.screenshot({path:testInfo.outputPath(`manual-chapter-${width}.png`),fullPage:true});
+  await form.getByRole('button',{name:'Save new chapter version'}).click();
+  await expect(page.locator('#novel-prose')).toContainText('A revised authored story.');
+  expect(created[1].previousChapterId).toBe('d'.repeat(64));
+  expect(records.get('d'.repeat(64)).markdown).toBe('An explicitly authored story.');
+  await page.getByRole('button',{name:'Details',exact:true}).click();
+  await page.getByRole('link',{name:'Previous chapter version'}).click();
+  await expect(page.locator('#novel-prose')).toContainText('An explicitly authored story.');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 });

@@ -32,8 +32,9 @@ export class EditorialProcessing extends Construct {
       exclude: ["**/__pycache__/**", "**/*.pyc"],
     });
     const environment = { ASSET_BUCKET_NAME: props.bucket.bucketName,
+      CATALOG_READERS: props.accessEnvironment.CATALOG_READERS,
       MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS,
-      EDITORIAL_TABLE: table.tableName, EDITORIAL_PLAN: JSON.stringify(plan) };
+      EDITORIAL_TABLE: table.tableName, EDITORIAL_PLAN: JSON.stringify(plan), ASSET_BROWSE_TABLE: props.browseTable.tableName };
     const fn = new lambda.Function(this, "Broker", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
       handler: "editorial_jobs.handler", code, environment,
@@ -41,6 +42,7 @@ export class EditorialProcessing extends Construct {
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
     });
     table.grantReadWriteData(fn);
+    props.browseTable.grant(fn, "dynamodb:Query", "dynamodb:GetItem");
     props.bucket.grantRead(fn, "games/*");
     const failed = new tasks.LambdaInvoke(this, "RecordFailure", {
       lambdaFunction: fn, payload: sfn.TaskInput.fromObject({ operation: "fail", "jobId.$": "$.jobId" }),
@@ -60,8 +62,14 @@ export class EditorialProcessing extends Construct {
     };
     const sequence = (names: string[]): sfn.Chain => names.slice(1).reduce(
       (chain, name) => chain.next(stage(name)), stage(names[0]));
+    const novelBranch = new sfn.Choice(this, "NovelRequested")
+      .when(sfn.Condition.stringEquals("$.target", "video"), new sfn.Pass(this, "SkipNovel"))
+      .otherwise(sequence(plan.novel));
+    const videoBranch = new sfn.Choice(this, "VideoRequested")
+      .when(sfn.Condition.stringEquals("$.target", "novel"), new sfn.Pass(this, "SkipVideo"))
+      .otherwise(sequence(plan.video));
     const branches = new sfn.Parallel(this, "Adaptations", { resultPath: sfn.JsonPath.DISCARD })
-      .branch(sequence(plan.novel), sequence(plan.video));
+      .branch(novelBranch.afterwards(), videoBranch.afterwards());
     const pipeline = new sfn.Parallel(this, "ProtectedPipeline", { resultPath: sfn.JsonPath.DISCARD })
       .branch(sequence(plan.correction).next(branches));
     pipeline.addCatch(failed, { resultPath: "$.failure" });
@@ -109,6 +117,24 @@ export class EditorialProcessing extends Construct {
     for (const route of ["/novel", "/novel-chapter"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration: novelIntegration, authorizer: props.authorizer });
     }
+    const chapterWriter = new lambda.Function(this, "ChapterWriter", {
+      runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+      handler: "manual_chapters.handler", code, environment: {...environment,
+        ASSET_BROWSE_TABLE: props.browseTable.tableName, CATALOG_TABLE: props.catalogTable.tableName},
+      memorySize: 256, timeout: Duration.seconds(30),
+      logGroup: new logs.LogGroup(this, "ChapterWriterLogs", {retention: logs.RetentionDays.ONE_MONTH}),
+    });
+    props.browseTable.grant(chapterWriter, "dynamodb:GetItem", "dynamodb:BatchGetItem");
+    chapterWriter.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#chapter#*"]}}}));
+    chapterWriter.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"],resources:[props.catalogTable.tableArn],
+      conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["GAMES"]}}}));
+    props.bucket.grantRead(chapterWriter, "games/*");
+    chapterWriter.addToRolePolicy(new iam.PolicyStatement({actions:["s3:PutObject"],resources:[
+      props.bucket.arnForObjects("games/*/catalog/assets/authored-chapter-*/*"),
+      props.bucket.arnForObjects("games/*/content/*/authored-chapter-*/*")], conditions:{Null:{"s3:if-none-match":"false"}}}));
+    props.api.addRoutes({path:"/novel-chapters",methods:[api.HttpMethod.POST],
+      integration:new integrations.HttpLambdaIntegration("ChapterWriterIntegration",chapterWriter),authorizer:props.authorizer});
     // Organization is a separate metadata API. It cannot modify manuscripts, jobs or spend.
     const library = new lambda.Function(this, "NovelLibrary", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
@@ -122,7 +148,7 @@ export class EditorialProcessing extends Construct {
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"], resources:[props.browseTable.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#*", "novel-library-history#*", "novel-library-ops#*"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "v3#*#all"]}}}));
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "novel-library#chapter#*", "v3#*#all"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[table.tableArn],
       conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["TASKS"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"], resources:[props.catalogTable.tableArn],

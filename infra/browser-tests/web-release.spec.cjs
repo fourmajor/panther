@@ -57,5 +57,5 @@ for (const width of [1440, 390]) test(`cached release updates without losing the
     // An old document can still retrieve the exact old release after deployment.
     const oldFile = Object.keys(old.files).find(f => f.startsWith('app.'));
     expect((await page.request.get(new URL('/' + oldFile, url).href)).status()).toBe(200);
-  } finally { await new Promise(resolve => server.close(resolve)); }
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });

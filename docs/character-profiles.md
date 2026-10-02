@@ -14,8 +14,7 @@ Player, or immutable Asset records. Future entity kinds require extending the ty
 arbitrary URLs and guessed connections are rejected. Ownership remains a Player membership
 fact, not a login identity.
 
-The web editor provides text fields and typed statistic rows, an advanced connections JSON
-field, and thumbnail choices from explicitly character-tagged images. The thumbnail does not
+The web editor provides text fields and typed statistic rows, typed connection rows, and thumbnail choices from explicitly character-tagged images. The thumbnail does not
 replace the official portrait. Media groups show actual kinds and recorded categories, with
 Unclassified for missing classification. New media kinds remain visible. Downloads, asset
 versions, source lineage, and the existing appearance viewer retain their shared contracts.
@@ -74,3 +73,24 @@ Apply durably records a pending operation before each request and its result aft
 stops on failure. Retry the original plan into a new report using the same operation identities.
 Verification re-enumerates all games/profiles, validates facts and references, and checks
 migration history. Resolve blockers privately and verify the full inventory before closing #23.
+
+## Browser workspace and revision history
+
+Add character creates a schema-2 registered identity with unknown facts left blank.
+The editor can change its name, background and structured fields in one guarded
+revision. Optional `name` in a regular details edit updates the roster label while
+retaining `previousName` in that revision; migration envelopes cannot rename a
+character. References and media show only explicit character associations, with
+image thumbnails and links to immutable asset editions.
+
+`GET /character-details/history` returns up to 25 actual predecessor revisions,
+newest first, with a cursor for the next page. It follows revision links rather
+than sorting random identifiers. Snapshots include previous facts and names when
+recorded; absent historical data stays absent. Private login identities are not
+projected into the history response. Existing creation revisions without a history
+snapshot are not reconstructed from current facts.
+
+Opening a legacy profile may prepare and apply the existing evidence-pinned
+migration only when the account already has migration permission. Conflicts,
+invalid facts and missing permission remain explicit blockers. The browser neither
+invents missing facts nor broadens the migration capability.

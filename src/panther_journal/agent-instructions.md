@@ -714,3 +714,17 @@ editorial processing. Exact inputs and original provider responses remain immuta
 This paid integration is limited to the user-authorized browser feature, not a fallback for
 local ASR or subscription-backed workflows. See `docs/browser-recording.md` for configuration,
 recovery, timing limits and uncertain provider outcomes.
+
+Manually authored chapters use `UserChapter` schema 1, separate from reviewed
+`EditorialArtifact` outputs. The web Novel editor preserves immutable editions,
+semantic versions and explicit input keys; manual writing must not be labeled
+AI-reviewed or substituted for raw transcription. See `docs/authored-chapters.md`
+for the application operation and read-time catalog contract.
+
+Browser editorial creation uses workflow version 3. A creation request pins one to eight completed
+same-game raw PlayerTranscript/final BrowserTranscript inputs, optional eligible text context,
+a title and direction. The source-local timestamps and unassigned speakers stay unchanged;
+the worker's bundle records each segment's exact source asset and index. Each adaptation links
+all raw inputs. Update the subscription worker before processing version 3 jobs; preserve
+older executions and outputs under their original version. Video creation plans scripts,
+shots and schematic storyboards only; it never authorizes or submits paid generation.

@@ -1,0 +1,15 @@
+@import "tailwindcss/theme" layer(theme);
+@import "tailwindcss/utilities" layer(utilities);
+@source "./**/*.{js,jsx}";
+
+.panther-select-trigger { background: var(--panel); color: var(--ink); border-color: var(--line); width: min(18rem, 38vw); }
+.panther-select-trigger:focus-visible { --tw-ring-color: var(--accent); }
+.panther-select-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panther-select-content { background: var(--panel-raised); color: var(--ink); border-color: var(--line); width: var(--radix-select-trigger-width); max-height: var(--radix-select-content-available-height); }
+.panther-select-item[data-highlighted] { background: var(--accent-dark); color: var(--accent); }
+.ui-button-primary { background:var(--accent); color:var(--accent-dark); }
+.ui-button-secondary,.ui-input { background:var(--panel); color:var(--ink); border-color:var(--line); }
+.ui-button-ghost { background:transparent; color:var(--ink); border-color:transparent; }
+.ui-button-ghost:hover { background:var(--panel-raised); }
+.ui-input:focus-visible,.ui-button-ghost:focus-visible { --tw-ring-color:var(--accent); }
+@media (max-width: 600px) { .panther-select-trigger { width: min(14rem, 56vw); } }

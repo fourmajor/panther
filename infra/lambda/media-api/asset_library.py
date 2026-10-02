@@ -89,6 +89,12 @@ def valid_key(media, game, key):
 def novel_summary(doc, asset):
     """Observed manuscript metadata only; review acceptance is not owner approval."""
     summary = {"schemaVersion": 1, "state": "unavailable"}
+    if isinstance(doc, dict) and doc.get("entityType") == "UserChapter":
+        import manual_chapters
+        try:
+            return manual_chapters.summary(doc, asset)
+        except (ValueError, TypeError, KeyError):
+            return summary
     if (
         not isinstance(doc, dict)
         or doc.get("entityType") != "EditorialArtifact"

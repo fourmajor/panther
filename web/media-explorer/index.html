@@ -7,8 +7,10 @@
     <title>Panther</title>
     <meta name="panther-pcm-worklet" content="/pcm-capture-v1.js">
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/ui-system.css">
     <script src="/config.js"></script>
     <script type="module" src="/vendor/model-viewer.min.js"></script>
+    <script src="/ui-runtime.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -21,7 +23,8 @@
       </a>
       <div class="game-toolbar" id="game-toolbar" hidden>
         <label for="game-selector">Current game</label>
-        <select id="game-selector" aria-label="Game"></select>
+        <select id="game-selector" aria-label="Game" hidden></select>
+        <div id="game-select-root"></div>
       </div>
       <nav class="primary-nav" id="primary-nav" aria-label="Panther sections" hidden>
         <a href="/dashboard">Dashboard</a>
@@ -34,7 +37,7 @@
         <a href="/settings">Settings</a>
       </nav>
       <div class="account" id="account" hidden>
-        <span id="username"></span>
+        <span id="username" hidden></span>
         <button class="quiet-button" id="account-settings-button" type="button" aria-label="Account"><span class="account-action-label">Account</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>
         <button class="quiet-button" id="logout-button" type="button" aria-label="Sign out"><span class="account-action-label">Sign out</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4"/></svg></button>
       </div>
@@ -43,8 +46,8 @@
     <main>
       <div id="page-loading" hidden></div>
       <div class="game-context" id="game-context" hidden>
-        <span id="game-purpose" class="game-purpose"></span>
-        <span id="game-ruleset" class="game-ruleset"></span>
+        <span id="game-purpose" class="game-purpose" hidden></span>
+        <span id="game-ruleset" class="game-ruleset" hidden></span>
         <a id="recording-badge" class="recording-badge" hidden><span class="recording-dot" aria-hidden="true"></span><span id="recording-label" role="status"></span></a>
       </div>
       <section id="room-recorder" class="room-recorder" aria-label="Room audio recorder" hidden>
@@ -66,27 +69,27 @@
       </section>
       <section id="dashboard" class="dashboard" aria-label="Game dashboard" hidden>
         <div class="dashboard-hero">
-          <div><p class="eyebrow" id="dashboard-purpose">Your campaign</p><h1 id="dashboard-name"></h1><p class="dashboard-description" id="dashboard-description"></p>
+          <div><p id="dashboard-purpose" hidden></p><h1 id="dashboard-name"></h1><p class="dashboard-description" id="dashboard-description"></p>
             <div class="dashboard-facts" id="dashboard-facts"></div>
           </div>
           <a class="primary-button dashboard-open" data-game-section="media" href="/media">Explore the archive <svg class="navigation-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></a>
         </div>
-        <div class="dashboard-section-heading"><div><p class="eyebrow">Everything in one place</p><h2>Explore your game</h2></div><span>Source material & stories</span></div>
+        <div class="dashboard-section-heading"><div><h2>Explore your game</h2></div><span>Source material & stories</span></div>
         <div class="dashboard-sections" id="dashboard-sections"></div>
-        <div class="dashboard-bottom">
+        <div id="dashboard-recent" class="dashboard-recent"></div><div class="dashboard-bottom">
           <section class="dashboard-crew"><div class="dashboard-section-heading"><h2>At the table</h2><a data-game-section="characters" href="/characters">View characters <svg class="navigation-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></a></div><ul id="player-roster"></ul></section>
-          <section class="dashboard-note"><p class="eyebrow">Make it your own</p><h2>The world starts here.</h2><p>Set the game’s description, system and visual direction in Settings.</p><a data-game-section="settings" href="/settings">Game settings <span aria-hidden="true">→</span></a></section>
+
         </div>
       </section>
       <section id="game-settings" class="game-settings" aria-label="Game settings" hidden>
-        <div class="page-intro"><p class="eyebrow">Your game, your world</p><h1>Game settings</h1><p>The details and creative defaults shared by this game.</p></div>
+
         <p id="game-settings-access" class="settings-access" hidden></p>
-        <section class="settings-card"><div class="settings-card-intro"><h2>Game details</h2><p>Give the game a name, describe its world, and choose the system you play.</p></div>
+        <section class="settings-card"><div class="settings-card-intro"><h2>Game details</h2></div>
           <form id="game-settings-form">
             <label for="game-name">Game name</label><input id="game-name" name="name" maxlength="120" required>
             <label for="game-description">Description <span class="field-optional">Optional</span></label><textarea id="game-description" name="description" rows="4" maxlength="2000" placeholder="What is this game about?"></textarea>
             <label for="game-system">Game system</label><input id="game-system" name="ruleset" maxlength="120" placeholder="For example, Dungeons & Dragons 5e">
-            <p class="field-help">Leave the system empty if it hasn’t been decided yet.</p>
+
             <div class="settings-form-footer"><button class="primary-button" type="submit">Save game details</button><p id="game-settings-status" role="status"></p></div>
           </form>
         </section>
@@ -99,7 +102,7 @@
         </section>
       </section>
       <section class="welcome" id="welcome">
-        <p class="eyebrow">Private game archive</p>
+
         <h1>Your game’s source material and finished stories, together.</h1>
         <p class="lede">
           Browse recordings, portraits, maps, transcripts, narrative retellings, episodic
@@ -115,10 +118,15 @@
       <section class="characters" id="characters" hidden>
         <div class="explorer-heading">
           <div>
-            <p class="eyebrow">The crew</p>
             <h1>Characters</h1>
           </div>
+          <button id="character-create" class="primary-button" type="button">Add character</button>
         </div>
+        <form id="character-create-form" class="character-edit-form" hidden>
+          <label>Character name<input required maxlength="120"></label>
+          <div class="model-control-row"><button class="primary-button" type="submit">Create character</button><button class="quiet-button" type="button">Cancel</button></div>
+          <p role="status"></p>
+        </form>
         <div class="status" id="characters-status" role="status">Loading…</div>
         <div class="character-list" id="character-list" aria-live="polite"></div>
         <button class="quiet-button" id="characters-more" type="button" hidden>Load more characters</button>
@@ -137,7 +145,7 @@
           <p id="character-no-model" hidden>No portrait or 3D model has been added yet.</p>
           <img id="character-portrait-only" class="character-portrait-only" alt="" hidden>
           <section class="appearance-history" id="appearance-history" aria-label="Appearance versions">
-            <div><h2>Appearance history</h2><p>Physical states and artwork editions are separate. Earlier portrait/model pairs remain intact.</p></div>
+            <div><h2>Appearances</h2></div>
             <div class="appearance-pickers">
               <label for="appearance-state">Physical appearance <select id="appearance-state" aria-label="Physical appearance"></select></label>
               <label for="model-version">Artwork edition <select id="model-version" aria-label="Artwork edition"></select></label>
@@ -208,7 +216,7 @@
             </aside>
           </div>
           <section id="character-assets" aria-label="Assets featuring this character">
-            <div class="explorer-heading"><h2>Featuring this character</h2><button id="character-assets-refresh" class="quiet-button" type="button">Refresh assets</button></div>
+            <div class="explorer-heading"><h2>Featuring this character</h2><button id="character-assets-refresh" class="quiet-button" type="button" hidden>Refresh assets</button></div>
             <p id="character-assets-status" role="status"></p>
             <ul id="character-assets-list"></ul>
           </section>
@@ -217,9 +225,11 @@
 
       <section id="novel" hidden aria-label="Novel">
         <div class="explorer-heading">
-          <div><p class="eyebrow">From the table to the page</p><h1>Novel</h1></div>
-          <button class="quiet-button" id="novel-refresh" type="button">Refresh chapters</button>
+          <div><h1>Novel</h1></div>
+          <button class="quiet-button" id="novel-refresh" type="button" hidden>Refresh chapters</button>
+          <button class="quiet-button" id="manual-chapter-create" type="button">Add chapter</button>
         </div>
+        <form id="manual-chapter-form" class="character-edit-form" hidden></form>
         <p id="novel-status" class="status" role="status"></p>
         <div id="novel-resume" class="novel-resume" hidden></div>
         <div id="novel-list" class="novel-list"></div>
@@ -248,11 +258,11 @@
 
       <section id="session-library" hidden aria-label="Session library">
         <div class="explorer-heading">
-          <div><p class="eyebrow">The session record</p><h1 id="library-title"></h1></div>
-          <button class="quiet-button" id="library-refresh" type="button">Refresh</button>
+          <div><h1 id="library-title"></h1></div>
+          <button class="quiet-button" id="library-refresh" type="button" hidden>Refresh</button>
         </div>
         <section id="live-transcript" class="live-transcript" aria-label="Live transcript" hidden>
-          <div class="explorer-heading"><h2>Live transcript</h2><button id="live-refresh" class="quiet-button" type="button">Refresh live feed</button></div>
+          <div class="explorer-heading"><h2>Live transcript</h2><button id="live-refresh" class="quiet-button" type="button" hidden>Refresh live feed</button></div>
           <p>Provisional preview · player labels are tentative; unlabeled speakers are not yet identified.</p>
           <p id="live-status" role="status">Checking for live recordings…</p>
           <div id="live-recordings"></div>
@@ -266,16 +276,21 @@
       <section class="explorer" id="explorer" hidden>
         <div class="explorer-heading">
           <div>
-            <p class="eyebrow">Private library</p>
+
             <h1>Media</h1>
           </div>
-          <button class="quiet-button" id="refresh-button" type="button">Refresh</button>
+          <button class="quiet-button" id="refresh-button" type="button" hidden>Refresh</button>
         </div>
 
         <nav class="breadcrumbs" id="breadcrumbs" aria-label="Current folder"></nav>
         <div class="status" id="status" role="status">Loading…</div>
         <div class="entries" id="entries" aria-live="polite"></div>
         <button class="load-more" id="load-more-button" type="button" hidden>Load more</button>
+      </section>
+      <section id="account-page" class="account-page" aria-labelledby="account-settings-title" hidden>
+        <header class="account-page-heading"><div><h1 id="account-settings-title">Account</h1><p id="account-page-subtitle">Manage your profile and security.</p></div><button class="quiet-button" id="account-settings-back" type="button">Back to game</button></header>
+        <nav id="account-section-nav" class="account-section-nav" aria-label="Account sections"></nav>
+        <div class="account-settings-body" id="account-settings-body"></div>
       </section>
     </main>
 
@@ -297,11 +312,6 @@
         <a class="quiet-button link-button" id="open-original" target="_blank" rel="noreferrer">Open original</a>
         <span id="asset-download-status" role="status"></span>
       </div>
-    </dialog>
-
-    <dialog id="account-settings-dialog" class="account-settings-dialog" aria-labelledby="account-settings-title">
-      <header class="account-settings-heading"><div><p class="eyebrow">Your Panther account</p><h2 id="account-settings-title">Account settings</h2></div><button class="quiet-button" id="account-settings-close" aria-label="Close account settings" type="button">×</button></header>
-      <div class="account-settings-body" id="account-settings-body"></div>
     </dialog>
 
     <template id="folder-template">

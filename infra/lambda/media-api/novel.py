@@ -13,6 +13,7 @@ import browse_index
 
 def committed_records(summaries):
     """Bounded projected batch reads; no manuscript reads and no task-token projection."""
+    summaries = [s for s in summaries if s.get("authorship") != "human"]
     keys = [
         {"pk": prefix, "sk": s["id"] + (":novel-chapter" if prefix == "TASKS" else "")}
         for s in summaries
@@ -111,12 +112,11 @@ def chapter(job):
 
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    # Same configured publisher access as the editorial/catalog APIs; memberships are game roles,
-    # not authorization grants. Future multi-group access must change this policy explicitly.
+    # Reading uses the private catalog-reader capability; publication remains separate.
     from access_policy import authorized
 
-    if not authorized(claims, "MODEL_PUBLISHERS"):
-        return jobs.response(403, {"error": "Owner or DM sign-in required"})
+    if not authorized(claims, "CATALOG_READERS"):
+        return jobs.response(403, {"error": "This account cannot access the novel library"})
     q = event.get("queryStringParameters") or {}
     game = q.get("gameId", "")
     if not jobs.media._valid_slug(game) or len(game) > 96:
@@ -126,6 +126,11 @@ def handler(event, _context):
             job_id = q.get("chapterId", "")
             if not re.fullmatch(r"[a-f0-9]{64}", job_id):
                 return jobs.response(400, {"error": "Invalid chapter"})
+            import manual_chapters
+
+            authored = manual_chapters.read(game, job_id, jobs.media)
+            if authored:
+                return jobs.response(200, authored)
             job = jobs.read("RUNS", job_id)
             result = chapter(job) if job and job["gameId"] == game else None
             return (
@@ -144,6 +149,24 @@ def handler(event, _context):
         for asset in page["assets"]:
             summary = asset.get("novel", {})
             if summary.get("state") != "available":
+                continue
+            if summary.get("authorship") == "human":
+                import manual_chapters
+
+                authored = manual_chapters.record(game, summary["id"])
+                if authored and authored["assetKey"] == asset["key"]:
+                    chapters.append(
+                        {
+                            **summary,
+                            "gameId": game,
+                            "createdAt": authored["createdAt"],
+                            "publishedAt": authored["createdAt"],
+                            "notice": "",
+                            "generation": asset.get("metadata", {})
+                            .get("extra", {})
+                            .get("generation"),
+                        }
+                    )
                 continue
             task = records.get(("TASKS", f"{summary['id']}:novel-chapter"))
             job = records.get(("RUNS", summary["id"]))

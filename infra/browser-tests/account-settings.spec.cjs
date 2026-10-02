@@ -25,7 +25,7 @@ async function fixture(context,{signedIn=true,mfa=false}={}) {
     if(pathname.startsWith('/auth/')) return route.fulfill({status:signedIn?200:401,json:signedIn?{id_token:jwt,expires_in:3600}:{}});
     if(pathname==='/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
     if(pathname==='/vendor/model-viewer.min.js') return route.fulfill({contentType:'application/javascript',body:''});
-    const source=path.join(__dirname,'../../web/media-explorer',pathname.startsWith('/avatars/')?pathname.slice(1):['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+    const source=path.join(__dirname,'../../web/media-explorer',pathname.startsWith('/avatars/')?pathname.slice(1):['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(source),contentType:source.endsWith('.svg')?'image/svg+xml':source.endsWith('.js')?'application/javascript':source.endsWith('.css')?'text/css':'text/html'});
   });
   return {calls,profile};
@@ -44,7 +44,10 @@ for(const width of [1280,390]) {
     await page.goto('https://panther.place/media');
     await visibleControl(page.getByRole('button',{name:'Account',exact:true}));
     await page.getByRole('button',{name:'Account',exact:true}).click();
-    const dialog=page.getByRole('dialog',{name:'Account settings'});
+    await expect(page).toHaveURL('https://panther.place/account');
+    const dialog=page.locator('#account-page');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('navigation',{name:'Account sections'}).getByRole('link')).toHaveCount(5);
     await expect(dialog.getByLabel('Display name')).toHaveValue('Example Member');
     await dialog.getByLabel('Display name').focus(); await page.keyboard.press('Tab');
     await expect(dialog.getByLabel('Avatar',{exact:true})).toBeFocused();
@@ -80,8 +83,8 @@ for(const width of [1280,390]) {
     await expect(dialog.getByRole('button',{name:'Set up authenticator',exact:true})).not.toBeVisible();
     await expect(dialog).toContainText('Authenticator MFA is enabled.');
     await page.screenshot({path:testInfo.outputPath(`account-authenticator-${width}.png`)});
-    await visibleControl(dialog.getByRole('button',{name:'Close account settings'}));
-    await dialog.getByRole('button',{name:'Close account settings'}).click();
+    await visibleControl(dialog.getByRole('button',{name:'Back to game'}));
+    await dialog.getByRole('button',{name:'Back to game'}).click();
     await expect(dialog).not.toBeVisible();
     const stored=await page.evaluate(()=>JSON.stringify([sessionStorage,localStorage]));
     expect(stored).not.toMatch(/SETUP-KEY|Synthetic-old|Synthetic-new/);
@@ -93,7 +96,7 @@ for(const width of [1280,390]) {
 test('authenticator removal and global sign-out require explicit acknowledgement',async({page,context})=>{
   const {calls}=await fixture(context,{mfa:true}); await page.goto('https://panther.place/media');
   await page.getByRole('button',{name:'Account',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Account settings'});
+  const dialog=page.locator('#account-page');
   await dialog.getByRole('button',{name:'Disable authenticator',exact:true}).click();
   await expect(dialog).toContainText('Confirm that you want to remove');
   expect(calls.some(v=>v.action==='mfa-disable')).toBe(false);
@@ -130,18 +133,18 @@ for(const width of [1280,390]) {
     await expect(recovery).toHaveCSS('outline-style','solid');
     await page.screenshot({path:testInfo.outputPath(`sign-in-recovery-${width}.png`)});
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('dialog',{name:'Password recovery'})).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(recovery).toBeFocused();
+    await expect(page.locator('#account-page')).toBeVisible();
+    await page.getByRole('button',{name:'Back to sign in'}).click();
+    await expect(recovery).toBeVisible();
     await recovery.click();
-    await expect(page.getByRole('dialog',{name:'Password recovery'})).toBeVisible();
+    await expect(page.locator('#account-page')).toBeVisible();
   });
 }
 
 test('signed-out recovery uses generic acknowledgement and clears new passwords',async({page,context})=>{
   const {calls}=await fixture(context,{signedIn:false}); await page.goto('https://panther.place/media');
   await page.getByRole('button',{name:'Forgot password?'}).click();
-  const dialog=page.getByRole('dialog',{name:'Password recovery'});
+  const dialog=page.locator('#account-page');
   await dialog.getByLabel('Username',{exact:true}).fill('example-member');
   await dialog.getByRole('button',{name:'Send recovery code',exact:true}).click();
   await expect(dialog).toContainText('If this account can recover by email');
@@ -152,7 +155,7 @@ test('signed-out recovery uses generic acknowledgement and clears new passwords'
   await expect(dialog).toContainText('Password reset.');
   await expect(dialog.getByLabel('New password',{exact:true})).toHaveValue('');
   expect(calls.map(v=>v.action)).toEqual(['forgot','confirm']);
-  await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible();
+  await page.getByRole('button',{name:'Back to sign in'}).click(); await expect(dialog).not.toBeVisible();
   await expect(page.locator('#account-settings-body')).toBeEmpty();
 });
 
@@ -165,9 +168,35 @@ test('closing account setup discards a delayed authenticator secret',async({page
   });
   await page.goto('https://panther.place/media'); await page.getByRole('button',{name:'Account',exact:true}).click();
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click(); await seen;
-  await page.getByRole('button',{name:'Close account settings'}).click();
+  await page.getByRole('button',{name:'Back to game'}).click();
   const completed=page.waitForResponse(response=>response.url().endsWith('/auth/account'));
   release(); await completed;
   await expect(page.locator('#account-settings-body')).toBeEmpty();
   await expect(page.getByText('DELAYED-SYNTHETIC-SECRET')).toHaveCount(0);
+});
+
+test('Account supports direct URLs and browser back while discarding enrollment secrets',async({page,context})=>{
+  const {calls}=await fixture(context);
+  await page.goto('https://panther.place/account');
+  await expect(page.getByRole('heading',{name:'Account',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Display name')).toHaveValue('Example Member');
+  await page.getByRole('button',{name:'Back to game'}).click();
+  await expect(page.locator('#dashboard')).toBeVisible();
+  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.getByRole('button',{name:'Set up authenticator',exact:true}).click();
+  await expect(page.getByLabel('Authenticator setup key')).toBeVisible();
+  await page.goBack();
+  await expect(page.locator('#account-settings-body')).toBeEmpty();
+  await page.goForward();
+  await expect(page.getByLabel('Display name')).toBeVisible();
+  await expect(page.getByLabel('Authenticator setup key')).toHaveCount(0);
+  expect(calls.filter(call=>call.action==='get')).toHaveLength(3);
+});
+
+test('Password recovery supports a direct signed-out URL',async({page,context})=>{
+  await fixture(context,{signedIn:false});
+  await page.goto('https://panther.place/account/recovery');
+  await expect(page.getByRole('heading',{name:'Password recovery',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Username',{exact:true})).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });

@@ -132,6 +132,10 @@ export class PantherMediaExplorerStack extends Stack {
               "script-src 'self' 'wasm-unsafe-eval'",
               // Exact hash of model-viewer 4.3.1's injected style element.
               "style-src 'self' 'sha256-F7kvx28zBT3UUQL/hTOYst+55RSmqyCY3muSCYmt6A4='",
+              // Radix's portalled Select injects scrollbar-dependent scroll-lock
+              // styles. Permit those style elements without relaxing scripts or
+              // style attributes; their runtime bytes cannot use a fixed hash.
+              "style-src-elem 'self' 'unsafe-inline'",
               "worker-src 'self' blob:",
             ].join("; "),
             override: true,
@@ -601,7 +605,7 @@ export class PantherMediaExplorerStack extends Stack {
       fs.readFileSync(path.join(siteDirectory, "index.html"), "utf8")
         .replace("</head>", '<script src="/release.js" defer></script>\n  </head>'),
       Object.fromEntries([
-        ...["app.js", "styles.css", "release.js", "pcm-capture-v1.js"].map(name =>
+        ...["app.js", "styles.css", "release.js", "pcm-capture-v1.js", "ui-runtime.js", "ui-system.css"].map(name =>
           [name, fs.readFileSync(path.join(siteDirectory, name), "utf8")]),
         ["vendor/model-viewer.min.js", fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8")],
       ]),
