@@ -262,3 +262,8 @@ The user LaunchAgent `place.panther.editorial-worker` processes one stage per mi
 It never mounts/copies AWS or Codex credentials. Inspect with `launchctl print gui/$(id -u)/place.panther.editorial-worker`;
 stop with `launchctl bootout gui/$(id -u)/place.panther.editorial-worker`. Upgrades refuse to silently
 replace a loaded service or existing release. Preserve prior releases/logs when explicitly upgrading.
+
+Browser room transcription produces an unreviewed `BrowserTranscript`, with unassigned speakers
+and window-boundary timestamps. It does not automatically enter the player-attributed editorial
+pipeline. Preserve its raw evidence and capture warnings; establish player identities in a
+separate annotated version before adapting it. See [browser recording](browser-recording.md).

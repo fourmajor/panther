@@ -188,7 +188,7 @@ def describe(media, game, key, *, include_document=False):
             inputs = doc.get("inputArtifacts")
             if isinstance(inputs, dict):
                 sources.extend(v.get("key") for v in inputs.values() if isinstance(v, dict))
-            if doc.get("entityType") == "Recording" and isinstance(doc.get("parts"), list):
+            if doc.get("entityType") in {"Recording", "BrowserRecording"} and isinstance(doc.get("parts"), list):
                 result["recording"] = {
                     "partCount": len(doc["parts"]),
                     "status": doc.get("status", "unknown"),

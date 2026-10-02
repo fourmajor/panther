@@ -574,7 +574,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 95);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 99);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -654,4 +654,19 @@ test("remembered sign-in uses maximum rotating refresh sessions and an uncached 
     Environment: { Variables: Match.objectLike({ SITE_ORIGIN: "https://panther.place", WEB_CLIENT_ID: Match.anyValue() }) },
     Timeout: 30, MemorySize: 128,
   });
+});
+
+
+test("browser audio gates API transcription on an optional server secret", () => {
+  const secretArn="arn:aws:secretsmanager:us-west-2:123456789012:secret:browser-asr-ABCDEF";
+  const template=mediaExplorerTemplate({browserTranscriptionSecretArn:secretArn});
+  for(const RouteKey of ["GET /browser-recording/capabilities","POST /browser-recording/complete","GET /browser-transcriptions","POST /browser-transcriptions"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey,AuthorizationType:"JWT"});
+  const policies=Object.entries(template.findResources("AWS::IAM::Policy"));
+  const secretPolicies=policies.filter(([,resource])=>JSON.stringify(resource.Properties.PolicyDocument).includes("secretsmanager:GetSecretValue"));
+  assert.equal(secretPolicies.length,1);
+  assert.match(secretPolicies[0][0],/BrowserRecordingsWorker/);
+  template.hasResourceProperties("AWS::Lambda::Function",{Handler:"browser_transcription.work",Timeout:300,Environment:{Variables:Match.objectLike({OPENAI_TRANSCRIPTION_SECRET_ARN:secretArn})}});
+  mediaExplorerTemplate().hasResourceProperties("AWS::Lambda::Function",{Handler:"browser_transcription.work",Environment:{Variables:Match.objectLike({OPENAI_TRANSCRIPTION_SECRET_ARN:""})}});
+  assert.throws(()=>mediaExplorerTemplate({browserTranscriptionSecretArn:"client-visible-key"}),/Secrets Manager ARN/);
+  assert.match(JSON.stringify(template.findResources("AWS::CloudFront::ResponseHeadersPolicy")),/microphone=\(self\)/);
 });

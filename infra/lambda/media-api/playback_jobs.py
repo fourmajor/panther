@@ -48,7 +48,7 @@ def reference(object_key):
     return {"key": object_key, "size": head["ContentLength"], "sha256": checksum}
 
 
-def document(ref, limit=200_000):
+def document(ref, limit=512_000):
     if ref["size"] > limit:
         raise ValueError("Manifest exceeds supported size")
     reply = media.s3.get_object(Bucket=media.BUCKET_NAME, Key=ref["key"])
@@ -79,19 +79,29 @@ def submit(body):
     if existing:
         return public(existing)
     doc = document(ref)
-    if (doc.get("schemaVersion") != 1 or doc.get("entityType") != "Recording"
+    browser = doc.get("entityType") == "BrowserRecording"
+    source_format = "wav" if browser else "flac"
+    if (doc.get("schemaVersion") != 1 or doc.get("entityType") not in {"Recording", "BrowserRecording"}
             or doc.get("gameId") != game or doc.get("id") != match[1]
             or doc.get("status") not in {"complete", "interrupted"}
-            or doc.get("sourceFormat") != "flac" or not media._valid_slug(doc.get("sessionId"))):
+            or doc.get("sourceFormat") != source_format or not media._valid_slug(doc.get("sessionId"))):
         raise ValueError("Invalid finalized recording")
+    if browser and (not isinstance(doc.get("captureWarnings"), list)
+            or len(doc["captureWarnings"]) > 100
+            or not all(isinstance(w, str) and len(w) <= 500 for w in doc["captureWarnings"])):
+        raise ValueError("Explicit browser capture warnings required")
     parts = doc.get("parts")
     if not isinstance(parts, list) or not 1 <= len(parts) <= 1000:
         raise ValueError("Expected 1–1000 chunks")
     refs, offset = [], 0.0
     prefix = recording_key.removesuffix("recording.json")
     for i, part in enumerate(parts):
-        if part.get("file") != f"part-{i:04d}.flac":
+        if part.get("file") != f"part-{i:04d}.{source_format}":
             raise ValueError("Chunks must have unique consecutive indexes")
+        if browser and (part.get("sampleRate") != 32000 or part.get("channels") != 1
+                or part.get("bitsPerSample") != 16
+                or part.get("size") != 44 + round(part.get("duration", 0) * 32000) * 2):
+            raise ValueError("Invalid browser PCM capture format")
         start, duration = part.get("start"), part.get("duration")
         if (any(type(n) not in (float, int) or not math.isfinite(n) for n in (start, duration))
                 or duration <= 0 or abs(start - offset) > 0.02):
@@ -103,7 +113,7 @@ def submit(body):
         if item["size"] != part.get("size") or base64.b64decode(item["sha256"]).hex() != part.get("sha256"):
             raise ValueError("Chunk missing or does not match manifest")
     # This immutable set membership is the tag for legacy chunks too: no rewriting old objects.
-    job = {**key(job_id), "schemaVersion": 1, "entityType": "RecordingChunkSet", "workflowVersion": 1,
+    job = {**key(job_id), "schemaVersion": 1, "entityType": "RecordingChunkSet", "workflowVersion": 2 if browser else 1,
            "jobId": job_id, "chunkSetId": doc["id"], "gameId": game, "sessionId": doc["sessionId"],
            "setStatus": "COMPLETE", "captureStatus": doc["status"], "status": "SUBMITTED",
            "recording": ref, "chunks": refs, "createdAt": int(time.time()), "attempts": 0}
@@ -125,11 +135,13 @@ def page(cursor=None):
     return table.query(**args)
 
 
-def claim(actor):
+def claim(actor, workflow_version=1):
     now, cursor = int(time.time()), None
     while True:
         batch = page(cursor)
         for job in batch.get("Items", []):
+            if job.get("workflowVersion", 1) > workflow_version:
+                continue
             if job["status"] not in {"QUEUED", "RUNNING"} or job.get("leaseUntil", 0) > now:
                 continue
             lease = uuid.uuid4().hex
@@ -235,9 +247,9 @@ def handler(event, _context):
         if not authorized(claims, "MODEL_WORKERS"):
             return response(403, {"error": "Only the owner's laptop can process playback"})
         if route == "POST /recording-playback-jobs/claim":
-            if body.get("workflowVersion") != 1:
+            if body.get("workflowVersion") not in {1, 2}:
                 raise ValueError("Unsupported workflow version")
-            return response(200, claim(claims["sub"]))
+            return response(200, claim(claims["sub"], body["workflowVersion"]))
         operation = route.removeprefix("POST /recording-playback-jobs/")
         if operation in {"heartbeat", "complete"}:
             return response(200, update(body, claims["sub"], operation))

@@ -697,3 +697,20 @@ applying the selected style. Record the selected style in the preparation docume
 Missing style is a catalog setup problem, not permission to guess. Preserve uploaded
 originals and previous revisions; changing style does not regenerate assets or authorize
 paid requests. See `docs/game-visual-style.md` for the setting and migration contract.
+
+# Browser room capture
+
+The web Audio and Transcripts pages can capture schema-1 `BrowserRecording` WAV originals,
+with explicit capture warnings and immutable parts in the shared location catalog. The native
+CLI `Recording` FLAC contract remains distinct. Keep the originals; playback is produced only
+by the separate completed-set laptop worker, which now advertises protocol 2. Upgrade that
+worker before enabling browser recording; protocol-1 workers skip browser sets.
+
+When the server has an explicitly configured OpenAI secret, browser capture can request optional
+provisional live `gpt-transcribe` output and an independent final pass after stopping. A final
+`BrowserTranscript` has unassigned speakers and window-boundary timestamps. Do not invent
+player identity, convert it to verified player attribution, or use it to automatically trigger
+editorial processing. Exact inputs and original provider responses remain immutable evidence.
+This paid integration is limited to the user-authorized browser feature, not a fallback for
+local ASR or subscription-backed workflows. See `docs/browser-recording.md` for configuration,
+recovery, timing limits and uncertain provider outcomes.

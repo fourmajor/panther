@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <title>Panther</title>
+    <meta name="panther-pcm-worklet" content="/pcm-capture-v1.js">
     <link rel="stylesheet" href="/styles.css">
     <script src="/config.js"></script>
     <script type="module" src="/vendor/model-viewer.min.js"></script>
@@ -46,6 +47,19 @@
         <span id="game-ruleset" class="game-ruleset"></span>
         <a id="recording-badge" class="recording-badge" hidden><span class="recording-dot" aria-hidden="true"></span><span id="recording-label" role="status"></span></a>
       </div>
+      <section id="room-recorder" class="room-recorder" aria-label="Room audio recorder" hidden>
+        <div class="room-heading"><div><p class="eyebrow">Capture the session</p><h2>Record room audio</h2><p>Keep the microphone close to the table and keep this tab open.</p></div><span id="room-state" class="room-state">Ready</span></div>
+        <div class="room-controls"><label for="room-session">Session ID<input id="room-session" placeholder="For example, session-12" pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="96" required></label>
+          <button id="room-start" class="primary-button" type="button">Start recording</button><button id="room-stop" class="quiet-button" type="button" hidden>Stop & save</button>
+          <button id="room-live-toggle" class="quiet-button" type="button" aria-pressed="false" disabled>Live transcription off</button>
+          <span id="room-timer">00:00</span><meter id="room-level" min="0" max="1" value="0" aria-label="Microphone level"></meter>
+        </div>
+        <p id="room-help" class="field-help">Microphone permission is requested when you start. Make sure everyone at the table agrees to be recorded.</p>
+        <p id="room-status" role="status"></p>
+        <div id="room-recovery" hidden><p>Closed audio parts are retained in this browser. Save or download them for backup; closing a tab can lose its unfinished part.</p><button id="room-resume" class="quiet-button" type="button">Save retained recording</button><button id="room-download" class="quiet-button" type="button">Download retained audio</button></div>
+        <div id="room-live" class="room-live" hidden><h3>Live transcript <span>Provisional · speakers unassigned · ~15-second windows</span></h3><div id="room-live-text" aria-live="polite" role="log"></div></div>
+        <div id="room-final" hidden><h3>Full transcription</h3><p id="room-final-status" role="status"></p><a id="room-final-link" hidden>Open the full transcript</a></div>
+      </section>
       <section id="dashboard" class="dashboard" aria-label="Game dashboard" hidden>
         <div class="dashboard-hero">
           <div><p class="eyebrow" id="dashboard-purpose">Your campaign</p><h1 id="dashboard-name"></h1><p class="dashboard-description" id="dashboard-description"></p>

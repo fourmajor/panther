@@ -1138,3 +1138,27 @@ h1 { font-size:clamp(2rem,4vw,3.4rem); line-height:1.1; letter-spacing:-.035em; 
   .page-intro { margin-top:.8rem; margin-bottom:1.8rem; }
 }
 @media(prefers-reduced-motion:reduce) { .dashboard-card { transition:none; } }
+
+.room-recorder { border:1px solid var(--line); border-radius:.7rem; background:var(--panel); padding:1.5rem; margin:0 0 2rem; }
+.room-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
+.room-heading h2 { margin:.3rem 0; font:400 1.65rem Georgia,serif; }
+.room-heading p:not(.eyebrow), .room-recorder .field-help, #room-recovery p { color:var(--muted); font-size:.85rem; }
+.room-state { border:1px solid var(--line); padding:.35rem .6rem; border-radius:2rem; font-size:.75rem; white-space:nowrap; }
+.room-recorder[data-recording="true"] .room-state { color:var(--danger); border-color:var(--danger); }
+.room-controls { display:flex; align-items:end; flex-wrap:wrap; gap:.75rem; margin:1.2rem 0; }
+.room-controls label { display:grid; gap:.4rem; font-size:.8rem; min-width:0; flex:1 1 12rem; }
+.room-controls input { width:100%; box-sizing:border-box; min-width:0; background:var(--paper); color:var(--ink); border:1px solid var(--line); border-radius:.4rem; padding:.75rem; font:inherit; }
+.room-controls button { min-height:44px; font-size:.82rem; }
+.room-controls button[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }
+#room-timer { align-self:center; font-variant-numeric:tabular-nums; color:var(--muted); }
+#room-level { width:5rem; align-self:center; }
+#room-status { font-size:.85rem; overflow-wrap:anywhere; }
+#room-status[data-state="error"] { color:var(--danger); }
+.room-live, #room-final { border-top:1px solid var(--line); padding-top:1rem; margin-top:1rem; }
+.room-live h3, #room-final h3 { font-size:.9rem; margin:.3rem 0 1rem; }
+.room-live h3 span { display:block; color:var(--muted); font-size:.75rem; font-weight:400; margin-top:.3rem; }
+#room-live-text { max-height:18rem; overflow:auto; font-size:.9rem; line-height:1.7; }
+#room-live-text p { margin:.75rem 0; }
+#room-live-text small { color:var(--muted); margin-right:.5rem; }
+#room-final-link { color:var(--accent); }
+@media(max-width:600px) { .room-recorder { padding:1rem; } .room-controls label { flex-basis:100%; } }
