@@ -72,7 +72,7 @@ for(const width of [1440,390]) for(const design of ['studio','chronicle','cinema
     await fixture(page);
     await page.goto(`https://panther.place/games/synthetic-game/workflows?ui=${design}`);
     await expect(page.locator('.workshop-card')).toHaveCount(4);
-    await expect(page.locator('.workshop-group')).toHaveCount(6);
+    await expect(page.locator('.workshop-group')).toHaveCount(7);
     await expect(page.locator('.workshop-group[data-kind=editorial]')).toContainText('The Lanterns at Dawn');
     await expect(page.locator('.workshop-group[data-kind=playback]')).toContainText('Continuous session audio');
     await expect(page.locator('#primary-nav a[aria-current]')).toHaveText('Workflows');
