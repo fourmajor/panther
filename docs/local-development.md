@@ -34,7 +34,7 @@ Run the separate development playback worker alongside the server, using the sam
 private SQLite database (the defaults match):
 
 ```sh
-python3 tools/dev_playback_worker.py \
+.venv/bin/python tools/dev_playback_worker.py \
   --database ~/.local/state/panther/development.sqlite \
   --work-dir ~/.local/state/panther/playback
 ```

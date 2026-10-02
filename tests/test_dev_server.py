@@ -290,7 +290,8 @@ def test_local_asset_generation_persists_real_queue_and_rejects_changed_retry(tm
     store.seed()
     body = {"gameId": "preview-campaign", "type": "map", "name": "Coast", "prompt": "A detailed coastline map", "operationId": "a" * 32}
     job = store.submit_asset_generation(body)
-    assert job["status"] == "QUEUED" and job["assetKey"] is None
+    assert job["status"] == "ATTENTION" and job["assetKey"] is None
+    assert "panther assets worker" in job["message"]
     assert dev.Store(store.path).submit_asset_generation(body) == job
     with pytest.raises(ValueError, match="Operation reused"):
         store.submit_asset_generation({**body, "prompt": "Another map"})
@@ -442,3 +443,15 @@ def test_local_editorial_queue_reports_missing_worker_without_mutating_history(t
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_local_asset_generation_projects_old_queued_jobs_without_rewriting(tmp_path):
+    import json
+    store = dev.Store(tmp_path / "old-generation.sqlite")
+    store.seed()
+    job = {"jobId": "old", "gameId": "preview-campaign", "status": "QUEUED", "prompt": "Preserved request"}
+    with store.connect() as db:
+        db.execute("INSERT INTO records VALUES ('asset-generation',?,?,?)", ("old", "preview-campaign", json.dumps(job)))
+    view = store.asset_generation_page("preview-campaign")["jobs"][0]
+    assert view["status"] == "ATTENTION" and "local database" in view["message"]
+    assert store.get("asset-generation", "old") == job

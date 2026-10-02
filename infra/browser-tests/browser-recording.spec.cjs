@@ -68,13 +68,13 @@ async function fixture(page,transcriptionAvailable=true,failFinal=false,uploadOr
     return respond({});
   });
   await page.goto(origin+'/games/test-game/audio');
-  await expect(page.locator('#room-recorder')).toBeVisible();
-  await expect(page.locator('#room-recorder').getByRole('button')).toHaveCount(1);
+  await expect(page.locator('.room-controls')).toBeVisible();
+  await expect(page.locator('.room-controls').getByRole('button')).toHaveCount(1);
   await expect(page.locator('#room-result')).not.toBeVisible();
   await expect(page.locator('#room-recorder')).not.toContainText('Capture the session');
   await expect(page.locator('#room-recorder').getByRole('textbox')).toHaveCount(0);
   await expect(page.locator('#live-transcript')).not.toBeVisible();
-  expect((await page.locator('#library-title').boundingBox()).y).toBeLessThan((await page.locator('#room-start').boundingBox()).y);
+  expect((await page.locator('#room-start').boundingBox()).x).toBeGreaterThan((await page.locator('#library-title').boundingBox()).x);
   return {posts,files,signed};
 }
 
@@ -301,4 +301,8 @@ for (const width of [1280,390]) test(`Missing playback job cannot leave preparin
   await expect(page.locator('#room-audio-status')).toHaveText('Audio saved · Status unavailable');
   await expect(page.locator('#room-status')).toContainText('processing job could not be found');
   await expect(page.locator('#room-start')).toBeEnabled();await expect(page.locator('#room-download')).toBeVisible();
+});
+
+for(const width of [1280,390])test(`Sessions recording action sits in the top-right page heading at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page,false);const start=page.locator('#room-start');await expect(start).toBeVisible();await expect(start).toBeInViewport();const title=await page.locator('#library-title').boundingBox(),record=await start.boundingBox();expect(record.x).toBeGreaterThan(title.x+title.width);expect(record.y).toBeLessThan(title.y+title.height+50);await expect(page.getByRole('button',{name:'Create episode',exact:true})).toHaveCount(0);await page.screenshot({path:test.info().outputPath(`sessions-heading-${width}.png`),fullPage:true});
 });

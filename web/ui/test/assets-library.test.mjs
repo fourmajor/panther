@@ -24,3 +24,13 @@ test('asset operation identities use the exact backend 32-hex contract',()=>{
   const first=newAssetOperationId(),second=newAssetOperationId();
   assert.match(first,/^[0-9a-f]{32}$/);assert.match(second,/^[0-9a-f]{32}$/);assert.notEqual(first,second);
 });
+
+
+import {assetFileFormat} from '../src/assets-library-data.js';
+test('file format stays distinct from semantic type and display title',()=>{
+ assert.equal(assetFileFormat({kind:'map',name:'Riverlands',key:'games/demo/coast.png'}),'PNG');
+ assert.equal(assetFileFormat({kind:'unknown',key:'games/demo/notes.json'}),'JSON');
+ assert.equal(assetFileFormat({key:'games/demo/recording',contentType:'audio/wav'}),'WAV');
+ assert.equal(assetFileFormat({kind:'map',name:'Coast'}),'File');
+ assert.equal(assetFileFormat({filename:'room.WAV',contentType:'audio/wav'}),'WAV');
+});

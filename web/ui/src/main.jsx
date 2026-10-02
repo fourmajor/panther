@@ -5,11 +5,25 @@ import { queryClient as client } from "./data-layer.js";
 import { GameSelect } from "./components/ui/select.jsx";
 import { MediaBrowser } from "./media-browser.jsx";
 import { AssetsLibrary } from "./assets-library.jsx";
+import { MultiSelect } from "./components/ui/multi-select.jsx";
+import { Users, Mic, BookOpen, Clapperboard, Folder, ArrowUpRight } from "lucide-react";
 import "./styles.css";
 
+const iconRoots=new WeakMap();
+export function mountIcon(host,name){const Icon={characters:Users,sessions:Mic,novel:BookOpen,videos:Clapperboard,assets:Folder,arrow:ArrowUpRight}[name];if(!Icon)return;let root=iconRoots.get(host);if(!root){root=createRoot(host);iconRoots.set(host,root);}root.render(<Icon size={22} strokeWidth={1.7} aria-hidden="true"/>);}
+export function unmountIcon(host){iconRoots.get(host)?.unmount();iconRoots.delete(host);}
 let root;
 const mediaRoots = new WeakMap();
 const assetsRoots = new WeakMap();
+const multiSelectRoots = new WeakMap();
+export function unmountMultiSelect(host) {
+  multiSelectRoots.get(host)?.unmount();
+  multiSelectRoots.delete(host);
+}
+export function mountMultiSelect(host, props) {
+  if (!multiSelectRoots.has(host)) multiSelectRoots.set(host, createRoot(host));
+  multiSelectRoots.get(host).render(<MultiSelect {...props} />);
+}
 export function unmountAssetsLibrary(host) {
   assetsRoots.get(host)?.unmount();
   assetsRoots.delete(host);

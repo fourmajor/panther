@@ -673,10 +673,11 @@ function renderDashboard() {
   for (const selector of ['#dashboard-purpose','#dashboard-facts','.dashboard-open','#dashboard .dashboard-section-heading','#dashboard .dashboard-bottom','#dashboard-recent']) {
     document.querySelector(selector)?.setAttribute('hidden','');
   }
-  const cards = document.getElementById("dashboard-sections"); cards.replaceChildren();
+  const cards = document.getElementById("dashboard-sections");for(const icon of cards.querySelectorAll("[data-dashboard-icon]"))window.PantherUI.unmountIcon?.(icon);cards.replaceChildren();
   for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Videos"],["assets","Assets"]]) {
     const card=document.createElement('section');card.className='dashboard-card';card.dataset.section=section;
-    const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;title.append(link);
+    const icon=document.createElement('span'),arrow=document.createElement('span');icon.className='dashboard-section-icon';arrow.className='dashboard-card-arrow';icon.dataset.dashboardIcon=section;arrow.dataset.dashboardIcon='arrow';icon.setAttribute('aria-hidden','true');arrow.setAttribute('aria-hidden','true');card.append(icon,arrow);window.PantherUI.mountIcon(icon,section);window.PantherUI.mountIcon(arrow,'arrow');
+    const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
     const list=document.createElement('ul');list.className='dashboard-recent-links';list.setAttribute('aria-label',`Recent ${label.toLowerCase()}`);card.append(title,list);cards.append(card);
   }
 }
@@ -1629,6 +1630,7 @@ async function renderRoute() {
   if(legacySessionRoute){navigate(`${legacySessionRoute[1]||''}/sessions${location.search}${location.hash}`,{replace:true});return;}
   closeLiveReader();
   document.getElementById("recording-badge").hidden = true;
+  document.getElementById("episode-create-action")?.remove();
   document.getElementById("episode-workspace")?.stopPreview?.();
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
     const epoch = ++routeEpoch;
@@ -1686,7 +1688,7 @@ async function renderRoute() {
   if(section==='assets') {
     setActiveNavigation('assets');elements.characters.hidden=true;elements.explorer.hidden=false;
     const files=new URLSearchParams(location.search).has('folder');
-    document.getElementById('asset-view-actions').hidden=false;document.getElementById('asset-browse-files').hidden=files;
+    document.getElementById('asset-view-actions').hidden=!files;document.getElementById('asset-browse-files').hidden=true;
     const back=document.getElementById('asset-back-library');back.hidden=!files;back.href=gamePath('assets');back.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(back.href);};
     document.getElementById('asset-browse-files').onclick=()=>navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${state.gameId}/`));
     if(!files){elements.entries.hidden=true;elements.breadcrumbs.hidden=true;elements.status.hidden=true;elements.loadMore.hidden=true;await loadAssetLibrary(epoch);}
@@ -1788,7 +1790,7 @@ async function uploadGameAsset(gameId,request){
 }
 function drawAssetLibrary(epoch){
   const host=document.getElementById('assets-library'),gameId=state.gameId;host.hidden=false;
-  window.PantherUI.mountAssetsLibrary?.(host,{...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
+  window.PantherUI.mountAssetsLibrary?.(host,{...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,browseFilesHref:gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`),onBrowseFiles:event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`));},hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
     onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
     onThumbnail:async asset=>(await api('/object-url',{key:asset.key})).url,
     onUpload:request=>uploadGameAsset(gameId,request),
@@ -2598,11 +2600,11 @@ function manualChapterEditor(previous = null) {
 }
 
 function syncNovelEmptyState() {
-  const empty=document.getElementById('novel-empty-state');
-  if(!empty)return;
-  const panel=document.querySelector('#editorial-novel-composer .editorial-creation-panel');
-  const form=panel?.querySelector('form');
-  empty.hidden=!document.getElementById('manual-chapter-form').hidden || Boolean(panel&&!panel.hidden&&form&&!form.hidden);
+  const empty=document.getElementById('novel-empty-state'),panel=document.querySelector('#editorial-novel-composer .editorial-creation-panel'),form=panel?.querySelector('form');
+  const editing=!document.getElementById('manual-chapter-form').hidden||Boolean(panel&&!panel.hidden&&form&&!form.hidden);
+  if(empty)empty.hidden=editing||Boolean(panel&&!panel.hidden&&panel.querySelector(".editorial-project-progress"));
+  const action=document.querySelector('#novel .explorer-heading [data-generation-action]');
+  if(action)action.hidden=editing||Boolean(currentChapter);
 }
 
 function renderNovelEmptyState() {
@@ -2684,7 +2686,7 @@ async function loadNovel(chapterId, epoch) {
         novel.resume.append(link); novel.resume.hidden = false;
       }
       if (selectedBook) {
-        if(create)create.hidden=!composer.querySelector(".editorial-creation-panel").hidden;
+        if(create)create.hidden=Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
         novel.list.append(bookCard(selectedBook,organization.stories.find(s=>s.id===selectedBook.storyId),byKey,current));
         for(const volume of selectedBook.volumes) {
           const section=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ol"); heading.textContent=volume.title;
@@ -2703,7 +2705,7 @@ async function loadNovel(chapterId, epoch) {
       novel.status.hidden = true;
       novel.status.textContent = "";
       if(!ordered.length&&!organization.stories.length)renderNovelEmptyState();
-      if(create)create.hidden=!composer.querySelector(".editorial-creation-panel").hidden;
+      if(create)create.hidden=Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
       for (const [index, chapter] of ordered.entries()) {
         const card = document.createElement("div"); card.className = "novel-card";
         const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
@@ -2755,7 +2757,7 @@ async function loadNovel(chapterId, epoch) {
     novel.status.hidden = false;
     novel.list.replaceChildren();
     novel.status.textContent = `${error.message}. Use Reload the page to try again.`;
-    if(create)create.hidden=Boolean(chapterId)||!composer.querySelector(".editorial-creation-panel").hidden;
+    if(create)create.hidden=Boolean(chapterId)||Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
   }
 }
 
@@ -2766,6 +2768,7 @@ function sameGameKey(key) {
 }
 
 function clearLibrary() {
+  for(const host of document.querySelectorAll("[data-multi-filter]"))window.PantherUI.unmountMultiSelect?.(host);
   for(const native of document.querySelectorAll('#episode-workspace select[data-react-select]'))window.PantherUI.destroySelect(native);
   document.getElementById("movie-workspace").replaceChildren();
   document.getElementById("movie-workspace").hidden = true;
@@ -2775,7 +2778,7 @@ function clearLibrary() {
   document.getElementById("library-status").hidden = false;
   if (!state.tokens) {
     assetIndex = null; videoPlaylist = null;
-    videoLibraryView = {gameId:null,search:"",tag:"",character:"",collection:""};
+    videoLibraryView = {gameId:null,search:"",tags:[],characters:[],collection:""};
   }
 }
 
@@ -2816,7 +2819,7 @@ function assetLink(asset, label) {
   return link;
 }
 
-let videoLibraryView = {gameId:null, search:"", tag:"", character:"", collection:""};
+let videoLibraryView = {gameId:null, search:"", tags:[], characters:[], collection:""};
 let videoPlaylist = null;
 function sceneMapPicker(gameId, selectedKey, current, onChange = () => {}) {
   const host=document.createElement('section');host.className='scene-map-picker';
@@ -2858,7 +2861,7 @@ function renderEpisodeWorkspace(epoch) {
   const button=(text,action,primary=false)=>{const node=document.createElement('button');node.type='button';node.textContent=text;node.className=primary?'primary-button':'quiet-button';node.onclick=action;return node;};
   const episodes=[],scenes=[];let selectedEpisode=null,selectedScene=null,sceneGeneration=0;
   const toolbar=document.createElement('div'),heading=document.createElement('h2'),episodeCards=document.createElement('div'),episodeStatus=document.createElement('p'),editor=document.createElement('div'),detail=document.createElement('section');
-  toolbar.className='episode-toolbar';heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');detail.className='episode-detail';detail.hidden=true;
+  toolbar.className='episode-toolbar';heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');episodeStatus.dataset.episodeEmpty='true';detail.className='episode-detail';detail.hidden=true;
   const create=button('Create episode',()=>edit('episode'),true);create.id='episode-create-action';parent.querySelector('#episode-create-action')?.remove();parent.querySelector('.explorer-heading').append(create);toolbar.append(heading);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
   const params=()=>new URLSearchParams(location.search);
   const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);for(const [name,value] of Object.entries({episode:episodeId,scene:sceneId,view:null,series:null,episodeRevision:null})){if(value)url.searchParams.set(name,value);else url.searchParams.delete(name);}history.replaceState(null,'',url);};
@@ -2878,7 +2881,7 @@ function renderEpisodeWorkspace(epoch) {
       }catch(error){if(current()){status.textContent=error.message;save.disabled=error.status===409;if(error.status===400){pending=null;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=false;}save.textContent=error.status===409?'Reopen to edit':'Retry save';}}
     };
   }
-  function drawEpisodes(){if(episodes.length&&episodeStatus.textContent==='No episodes yet.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){if(host.videoSearch&&!`${episode.name} ${episode.description||''}`.toLowerCase().includes(host.videoSearch.toLowerCase()))continue;const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
+  function drawEpisodes(){host.dataset.hasEpisodes=String(episodes.length>0);episodeStatus.hidden=episodes.length>0||Number(host.dataset.videoAssetCount)>0;if(episodes.length&&episodeStatus.textContent==='Create your first episode.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){if(host.videoSearch&&!`${episode.name} ${episode.description||''}`.toLowerCase().includes(host.videoSearch.toLowerCase()))continue;const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
   host.filterEpisodes=value=>{host.videoSearch=value;drawEpisodes();};
   let sceneCards,sceneStatus,sceneDetail,sceneMore,previewHost,scenesComplete=false,mutationPending=false,mutationUncertain=false,previewGeneration=0,playbackView=0;
   const orderedScenes=()=>Array.isArray(selectedEpisode?.sceneIds)?selectedEpisode.sceneIds.map(id=>scenes.find(scene=>scene.id===id)):[];
@@ -2906,7 +2909,7 @@ function renderEpisodeWorkspace(epoch) {
     const page=async cursor=>{showLoading(sceneStatus,'Loading scenes…');try{const result=await api('/scenes',{gameId,episodeId:episode.id,cursor});if(!current()||generation!==sceneGeneration)return;if(!Array.isArray(result.records))throw new Error('Scenes unavailable');scenes.push(...result.records);scenesComplete=!result.cursor;sceneStatus.textContent='';drawScenes();drawPlayback();sceneMore.replaceChildren();if(result.cursor)sceneMore.append(button('More scenes',()=>void page(result.cursor)));if(restoreScene){const scene=scenes.find(item=>item.id===restoreScene);if(scene){chooseScene(scene);restoreScene=null;}else if(!result.cursor){sceneStatus.textContent='This scene is unavailable.';updateURL(episode.id,null);}}}catch(error){if(current()&&generation===sceneGeneration)sceneStatus.textContent=error.status===403?'You cannot access scenes in this game.':`Scenes unavailable: ${error.message}`;}};
     await page();
   }
-  const load=async cursor=>{showLoading(episodeStatus,'Loading episodes…');try{const result=await api('/episodes',{gameId,cursor});if(!current())return;if(!Array.isArray(result.records))throw new Error('Episodes unavailable');episodes.push(...result.records);episodeStatus.textContent=episodes.length?'':'No episodes yet.';drawEpisodes();host.querySelector('.episodes-more')?.remove();if(result.cursor){const more=button('More episodes',()=>{more.remove();void load(result.cursor);});more.classList.add('episodes-more');episodeCards.after(more);}
+  const load=async cursor=>{showLoading(episodeStatus,'Loading episodes…');try{const result=await api('/episodes',{gameId,cursor});if(!current())return;if(!Array.isArray(result.records))throw new Error('Episodes unavailable');episodes.push(...result.records);episodeStatus.textContent=episodes.length?'':'Create your first episode.';drawEpisodes();host.querySelector('.episodes-more')?.remove();if(result.cursor){const more=button('More episodes',()=>{more.remove();void load(result.cursor);});more.classList.add('episodes-more');episodeCards.after(more);}
       const requested=params().get('episode');if(requested&&!selectedEpisode){const selected=episodes.find(item=>item.id===requested);if(selected)await chooseEpisode(selected,params().get('scene'));else if(!result.cursor){episodeStatus.textContent='This episode is unavailable.';updateURL(null,null);}}
     }catch(error){if(current()){episodeStatus.textContent=error.status===403?'You cannot access episodes in this game.':`Episodes unavailable: ${error.message}`;if(error.status===403)create.disabled=true;}}};void load();
 }
@@ -2914,101 +2917,23 @@ function renderEpisodeWorkspace(epoch) {
 function renderVideoLibrary(assets, list, status, current, loadMore) {
   const gameId = state.gameId;
   const videoHost=document.createElement("div");videoHost.hidden=!assets.length&&!loadMore;list.append(videoHost);
-  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
+  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",tags:[],characters:[],collection:new URLSearchParams(location.search).get("collection") || ""};
   const view = videoLibraryView;
   view.collection=new URLSearchParams(location.search).get("collection") || "";
-  const controls = document.createElement("section"), cards = document.createElement("div"), collectionsStatus = document.createElement("p"), summary = document.createElement("p");
-  controls.className = "video-library-controls"; controls.setAttribute("aria-label", "Filter videos");
-  cards.className = "video-library-cards"; summary.setAttribute("role", "status"); collectionsStatus.setAttribute("role", "status");
-  const field = (text, element, id) => { const label = document.createElement("label"); label.textContent = text; element.id = id; label.htmlFor = id; const wrap = document.createElement("div"); wrap.append(label,element); controls.append(wrap); return element; };
-  const search = field("Search videos",document.createElement("input"),"video-search"); search.type = "search";search.placeholder="Search videos and episodes"; search.maxLength = 300; search.value = view.search;
-  const tag = field("Tag",document.createElement("select"),"video-tag"); tag.add(new Option("All tags",""));
-  for (const name of [...new Set(assets.flatMap(a=>a.metadata?.tags || []))].sort()) tag.add(new Option(name,name));
-  tag.value = view.tag;
-  const character = field("Featuring character",document.createElement("select"),"video-character"); character.add(new Option("All characters",""));
-  for (const c of state.gameDetail?.characters || []) character.add(new Option(c.name,c.id));
-  character.value = view.character;
-  const collection = field("Clip collection",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
-  const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
-  controls.append(collectionsStatus,retry,summary);
-  const galleryHeading=document.createElement("h2");galleryHeading.textContent="Clips";
-  videoHost.append(galleryHeading,controls,cards);
-  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filterFields=document.createElement('div');
-  filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filterFields.className='video-top-filter-fields';filterFields.append(tag.parentNode,character.parentNode);filterBar.append(search.parentNode,filterFields);
+  const cards=document.createElement('div');cards.className='video-library-cards';videoHost.append(cards);
+  const search=document.createElement('input');search.type='search';search.id='video-search';search.placeholder='Search videos and episodes';search.maxLength=300;search.value=view.search;
+  const label=document.createElement('label');label.htmlFor=search.id;label.textContent='Search videos';const searchField=document.createElement('div');searchField.append(label,search);
+  const tagHost=document.createElement('div'),characterHost=document.createElement('div');tagHost.dataset.multiFilter='tags';characterHost.dataset.multiFilter='characters';
+  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filterFields=document.createElement('div');filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filterFields.className='video-top-filter-fields';filterFields.append(tagHost,characterHost);filterBar.append(searchField,filterFields);
   workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(filterBar);workspace?.filterEpisodes?.(view.search);
-  for(const select of [tag,character,collection])window.PantherUI.enhanceSelect(select,select===tag?'Tag':select===character?'Featuring character':'Clip collection');
-
-
-  let displayed = assets, chosen = null, sequence = 0;
-  const sceneActions = document.createElement("div"); sceneActions.className = "model-control-row";
-  const createScene = document.createElement("button"), editScene = document.createElement("button"), sceneForm = document.createElement("form");
-  createScene.type = editScene.type = "button"; createScene.className = editScene.className = "quiet-button";
-  createScene.textContent = "Create collection"; editScene.textContent = "Edit collection"; editScene.disabled = true;
-  sceneForm.className = "scene-edit-form character-edit-form"; sceneForm.hidden = true;
-  sceneActions.append(createScene,editScene); controls.append(sceneActions); videoHost.insertBefore(sceneForm,cards);
-  let sceneGeneration = 0;
-  async function editSceneClips(existing = null) {
-    const generation = ++sceneGeneration; sceneForm.hidden = false; sceneForm.replaceChildren();
-    const loading = document.createElement("p"), closeLoading = document.createElement("button");
-    closeLoading.type="button";closeLoading.className="quiet-button";closeLoading.textContent="Cancel";closeLoading.onclick=()=>{sceneGeneration++;sceneForm.hidden=true;};
-    sceneForm.append(loading,closeLoading); showLoading(loading,"Loading available clips");
-    try {
-      const catalog = await allAssets(gameId,()=>{},"videos");
-      if (!current() || generation !== sceneGeneration || !sceneForm.isConnected) return;
-      const clips = catalog.filter(a=>a.contentType?.startsWith("video/") && a.metadata?.extra?.relationshipRole === "finished" && !a.lineageWarning);
-      const byKey = new Map(clips.map(a=>[a.key,a])); let ordered = [...(existing?.assetKeys || [])];
-      const name = document.createElement("input"), description = document.createElement("input"), picker = document.createElement("fieldset"), order = document.createElement("ol");
-      name.required = true; name.maxLength = 120; name.value = existing?.name || ""; description.maxLength = 1000; description.value = existing?.description || "";
-      const nameLabel = document.createElement("label"), descriptionLabel = document.createElement("label"), legend = document.createElement("legend"), orderHeading = document.createElement("h3");
-      nameLabel.textContent = "Collection title"; descriptionLabel.textContent = "Collection description"; nameLabel.append(name); descriptionLabel.append(description); legend.textContent = "Clips"; picker.append(legend); orderHeading.textContent = "Clip order";
-      const checks = new Map(); const title = key => byKey.get(key)?.metadata?.title || byKey.get(key)?.name || "Unavailable clip";
-      const save = document.createElement("button"), cancel = document.createElement("button"), message = document.createElement("p"), actions = document.createElement("div");
-      save.type = "submit"; save.className = "primary-button"; save.textContent = "Save collection"; cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; message.setAttribute("role","status"); actions.className = "model-control-row";actions.append(save,cancel);
-      const drawOrder = () => {
-        order.replaceChildren();
-        for(const [index,key] of ordered.entries()) {
-          const li = document.createElement("li"), text = document.createElement("span"); text.textContent = title(key); li.append(text);
-          for(const [label,delta] of [["Move up",-1],["Move down",1],["Remove",0]]) {
-            const button = document.createElement("button");button.type="button";button.className="quiet-button";button.textContent=label;button.setAttribute("aria-label",`${label} ${title(key)}`);
-            button.disabled=delta<0 && index===0 || delta>0 && index===ordered.length-1;
-            button.onclick=()=>{if(delta){[ordered[index],ordered[index+delta]]=[ordered[index+delta],ordered[index]];}else{ordered.splice(index,1);if(checks.has(key))checks.get(key).checked=false;}drawOrder();};li.append(button);
-          }
-          order.append(li);
-        }
-        save.disabled=!ordered.length || ordered.some(key=>!byKey.has(key));
-        message.textContent=ordered.some(key=>!byKey.has(key)) ? "Remove unavailable clips before saving." : "";
-      };
-      for(const clip of clips) {
-        const label=document.createElement("label"), check=document.createElement("input");check.type="checkbox";check.checked=ordered.includes(clip.key);checks.set(clip.key,check);
-        check.onchange=()=>{if(check.checked){if(ordered.length>=50){check.checked=false;message.textContent="Choose up to 50 clips.";return;}ordered.push(clip.key);}else ordered=ordered.filter(key=>key!==clip.key);drawOrder();};label.append(check,document.createTextNode(title(clip.key)));picker.append(label);
-      }
-      sceneForm.replaceChildren(nameLabel,descriptionLabel,picker,orderHeading,order,actions,message);
-      if(!clips.length){const empty=document.createElement("p");empty.textContent="No finished clips yet.";picker.append(empty);}
-      cancel.onclick=()=>{sceneGeneration++;sceneForm.hidden=true;};
-      let pending = null;
-      sceneForm.onsubmit=async event=>{
-        event.preventDefault();
-        pending ||= {gameId,id:existing?.id || `scene-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),assetKeys:[...ordered],expectedRevision:existing?.revision || null,operationId:crypto.randomUUID().replaceAll("-","")};
-        for(const control of sceneForm.querySelectorAll("input,button"))control.disabled=true;
-        try {
-          const response=await api("/video-collections",{},{body:pending});
-          if(!current() || generation!==sceneGeneration)return;
-          const saved=response.collection;
-          if(![...collection.options].some(option=>option.value===saved.id))collection.add(new Option(`${saved.name} (${saved.assetKeys.length})`,saved.id));
-          else [...collection.options].find(option=>option.value===saved.id).textContent=`${saved.name} (${saved.assetKeys.length})`;
-          collection.disabled=false;collection.value=saved.id;sceneForm.hidden=true;await choose();
-        } catch(error) {
-          if(!current() || generation!==sceneGeneration)return;
-          message.textContent=error.status===409 ? "This scene changed. Cancel to review its latest version." : error.message;
-          if(error.status===400){pending=null;for(const control of sceneForm.querySelectorAll("input,button"))control.disabled=false;drawOrder();message.textContent=error.message;}
-          else {save.disabled=error.status===409;save.textContent="Retry save";cancel.disabled=false;}
-        }
-      };
-      drawOrder();name.focus();
-    } catch(error) {if(current() && generation===sceneGeneration)loading.textContent=error.message;}
-  }
-  createScene.onclick=()=>void editSceneClips();editScene.onclick=()=>{if(chosen)void editSceneClips(chosen);};
-
+  let displayed=view.collection?[]:assets,chosen=null;
+  const retry=document.createElement('button');retry.type='button';retry.className='quiet-button';retry.textContent='Retry preview images';retry.hidden=true;videoHost.append(retry);
+  const tags=()=>[...new Set(assets.flatMap(asset=>asset.metadata?.tags||[]))].sort().map(name=>({id:name,name}));
+  const characters=()=> (state.gameDetail?.characters||[]).map(character=>({id:character.id||character.characterId,name:character.name}));
+  const filters=()=>{
+    window.PantherUI.mountMultiSelect(tagHost,{label:'Tags',options:tags(),value:view.tags,onChange:value=>{view.tags=value;filters();draw();},placeholder:'Add tag…'});
+    window.PantherUI.mountMultiSelect(characterHost,{label:'Characters',options:characters(),value:view.characters,onChange:value=>{view.characters=value;filters();draw();},placeholder:'Add character…'});
+  };
   const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; videoHost.append(more);
   more.onclick = () => { more.disabled = true; more.textContent = "Loading more…"; loadMore(); };
   const posters = new Map(), posterLinks = new Map(), posterRequests = new Map(); let imageGeneration=0;
@@ -3043,12 +2968,13 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   function draw() {
     if (!current()) return;
     cards.replaceChildren(); posters.clear();
-    editScene.disabled = !chosen;
     const needle = view.search.trim().toLocaleLowerCase();
     const selected = displayed.filter(a => (!needle || [a.metadata?.title,a.metadata?.description,...(a.metadata?.tags || [])].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle))
-      && (!view.tag || a.metadata?.tags?.includes(view.tag)) && (!view.character || a.metadata?.characterIds?.includes(view.character)));
-    summary.textContent = `${selected.length} clip${selected.length===1 ? "" : "s"}`;
-    status.textContent = chosen ? chosen.description || "" : displayed.length ? "" : "No videos yet.";
+      && view.tags.every(tag=>a.metadata?.tags?.includes(tag)) && view.characters.every(id=>a.metadata?.characterIds?.includes(id)));
+    status.textContent=displayed.length&&!selected.length?'No matching videos.':'';status.hidden=!status.textContent;
+    const episodesEmpty=document.querySelector('#episode-workspace [data-episode-empty]');
+    if(workspace)workspace.dataset.videoAssetCount=String(displayed.length);
+    if(episodesEmpty){episodesEmpty.hidden=displayed.length>0||workspace?.dataset.hasEpisodes==='true';if(!displayed.length)episodesEmpty.textContent='Create your first episode.';}
     more.hidden = Boolean(chosen) || !loadMore;
     videoPlaylist = chosen ? {gameId,collection:chosen,assets:displayed} : null;
     for (const asset of selected) {
@@ -3074,43 +3000,13 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
     void images();
   }
   search.oninput = () => { view.search=search.value;workspace?.filterEpisodes?.(view.search);draw(); };
-  tag.onchange = () => { view.tag=tag.value; draw(); };
-  character.onchange = () => { view.character=character.value; draw(); };
-  async function choose() {
-    const generation=++sequence; view.collection=collection.value;
-    const url=new URL(location.href);if(view.collection)url.searchParams.set("collection",view.collection);else url.searchParams.delete("collection");history.replaceState(null,"",url);
-    if (!view.collection) { chosen=null; displayed=assets; collectionsStatus.textContent=""; draw(); return; }
-    showLoading(collectionsStatus,"Loading exact collection members…");
-    try {
-      const result=await api("/video-collections",{gameId,id:view.collection});
-      if (!current() || generation !== sequence) return;
-      chosen=result.collection; displayed=result.assets;
-      collectionsStatus.textContent=result.warnings?.length ? `${result.warnings.length} unavailable members are not substituted. Collection: ${chosen.assetKeys.length} saved members; ${displayed.length} playable catalog entries.` : `${displayed.length} saved members in explicit order.`;
-      draw();
-    } catch(error) { if(current() && generation===sequence) { chosen=null; displayed=[]; videoPlaylist=null; cards.replaceChildren(); summary.textContent="Collection not loaded; no partial playlist is presented."; collectionsStatus.textContent=`${error.message}. Select the library or refresh to retry.`; } }
-  }
-  collection.onchange=choose;
-  void (async()=>{
-    try {
-      let cursor=null, seen=new Set(), count=0;
-      const nextPage=async()=>{
-        showLoading(collectionsStatus,"Fetching saved collections…");
-        const result=await api("/video-collections",{gameId,cursor}); if(!current())return;
-        for(const item of result.collections) { if([...collection.options].some(o=>o.value===item.id)) continue; collection.add(new Option(`${item.name} (${item.assetKeys.length})`,item.id)); count++; }
-        cursor=result.cursor;
-        if(cursor && seen.has(cursor)) throw new Error("Repeated collection cursor"); if(cursor)seen.add(cursor);
-        collection.disabled=false;
-        collectionsStatus.textContent=count ? `${count} collections` : "";
-        videoHost.hidden=!assets.length&&!loadMore&&!count;
-        collectionMore.hidden=!cursor; collectionMore.disabled=false;
-      };
-      const collectionMore=document.createElement("button"); collectionMore.type="button"; collectionMore.className="quiet-button"; collectionMore.textContent="Load more collections"; collectionMore.hidden=true; controls.append(collectionMore);
-      collectionMore.onclick=async()=>{ collectionMore.disabled=true; try{await nextPage();}catch(error){if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. Reload the page to try again.`;} };
-      await nextPage();
-      if(view.collection) { if(![...collection.options].some(o=>o.value===view.collection)) collection.add(new Option("Selected collection",view.collection)); collection.value=view.collection;for(const option of collection.options)option.toggleAttribute("selected",option.value===view.collection); await choose(); }
-    } catch(error) { if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. The loaded video library remains usable.`; }
+  filters();draw();
+  // Existing typed references retain their exact saved membership and order.
+  // Collections are no longer offered as a creation or filtering control.
+  if(view.collection)void(async()=>{
+    try{const result=await api('/video-collections',{gameId,id:view.collection});if(!current())return;chosen=result.collection;displayed=result.assets||[];videoHost.hidden=false;draw();}
+    catch(error){if(current()){status.textContent=`Videos unavailable: ${error.message}`;status.hidden=false;}}
   })();
-  draw();
 }
 
 function configureVideoPreview(asset, video, epoch) {
@@ -3939,7 +3835,7 @@ elements.previewDialog.addEventListener("click", (event) => {
 // Room capture v1. IndexedDB retains closed PCM parts before any network request.
 class RoomRecorder {
   constructor() {
-    this.host=document.getElementById('room-recorder'); this.recording=false; this.draft=null; this.liveEnabled=false;
+    this.host=document.getElementById('room-recorder');this.controls=this.host.querySelector('.room-controls'); this.recording=false; this.draft=null; this.liveEnabled=false;
     this.writeChain=Promise.resolve(); this.uploadChain=Promise.resolve(); this.nodes=new Map();
     this.el=Object.fromEntries(['start','stop','status','state','timer','level','live-toggle','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
     this.el.audio=document.createElement('audio');this.el.audio.id='room-audio';this.el.audio.controls=true;this.el.audio.preload='metadata';this.el.audio.hidden=true;
@@ -4008,14 +3904,14 @@ class RoomRecorder {
   async render(section,epoch) {
     if(section!=='sessions')this.liveDialog.close();
     const visible=section==='sessions' || this.recording || this.stopping;
-    this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
-    if(section==='sessions') document.getElementById('session-library').insertBefore(this.host,document.getElementById('live-transcript'));
-    else document.getElementById('game-context').after(this.host);
+    this.controls.hidden=!visible;this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
+    if(section==='sessions'){const heading=document.querySelector('#session-library > .explorer-heading');heading.append(this.controls);heading.after(this.host);}
+    else {this.host.prepend(this.controls);document.getElementById('game-context').after(this.host);}
     try {
       this.capabilities ||= await api('/browser-recording/capabilities');
       if(epoch!==routeEpoch) return;
-      if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;return;}
-      if(!this.capabilities.canRecord) {this.host.hidden=true; return;}
+      if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;this.controls.hidden=true;return;}
+      if(!this.capabilities.canRecord) {this.host.hidden=true;this.controls.hidden=true; return;}
       if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
         this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
         const held=await navigator.locks?.query();
@@ -4317,6 +4213,7 @@ function resetLive() {
   for (const controller of liveHistoryControllers) controller.abort();
   liveHistoryControllers.clear(); liveHistory.clear();
   document.getElementById("recording-badge").hidden = true;
+  document.getElementById("episode-create-action")?.remove();
   document.getElementById("live-recordings").replaceChildren();
   showLoading(document.getElementById("live-status"), "Checking for active recording sessions…");
 }
@@ -4527,7 +4424,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     try {const result=await api('/editorial-jobs',{gameId,cursor});if(!current())return;
       for(const job of result.jobs||[])if(job.creation?.target===target){
         const button=document.createElement('button');button.type='button';button.className='quiet-button';button.textContent=job.creation.title;
-        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
+        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});if(target==='novel')syncNovelEmptyState();void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
       }
       if(result.cursor){const more=document.createElement('button');more.type='button';more.className='text-link-button';more.textContent='More projects';more.onclick=()=>{more.remove();void loadProjects(result.cursor);};projects.append(more);}
     }catch{/* Creation remains available if the optional project list is unavailable. */}
@@ -4601,7 +4498,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
         const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:3,target,brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
         const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
         if(!current())return;form.hidden=true;status.textContent='';panel.dataset.project='true';open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
-        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);
+        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);if(target==='novel')syncNovelEmptyState();
         editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
       }catch(error){if(current()){status.textContent=error.status===409?'This scene changed. Reopen it before generating.':error.message;if(error.status===400)pendingMap=null;for(const control of controls)control.disabled=false;if(map&&pendingMap)map.select.disabled=true;updateSubmit();if(error.status===409)submit.disabled=true;}}
     };

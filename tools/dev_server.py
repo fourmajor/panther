@@ -433,13 +433,20 @@ class Store:
                 raise ValueError("Character details exceed the portrait request limit")
         request = {**body, "schemaVersion": 1}
         identity = hashlib.sha256(json.dumps({"gameId": body["gameId"], "operationId": body["operationId"]}, sort_keys=True).encode()).hexdigest()
-        job = {**request, "jobId": identity, "status": "QUEUED", "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True, **({"characterReference": character_reference} if character_reference else {})}
+        job = {**request, "jobId": identity, "status": "ATTENTION", "message": "Image generation is not configured for this local database. Use the hosted app with a signed-in laptop running panther assets worker --work-dir /private/path/asset-generation. Local uploads remain available.", "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True, **({"characterReference": character_reference} if character_reference else {})}
         with self.connect() as db:
             db.execute("INSERT OR IGNORE INTO records VALUES ('asset-generation',?,?,?)", (identity, body["gameId"], json.dumps(job)))
         saved = self.get("asset-generation", identity)
         if any(saved.get(field) != value for field, value in request.items()):
             raise ValueError("Operation reused with different generation request")
-        return saved
+        return self.asset_generation_view(saved)
+
+    def asset_generation_view(self, job):
+        # Read-time projection preserves the original job and request history.
+        # No local image worker/broker is implemented; do not imply work is running.
+        if job and job.get("status") in {"QUEUED", "PENDING", "RUNNING", "GENERATING"}:
+            return {**job, "status": "ATTENTION", "message": "Image generation is not configured for this local database. Use the hosted app with a signed-in laptop running panther assets worker --work-dir /private/path/asset-generation. Local uploads remain available."}
+        return job
 
     def asset_generation_page(self, game, cursor=None):
         self.game(game)
@@ -455,7 +462,7 @@ class Store:
         with self.connect() as db:
             rows = db.execute("SELECT payload FROM records WHERE kind='asset-generation' AND game=? ORDER BY rowid DESC LIMIT 26 OFFSET ?", (game, offset)).fetchall()
         next_cursor = base64.urlsafe_b64encode(json.dumps({"gameId": game, "offset": offset + 25}).encode()).decode() if len(rows) > 25 else None
-        return {"jobs": [json.loads(row[0]) for row in rows[:25]], "cursor": next_cursor}
+        return {"jobs": [self.asset_generation_view(json.loads(row[0])) for row in rows[:25]], "cursor": next_cursor}
 
     def upload_request(self, body):
         self.game(body["gameId"])
@@ -620,7 +627,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.transcript_summary_view(game, q["key"])
             elif path == "/asset-generation":
                 if q.get("jobId"):
-                    result = store.get("asset-generation", q["jobId"])
+                    result = store.asset_generation_view(store.get("asset-generation", q["jobId"]))
                     if not result or result["gameId"] != game:
                         raise LookupError("Generation job not found")
                 else:
