@@ -73,3 +73,19 @@ collection data type has no earlier records to migrate. The catalog-v3 all-game 
 verification and activation must complete before production browsing is declared upgraded.
 
 Structured series, seasons and episode editions are documented in [TV library](tv-library.md).
+
+## Scene assembly
+
+Create scene selects finished same-game clips into an explicit sequence. The scene
+editor provides title, description, clip selection, move up/down and removal.
+Edit scene saves against the exact observed collection revision; concurrent edits
+fail rather than silently replacing another sequence. An uncertain save repeats
+the identical operation and ordered inputs. Previous collection revisions remain
+retained by the existing metadata history.
+
+A scene uses the existing `VideoCollection` contract and immutable `assetKeys`.
+It is a logical playback sequence, not a rendered or stitched video. Editing it
+never changes clip bytes, asset versions, provenance or approval status, and
+performs no paid generation. Playback follows the selected clip order using the
+existing collection player. A continuous exported scene remains a separate
+production workflow with its own exact input references and measured review.

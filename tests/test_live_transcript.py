@@ -77,47 +77,76 @@ def test_enrolled_live_labels_resume_and_finalize_without_inference(capture, tmp
     from panther_journal import speaker_profiles as speakers
     from panther_journal.live_finalize import checkpoint_lines
     from panther_journal.live_history import chunk_payload
+
     folder, header, model = capture
     part = add_part(capture, 0)
-    speaker_model = tmp_path / 'speaker-model'
+    speaker_model = tmp_path / "speaker-model"
     speaker_model.mkdir()
-    (speaker_model / 'weights.bin').write_bytes(b'synthetic')
-    profile = tmp_path / 'profiles.json'
-    embedding = [1] + [0]*15
-    profile.write_text(json.dumps({'schemaVersion': 1, 'entityType': 'SpeakerRecognitionProfiles',
-        'gameId': header['gameId'], 'modelFiles': speakers.model_pin(speaker_model),
-        'profiles': [{'playerId': 'alex', 'identityEvidence': 'Synthetic confirmed clip', 'embedding': embedding}]}))
+    (speaker_model / "weights.bin").write_bytes(b"synthetic")
+    profile = tmp_path / "profiles.json"
+    embedding = [1] + [0] * 15
+    profile.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "entityType": "SpeakerRecognitionProfiles",
+                "gameId": header["gameId"],
+                "modelFiles": speakers.model_pin(speaker_model),
+                "profiles": [
+                    {
+                        "playerId": "alex",
+                        "identityEvidence": "Synthetic confirmed clip",
+                        "embedding": embedding,
+                    }
+                ],
+            }
+        )
+    )
 
     def analyze(self, wav, attempt):
-        result = {'turns': [{'start': 0, 'end': 5, 'speaker': 'SPEAKER_00'}],
-                  'embeddings': {'SPEAKER_00': embedding}}
-        (attempt / 'speaker-result.json').write_text(json.dumps(result))
+        result = {
+            "turns": [{"start": 0, "end": 5, "speaker": "SPEAKER_00"}],
+            "embeddings": {"SPEAKER_00": embedding},
+        }
+        (attempt / "speaker-result.json").write_text(json.dumps(result))
         return result
 
-    monkeypatch.setattr(speakers.SpeakerWorker, 'analyze', analyze)
-    options = dict(once=True, from_start=True, transcriber=recognizer, emit=lambda _: None,
-                   speaker_profiles=profile, speaker_model=speaker_model, speaker_runtime=model)
+    monkeypatch.setattr(speakers.SpeakerWorker, "analyze", analyze)
+    options = dict(
+        once=True,
+        from_start=True,
+        transcriber=recognizer,
+        emit=lambda _: None,
+        speaker_profiles=profile,
+        speaker_model=speaker_model,
+        speaker_runtime=model,
+    )
     root = live.follow(folder, model, **options)
-    config = live.read_json(root / 'preview.json')
-    value = live.read_json(root / 'part-0000.json')
-    assert value['segments'][0]['playerId'] == 'alex'
-    assert value['speakerEvidence']['speaker-result.json']
-    assert chunk_payload(folder, header, root, config, part)['segments'][0]['playerId'] == 'alex'
-    monkeypatch.setattr(speakers.SpeakerWorker, 'analyze', lambda *args: pytest.fail('Do not rerun saved speaker analysis'))
+    config = live.read_json(root / "preview.json")
+    value = live.read_json(root / "part-0000.json")
+    assert value["segments"][0]["playerId"] == "alex"
+    assert value["speakerEvidence"]["speaker-result.json"]
+    assert chunk_payload(folder, header, root, config, part)["segments"][0]["playerId"] == "alex"
+    monkeypatch.setattr(
+        speakers.SpeakerWorker,
+        "analyze",
+        lambda *args: pytest.fail("Do not rerun saved speaker analysis"),
+    )
     assert live.follow(folder, model, **options) == root
     raw, attributed = checkpoint_lines(folder, root, config, [part])
-    assert raw[0]['playerId'] is None and attributed[0]['playerId'] == 'alex'
-    (root / value['attempt'] / 'speaker-result.json').write_text('{}')
-    with pytest.raises(click.ClickException, match='speaker evidence changed'):
+    assert raw[0]["playerId"] is None and attributed[0]["playerId"] == "alex"
+    (root / value["attempt"] / "speaker-result.json").write_text("{}")
+    with pytest.raises(click.ClickException, match="speaker evidence changed"):
         checkpoint_lines(folder, root, config, [part])
 
 
 def test_finalization_requires_every_chunk(capture):
     from panther_journal.live_finalize import checkpoint_lines
+
     folder, _, model = capture
     part = add_part(capture, 0)
     _, _, _, root, config = live.initialize(folder, model, True)
-    with pytest.raises(click.ClickException, match='incomplete'):
+    with pytest.raises(click.ClickException, match="incomplete"):
         checkpoint_lines(folder, root, config, [part])
 
 
@@ -285,6 +314,15 @@ def test_real_decode_and_bounded_whisper_invocation(capture, monkeypatch):
         assert (directory / "input.wav").exists()
         (directory / "recognizer.json").write_text(json.dumps({"transcription": []}))
 
+    # Recognition is fake here; only decoding executes a real local tool.
+    original_executable = audio.executable
+    monkeypatch.setattr(
+        audio,
+        "executable",
+        lambda name: (
+            "/synthetic/whisper-cli" if name == "whisper-cli" else original_executable(name)
+        ),
+    )
     monkeypatch.setattr(live, "run_process", run)
     assert live.transcribe_part(folder, part, model, attempt) == []
 
@@ -407,15 +445,18 @@ def test_preview_clips_small_decoder_overrun_without_changing_raw(capture):
         live.preview_lines(raw, part)
 
 
-@pytest.mark.parametrize("segment", [
-    {"offsets": {"from": 28000, "to": 38160}, "text": "Synthetic overrun"},
-    {"offsets": {"from": -1, "to": 1000}, "text": "Negative"},
-    {"offsets": {"from": float("nan"), "to": 1000}, "text": "Nonfinite"},
-    {"offsets": {"from": 2000, "to": 1000}, "text": "Reversed"},
-    {"text": "Missing offsets"},
-    {"offsets": {"from": 0, "to": 1000}, "text": None},
-    None,
-])
+@pytest.mark.parametrize(
+    "segment",
+    [
+        {"offsets": {"from": 28000, "to": 38160}, "text": "Synthetic overrun"},
+        {"offsets": {"from": -1, "to": 1000}, "text": "Negative"},
+        {"offsets": {"from": float("nan"), "to": 1000}, "text": "Nonfinite"},
+        {"offsets": {"from": 2000, "to": 1000}, "text": "Reversed"},
+        {"text": "Missing offsets"},
+        {"offsets": {"from": 0, "to": 1000}, "text": None},
+        None,
+    ],
+)
 def test_invalid_recognition_is_preserved_gap_and_following_chunk_continues(capture, segment):
     from panther_journal.live_publish import snapshot
 
@@ -431,10 +472,13 @@ def test_invalid_recognition_is_preserved_gap_and_following_chunk_continues(capt
             return live.preview_lines(json.loads(raw), part)
         return recognizer(folder, part, model, attempt)
 
-    root = live.follow(folder, model, from_start=True, transcriber=bad_then_good, emit=messages.append)
+    root = live.follow(
+        folder, model, from_start=True, transcriber=bad_then_good, emit=messages.append
+    )
     saved = live.read_json(root / "part-0000.json")
-    assert saved["segments"] == [{"kind": "preview-gap", "start": 0.0, "end": 30.0,
-                                 "text": live.GAP_NOTICE}]
+    assert saved["segments"] == [
+        {"kind": "preview-gap", "start": 0.0, "end": 30.0, "text": live.GAP_NOTICE}
+    ]
     assert (root / saved["attempt"] / "recognizer.json").read_text() == raw
     assert live.read_json(root / "status.json")["chunksTranscribed"] == 2
     assert any(live.GAP_NOTICE in message for message in messages)
@@ -444,8 +488,13 @@ def test_invalid_recognition_is_preserved_gap_and_following_chunk_continues(capt
     assert web["segments"][0]["kind"] == "preview-gap"
     assert web["segments"][1]["text"] == "Synthetic preview"
     before = (root / "part-0000.json").read_bytes()
-    live.follow(folder, model, from_start=True,
-                transcriber=lambda *a: pytest.fail("Do not retry a saved gap"), emit=lambda _: None)
+    live.follow(
+        folder,
+        model,
+        from_start=True,
+        transcriber=lambda *a: pytest.fail("Do not retry a saved gap"),
+        emit=lambda _: None,
+    )
     assert (root / "part-0000.json").read_bytes() == before
 
 
@@ -467,10 +516,15 @@ def test_invalid_recognition_never_bypasses_input_integrity(capture, target):
 def test_out_of_order_recognition_is_not_published(capture):
     part = add_part(capture, 0)
     with pytest.raises(live.PreviewOutputError):
-        live.preview_lines({"transcription": [
-            {"offsets": {"from": 5000, "to": 6000}, "text": "Later"},
-            {"offsets": {"from": 1000, "to": 2000}, "text": "Earlier"},
-        ]}, part)
+        live.preview_lines(
+            {
+                "transcription": [
+                    {"offsets": {"from": 5000, "to": 6000}, "text": "Later"},
+                    {"offsets": {"from": 1000, "to": 2000}, "text": "Earlier"},
+                ]
+            },
+            part,
+        )
 
 
 def test_malformed_json_gap_retains_raw_and_detects_later_tampering(capture, monkeypatch):
@@ -511,7 +565,12 @@ def test_backfill_starts_at_beginning_but_new_audio_has_priority(capture):
     text = (root / "preview.txt").read_text()
     assert text.index("[00:00:01]") < text.index("[00:00:31]") < text.index("[00:01:01]")
     before = {p: p.read_bytes() for p in root.glob("part-*.json")}
-    live.follow(folder, model, transcriber=lambda *a: pytest.fail("No repeated inference"), emit=lambda _: None)
+    live.follow(
+        folder,
+        model,
+        transcriber=lambda *a: pytest.fail("No repeated inference"),
+        emit=lambda _: None,
+    )
     assert all(p.read_bytes() == data for p, data in before.items())
 
 
@@ -524,10 +583,12 @@ def test_history_upload_is_complete_idempotent_and_includes_backfilled_chunks(ca
     root = live.follow(folder, model, transcriber=recognizer, emit=lambda _: None)
     config = live.read_json(root / "preview.json")
     sent = []
-    monkeypatch.setattr(live_history.cloud, "api", lambda c,m,r,**kw: sent.append((m,r,kw["json"])))
+    monkeypatch.setattr(
+        live_history.cloud, "api", lambda c, m, r, **kw: sent.append((m, r, kw["json"]))
+    )
     assert live_history.publish_pending(folder, header, root, config, {}) == 2
-    assert [body["partIndex"] for _,_,body in sent] == [1, 0]
-    assert all(route == "/recordings/live/history" for _,route,_ in sent)
-    assert all(body["modelSha256"] == config["settings"]["modelSha256"] for _,_,body in sent)
+    assert [body["partIndex"] for _, _, body in sent] == [1, 0]
+    assert all(route == "/recordings/live/history" for _, route, _ in sent)
+    assert all(body["modelSha256"] == config["settings"]["modelSha256"] for _, _, body in sent)
     assert live_history.publish_pending(folder, header, root, config, {}) == 0
     assert len(sent) == 2

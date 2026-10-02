@@ -23,9 +23,20 @@ test("deployed model viewer has no unresolved static imports", () => {
 test("static assets resolve from nested character URLs", () => {
   const html = readFileSync(path.join(__dirname, "../../../web/media-explorer/index.html"), "utf8");
   const assets = [...html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="([^"]+)"/g)];
-  assert.equal(assets.length, 4);
+  assert.equal(assets.length, 6);
   for (const [, asset] of assets) {
     assert.ok(asset.startsWith("/"), `${asset} must resolve from the site root`);
     assert.equal(new URL(asset, "https://panther.place/characters/game/character").pathname, asset);
+  }
+});
+
+test("React UI dependencies are bundled locally before the legacy bridge", () => {
+  const directory = path.join(__dirname, "../../../web/media-explorer");
+  const html = readFileSync(path.join(directory, "index.html"), "utf8");
+  assert.ok(html.indexOf('/ui-runtime.js') < html.indexOf('/app.js'));
+  const runtime = ts.createSourceFile("ui-runtime.js", readFileSync(path.join(directory, "ui-runtime.js"), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  assert.ok(runtime.statements.length > 0);
+  for (const statement of runtime.statements) {
+    assert.equal(ts.isImportDeclaration(statement), false, "UI dependencies must not require CDN imports");
   }
 });

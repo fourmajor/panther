@@ -75,6 +75,21 @@ def command(*args):
 
 
 @pytest.fixture
+def caption_delivery():
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg required for captioned video delivery")
+    filters = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-filters"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if " subtitles " not in filters.stdout:
+        pytest.skip("FFmpeg subtitles filter (libass) required for captioned video delivery")
+
+
+@pytest.fixture
 def media(tmp_path):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("FFmpeg/ffprobe required for real media integration tests")
@@ -199,6 +214,7 @@ def test_snapshot_checks_checksum_and_remote_identity(media, tmp_path, monkeypat
         p.snapshot(media, target, verify_cloud=False)
 
 
+@pytest.mark.usefixtures("caption_delivery")
 def test_real_finishing_and_idempotency(media, tmp_path):
     calls = []
 
@@ -276,6 +292,7 @@ def test_real_finishing_and_idempotency(media, tmp_path):
         p.execute(media, tmp_path / "runs", verify_cloud=False, reviewer=reviewer)
 
 
+@pytest.mark.usefixtures("caption_delivery")
 def test_oversize_master_requires_explicit_local_retention(media, tmp_path, monkeypatch):
     folder, result = p.execute(
         media, tmp_path / "runs", verify_cloud=False, reviewer=lambda *a: report()
@@ -295,6 +312,7 @@ def test_oversize_master_requires_explicit_local_retention(media, tmp_path, monk
     assert p.digest(master) == original
 
 
+@pytest.mark.usefixtures("caption_delivery")
 def test_unresolved_continuity_is_working_draft_not_owner_gate(media, tmp_path):
     def reviewer(*args):
         value = report()
@@ -374,6 +392,7 @@ def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):
     assert calls[0]["stage"] == "composition-preparation"
 
 
+@pytest.mark.usefixtures("caption_delivery")
 def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch):
     monkeypatch.setattr(p.cloud, "configuration", lambda: {})
     assets = {
@@ -436,6 +455,7 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         p.publish(folder)
 
 
+@pytest.mark.usefixtures("caption_delivery")
 def test_multiple_shots_cues_follow_final_timeline(media, tmp_path):
     second = media.shots[0].model_copy(deep=True, update={"id": "two"})
     plan = media.model_copy(update={"shots": [media.shots[0], second]})

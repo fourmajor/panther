@@ -10,6 +10,7 @@ import uuid
 
 import click
 
+from panther_journal.browser_recording import verified
 from panther_journal import recording as audio
 from panther_journal.audio_storage import capture_active, flush_directory, flush_file, lock
 
@@ -23,7 +24,7 @@ def build(folder):
     if (folder / "recording.json").is_symlink():
         raise click.ClickException("Refusing a symlinked recording manifest.")
     with lock(folder, "playback.lock"):
-        record = audio.verified(folder)
+        record = verified(folder)
         source_hash = audio.digest(folder / "recording.json")
         name = f"playback-v1-{source_hash[:16]}"
         target, manifest = folder / f"{name}.mp3", folder / f"{name}.json"
@@ -60,7 +61,7 @@ def build(folder):
                                 raise click.ClickException("Decoded source format differs from manifest.")
                             markers.append({"file": part.file, "start": total_samples / first.sampleRate})
                             decode = [audio.executable("ffmpeg"), "-v", "error", "-xerror", "-nostdin",
-                                      "-f", "flac", "-i", str(folder / part.file), "-map", "0:a:0",
+                                      "-f", record.sourceFormat, "-i", str(folder / part.file), "-map", "0:a:0",
                                       "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1"]
                             count = 0
                             with subprocess.Popen(decode, stdout=subprocess.PIPE, stderr=errors) as decoder:
@@ -91,7 +92,7 @@ def build(folder):
                             pass
                         encoder.wait(timeout=30)
             # Verify sources again before publishing a derivative; never fix gaps with silence.
-            audio.verified(folder)
+            verified(folder)
             if audio.digest(folder / "recording.json") != source_hash:
                 raise click.ClickException("Recording manifest changed during assembly.")
             if temporary.stat().st_size > audio.cloud.MAX_UPLOAD_BYTES:
