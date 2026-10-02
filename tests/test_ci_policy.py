@@ -12,8 +12,9 @@ def test_playwright_runs_only_in_manually_dispatched_self_hosted_job():
     job = workflow["jobs"]["test"]
     assert job["runs-on"] == ["self-hosted", "Linux", "panther-local"]
     assert "github.repository == 'fourmajor/panther'" in job["if"]
-    assert "github.actor == 'fourmajor'" in job["if"]
-    assert "github.triggering_actor == 'fourmajor'" in job["if"]
+    assert "github.event_name == 'workflow_dispatch'" in job["if"]
+    assert "github.actor" not in job["if"]
+    assert "github.triggering_actor" not in job["if"]
     assert "refs/heads/main" in job["if"]
     assert "startsWith(github.ref, 'refs/heads/codex/')" in job["if"]
     assert workflow["permissions"] == {"contents": "read"}
