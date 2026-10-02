@@ -3,6 +3,25 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 
+for(const width of [1440,390]) test(`Session finalization is visible and inspectable at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:1000});const state=await fixture(page);
+  const job=sample('9'.repeat(64),'session-finalization','running','Session finalization · synthetic-session',[
+    {id:'verify-inputs',label:'Verify inputs',status:'done'},
+    {id:'preserve-raw-transcript',label:'Preserve raw transcript',status:'running'},
+    {id:'match-players',label:'Match players',status:'pending'},
+    {id:'start-adaptations',label:'Start adaptations',status:'pending'},
+  ],{source:'local-worker',reportedAt:Date.now()/1000});state.jobs.unshift(job);
+  await page.goto('https://panther.place/games/synthetic-game/workflows');
+  const group=page.locator('.workshop-group[data-kind=session-finalization]');
+  await expect(group).toBeVisible();await expect(group.locator('summary')).toContainText('Session finalization');
+  await group.locator('.workshop-card').click();
+  await expect(page.locator('.workshop-stages li')).toHaveCount(4);
+  await expect(page.locator('#workshop-detail')).toContainText('Match players');
+  await expect(page.locator('.workshop-stages .is-working')).toHaveCount(1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`session-finalization-${width}.png`),fullPage:true});
+});
+
 function sample(id,kind,status,title,stages,extra={}) {
   const common=stages.filter(s=>!s.id.startsWith('novel-')&&!s.id.startsWith('video-')).map(s=>s.id);
   const lanes=kind==='editorial'?[

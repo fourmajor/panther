@@ -18,7 +18,7 @@ DB = boto3.resource("dynamodb")
 INDEX = DB.Table(os.environ["WORKSHOP_TABLE"])
 SOURCES = json.loads(os.environ["WORKSHOP_SOURCES"])
 PLAN = json.loads(os.environ["WORKSHOP_PLAN"])
-KINDS = (*SOURCES, "video-production", "video-generation")
+KINDS = (*SOURCES, "video-production", "video-generation", "session-finalization")
 STATE = {"pk": "SYSTEM", "sk": "workshop-v1"}
 SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 STATES = {"pending", "queued", "running", "done", "failed", "paused", "unknown"}
@@ -79,7 +79,7 @@ def source_view(kind, key):
         names = PLAN["correction"] + (PLAN["novel"] if target != "video" else []) + (PLAN["video"] if target != "novel" else [])
         stages = [phase(name, status(tasks[name]["status"]) if name in tasks else "pending", tasks.get(name)) for name in names]
         title = job.get("creation", {}).get("title") or "Transcript → story & screen planning"
-        note = "Screen planning ends before paid video generation." if target != "novel" else "Novel adaptation; raw evidence remains unchanged."
+        note = "Screen planning ends before paid video generation. Approval of the exact script/storyboard is required; completed planning never authorizes spending." if target != "novel" else "Novel adaptation; raw evidence remains unchanged."
     elif kind in {"model", "playback"}:
         if item["pk"] != ("JOBS" if kind == "model" else "SETS") or not item.get("jobId"):
             return None
@@ -197,7 +197,7 @@ def handler(event, _context):
             if len(event.get("body") or "") > 65536:
                 raise ValueError("Progress report too large")
             body = json.loads(event.get("body") or "{}")
-            if set(body) != {"kind", "gameId", "runId", "title", "stages", "status", "expectedRevision"} or body["kind"] not in {"video-production", "video-generation"}:
+            if set(body) != {"kind", "gameId", "runId", "title", "stages", "status", "expectedRevision"} or body["kind"] not in {"video-production", "video-generation", "session-finalization"}:
                 raise ValueError("Invalid progress envelope")
             if len(body["gameId"]) > 96 or not re.fullmatch(SLUG, body["gameId"]) or not re.fullmatch(r"[a-f0-9]{64}", body["runId"]):
                 raise ValueError("Invalid workflow identity")
@@ -214,7 +214,8 @@ def handler(event, _context):
             previous = get(INDEX, "GAME#" + body["gameId"], identity)
             if (previous or {}).get("revision") != body["expectedRevision"]:
                 return reply(409, {"error": "Progress revision changed"})
-            item = store({"schemaVersion": 1, "id": identity, "kind": body["kind"], "gameId": body["gameId"], "title": body["title"], "status": body["status"], "stages": body["stages"], "createdAt": (previous or {}).get("createdAt", int(time.time())), "reportedAt": int(time.time()), "source": "local-worker", "note": "Local report; generation completion is not final movie delivery or quality approval."}, previous)
+            note = "Local finalization report; adaptation progress appears in the linked story/screen workflow. Video stops for storyboard approval." if body["kind"] == "session-finalization" else "Local report; generation completion is not final movie delivery or quality approval."
+            item = store({"schemaVersion": 1, "id": identity, "kind": body["kind"], "gameId": body["gameId"], "title": body["title"], "status": body["status"], "stages": body["stages"], "createdAt": (previous or {}).get("createdAt", int(time.time())), "reportedAt": int(time.time()), "source": "local-worker", "note": note}, previous)
             return reply(200, {"workflow": public(item, True)})
         if route != "GET /workflows":
             return reply(404, {"error": "Unknown workflow route"})
@@ -223,7 +224,7 @@ def handler(event, _context):
         if not re.fullmatch(SLUG, game):
             raise ValueError("Invalid game")
         if q.get("id"):
-            if not re.fullmatch(r"(?:editorial|model|playback|transcription|video-production|video-generation)~[a-z0-9-]{1,80}", q["id"]):
+            if not re.fullmatch(r"(?:editorial|model|playback|transcription|video-production|video-generation|session-finalization)~[a-z0-9-]{1,80}", q["id"]):
                 raise ValueError("Invalid workflow ID")
             item = get(INDEX, "GAME#" + game, q["id"])
             return reply(200, {"workflow": public(item, True)}) if item else reply(404, {"error": "Workflow not found in this game"})

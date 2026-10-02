@@ -73,6 +73,18 @@ def test_submission_is_idempotent_and_rejects_adaptation_and_cross_game(editoria
     assert request(m, "POST /editorial-jobs", body, username="intruder")["statusCode"] == 403
 
 
+def test_large_preserved_word_evidence_can_start_editorial_without_truncation(editorial):
+    m = editorial
+    original = raw()
+    original["segments"][0]["wordAttribution"] = {"evidence": "x" * (3 * 1024**2)}
+    key = "games/test-game/assets/test-recording/original/detailed-raw.json"
+    put(m, key, json.dumps(original).encode(), "application/json")
+    result = request(m, "POST /editorial-jobs", {"gameId": "test-game", "rawKey": key})
+    assert result["statusCode"] == 200
+    job = unpack(result)
+    assert job["raw"]["size"] > 2 * 1024**2
+
+
 def test_leases_callback_redaction_and_expiry(editorial):
     m = editorial
     job, claim = queued(m)

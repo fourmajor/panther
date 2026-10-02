@@ -4649,7 +4649,7 @@ document.getElementById("account-settings-back").addEventListener("click",leaveA
 const workshop = (() => {
   const host=document.getElementById("workshop"), list=document.getElementById("workshop-list"), detail=document.getElementById("workshop-detail");
   const health=document.getElementById("workshop-health"), more=document.getElementById("workshop-more"), filters=document.getElementById("workshop-filters");
-  const labels={editorial:"Story & screen planning",model:"3D modeling",playback:"Audio assembly",transcription:"Transcription","video-production":"Video finishing","video-generation":"Video generation"};
+  const labels={"session-finalization":"Session finalization",editorial:"Story & screen planning",model:"3D modeling",playback:"Audio assembly",transcription:"Transcription","video-production":"Video finishing","video-generation":"Video generation"};
   let timer=null, controller=null, rows=[], cursor=null, filter="all", epoch=0, game=null, busy=false, selected=null, loadedCursors=[], generation=0;
   const groupOpen=new Map();let graphObserver=null;
   function node(tag,text,className) {const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element;}

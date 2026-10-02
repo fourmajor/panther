@@ -49,7 +49,7 @@ def query(pk):
         args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
-def asset(key, game):
+def asset(key, game, maximum=16 * 1024**2):
     if (
         not isinstance(key, str)
         or not re.fullmatch(rf"games/{re.escape(game)}/assets/[a-z0-9-]+/original/[^/\\]+", key)
@@ -57,14 +57,14 @@ def asset(key, game):
     ):
         raise ValueError("Expected immutable same-game asset")
     head = media.s3.head_object(Bucket=media.BUCKET_NAME, Key=key, ChecksumMode="ENABLED")
-    if not head.get("ChecksumSHA256") or not 0 < head["ContentLength"] <= 2 * 1024**2:
-        raise ValueError("Expected checksummed text artifact under 2 MiB")
+    if not head.get("ChecksumSHA256") or not 0 < head["ContentLength"] <= maximum:
+        raise ValueError("Checksummed text artifact exceeds the supported size")
     return {"key": key, "sha256": head["ChecksumSHA256"], "size": head["ContentLength"]}, head
 
 
 def document(reference):
     data = media.s3.get_object(Bucket=media.BUCKET_NAME, Key=reference["key"])["Body"].read(
-        2 * 1024**2 + 1
+        16 * 1024**2 + 1
     )
     if (
         len(data) != reference["size"]
@@ -149,7 +149,7 @@ def submit(body):
     for key in source_keys:
         if not isinstance(key, str) or not key.endswith(".json"):
             raise ValueError("Expected structured raw transcript JSON")
-        ref, head = asset(key, body["gameId"])
+        ref, head = asset(key, body["gameId"], maximum=16 * 1024**2)
         raw = document(ref)
         validate_raw(raw, body["gameId"])
         references.append(ref)
@@ -159,7 +159,7 @@ def submit(body):
     for key in context_keys:
         if not key.endswith((".json", ".md", ".txt")):
             raise ValueError("Expected text context")
-        ref, head = asset(key, body["gameId"])
+        ref, head = asset(key, body["gameId"], maximum=2 * 1024**2)
         stored = head.get("Metadata", {})
         details = json.loads(base64.b64decode(stored.get("panther", "e30=")))
         if (
