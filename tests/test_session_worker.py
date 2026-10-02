@@ -157,6 +157,24 @@ def test_partial_transcript_pair_resumes_without_overwrite(tmp_path):
         worker.save_transcript(tmp_path, {**document, "segments": []})
 
 
+def test_bad_recognizer_timing_retains_all_text_without_inventing_speech_intervals(tmp_path):
+    raw = {"transcription": [{"text": "First. ", "offsets": {"from": 20000, "to": 10000}},
+                             {"text": "Second.", "offsets": {"from": 100000, "to": 110000}}]}
+    write_json(tmp_path / "recognizer.json", raw)
+    part = SimpleNamespace(start=30, duration=30)
+    result = worker.uncertain_timing(tmp_path, part)
+    assert result[0]['text'] == 'First. Second.'
+    assert (result[0]['start'], result[0]['end']) == (30, 60)
+    assert result[0]['playerId'] is None
+    assert 'not precise speech timing' in result[0]['timingNote']
+    assert json.loads((tmp_path / 'recognizer.json').read_text()) == raw
+    from panther_journal.editorial import reading_transcript
+    assert reading_transcript({'segments': result})['segments'][0]['timingNote']
+    write_json(tmp_path / 'recognizer.json', {'transcription': [{'text': None}]}, replace=True)
+    with pytest.raises(click.ClickException, match='text is unavailable'):
+        worker.uncertain_timing(tmp_path, part)
+
+
 def test_short_confirmed_enrollment_is_explicit_and_never_accepts_multiple_speakers(tmp_path, monkeypatch):
     from click.testing import CliRunner
     sample = tmp_path / "confirmed.wav"
