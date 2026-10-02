@@ -1,5 +1,11 @@
 # Panther agent instructions
 
+Inspect reported processing with `panther workflows list --game GAME`, or the
+web app’s Workflows section. See `docs/workflow-workshop.md` for repeatable
+historical indexing and imports of genuine local checkpoints. Status reporting
+is not execution or spending approval; never run missing stages merely to fill
+the status display. Preserve uncertainty and private operational evidence.
+
 Curated chapter artwork uses `panther novels illustrations` and `save-illustrations` with exact
 completed chapter and immutable same-game image keys, meaningful alt text/captions and a guarded
 selection revision. This is a separate illustrative adaptation, not manuscript text or canon.

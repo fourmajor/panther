@@ -15,11 +15,12 @@ import { CharacterAppearances } from "./character-appearances";
 
 /** Private application jobs, not CI. No AI service, inbound laptop connection, or idle compute. */
 export class ModelProcessing extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
     bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
   }) {
     super(scope, id);
-    const table = new dynamodb.Table(this, "Jobs", {
+    const table = this.table = new dynamodb.Table(this, "Jobs", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
