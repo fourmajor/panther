@@ -1310,6 +1310,9 @@ body { padding-bottom:6rem; }
 :root[data-interface]:not([data-interface=studio]) .dashboard-facts span:first-child { background:var(--panel-raised); border-color:var(--line); }
 :root[data-interface]:not([data-interface=studio]) .crew-initial { background:var(--panel-raised); color:var(--accent); }
 :root[data-interface]:not([data-interface=studio]) .primary-nav a[aria-current] { color:var(--accent); }
+:root[data-interface]:not([data-interface=studio]) .primary-button { background:var(--accent); color:var(--accent-dark); }
+:root[data-interface=cinema] .masthead .primary-nav a[aria-current] { color:var(--accent-dark); }
+:root[data-interface=poster] .masthead .primary-nav a[aria-current] { color:var(--paper); }
 :root[data-interface]:not([data-interface=studio]) :is(input,textarea,select) { background:var(--panel); color:var(--ink); border-color:var(--line); }
 
 /* Chronicle: a book's contents rail and a single-column archival index. */

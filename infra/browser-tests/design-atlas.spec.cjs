@@ -49,6 +49,15 @@ for(const width of [1440,390]) for(const design of designs) {
     await expect(page.locator('#dashboard-name')).toHaveText('The Lantern Expedition');
     await accessible(page.locator('#design-open'),width);
     for(const link of await page.locator('#primary-nav a').all()) await accessible(link,width);
+    const contrast=await page.locator('#primary-nav a[aria-current]').evaluate(el=>{
+      const style=getComputedStyle(el);
+      const luminance=color=>{const values=color.match(/[\d.]+/g).slice(0,3).map(n=>{const v=Number(n)/255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return values[0]*.2126+values[1]*.7152+values[2]*.0722;};
+      const background=style.backgroundColor==='rgba(0, 0, 0, 0)'?getComputedStyle(document.documentElement).getPropertyValue('--panel'):style.backgroundColor;
+      const canvas=document.createElement('canvas').getContext('2d');canvas.fillStyle=background;
+      const hex=canvas.fillStyle;const normalized=hex.startsWith('#')?'rgb('+[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)).join(',')+')':hex;
+      const a=luminance(style.color),b=luminance(normalized);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+    });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     if(width===1440) {
       const columns=await page.locator('.dashboard-sections').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length);
@@ -66,6 +75,7 @@ for(const width of [1440,390]) for(const design of designs) {
     await page.locator('#design-open').click();
     await expect(page.locator('#design-atlas')).toBeVisible();
     await expect(page.locator('.atlas-option')).toHaveCount(6);
+    if(design==='studio') await page.screenshot({path:test.info().outputPath(`atlas-${width}.png`)});
     const other=design==='field'?'chronicle':'field';
     const choice=page.locator(`[data-design=${other}]`);
     // On a small screen the contact sheet deliberately scrolls, not a clipped carousel.
