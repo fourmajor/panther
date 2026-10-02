@@ -19,6 +19,7 @@ class BrowserPart(audio.Part):
 
 class BrowserRecording(audio.Recording):
     entityType: Literal["BrowserRecording"] = "BrowserRecording"
+    sessionName: str = Field(min_length=1, max_length=120)
     sourceFormat: Literal["wav"] = "wav"
     parts: list[BrowserPart] = Field(min_length=1, max_length=1000)
     captureWarnings: list[str] = Field(max_length=100)

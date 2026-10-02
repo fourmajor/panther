@@ -252,3 +252,28 @@ def test_provider_request_uses_explicit_model_without_context_or_browser_credent
     assert b"\r\ngpt-transcribe\r\n" in req.data
     assert b'name="prompt"' not in req.data
     assert wav() in req.data
+
+
+def test_playback_progress_is_member_readable_without_exposing_worker_secrets(browser):
+    complete, live = sources(browser)
+    completed = unpack(
+        request(browser, "POST /browser-recording/complete", complete, username="example-member")
+    )
+    query = {
+        "gameId": live["gameId"],
+        "recordingId": live["recordingId"],
+        "mode": "live",
+        "playbackJobId": completed["jobId"],
+    }
+    result = unpack(
+        request(browser, "GET /browser-transcriptions", username="example-member", query=query)
+    )
+    assert result["playback"] == {"status": "SUBMITTED"}
+    assert (
+        request(
+            browser,
+            "GET /browser-transcriptions",
+            query={**query, "recordingId": "recording-" + "b" * 32},
+        )["statusCode"]
+        == 400
+    )

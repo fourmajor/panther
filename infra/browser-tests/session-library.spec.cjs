@@ -512,6 +512,8 @@ test('deep-linked transcript survives reload and expired authentication clears c
   await page.reload(); await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
   await page.getByRole('button',{name:'Close preview'}).click();
   await page.locator('#primary-nav').getByRole('link',{name:'Audio',exact:true}).click();
+  await expect(page.locator('#session-library')).toBeVisible();
+  await expect(page.locator('.session-card')).toHaveCount(1);
   await page.route(`${api}/assets*`,route=>route.fulfill({status:401,headers,json:{error:'Expired'}}));
   await page.route(`${origin}/auth/refresh`,route=>route.fulfill({status:401,json:{error:'Expired'}}));
   await page.locator('#library-refresh').click();

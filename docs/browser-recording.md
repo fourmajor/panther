@@ -1,7 +1,8 @@
 # Browser room recording
 
-Audio and Transcripts offer **Record room audio** to signed-in catalog members. Enter a
-session identifier, get agreement from everyone being recorded, and grant microphone access.
+Audio and Transcripts offer **Record room audio** to signed-in catalog members. Get agreement from everyone being recorded, then press **Record** and grant microphone access.
+The session ID and a dated display name are generated automatically. Stop shows processing
+progress directly below the controls; playback and the transcript appear there when ready.
 A current browser on HTTPS (or localhost) needs Web Audio, AudioWorklet, Web Locks and IndexedDB.
 Keep the tab open and the device awake. Browser capture cannot certify hardware continuity.
 

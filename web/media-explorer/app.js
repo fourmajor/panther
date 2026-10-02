@@ -429,7 +429,7 @@ async function selectGame(requested, epoch) {
   let remembered = null;
   try { remembered = sessionStorage.getItem("panther.game"); } catch { /* Optional preference. */ }
   const selected = requested || state.gameId || remembered || state.games[0]?.id;
-  if (roomCapture?.recording && selected !== roomCapture.draft.gameId) throw new Error("Stop the room recording before switching games.");
+  if ((roomCapture?.recording || roomCapture?.stopping || roomCapture?.archiving) && selected !== roomCapture.draft.gameId) throw new Error("Finish saving the room recording before switching games.");
   if (!state.games.some(g => g.id === selected)) throw new Error("Game not found. Choose an available game.");
   elements.gameToolbar.hidden = false;
   document.getElementById("game-context").hidden = false;
@@ -3384,7 +3384,8 @@ class RoomRecorder {
   constructor() {
     this.host=document.getElementById('room-recorder'); this.recording=false; this.draft=null; this.liveEnabled=false;
     this.writeChain=Promise.resolve(); this.uploadChain=Promise.resolve(); this.nodes=new Map();
-    this.el=Object.fromEntries(['start','stop','session','status','state','timer','level','help','live-toggle','live','live-text','recovery','resume','download','final','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
+    this.el=Object.fromEntries(['start','stop','status','state','timer','level','live-toggle','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
+    this.el.audio=document.createElement('audio');this.el.audio.id='room-audio';this.el.audio.controls=true;this.el.audio.preload='metadata';this.el.audio.hidden=true;
     this.el.start.onclick=()=>this.start(); this.el.stop.onclick=()=>this.stop();
     this.el['live-toggle'].onclick=()=>{this.liveEnabled=!this.liveEnabled; this.buttons(); this.say(this.liveEnabled?'Live transcription enabled for new audio.':'New live requests paused. A full pass will still run after Stop.');};
     this.el.resume.onclick=async()=>{this.uploadError=false; this.el.resume.disabled=true; try {await this.upload(); if(!this.recording) await this.archive();} catch(error) {this.say(error.message,true);} finally {this.el.resume.disabled=false;}};
@@ -3407,14 +3408,14 @@ class RoomRecorder {
     });
   }
   persist() {const draft=this.draft; this.writeChain=this.writeChain.then(()=>this.store('drafts','put',structuredClone(draft))); return this.writeChain;}
-  say(text,error=false) {this.el.status.textContent=text; this.el.status.dataset.state=error?'error':'normal';}
+  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;}
   buttons() {
     this.host.dataset.recording=String(this.recording); this.el.start.hidden=this.recording; this.el.stop.hidden=!this.recording;
-    this.el.start.disabled=!!this.draft && this.draft.status!=='archived'; this.el.session.disabled=this.recording || (!!this.draft && this.draft.status!=='archived');
-    this.el['live-toggle'].disabled=!this.capabilities?.transcriptionAvailable;
-    this.el['live-toggle'].setAttribute('aria-pressed',String(this.liveEnabled)); this.el['live-toggle'].textContent=this.liveEnabled?'Live transcription on':'Live transcription off';
-    this.el.state.textContent=this.recording?'Recording':this.draft?.status==='archived'?'Saved':this.draft?'Audio retained':'Ready';
-    elements.gameSelector.disabled=this.recording || !!this.stopping;
+    this.el.start.disabled=!!this.archiving || !!this.stopping || (!!this.draft && this.draft.status!=='archived');
+    this.el['live-toggle'].disabled=!this.capabilities?.transcriptionAvailable;this.el['live-toggle'].hidden=!this.recording || !this.capabilities?.transcriptionAvailable;
+    this.el['live-toggle'].setAttribute('aria-pressed',String(this.liveEnabled)); this.el['live-toggle'].textContent=this.liveEnabled?'Live text on':'Live text off';
+    this.el.state.textContent=this.stopping?'Finishing…':'Recording';this.el.state.hidden=!this.recording && !this.stopping;this.el.timer.hidden=!this.recording && !this.stopping;this.el.level.hidden=!this.recording;
+    elements.gameSelector.disabled=this.recording || !!this.stopping || !!this.archiving;
   }
   async render(section,epoch) {
     const visible=['audio','transcripts'].includes(section) || this.recording || this.stopping;
@@ -3422,26 +3423,22 @@ class RoomRecorder {
     try {
       this.capabilities ||= await api('/browser-recording/capabilities');
       if(epoch!==routeEpoch) return;
-      if((this.recording || this.stopping) && this.draft?.owner!==this.owner()) {this.host.hidden=true;return;}
+      if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;return;}
       if(!this.capabilities.canRecord) {this.host.hidden=true; return;}
       if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
-        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.final.hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
+        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
         const held=await navigator.locks?.query();
         if(held?.held.some(lock=>lock.name==='panther-room-capture')) {this.say('Another tab is using the room recorder.',true);this.el.start.disabled=true;return;}
         const drafts=await this.store('drafts','getAll');
         this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived').sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
-        if(this.draft) {this.draft.status='interrupted';if(!this.draft.manifestDoc) this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');await this.persist();this.el.session.value=this.draft.sessionId;this.el.recovery.hidden=false;this.say('Closed audio parts were recovered from this browser. Save them without recording again.');}
+        if(this.draft) {this.draft.status='interrupted';if(!this.draft.manifestDoc) this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');await this.persist();this.showResult('Audio retained','error');this.el.recovery.hidden=false;this.say('Closed audio parts were recovered from this browser. Save them without recording again.');}
         this.liveEnabled=!!this.capabilities.transcriptionAvailable;
       }
-      this.el.help.textContent=this.capabilities.transcriptionAvailable
-        ? 'With everyone’s agreement, capture the room microphone. Audio is sent to OpenAI for provisional live ASR and a separate full pass after Stop. Live can be switched off. Keep this tab open.'
-        : 'Recording and backup are available. OpenAI transcription is not configured on the server. Get agreement from everyone at the table and keep this tab open.';
       this.buttons();
     } catch(error) {this.host.hidden=true;}
   }
   async start() {
     if(this.recording || this.stopping || !this.capabilities?.canRecord || this.el.start.disabled) return;
-    if(!this.el.session.reportValidity()) return;
     if(!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode || !navigator.locks) {this.say('Use a current browser on HTTPS or localhost with microphone, AudioWorklet and Web Locks support.',true);return;}
     await navigator.locks.request('panther-room-capture',{ifAvailable:true},async lock=>{
       if(!lock) {this.say('Another tab is already recording. Return to that tab to stop it.',true);return;}
@@ -3453,8 +3450,8 @@ class RoomRecorder {
         if(this.context.sampleRate!==32000) throw new Error('This browser cannot provide the supported 32 kHz capture format.');
         await this.context.audioWorklet.addModule(document.querySelector('meta[name="panther-pcm-worklet"]').content);
         const track=this.stream.getAudioTracks()[0];
-        this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:this.el.session.value.trim(),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
-        this.writeChain=Promise.resolve(); await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.final.hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
+        this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+new Date().toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
+        this.writeChain=Promise.resolve(); await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
         this.node=new AudioWorkletNode(this.context,'panther-pcm-capture-v1'); this.source=this.context.createMediaStreamSource(this.stream);
         this.node.port.onmessage=event=>{
           if(event.data.type==='level') this.el.level.value=event.data.peak;
@@ -3465,7 +3462,7 @@ class RoomRecorder {
         track.onended=()=>{if(this.recording) void this.stop('The microphone disconnected.');};
         this.source.connect(this.node);this.node.connect(this.context.destination);await this.context.resume();
         this.context.onstatechange=()=>{if(this.recording && this.context.state==='suspended') {this.draft.captureWarnings.push('The browser suspended capture; audio may be missing.');this.say('Audio capture is suspended by the browser. Return to this tab and Stop to retain captured parts.',true);}};
-        this.recording=true; this.started=performance.now(); this.buttons();this.say('Recording. Closed parts are saved in this browser before backup.');
+        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();this.say('Recording. Closed parts are saved in this browser before backup.');
         this.timer=setInterval(()=>{this.el.timer.textContent=timestamp((performance.now()-this.started)/1000);},1000);
         await new Promise(resolve=>{this.unlock=resolve;});
       } catch(error) {
@@ -3495,7 +3492,7 @@ class RoomRecorder {
     const bytes=await blob.arrayBuffer(), hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
     const sha=btoa(String.fromCharCode(...hash)), key=`games/${this.draft.gameId}/assets/${this.draft.id}/original/${filename}`;
     try {const old=await api('/object-url',{key});if(old.size===blob.size && old.metadata?.extra?.sha256===sha) return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};throw new Error('An existing archive object differs. Retained audio will not be overwritten.');} catch(error) {if(error.status!==404) throw error;}
-    const signed=await api('/uploads',{}, {body:{gameId:this.draft.gameId,assetId:this.draft.id,kind,filename,size:blob.size,sha256:sha,contentType:blob.type,metadata:{title:filename,sessionId:this.draft.sessionId,category:kind==='recording'?'canonical-source':'unclassified',characterIds:[],sourceKeys:sources,extra:{...extra,sha256:sha,chunkSetId:this.draft.id,generation:{schemaVersion:1,method:kind==='recording'?'capture':'procedural',inference:'not-applicable',execution:'local',tool:kind==='recording'?'Browser Web Audio PCM capture':'Panther browser recording manifest',cost:{status:'not-applicable'}}}}}});
+    const signed=await api('/uploads',{}, {body:{gameId:this.draft.gameId,assetId:this.draft.id,kind,filename,size:blob.size,sha256:sha,contentType:blob.type,metadata:{title:kind==='recording-manifest'?this.draft.sessionName:filename,sessionId:this.draft.sessionId,category:kind==='recording'?'canonical-source':'unclassified',characterIds:[],sourceKeys:sources,extra:{...extra,sha256:sha,chunkSetId:this.draft.id,generation:{schemaVersion:1,method:kind==='recording'?'capture':'procedural',inference:'not-applicable',execution:'local',tool:kind==='recording'?'Browser Web Audio PCM capture':'Panther browser recording manifest',cost:{status:'not-applicable'}}}}}});
     const headers={...signed.headers};delete headers['Content-Length'];
     const response=await fetch(signed.url,{method:'PUT',headers,body:blob});
     if(!response.ok) throw new Error('Audio backup did not finish. Retained browser audio can be saved again.');
@@ -3523,34 +3520,36 @@ class RoomRecorder {
   }
   async stop(warning=null,alreadyStopped=false) {
     if(!this.recording || this.stopping) return;
-    this.stopping=true;this.el.stop.disabled=true;let flushFailed=false;if(warning) this.draft.captureWarnings.push(warning);
+    this.stopping=true;this.el.stop.disabled=true;this.showResult('Saving audio…');let flushFailed=false;if(warning) this.draft.captureWarnings.push(warning);
     if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
     this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream.getTracks().forEach(track=>track.stop());this.source.disconnect();this.node.disconnect();await this.context.close();
-    await this.writeChain;this.unlock?.();this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
-    this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=false;
+    await this.writeChain;this.unlock?.();if(!this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=true;this.el.result.hidden=true;this.say('No audio was captured. You can start a new recording.');return;}
+    this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
+    this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=false;this.el.download.hidden=false;
     try {await this.archive();} catch(error) {this.say(error.message,true);}
   }
   interrupt() {if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
   async archive() {
     if(this.archiving) return this.archiving;
-    this.archiving=this.saveArchive().finally(()=>{this.archiving=null;});return this.archiving;
+    this.archiving=this.saveArchive().finally(()=>{this.archiving=null;this.buttons();});this.buttons();return this.archiving;
   }
   async saveArchive() {
     if(this.recording || this.stopping || !this.draft?.parts.length) {this.say('No completed audio parts to save yet.',true);return;}
     if(this.draft.owner!==this.owner()) throw new Error('Sign in to the capturing account to save retained audio.');
     await this.upload();if(this.uploadError) return;
-    const doc=this.draft.manifestDoc || {schemaVersion:1,entityType:'BrowserRecording',id:this.draft.id,gameId:this.draft.gameId,sessionId:this.draft.sessionId,startedAt:this.draft.startedAt,device:this.draft.device,status:this.draft.status==='interrupted'?'interrupted':'complete',sourceFormat:'wav',captureWarnings:this.draft.captureWarnings,parts:this.draft.parts.map(part=>Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted','key'].includes(key))))};
+    const doc=this.draft.manifestDoc || {schemaVersion:1,entityType:'BrowserRecording',id:this.draft.id,gameId:this.draft.gameId,sessionId:this.draft.sessionId,sessionName:this.draft.sessionName,startedAt:this.draft.startedAt,device:this.draft.device,status:this.draft.status==='interrupted'?'interrupted':'complete',sourceFormat:'wav',captureWarnings:this.draft.captureWarnings,parts:this.draft.parts.map(part=>Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted','key'].includes(key))))};
     this.draft.manifestDoc=doc;await this.persist();
     const manifest=await this.put(new Blob([JSON.stringify(doc)],{type:'application/json'}),'recording.json','recording-manifest',{recordingId:this.draft.id});
     const completed=await api('/browser-recording/complete',{}, {body:{gameId:this.draft.gameId,recordingKey:manifest.key,manifestSha256:manifest.hex,status:'COMPLETE'}});
-    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;await this.persist();this.buttons();this.say('Audio saved. Continuous playback will be prepared by the laptop worker.');
-    this.el.recovery.hidden=false;this.el.resume.hidden=true;this.el.download.hidden=false;
-    if(this.capabilities.transcriptionAvailable) {
-      this.el.final.hidden=false;this.el['final-status'].textContent='Preparing a separate full transcription pass…';
+    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;await this.persist();this.buttons();this.say('Audio saved.');this.showResult('Preparing audio…');
+    this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;this.schedulePoll();
+    if(this.capabilities?.transcriptionAvailable) {
+      this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='processing';this.el['final-status'].textContent='Transcribing…';
       try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'final',playbackJobId:completed.jobId}});this.draft.finalRequested=true;await this.persist();this.schedulePoll();}
-      catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.say('Audio is saved, but the full transcription request did not finish. Save retained recording to retry the same request.',true);this.buttons();}
+      catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say('Audio saved. Retry to finish transcription.',true);this.buttons();}
     }
   }
+  showResult(text,state='processing') {this.el.result.hidden=false;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=!(this.draft.manifestDoc?.status==='interrupted' || this.draft.status==='interrupted');this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
   schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
   async poll() {
     if(!this.draft || !state.tokens) return;
@@ -3558,8 +3557,13 @@ class RoomRecorder {
     try {
       let pending=false;
       for(const mode of ['live',...(this.draft.finalRequested?['final']:[])]) {
-        const result=await api('/browser-transcriptions',{gameId:draft.gameId,recordingId:draft.id,mode});
+        const result=await api('/browser-transcriptions',{gameId:draft.gameId,recordingId:draft.id,mode,...(draft.playbackJobId?{playbackJobId:draft.playbackJobId}:{})});
         if(this.draft!==draft || state.gameId!==draft.gameId || !state.tokens) return;
+        if(result.playback) {
+          const playback=result.playback;pending ||= !['DONE','FAILED'].includes(playback.status);
+          this.showResult(playback.status==='DONE'?'Audio ready':playback.status==='FAILED'?'Audio processing failed':'Preparing audio…',playback.status==='DONE'?'ready':playback.status==='FAILED'?'error':'processing');
+          if(playback.audioKey && this.audioKey!==playback.audioKey) {const link=await api('/object-url',{key:playback.audioKey});if(this.draft!==draft || state.gameId!==draft.gameId) return;this.audioKey=playback.audioKey;this.el.audio.src=link.url;this.el.audio.hidden=false;this.el.result.insertBefore(this.el.audio,this.el['final-link']);}
+        }
         pending ||= result.jobs.some(job=>['SUBMITTED','RUNNING'].includes(job.status));
         if(mode==='live') {
           for(const job of result.jobs) if(job.status==='DONE' && !this.nodes.has(job.id)) {
@@ -3568,7 +3572,7 @@ class RoomRecorder {
           if(result.jobs.some(job=>job.status==='UNKNOWN')) this.say('Some live transcription outcomes are unknown. Audio is retained; paid requests will not be repeated automatically.',true);
         } else {
           pending ||= !result.transcriptKey && !result.jobs.some(job=>job.status==='UNKNOWN');
-          this.el['final-status'].textContent=result.transcriptKey?'Full transcript saved. Speakers remain unassigned; review the raw text before treating it as accurate.':result.jobs.some(job=>job.status==='UNKNOWN')?'The full pass could not finish. Sources and completed provider responses are retained; no automatic paid retry.':'Full transcription in progress…';
+          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':result.jobs.some(job=>job.status==='UNKNOWN')?'error':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':result.jobs.some(job=>job.status==='UNKNOWN')?'Transcription unavailable':'Transcribing…';
           if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}
         }
       }

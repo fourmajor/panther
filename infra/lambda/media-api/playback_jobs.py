@@ -86,7 +86,9 @@ def submit(body):
             or doc.get("status") not in {"complete", "interrupted"}
             or doc.get("sourceFormat") != source_format or not media._valid_slug(doc.get("sessionId"))):
         raise ValueError("Invalid finalized recording")
-    if browser and (not isinstance(doc.get("captureWarnings"), list)
+    if browser and (not isinstance(doc.get("sessionName"), str)
+            or not 1 <= len(doc["sessionName"].strip()) <= 120
+            or not isinstance(doc.get("captureWarnings"), list)
             or len(doc["captureWarnings"]) > 100
             or not all(isinstance(w, str) and len(w) <= 500 for w in doc["captureWarnings"])):
         raise ValueError("Explicit browser capture warnings required")

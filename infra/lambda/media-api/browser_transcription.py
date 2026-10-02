@@ -192,10 +192,24 @@ def handler(event, _context):
                 raise ValueError("Invalid mode")
             jobs = entries(pk, mode)
             transcript = read(pk, "FINAL-TRANSCRIPT")
+            playback = None
+            if query.get("playbackJobId"):
+                completed = playback_jobs.read(query["playbackJobId"])
+                if (
+                    not completed
+                    or completed.get("workflowVersion") != 2
+                    or completed["gameId"] != query["gameId"]
+                    or completed["chunkSetId"] != query["recordingId"]
+                ):
+                    raise ValueError("Playback does not belong to this browser recording")
+                playback = {"status": completed["status"]}
+                if completed["status"] == "DONE":
+                    playback["audioKey"] = completed["output"]["audio"]["key"]
             return reply(
                 200,
                 {
                     "jobs": [public(j) for j in jobs],
+                    "playback": playback,
                     "transcriptKey": transcript.get("key") if transcript else None,
                 },
             )
@@ -275,6 +289,7 @@ def handler(event, _context):
             "schemaVersion": 1,
             "recording": completed["recording"],
             "groupCount": len(groups),
+            "sessionName": manifest["sessionName"],
             "captureWarnings": manifest.get("captureWarnings", []),
             "captureStatus": manifest["status"],
         }
@@ -329,7 +344,7 @@ def publish(job, name, doc, kind, sources, generation):
         kind,
         {
             "sessionId": job["sessionId"],
-            "title": "Full room transcript"
+            "title": "Full room transcript · " + job.get("sessionName", job["sessionId"])
             if name == "transcript.json"
             else f"{job['mode'].title()} room transcript · {job['start']}s",
             "characterIds": [],
@@ -464,6 +479,7 @@ def finish(job):
         "gameId": job["gameId"],
         "recordingId": job["recordingId"],
         "sessionId": job["sessionId"],
+        "sessionName": plan["sessionName"],
         "mode": "final",
         "reviewStatus": "unreviewed",
         "requestedModel": MODEL,
@@ -496,6 +512,7 @@ def finish(job):
     }
     aggregate_job = {
         **job,
+        "sessionName": plan["sessionName"],
         "id": hashlib.sha256(("browser-final:" + plan["recording"]["sha256"]).encode()).hexdigest(),
     }
     key = publish(
