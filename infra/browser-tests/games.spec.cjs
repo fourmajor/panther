@@ -26,7 +26,7 @@ for(const width of [1280,390]) {
     });
     await page.goto('https://panther.place/media');
     await expect(page.getByText('campaign-only.flac',{exact:true})).toBeVisible();
-    await expect(page.locator('#status')).not.toBeVisible();
+    await expect(page.locator('#explorer > #status')).not.toBeVisible();
     const toolbar=page.locator('#game-toolbar');
     const baseline=(await toolbar.boundingBox()).y;
     // Observe the brief sign-in spinner too, before cached navigation resolves.
@@ -44,7 +44,7 @@ for(const width of [1280,390]) {
       ['Transcripts','/assets','#library-status','#library-title'],
       ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
       ['Videos','/assets','#library-status','#library-title'],
-      ['Media','/objects','#status','#explorer h1'],
+      ['Media','/objects','#explorer > #status','#explorer h1'],
     ]) {
       // Media is cached on return; refresh exercises its loading state.
       pendingPath=path; pending=new Promise(resolve=>{release=resolve;});

@@ -4,6 +4,13 @@ const config = window.PANTHER_CONFIG;
 const loadingStates = new WeakMap();
 function showLoading(host, message) {
   loadingStates.get(host)?.stop();
+  if (host.matches("#characters-status, #novel-status, #library-status, #status")) {
+    // Keep existing summaries in their slot during refresh/pagination. New pages
+    // have no slot to reserve; their activity indicator stays outside the flow.
+    const previousHeight = host.textContent.trim() && host.textContent.trim() !== "Loading…"
+      ? host.getBoundingClientRect().height : 0;
+    host.style.setProperty("--loading-slot-height", `${previousHeight}px`);
+  }
   const root = document.createElement("span"), spinner = document.createElement("span");
   const copy = document.createElement("span"), label = document.createElement("span"), detail = document.createElement("span");
   root.className = "loading-state"; root.setAttribute("role", "status");
