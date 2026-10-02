@@ -58,23 +58,40 @@ async function fixture(page) {
 for(const width of [1280,390])test(`episode-owned scenes can be created without finished clips at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});await fixture(page);const episodes=[],scenes=[],writes=[];
  await page.route(`${api}/episodes*`,route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);const record={...body,revision:'a'.repeat(32),position:0};episodes.push(record);return route.fulfill({headers,json:{record}});}return route.fulfill({headers,json:{records:episodes,cursor:null}});});
- await page.route(`${api}/scenes*`,route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);const record={...body,revision:'b'.repeat(32),position:0};scenes.push(record);return route.fulfill({headers,json:{record}});}return route.fulfill({headers,json:{records:scenes,cursor:null}});});
+ await page.route(`${api}/scenes*`,route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);const record={...body,revision:'b'.repeat(32),position:0};scenes.push(record);const parent=episodes.find(episode=>episode.id===record.episodeId);const episodeRecord={...parent,sceneIds:[...parent.sceneIds,record.id],revision:'c'.repeat(32)};episodes[episodes.indexOf(parent)]=episodeRecord;return route.fulfill({headers,json:{record,episodeRecord}});}return route.fulfill({headers,json:{records:scenes,cursor:null}});});
  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[],cursor:null}}));
  await page.goto(`${origin}/games/test-game/videos`);
  await expect(page.getByRole('button',{name:'TV episodes',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Generate video',exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'Create episode',exact:true}).click();await page.getByLabel('Episode title',{exact:true}).fill('The crossing');
+ await page.getByRole('button',{name:'Create episode',exact:true}).click();
+ const episodeDialog=page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Episode editor'})});await expect(episodeDialog).toBeVisible();await expect(episodeDialog).toBeInViewport();
+ const episodeBox=await episodeDialog.boundingBox();expect(episodeBox.width).toBeLessThanOrEqual(width-16);expect(episodeBox.height).toBeLessThan(850);
+ expect(await page.getByRole('form',{name:'Episode editor'}).evaluate(form=>Boolean(form.closest('dialog[open]')))).toBe(true);
+ await page.getByLabel('Episode title',{exact:true}).fill('The crossing');
  await page.getByRole('form',{name:'Episode editor'}).getByRole('button',{name:'Create episode',exact:true}).click();
- await page.getByRole('button',{name:'Add scene',exact:true}).click();await page.getByLabel('Scene title',{exact:true}).fill('Lanterns on the river');
+ await expect(episodeDialog).toHaveCount(0);await page.getByRole('button',{name:'Add scene',exact:true}).click();
+ const sceneDialog=page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Scene editor'})});await expect(sceneDialog).toBeVisible();await expect(sceneDialog).toBeInViewport();
+ await page.getByLabel('Scene title',{exact:true}).fill('Lanterns on the river');
  await page.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'Action',exact:true}).click();
  await page.getByRole('form',{name:'Scene editor'}).getByRole('button',{name:'Add scene',exact:true}).click();
  const workspace=page.locator('#episode-workspace');await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
  expect(writes).toHaveLength(2);expect(writes[1].episodeId).toBe(writes[0].id);expect(writes[1].type).toBe('action');expect(writes[1]).not.toHaveProperty('assetKeys');
- const generate=workspace.getByRole('button',{name:'Generate video',exact:true});await generate.scrollIntoViewIfNeeded();await expect(generate).toBeInViewport();await generate.click();
+ await expect(sceneDialog).toHaveCount(0);await expect(workspace.getByRole('button',{name:'Generate video',exact:true})).toHaveCount(0);
+ await expect(workspace.locator('#editorial-video-composer')).toBeVisible();
+ await expect(workspace.locator('.episode-cards')).toBeHidden();await expect(workspace.locator('.episode-scenes-panel').getByRole('button',{name:'Lanterns on the river',exact:true})).toBeVisible();
+ const toolbarActions=[workspace.getByRole('button',{name:'Add scene',exact:true}),workspace.getByRole('button',{name:'Edit episode',exact:true}),workspace.getByRole('button',{name:'Edit scene',exact:true})];
+ const actionBoxes=[];for(const action of toolbarActions){await expect(action).toBeVisible();await expect(action).toBeInViewport();const bounds=await action.boundingBox();expect(bounds.height).toBeLessThanOrEqual(48);actionBoxes.push(bounds);expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
+ expect(Math.max(...actionBoxes.map(box=>box.height))-Math.min(...actionBoxes.map(box=>box.height))).toBeLessThanOrEqual(2);
+ const list=await workspace.locator('.episode-scenes-panel').boundingBox(),focused=await workspace.locator('.episode-scene-panel').boundingBox();
+ if(width>800){expect(list.x+list.width).toBeLessThanOrEqual(focused.x);expect(Math.max(list.y,focused.y)).toBeLessThan(Math.min(list.y+list.height,focused.y+focused.height));}else expect(list.y+list.height).toBeLessThanOrEqual(focused.y);
+ const back=workspace.getByRole('button',{name:'Back to episodes',exact:true});await expect(back).toBeVisible();
  await expect(workspace.getByLabel('Prompt',{exact:true})).toHaveValue('Lanterns on the river');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:test.info().outputPath(`episodes-scenes-${width}.png`),fullPage:true});
  await page.reload();await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
+ await workspace.getByRole('button',{name:'Back to episodes',exact:true}).click();await expect(workspace.locator('.episode-cards')).toBeVisible();await expect(page.getByLabel('Search videos',{exact:true})).toBeVisible();await expect(page).not.toHaveURL(/episode=/);
+ await workspace.getByRole('button',{name:'The crossing',exact:true}).click();await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
+ await workspace.getByRole('button',{name:'Edit scene',exact:true}).click();const editDialog=page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Scene editor'})});await editDialog.getByLabel('Scene title',{exact:true}).fill('Unsaved title');await editDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(editDialog).toHaveCount(0);expect(writes).toHaveLength(2);await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
 });
 for(const status of [403,503])test(`episode creation remains available when finished videos fail with ${status}`,async({page})=>{
  await fixture(page);await page.route(`${api}/assets*`,route=>route.fulfill({status,headers,json:{error:'Synthetic catalog failure'}}));
@@ -644,7 +661,7 @@ for(const width of [1280,390])test(`Videos search and compact creation action st
  const search=page.getByLabel('Search videos',{exact:true}),create=page.locator('#session-library > .explorer-heading').getByRole('button',{name:'Create episode',exact:true});
  for(const control of [search,create]){await expect(control).toBeVisible();await expect(control).toBeInViewport();expect(await control.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
  const heading=await page.locator('#library-title').boundingBox(),action=await create.boundingBox(),box=await search.boundingBox();expect(action.x).toBeGreaterThan(heading.x+heading.width);expect(action.height).toBeLessThanOrEqual(48);expect(box.y).toBeLessThan((await page.locator('.episode-cards').boundingBox()).y);
- await search.fill('river');await expect(page.locator('.episode-card')).toHaveCount(1);await expect(page.locator('.episode-card')).toHaveText('River crossing');
+ await search.fill('river');await expect(page.locator('.episode-card')).toHaveCount(1);await expect(page.locator('.episode-card')).toHaveAccessibleName('River crossing');await expect(page.locator('.episode-card strong')).toHaveText('River crossing');await expect(page.locator('.episode-card span')).toHaveText('0 scenes');
  await search.fill('unavailable phrase');await expect(page.locator('.episode-card')).toHaveCount(0);await search.fill('');await expect(page.locator('.episode-card')).toHaveCount(2);
  for(const name of ['Tags','Characters']){await expect(page.getByRole('combobox',{name,exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name,exact:true})).toBeInViewport();}
  await expect(page.locator('#session-library details,#session-library summary')).toHaveCount(0);await expect(page.getByText('Relationship to the game',{exact:true})).toHaveCount(0);

@@ -4,13 +4,13 @@ import { Check, ChevronDown } from "lucide-react";
 
 // Radix primitives, styled with the shadcn Select composition. The popup is
 // portalled so header overflow and small-screen navigation cannot clip it.
-export function GameSelect({ games, value, disabled, onChange, label="Current game", id="game-select-trigger", placeholder="Choose game" }) {
+export function GameSelect({ games, value, disabled, onChange, label="Current game", id="game-select-trigger", placeholder="Choose game", portalContainer }) {
   return <Primitive.Root value={value === undefined ? undefined : `option:${value}`} onValueChange={selected => onChange(selected.slice(7))} disabled={disabled}>
     <Primitive.Trigger id={id} aria-label={label} className="panther-select-trigger flex h-10 items-center justify-between gap-2 rounded-md border px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50">
       <Primitive.Value placeholder={placeholder} />
       <Primitive.Icon><ChevronDown className="h-4 w-4 opacity-60" aria-hidden="true" /></Primitive.Icon>
     </Primitive.Trigger>
-    <Primitive.Portal>
+    <Primitive.Portal container={typeof portalContainer === "function" ? portalContainer() : portalContainer}>
       <Primitive.Content position="popper" sideOffset={6} className="panther-select-content z-50 max-h-80 min-w-48 overflow-y-auto rounded-md border p-1 shadow-lg">
         <Primitive.Viewport>
           {games.map(game => <Primitive.Item key={game.id} value={`option:${game.id}`} className="panther-select-item relative flex cursor-default select-none items-center rounded-sm py-2 pl-8 pr-3 text-sm outline-none">

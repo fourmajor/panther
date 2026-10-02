@@ -58,7 +58,7 @@ export function enhanceSelect(native, label) {
   native.dataset.reactSelect="true";native.hidden=true;
   const host=document.createElement("span");host.className="panther-select-field";native.after(host);
   const selectRoot=createRoot(host);
-  const render=()=>selectRoot.render(<QueryClientProvider client={client}><GameSelect label={label} id={null} placeholder="Choose" games={[...native.options].map(option=>({id:option.value,name:option.textContent}))} value={native.value} disabled={native.disabled} onChange={value=>{native.value=value;render();native.dispatchEvent(new Event("change",{bubbles:true}));}} /></QueryClientProvider>);
+  const render=()=>selectRoot.render(<QueryClientProvider client={client}><GameSelect portalContainer={()=>native.closest("dialog")||undefined} label={label} id={null} placeholder="Choose" games={[...native.options].map(option=>({id:option.value,name:option.textContent}))} value={native.value} disabled={native.disabled} onChange={value=>{native.value=value;render();native.dispatchEvent(new Event("change",{bubbles:true}));}} /></QueryClientProvider>);
   render();const observer=new MutationObserver(render);observer.observe(native,{childList:true,subtree:true,attributes:true,characterData:true});native.addEventListener("change",render);
   const cleanup=()=>{observer.disconnect();native.removeEventListener("change",render);selectRoot.unmount();host.remove();native.hidden=false;delete native.dataset.reactSelect;enhancedSelects.delete(native);};enhancedSelects.set(native,cleanup);return cleanup;
 }

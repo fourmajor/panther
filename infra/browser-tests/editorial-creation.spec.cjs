@@ -6,7 +6,7 @@ const key=id=>`games/test-game/assets/${id}/original/raw.json`;
 const transcripts=[{key:key('source-one'),name:'raw.json',kind:'raw-transcript',metadata:{title:'First session'}},{key:key('source-two'),name:'raw.json',kind:'raw-transcript',metadata:{title:'Second session'}}];
 const internalAsset={key:'games/test-game/assets/migration-audit/original/provenance.json',name:'provenance.json',kind:'game-context',metadata:{title:'Migration provenance audit',category:'reference'}};
 const sceneRef={episodeId:'episode-one',sceneId:'scene-one',revision:'scene-revision'};
-async function openScene(page){await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'A moonlit crossing',exact:true}).click();await page.getByRole('button',{name:'Generate video',exact:true}).click();}
+async function openScene(page){await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'A moonlit crossing',exact:true}).click();await expect(page.locator('#editorial-video-composer')).toBeVisible();}
 const characters=[{id:'lantern-guide',characterId:'lantern-guide',name:'Lantern Guide'},{id:'river-scout',characterId:'river-scout',name:'River Scout'}];
 const contextAsset={key:'games/test-game/assets/context/original/lore.json',name:'lore.json',kind:'game-context',metadata:{title:'Campaign lore',category:'reference'}};
 const mapAsset={key:'games/test-game/assets/atlas/original/map.png',name:'map.png',kind:'map',contentType:'image/png',metadata:{title:'Riverlands atlas',category:'reference'}};
@@ -129,14 +129,14 @@ for(const width of [1280,390])test(`Map image and route prompt persist before ge
  await expect(composer).toContainText('Video plan ready');expect(sceneWrites).toHaveLength(1);expect(sceneWrites[0]).toMatchObject({type:'map',mapAssetKey:secondMap.key,expectedRevision:sceneRef.revision});
  expect(submissions).toHaveLength(1);expect(submissions[0].creation).toMatchObject({brief:'The travelers move from Harbor to the Hills.',sourceKeys:[],sceneRef:{...sceneRef,revision:'map-scene-revision'}});
  await page.reload();await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');await page.getByRole('button',{name:'Edit scene',exact:true}).click();
- await expect(page.getByRole('combobox',{name:'Scene type',exact:true})).toHaveText('Map');await expect(page.getByRole('combobox',{name:'Map image',exact:true})).toHaveText('Coastal atlas');
+ const editor=page.getByRole('form',{name:'Scene editor',exact:true});await expect(editor.getByRole('combobox',{name:'Scene type',exact:true})).toHaveText('Map');await expect(editor.getByRole('combobox',{name:'Map image',exact:true})).toHaveText('Coastal atlas');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 test('Scene editor can set Map type and image with only a title',async({page,context})=>{
  const{sceneWrites}=await fixture(context,{mapScene:true});await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'A moonlit crossing',exact:true}).click();await page.getByRole('button',{name:'Edit scene',exact:true}).click();
  const editor=page.getByRole('form',{name:'Scene editor',exact:true});await editor.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'General',exact:true}).click();await expect(editor.getByRole('combobox',{name:'Map image',exact:true})).toBeHidden();
  await editor.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'Map',exact:true}).click();await editor.getByRole('combobox',{name:'Map image',exact:true}).click();await page.getByRole('option',{name:'Riverlands atlas',exact:true}).click();await editor.getByRole('button',{name:'Save changes',exact:true}).click();
- await expect.poll(()=>sceneWrites.length).toBe(1);expect(sceneWrites[0]).toMatchObject({type:'map',mapAssetKey:mapAsset.key,description:''});await page.getByRole('button',{name:'Generate video',exact:true}).click();await expect(page.locator('#editorial-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeEnabled();
+ await expect.poll(()=>sceneWrites.length).toBe(1);expect(sceneWrites[0]).toMatchObject({type:'map',mapAssetKey:mapAsset.key,description:''});await expect(page.locator('#editorial-video-composer')).toBeVisible();await expect(page.locator('#editorial-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeEnabled();
 });
 test('A failed map save retains the image and prompt and retries the same operation',async({page,context})=>{
  const {submissions,sceneWrites}=await fixture(context,{mapScene:true});await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await openScene(page);

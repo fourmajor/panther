@@ -18,7 +18,9 @@ Choose the current game in the header. Its sections are:
 - **Novel:** generate a chapter from a prompt with optional transcript/context inputs, or write and
   edit chapters manually. Source reviews preserve raw speech separately from summaries/adaptations.
 - **Videos:** searchable multi-tag and multi-character filters use removable selections. Episodes own ordered scenes. A scene can start with a title, use characters and optional
-  sources, and specify a scene type. Map scenes select an actual map asset. An episode's playback
+  sources, and specify a scene type. Episode/scene forms open in dialogs; a focused editor keeps
+  ordered scenes beside the selected scene’s prompt, cast and output choices. Playback opens in its
+  own dialog. Map scenes select an actual map asset. An episode's playback
   follows its selected rendered scene outputs in order; drafting or planning does not imply footage
   has been generated.
 - **Assets:** browse and search game assets, filter by type, identify file formats, upload files and request image generation. Jobs show activity or an explicit worker/configuration problem.

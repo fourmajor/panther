@@ -41,13 +41,13 @@ for(const width of [1280,390])test(`Explicit episode order and continuous previe
  const down=host.getByRole('button',{name:'Move City gate down',exact:true});await expect(down).toBeInViewport();await down.click();
  await expect(host.locator('.scene-order-row .scene-card').first()).toHaveText('River crossing');expect(changes[0].sceneIds).toEqual(['river','gate']);
  await host.getByRole('button',{name:'Move City gate up',exact:true}).click();await expect(host.locator('.scene-order-row .scene-card').first()).toHaveText('City gate');
- await host.getByRole('button',{name:'Edit episode',exact:true}).click();await page.getByRole('form',{name:'Episode editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(3);expect(changes[2].expectedRevision).toBe('d'.repeat(32));
+ await host.getByRole('button',{name:'Edit episode',exact:true}).click();await expect(page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Episode editor',exact:true})})).toBeVisible();await page.getByRole('form',{name:'Episode editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(3);expect(changes[2].expectedRevision).toBe('d'.repeat(32));
  await host.getByRole('button',{name:'City gate',exact:true}).click();const first=host.getByRole('button',{name:'Use in episode: City gate take',exact:true});await first.scrollIntoViewIfNeeded();await expect(first).toBeInViewport();await first.click();
- await host.getByRole('button',{name:'Edit scene',exact:true}).click();await page.getByRole('form',{name:'Scene editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(5);expect(changes[4].expectedRevision).toBe('f'.repeat(32));
+ await host.getByRole('button',{name:'Edit scene',exact:true}).click();await expect(page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Scene editor',exact:true})})).toBeVisible();await page.getByRole('form',{name:'Scene editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(5);expect(changes[4].expectedRevision).toBe('f'.repeat(32));
  await host.getByRole('button',{name:'River crossing',exact:true}).click();const second=host.getByRole('button',{name:'Use in episode: River crossing take',exact:true});await second.scrollIntoViewIfNeeded();await expect(second).toBeInViewport();await second.click();
  expect([...new Set(changes.filter(body=>body.selectedOutputKey).map(body=>body.selectedOutputKey))]).toEqual([key('gate'),key('river')]);
  const start=host.getByRole('button',{name:'Preview episode',exact:true});await expect(start).toBeEnabled();await start.scrollIntoViewIfNeeded();await start.click();
- const player=host.getByLabel('Episode preview',{exact:true});await expect(player).toBeVisible();await expect(player).toHaveAttribute('src','https://audio.example/gate.webm');
+ const player=host.locator('video[aria-label="Episode preview"]');await expect(page.getByRole('dialog',{name:'Episode preview',exact:true})).toBeVisible();await expect(player).toBeVisible();await expect(player).toHaveAttribute('src','https://audio.example/gate.webm');
  await expect(player).toHaveAttribute('src','https://audio.example/river.webm',{timeout:10000});await expect(host.locator('.episode-preview-status')).toContainText('2 of 2');
  await page.screenshot({path:testInfo.outputPath(`episode-playback-${width}.png`)});
  await expect(host.locator('.episode-preview-status')).toHaveText('Preview complete.',{timeout:10000});await expect(player).toHaveCount(1);
@@ -64,15 +64,15 @@ test('Episode preview stops visibly on a broken selected clip',async({page,conte
 test('Selecting another take invalidates the cached episode composition immediately',async({page,context})=>{
  const{requests}=await fixture(page,context);const host=page.locator('#episode-workspace');
  for(const name of ['City gate','River crossing']){await host.getByRole('button',{name,exact:true}).click();await host.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
- await expect(host.locator('.episode-preview-status')).toHaveText('Preview · selected videos in scene order');
+ await expect(host.getByRole('button',{name:'Preview episode',exact:true})).toBeEnabled();
  await expect.poll(()=>requests.filter(path=>path==='/episode-composition').length).toBeGreaterThan(0);const before=requests.filter(path=>path==='/episode-composition').length;
  await host.getByRole('button',{name:'City gate',exact:true}).click();await host.getByRole('button',{name:'Use in episode: City gate second take',exact:true}).click();
  await expect.poll(()=>requests.filter(path=>path==='/episode-composition').length).toBeGreaterThan(before);
- await host.getByRole('button',{name:'Preview episode',exact:true}).click();const player=host.getByLabel('Episode preview',{exact:true});await expect(player).toHaveAttribute('src','https://audio.example/gate-alt.webm');
+ await host.getByRole('button',{name:'Preview episode',exact:true}).click();const player=host.locator('video[aria-label="Episode preview"]');await expect(player).toHaveAttribute('src','https://audio.example/gate-alt.webm');
  await expect.poll(()=>player.evaluate(video=>video.paused)).toBe(false);
- await page.getByRole('link',{name:'Dashboard',exact:true}).click();
- await expect.poll(()=>player.evaluate(video=>video.paused)).toBe(true);
- await expect(player).not.toBeVisible();
+ const capturedPlayer=await player.elementHandle();await page.getByRole('dialog',{name:'Episode preview',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
+ await expect.poll(()=>capturedPlayer.evaluate(video=>video.paused)).toBe(true);await expect(player).toHaveCount(0);
+ await page.getByRole('link',{name:'Dashboard',exact:true}).click();await expect(page.getByRole('dialog',{name:'Episode preview',exact:true})).toHaveCount(0);
 });
 
 test('An uncertain selection response is reconciled without repeating the write',async({page,context})=>{
