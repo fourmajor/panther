@@ -20,7 +20,7 @@ table = boto3.resource("dynamodb").Table(os.environ["EDITORIAL_TABLE"])
 states = boto3.client("stepfunctions")
 PLAN = json.loads(os.environ["EDITORIAL_PLAN"])
 STAGES = sum([PLAN[b] for b in ("correction", "novel", "video")], [])
-TERMINAL = {"FAILED", "READY_FOR_VIDEO_DISCUSSION"}
+TERMINAL = {"FAILED", "READY_FOR_VIDEO_DISCUSSION", "NOVEL_READY"}
 
 
 def response(code, value):
@@ -74,26 +74,31 @@ def document(reference):
     return json.loads(data)
 
 
-def submit(body):
-    if set(body) != {"gameId", "rawKey"} or not media._valid_slug(body["gameId"]):
-        raise ValueError("Expected gameId and rawKey")
-    ref, head = asset(body["rawKey"], body["gameId"])
-    raw = document(ref)
+def validate_raw(raw, game):
     if (
-        raw.get("entityType") != "PlayerTranscript"
-        or raw.get("gameId") != body["gameId"]
+        raw.get("entityType") not in {"PlayerTranscript", "BrowserTranscript"}
+        or raw.get("gameId") != game
         or raw.get("artifactType", "raw-transcript") != "raw-transcript"
+        or (raw.get("entityType") == "BrowserTranscript" and raw.get("mode") != "final")
     ):
         raise ValueError("Only completed raw transcripts can start editorial work")
     if (
         not isinstance(raw.get("segments"), list)
         or not raw["segments"]
-        or not isinstance(raw.get("sourceParts"), list)
-        or not raw["sourceParts"]
         or not media._valid_slug(raw.get("recordingId"))
         or not media._valid_slug(raw.get("sessionId"))
     ):
         raise ValueError("Incomplete raw transcript")
+    if raw["entityType"] == "PlayerTranscript" and (
+        not isinstance(raw.get("sourceParts"), list) or not raw["sourceParts"]
+    ):
+        raise ValueError("Missing source parts")
+    if raw["entityType"] == "BrowserTranscript" and (
+        not isinstance(raw.get("sourceKeys"), list)
+        or not raw["sourceKeys"]
+        or any(not isinstance(key, str) for key in raw["sourceKeys"])
+    ):
+        raise ValueError("Missing browser sources")
     for segment in raw["segments"]:
         if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
             raise ValueError("Invalid transcript segment")
@@ -103,20 +108,98 @@ def submit(body):
             or not 0 <= start <= end
         ):
             raise ValueError("Invalid transcript timing")
-    job_id = hashlib.sha256(json.dumps([ref, PLAN["version"]], sort_keys=True).encode()).hexdigest()
+
+
+def submit(body):
+    legacy = set(body) == {"gameId", "rawKey"}
+    if not legacy and set(body) != {"gameId", "creation"}:
+        raise ValueError("Expected gameId and rawKey or a creation request")
+    if not media._valid_slug(body["gameId"]):
+        raise ValueError("Invalid game")
+    creation = None
+    if legacy:
+        source_keys, context_keys = [body["rawKey"]], []
+    else:
+        creation = body["creation"]
+        if (
+            not isinstance(creation, dict)
+            or set(creation)
+            != {"schemaVersion", "target", "title", "brief", "sourceKeys", "contextKeys"}
+            or type(creation["schemaVersion"]) is not int
+            or creation["schemaVersion"] != 1
+            or creation["target"] not in {"novel", "video"}
+            or not isinstance(creation["title"], str)
+            or not 1 <= len(creation["title"].strip()) <= 160
+            or not isinstance(creation["brief"], str)
+            or len(creation["brief"]) > 4000
+        ):
+            raise ValueError("Invalid creation request")
+        source_keys, context_keys = creation["sourceKeys"], creation["contextKeys"]
+        for keys, minimum, maximum in [(source_keys, 1, 8), (context_keys, 0, 12)]:
+            if (
+                not isinstance(keys, list)
+                or not minimum <= len(keys) <= maximum
+                or any(not isinstance(key, str) for key in keys)
+                or len(set(keys)) != len(keys)
+            ):
+                raise ValueError("Invalid selected inputs")
+        if set(source_keys) & set(context_keys):
+            raise ValueError("Transcript inputs and context must be distinct")
+    references, raws, heads = [], [], []
+    for key in source_keys:
+        if not isinstance(key, str) or not key.endswith(".json"):
+            raise ValueError("Expected structured raw transcript JSON")
+        ref, head = asset(key, body["gameId"])
+        raw = document(ref)
+        validate_raw(raw, body["gameId"])
+        references.append(ref)
+        raws.append(raw)
+        heads.append(head)
+    contexts = []
+    for key in context_keys:
+        if not key.endswith((".json", ".md", ".txt")):
+            raise ValueError("Expected text context")
+        ref, head = asset(key, body["gameId"])
+        stored = head.get("Metadata", {})
+        details = json.loads(base64.b64decode(stored.get("panther", "e30=")))
+        if (
+            details.get("extra", {}).get("contextUse") == "exclude"
+            or stored.get("kind") in {"reading-script", "test-script", "holdout"}
+            or details.get("category")
+            in {"grounded-adaptation", "creative-reimagining", "playful-derivative"}
+        ):
+            raise ValueError("Selected context is not source evidence")
+        if not (
+            stored.get("kind")
+            in {"corrected-transcript", "character-profile", "lore", "game-context"}
+            or details.get("extra", {}).get("contextUse") == "evidence"
+            or details.get("category") in {"canonical-source", "reference"}
+        ):
+            raise ValueError("Selected context is not eligible evidence")
+        contexts.append({**ref, "kind": stored.get("kind", ""), "metadata": details})
+    if creation and sum(ref["size"] for ref in [*references, *contexts]) > 512 * 1024:
+        raise ValueError("Selected input bundle exceeds the stage context limit")
+    identity = (
+        [references, contexts, creation, PLAN["version"]]
+        if creation
+        else [references[0], PLAN["version"]]
+    )
+    job_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     job = {
         "pk": "RUNS",
         "sk": job_id,
         "jobId": job_id,
         "gameId": body["gameId"],
-        "sessionId": raw["sessionId"],
-        "raw": ref,
+        "sessionId": raws[0]["sessionId"] if len(raws) == 1 else "collection-" + job_id[:16],
+        "raw": references[0],
         "workflowVersion": PLAN["version"],
         "status": "SUBMITTED",
         "createdAt": int(time.time()),
-        "contextCutoff": int(media._asset_created_at(head).timestamp()),
+        "contextCutoff": int(max(media._asset_created_at(h).timestamp() for h in heads)),
         "videoGenerationAuthorized": False,
     }
+    if creation:
+        job.update(creation=creation, rawSources=references, selectedContext=contexts)
     try:
         table.put_item(Item=job, ConditionExpression="attribute_not_exists(pk)")
     except ClientError as exc:
@@ -128,45 +211,38 @@ def submit(body):
 def context_page(game, cursor, cutoff):
     if not media._valid_slug(game):
         raise ValueError("Invalid game")
-    args = {"Bucket": media.BUCKET_NAME, "Prefix": f"games/{game}/assets/", "MaxKeys": 50}
-    if cursor:
-        args["ContinuationToken"] = cursor
-    page = media.s3.list_objects_v2(**args)
+    from browse_index import page
+
+    result = page(game, "all", cursor)
     items = []
-    for item in page.get("Contents", []):
-        key = item["Key"]
-        if (
-            not key.endswith((".json", ".md", ".txt"))
-            or not 0 < item["Size"] <= 256 * 1024
-        ):
+    for item in result["assets"]:
+        key = item["key"]
+        if not key.endswith((".json", ".md", ".txt")) or not 0 < item.get("size", 0) <= 256 * 1024:
             continue
         ref, head = asset(key, game)
         if media._asset_created_at(head).timestamp() > cutoff:
             continue
-        stored = head.get("Metadata", {})
-        details = json.loads(base64.b64decode(stored.get("panther", "e30=")))
-        extra = details.get("extra", {})
-        kind = stored.get("kind", "")
-        if extra.get("contextUse") == "exclude" or kind in {
-            "reading-script",
-            "test-script",
-            "holdout",
-            "raw-transcript",
-            "editorial-failed-candidate",
-        }:
+        details = item.get("metadata", {})
+        extra, kind = details.get("extra", {}), item.get("kind", "")
+        if (
+            extra.get("contextUse") == "exclude"
+            or kind
+            in {
+                "reading-script",
+                "test-script",
+                "holdout",
+                "raw-transcript",
+                "editorial-failed-candidate",
+            }
+            or details.get("category")
+            in {"grounded-adaptation", "creative-reimagining", "playful-derivative"}
+        ):
             continue
-        if details.get("category") in {
-            "grounded-adaptation",
-            "creative-reimagining",
-            "playful-derivative",
-        }:
-            continue
-        eligible = (
+        if (
             kind in {"corrected-transcript", "character-profile", "lore", "game-context"}
             or extra.get("contextUse") == "evidence"
             or details.get("category") in {"canonical-source", "reference"}
-        )
-        if eligible:
+        ):
             items.append(
                 {
                     **ref,
@@ -175,7 +251,7 @@ def context_page(game, cursor, cutoff):
                     "lastModified": media._asset_created_at(head).isoformat(),
                 }
             )
-    return {"items": items, "cursor": page.get("NextContinuationToken")}
+    return {"items": items, "cursor": result["cursor"]}
 
 
 def claim(actor, version=1):
@@ -338,7 +414,15 @@ def internal(event):
             if read("TASKS", task["sk"])["taskToken"] != event["taskToken"]:
                 raise ValueError("Refusing mismatched stage token")
     else:
-        status = "READY_FOR_VIDEO_DISCUSSION" if event["operation"] == "finish" else "FAILED"
+        status = (
+            (
+                "NOVEL_READY"
+                if job.get("creation", {}).get("target") == "novel"
+                else "READY_FOR_VIDEO_DISCUSSION"
+            )
+            if event["operation"] == "finish"
+            else "FAILED"
+        )
         table.update_item(
             Key={"pk": "RUNS", "sk": job_id},
             UpdateExpression="SET #s = :status",
@@ -353,8 +437,10 @@ def handler(event, _context):
         return internal(event)
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     from access_policy import authorized
-    if not authorized(claims, "MODEL_PUBLISHERS"):
-        return response(403, {"error": "Owner or DM sign-in required"})
+
+    read_only = event.get("routeKey") == "GET /editorial-jobs"
+    if not authorized(claims, "CATALOG_READERS" if read_only else "MODEL_PUBLISHERS"):
+        return response(403, {"error": "This account cannot access editorial jobs"})
     try:
         route = event.get("routeKey", "")
         q = event.get("queryStringParameters") or {}
@@ -373,6 +459,37 @@ def handler(event, _context):
                     )
                     if job
                     else response(404, {"error": "Run not found"})
+                )
+            if q.get("gameId"):
+                game = q["gameId"]
+                if not media._valid_slug(game):
+                    raise ValueError("Invalid game")
+                args = {
+                    "KeyConditionExpression": Key("pk").eq("RUNS"),
+                    "Limit": 50,
+                    "ConsistentRead": True,
+                }
+                if q.get("cursor"):
+                    cursor = json.loads(base64.urlsafe_b64decode(q["cursor"]))
+                    if (
+                        set(cursor) != {"gameId", "sk"}
+                        or cursor["gameId"] != game
+                        or not re.fullmatch(r"[a-f0-9]{64}", cursor["sk"])
+                    ):
+                        raise ValueError("Invalid game cursor")
+                    args["ExclusiveStartKey"] = {"pk": "RUNS", "sk": cursor["sk"]}
+                page = table.query(**args)
+                next_key = page.get("LastEvaluatedKey")
+                return response(
+                    200,
+                    {
+                        "jobs": [public(j) for j in page.get("Items", []) if j["gameId"] == game],
+                        "cursor": base64.urlsafe_b64encode(
+                            json.dumps({"gameId": game, "sk": next_key["sk"]}).encode()
+                        ).decode()
+                        if next_key
+                        else None,
+                    },
                 )
             return response(200, {"jobs": [public(j) for j in query("RUNS")]})
         if route == "GET /editorial-context":
@@ -418,7 +535,12 @@ def stream(event, _context):
                     states.start_execution(
                         stateMachineArn=os.environ["STATE_MACHINE_ARN"],
                         name=new["jobId"],
-                        input=json.dumps({"jobId": new["jobId"]}),
+                        input=json.dumps(
+                            {
+                                "jobId": new["jobId"],
+                                "target": new.get("creation", {}).get("target", "both"),
+                            }
+                        ),
                     )
                 except ClientError as exc:
                     if exc.response["Error"]["Code"] != "ExecutionAlreadyExists":

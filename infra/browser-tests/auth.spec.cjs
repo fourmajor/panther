@@ -53,7 +53,7 @@ async function fixture(context, { remembered = true, username = 'test' } = {}) {
       } });
     }
     if (pathname === '/config.js') return route.fulfill({ contentType: 'application/javascript', body: 'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};' });
-    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname, '../../web/media-explorer', ['/app.js', '/styles.css'].includes(pathname) ? pathname.slice(1) : 'index.html');
+    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname, '../../web/media-explorer', ['/app.js', '/styles.css', '/ui-runtime.js', '/ui-system.css'].includes(pathname) ? pathname.slice(1) : 'index.html');
     return route.fulfill({ body: fs.readFileSync(file), contentType: file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html', headers: { 'content-security-policy': policy } });
   });
   return state;
@@ -167,4 +167,17 @@ test('OAuth callback uses server code exchange and retains PKCE/state validation
   await expect(page).toHaveURL('https://panther.place/media');
   expect(state.exchanges).toEqual([{ code: 'synthetic-code', codeVerifier: 'x'.repeat(43) }]);
   expect(await page.evaluate(() => sessionStorage.getItem('panther.tokens'))).not.toContain('refresh');
+});
+
+for(const width of [1280,390]) test(`React game Select works under the production CSP at ${width}px`,async({context,page})=>{
+  await page.setViewportSize({width,height:900});await fixture(context);
+  const violations=[];
+  await page.addInitScript(()=>{window.cspViolations=[];document.addEventListener('securitypolicyviolation',event=>window.cspViolations.push({directive:event.violatedDirective,blocked:event.blockedURI}));});
+  await page.goto('https://panther.place/media');
+  const select=page.getByRole('combobox',{name:'Current game'});
+  await expect(select).toBeVisible();await select.click();
+  const option=page.getByRole('option',{name:'Test Game',exact:true});await expect(option).toBeInViewport();
+  await option.click();await expect(select).toContainText('Test Game');
+  violations.push(...await page.evaluate(()=>window.cspViolations));
+  expect(violations).toEqual([]);
 });

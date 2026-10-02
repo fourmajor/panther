@@ -16,7 +16,7 @@ async function fixture(page) {
   await page.route(`${origin}/**`, route => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript', body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
-    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname,'../../web/media-explorer', ['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname,'../../web/media-explorer', ['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   await page.route(`${api}/**`, route => {
@@ -76,7 +76,7 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await expect(panel).toContainText('player labels are tentative');
   await expect(page.locator('#library-status')).toContainText('No transcripts yet');
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('recording-pulse');
-  for (const target of [badge,page.getByRole('button',{name:'Refresh live feed'})]) {
+  for (const target of [badge]) {
     const box = await target.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
     expect(box.y+box.height).toBeLessThanOrEqual(1000);
     expect(await target.evaluate(el=>{const r=el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
@@ -85,13 +85,13 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await page.emulateMedia({reducedMotion:'reduce'});
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   feed.records[0].segments.push({start:4,end:8,approximateTiming:true,text:'<img src=x onerror=window.attacked=true> Synthetic second line.'});
-  await page.getByRole('button',{name:'Refresh live feed'}).click();
+  await page.reload();
   await expect(panel).toContainText('Synthetic second line.'); await expect(panel.locator('img')).toHaveCount(0);
   await expect(panel.locator('time').last()).toHaveText('~0:04');
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
   feed.records[0].segments.push({start:30,end:60,kind:'preview-gap',text:'Must not appear as spoken dialogue.'});
   feed.records[0].segments.push({start:61,end:65,text:'Valid speech after the gap.'});
-  await page.getByRole('button',{name:'Refresh live feed'}).click();
+  await page.reload();
   const gap = panel.getByRole('note');
   await expect(gap).toBeVisible(); await expect(gap).toContainText('Preview gap: invalid recognizer output');
   await expect(gap).toContainText('not silence');
@@ -105,16 +105,16 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await expect(gap).toBeInViewport();
   await page.screenshot({path:test.info().outputPath(`live-gap-${width}.png`),fullPage:true});
   feed.records[0].captureState = 'stalled';
-  await page.getByRole('button',{name:'Refresh live feed'}).click();
+  await page.reload();
   await expect(badge).toHaveText('Recording progress stalled');
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   feed.records[0].captureState = 'recording'; feed.records[0].heartbeatAgeSeconds = 80; feed.records[0].connectionStale = true;
-  await page.getByRole('button',{name:'Refresh live feed'}).click();
+  await page.reload();
   await expect(badge).toHaveText('Recording signal lost');
   feed.records = [recording({captureState:'stopped',previewState:'stopped',heartbeatAgeSeconds:200,connectionStale:true})];
-  await page.getByRole('button',{name:'Refresh live feed'}).click();
+  await page.reload();
   await expect(badge).toHaveText('Recording stopped');
-  feed.fail = true; await page.getByRole('button',{name:'Refresh live feed'}).click();
+  feed.fail = true; await page.reload();
   await expect(badge).toHaveText('Recording signal lost');
   await expect(page.locator('#live-status')).toContainText('may still be running locally');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -131,11 +131,11 @@ test('automatic feed polling, cross-game isolation and sign-out cleanup', async(
   expect(feed.reads).toBeGreaterThanOrEqual(2);
   await page.locator('#recording-badge').click();
   await expect(page).toHaveURL(`${origin}/games/test-game/transcripts`);
-  await page.getByRole('combobox',{name:'Game'}).selectOption('other-game');
+  await selectGame(page,'other-game');
   await expect(page.locator('#live-recordings')).toBeEmpty();
   await expect(page.locator('#recording-badge')).toBeHidden();
   await expect(page.locator('#live-status')).toContainText('No live recording reported');
-  await page.getByRole('combobox',{name:'Game'}).selectOption('test-game');
+  await selectGame(page,'test-game');
   await expect(page.locator('#live-recordings')).toContainText('Arrived automatically.');
   await page.evaluate(()=>window.dispatchEvent(new StorageEvent('storage',{key:'panther.signed-out',newValue:'true'})));
   await expect(page.locator('#live-recordings')).toBeEmpty();
@@ -180,3 +180,10 @@ for (const width of [1280,390]) test(`full live history beginning, paging and li
   await expect(page.locator('#recording-badge')).toHaveText('Recording in progress');
   await expect(panel).toContainText('New live speech 45.');
 });
+
+// Exercise the visible Radix Select, including the portal and keyboard focus.
+async function selectGame(page,id) {
+  const name=await page.locator(`#game-selector option[value="${id}"]`).textContent();
+  await page.getByRole('combobox',{name:'Current game'}).click();
+  await page.getByRole('option',{name,exact:true}).click();
+}

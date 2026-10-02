@@ -81,3 +81,28 @@ Writes duplicate small summaries into relevant sections, not media bytes or whol
 
 References: [S3 EventBridge events](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html),
 [event structure](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ev-events.html).
+
+## Dashboard recent summaries
+
+`GET /dashboard-recent?gameId=...` is a catalog-reader operation. It returns five recent
+characters, transcripts, finished videos and chapter editions plus complete category counts
+in one browser request. Paired transcript Markdown/JSON exports count once. Every category
+is selected after reading the complete game's materialized metadata partition; it never
+labels the first page's locally sorted rows as the game's recent inventory.
+
+There is currently no event-maintained recency sort index. This operation reads metadata
+in bounded DynamoDB pages and sorts it in memory: initial backend work is O(N), not O(5).
+The frontend query cache reuses this result for 60 seconds. It never reads S3 payloads,
+downloads asset documents, signs images or silently falls back to a storage scan. The
+complete-summary bound is 5,000 indexed rows, 16 MiB of serialized metadata, 200 pages,
+and 500 registered characters. Exceeding a bound or an unprepared catalog returns an
+explicit unavailable response; no partial groups or counts are returned.
+
+Asset ordering uses recorded `lastModified` values. Character ordering uses actual catalog
+update/creation dates or the current immutable details revision's recorded history date.
+Unknown timestamps stay null and sort after dated items, with stable identity ordering;
+neither a zero timestamp nor a name is used to invent creation history. History actors
+and full character details are omitted from dashboard summaries. This read-time projection
+needs no asset rewrite or historical-date migration. A future indexed recency projection
+would require its own versioned all-game rebuild and verification before replacing this
+complete metadata traversal.

@@ -271,3 +271,65 @@ def test_verification_rejects_corrupt_migration_history(catalog):
     record["detailsMigrationRevision"] = "a" * 32
     catalog.table.put_item(Item=record)
     assert catalog.handler(event, None)["statusCode"] == 400
+
+
+def test_name_edits_are_revision_guarded_and_history_is_actual_predecessor_order(catalog):
+    request(catalog, "POST /games", setup())
+    initial = catalog.read("GAME#test-game", "CHARACTER#hero")
+    first = envelope(initial, name="Renamed Hero")
+    first["details"]["backstory"] = "An explicitly recorded background."
+    assert request(catalog, "POST /character-details", first)["statusCode"] == 200
+    next_record = catalog.read("GAME#test-game", "CHARACTER#hero")
+    assert next_record["name"] == "Renamed Hero"
+    assert (
+        request(catalog, "POST /character-details", envelope(initial, name="Stale"))["statusCode"]
+        == 409
+    )
+    second = envelope(next_record)
+    second["details"]["status"] = "Resting"
+    assert request(catalog, "POST /character-details", second)["statusCode"] == 200
+    event = {
+        "routeKey": "GET /character-details/history",
+        "queryStringParameters": {"gameId": "test-game", "characterId": "hero"},
+        "requestContext": {
+            "authorizer": {
+                "jwt": {"claims": {"sub": "synthetic-reader", "cognito:username": "example-member"}}
+            }
+        },
+    }
+    result = catalog.handler(event, None)
+    assert result["statusCode"] == 200
+    history = json.loads(result["body"])
+    assert len(history["history"]) == 2 and history["cursor"] is None
+    assert history["history"][0]["previousRevision"] == next_record["detailsRevision"]
+    assert history["history"][1]["previousName"] == "Hero"
+    assert history["history"][1]["name"] == "Renamed Hero"
+    assert history["history"][1]["previousDetails"]["backstory"] is None
+    assert all("actor" not in entry for entry in history["history"])
+    event["queryStringParameters"]["cursor"] = "../other-character"
+    assert catalog.handler(event, None)["statusCode"] == 400
+
+
+def test_character_history_pages_without_scanning_storage(catalog):
+    request(catalog, "POST /games", setup())
+    for number in range(27):
+        current = catalog.read("GAME#test-game", "CHARACTER#hero")
+        edit = envelope(current)
+        edit["details"]["status"] = str(number)
+        assert request(catalog, "POST /character-details", edit)["statusCode"] == 200
+    event = {
+        "routeKey": "GET /character-details/history",
+        "queryStringParameters": {"gameId": "test-game", "characterId": "hero"},
+        "requestContext": {
+            "authorizer": {
+                "jwt": {"claims": {"sub": "synthetic-reader", "cognito:username": "example-member"}}
+            }
+        },
+    }
+    first = json.loads(catalog.handler(event, None)["body"])
+    assert len(first["history"]) == 25
+    assert first["history"][0]["details"]["status"] == "26"
+    event["queryStringParameters"]["cursor"] = first["cursor"]
+    second = json.loads(catalog.handler(event, None)["body"])
+    assert [entry["details"]["status"] for entry in second["history"]] == ["1", "0"]
+    assert second["cursor"] is None

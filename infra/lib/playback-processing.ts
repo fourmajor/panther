@@ -14,11 +14,12 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 
 /** A completed set is the durable outbox event; individual uploads never start assembly. */
 export class PlaybackProcessing extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
     bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
   }) {
     super(scope, id);
-    const table = new dynamodb.Table(this, "Sets", {
+    const table = this.table = new dynamodb.Table(this, "Sets", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,

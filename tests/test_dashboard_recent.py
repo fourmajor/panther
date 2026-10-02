@@ -1,0 +1,110 @@
+# ruff: noqa: F811
+# Imported pytest fixtures intentionally share names with test parameters.
+import json
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
+
+from test_game_catalog import catalog, request, setup  # noqa: F401
+
+
+def prepare(catalog):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    import browse_index
+
+    db = browse_index.table()
+    db.put_item(Item={"pk": f"v{browse_index.VERSION}#catalog", "sk": "ready"})
+    return db, browse_index
+
+
+def put_asset(
+    db, index, number, *, kind="raw-transcript", game="test-game", suffix="json", novel=False
+):
+    key = f"games/{game}/assets/source-{number:04d}/original/asset.{suffix}"
+    item = {
+        "key": key,
+        "name": f"asset.{suffix}",
+        "kind": kind,
+        "contentType": "video/mp4" if suffix == "mp4" else "application/json",
+        "lastModified": (
+            datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=number)
+        ).isoformat(),
+        "metadata": {"title": f"Source {number}"},
+    }
+    if novel:
+        item["novel"] = {
+            "state": "available",
+            "id": f"chapter-{number}",
+            "title": f"Chapter {number}",
+        }
+    db.put_item(Item={"pk": index.partition(game, "all"), "sk": key, "payload": json.dumps(item)})
+    return key
+
+
+def test_recent_is_complete_beyond_first_page_without_reading_asset_bodies(catalog):
+    db, index = prepare(catalog)
+    for number in range(125):
+        put_asset(db, index, number)
+    put_asset(db, index, 124, suffix="md")
+    for number in range(6):
+        put_asset(db, index, 200 + number, kind="video", suffix="mp4")
+    for number in range(6):
+        put_asset(db, index, 300 + number, kind="novel-chapter", novel=True)
+    put_asset(db, index, 999, game="other-game")
+    catalog.media.s3 = Mock()
+    result = request(catalog, "GET /dashboard-recent", username="example-member")
+    assert result["statusCode"] == 200, result
+    value = json.loads(result["body"])
+    assert value["complete"] is True
+    assert value["counts"] == {"characters": 1, "transcripts": 125, "videos": 6, "chapters": 6}
+    assert [item["title"] for item in value["groups"]["transcripts"]] == [
+        f"Source {n}" for n in range(124, 119, -1)
+    ]
+    assert value["groups"]["chapters"][0]["title"] == "Chapter 305"
+    assert value["groups"]["videos"][0]["title"] == "Source 205"
+    assert value["groups"]["characters"][0]["updatedAt"] is None
+    assert not catalog.media.s3.mock_calls
+    assert request(catalog, "GET /dashboard-recent", username="outsider")["statusCode"] == 403
+
+
+def test_character_recency_uses_actual_revision_history_and_preserves_unknown(catalog):
+    prepare(catalog)
+    catalog.table.put_item(
+        Item={
+            "pk": "GAME#test-game",
+            "sk": "CHARACTER#recent",
+            "entityType": "Character",
+            "id": "recent",
+            "gameId": "test-game",
+            "name": "Recent",
+            "detailsRevision": "b" * 32,
+        }
+    )
+    catalog.table.put_item(
+        Item={
+            "pk": "CHARACTER_DETAILS_HISTORY#test-game#recent",
+            "sk": "b" * 32,
+            "recordedAt": "2026-09-30T12:00:00+00:00",
+            "actor": "PRIVATE-ACTOR-EXCLUDED",
+        }
+    )
+    value = json.loads(request(catalog, "GET /dashboard-recent", username="example-member")["body"])
+    assert value["groups"]["characters"][0]["id"] == "recent"
+    assert value["groups"]["characters"][0]["updatedAt"] == "2026-09-30T12:00:00+00:00"
+    assert value["groups"]["characters"][1]["updatedAt"] is None
+    assert "PRIVATE-ACTOR-EXCLUDED" not in json.dumps(value)
+
+
+def test_dashboard_fails_closed_when_index_not_ready_or_complete_bound_exceeded(
+    catalog, monkeypatch
+):
+    assert request(catalog, "POST /games", setup())["statusCode"] == 200
+    assert request(catalog, "GET /dashboard-recent", username="example-member")["statusCode"] == 503
+    db, index = prepare(catalog)
+    import dashboard_recent
+
+    monkeypatch.setattr(dashboard_recent, "MAX_ASSETS", 2)
+    for number in range(3):
+        put_asset(db, index, number)
+    result = request(catalog, "GET /dashboard-recent", username="example-member")
+    assert result["statusCode"] == 503
+    assert "groups" not in json.loads(result["body"])

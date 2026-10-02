@@ -89,6 +89,12 @@ def valid_key(media, game, key):
 def novel_summary(doc, asset):
     """Observed manuscript metadata only; review acceptance is not owner approval."""
     summary = {"schemaVersion": 1, "state": "unavailable"}
+    if isinstance(doc, dict) and doc.get("entityType") == "UserChapter":
+        import manual_chapters
+        try:
+            return manual_chapters.summary(doc, asset)
+        except (ValueError, TypeError, KeyError):
+            return summary
     if (
         not isinstance(doc, dict)
         or doc.get("entityType") != "EditorialArtifact"
@@ -188,7 +194,7 @@ def describe(media, game, key, *, include_document=False):
             inputs = doc.get("inputArtifacts")
             if isinstance(inputs, dict):
                 sources.extend(v.get("key") for v in inputs.values() if isinstance(v, dict))
-            if doc.get("entityType") == "Recording" and isinstance(doc.get("parts"), list):
+            if doc.get("entityType") in {"Recording", "BrowserRecording"} and isinstance(doc.get("parts"), list):
                 result["recording"] = {
                     "partCount": len(doc["parts"]),
                     "status": doc.get("status", "unknown"),

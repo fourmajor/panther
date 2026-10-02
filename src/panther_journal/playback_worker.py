@@ -10,6 +10,7 @@ import click
 import requests
 
 from panther_journal import cloud, recording as audio, recording_playback
+from panther_journal.browser_recording import verified
 from panther_journal.audio_storage import lock
 from panther_journal.model_workflow import download
 
@@ -58,8 +59,8 @@ class Lease:
 
 def process(config, claim, root):
     job = claim["job"]
-    if job.get("workflowVersion") != 1 or job.get("setStatus") != "COMPLETE":
-        raise click.ClickException("Worker requires an explicitly completed version-1 chunk set.")
+    if job.get("workflowVersion") not in {1, 2} or job.get("setStatus") != "COMPLETE":
+        raise click.ClickException("Worker requires an explicitly completed supported chunk set.")
     # Keep each exact immutable set/version separate. Never consult the capture machine's files.
     cloud.slug(job["jobId"])
     folder = root / job["jobId"]
@@ -68,7 +69,7 @@ def process(config, claim, root):
         refs = [job["recording"], *job["chunks"]]
         prefix = f"games/{job['gameId']}/assets/{job['chunkSetId']}/original/"
         for i, ref in enumerate(refs):
-            name = "recording.json" if i == 0 else f"part-{i - 1:04d}.flac"
+            name = "recording.json" if i == 0 else f"part-{i - 1:04d}.{'wav' if job['workflowVersion'] == 2 else 'flac'}"
             if ref["key"] != prefix + name or (folder / name).is_symlink():
                 raise click.ClickException("Invalid completed-set input path.")
             lease.check()
@@ -77,7 +78,7 @@ def process(config, claim, root):
             except requests.RequestException:
                 # requests exceptions can contain a full credential-bearing signed URL.
                 raise click.ClickException("Playback input download failed; checkpoints retained for retry.") from None
-        record = audio.verified(folder)
+        record = verified(folder)
         if record.id != job["chunkSetId"] or record.gameId != job["gameId"]:
             raise click.ClickException("Completed set identity mismatch.")
         target, manifest, _ = recording_playback.build(folder)
@@ -134,7 +135,7 @@ def worker(work_dir, once):
     with lock(root, "worker.lock"):
         config = cloud.configuration()
         while True:
-            claimed = cloud.api(config, "POST", "/recording-playback-jobs/claim", json={"workflowVersion": 1})
+            claimed = cloud.api(config, "POST", "/recording-playback-jobs/claim", json={"workflowVersion": 2})
             if claimed.get("job"):
                 result = process(config, claimed, root)
                 click.echo(json.dumps({"jobId": result["jobId"], "status": result["status"]}))

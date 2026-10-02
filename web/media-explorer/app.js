@@ -5,30 +5,19 @@ const loadingStates = new WeakMap();
 function showLoading(host, message) {
   loadingStates.get(host)?.stop();
   if (host.matches("#characters-status, #novel-status, #library-status, #status")) {
-    // Keep existing summaries in their slot during refresh/pagination. New pages
-    // have no slot to reserve; their activity indicator stays outside the flow.
-    const previousHeight = host.textContent.trim() && host.textContent.trim() !== "Loading…"
+    // Reserve the existing status geometry during refresh/pagination, including
+    // empty padded slots. The activity indicator itself stays outside the flow.
+    const previousHeight = host.textContent.trim() !== "Loading…"
       ? host.getBoundingClientRect().height : 0;
     host.style.setProperty("--loading-slot-height", `${previousHeight}px`);
   }
-  const root = document.createElement("span"), spinner = document.createElement("span");
-  const copy = document.createElement("span"), label = document.createElement("span"), detail = document.createElement("span");
+  const root = document.createElement("span"), skeleton = document.createElement("span");
+  const label = document.createElement("span");
   root.className = "loading-state"; root.setAttribute("role", "status");
-  spinner.className = "loading-spinner"; spinner.setAttribute("aria-hidden", "true");
-  label.className = "loading-label"; label.textContent = message;
-  detail.className = "loading-detail"; detail.setAttribute("aria-live", "off");
-  detail.textContent = "Waiting for Panther…";
-  copy.append(label, detail); root.append(spinner, copy); host.replaceChildren(root);
-  const started = Date.now();
-  const observer = new MutationObserver(() => { if (!host.contains(root) || host.hidden) stop(); });
-  const timer = setInterval(() => {
-    if (!host.contains(root) || !host.isConnected || host.hidden) { stop(); return; }
-    const seconds = Math.floor((Date.now() - started) / 1000);
-    detail.textContent = seconds >= 15 ? `Taking longer than usual · ${seconds}s elapsed. You can refresh to retry.` : `${seconds}s elapsed · waiting for a response`;
-  }, 1000);
-  function stop() { clearInterval(timer); observer.disconnect(); }
-  observer.observe(host, {childList:true, attributes:true, attributeFilter:["hidden"]});
-  const control = {stop, update(text) { if (host.contains(root)) label.textContent = text; }};
+  skeleton.className = "loading-skeleton"; skeleton.setAttribute("aria-hidden", "true");
+  label.className = "loading-label sr-only"; label.textContent = message;
+  root.append(skeleton, label); host.replaceChildren(root);
+  const control = {stop() {}, update(text) { if (host.contains(root)) label.textContent = text; }};
   loadingStates.set(host, control); return control;
 }
 
@@ -99,6 +88,7 @@ let routeEpoch = 0;
 let listingEpoch = 0;
 let previewEpoch = 0;
 let sessionEpoch = 0;
+let roomCapture = null;
 const LOGOUT_MARKER = "panther.signed-out";
 
 function logoutPending() {
@@ -206,6 +196,8 @@ function storeTokens(tokens) {
 }
 
 function clearSession() {
+  roomCapture?.interrupt();
+  window.PantherUI.clear();
   resetLive();
   state.games = null;
   state.gameId = null;
@@ -296,7 +288,7 @@ async function logout() {
   window.location.assign(`${config.cognitoDomain}/logout?${parameters}`);
 }
 
-async function api(path, parameters = {}, options = {}) {
+async function apiRequest(path, parameters = {}, options = {}) {
   await ensureSession();
   const url = new URL(path, config.apiUrl);
   for (const [key, value] of Object.entries(parameters)) {
@@ -327,7 +319,104 @@ async function api(path, parameters = {}, options = {}) {
   return body;
 }
 
+// The React and legacy views share one authenticated TanStack Query cache.
+// Catalog reads deduplicate and stay warm between tabs; durable mutations
+// invalidate their account scope. Live jobs and signed URLs remain time-sensitive.
+function apiScope() {
+  const claims = decodeToken(state.tokens.id_token);
+  return JSON.stringify([claims.iss || "", claims.sub || claims["cognito:username"] || claims.username || ""]);
+}
+function mutationReadPaths(path) {
+  if (["/image-links", "/uploads", "/browser-transcriptions"].includes(path)) return [];
+  if (path.startsWith("/game/") && path !== "/game/characters") return ["/games", "/game", "/dashboard-recent"];
+  if (path === "/game/characters" || path.startsWith("/character-")) return ["/game", "/characters", "/character", "/character-details", "/character-details/history", "/character-versions", "/dashboard-recent"];
+  if (path === "/novel-chapters") return ["/novel", "/novel-chapter", "/assets", "/objects", "/dashboard-recent"];
+  if (path === "/video-collections") return ["/video-collections", "/dashboard-recent"];
+  if (path === "/editorial-jobs") return ["/editorial-jobs"];
+  if (path === "/transcript-selection") return ["/transcript-selection", "/assets", "/dashboard-recent"];
+  return ["/assets", "/objects", "/asset-document", "/dashboard-recent"];
+}
+async function api(path, parameters = {}, options = {}) {
+  await ensureSession();
+  const scope = apiScope();
+  if (options.body) {
+    const result = await apiRequest(path, parameters, options);
+    await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
+    return result;
+  }
+  const sensitive = /(?:live|transcriptions|jobs|object-url|image-links)/.test(path);
+  const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
+  return window.PantherUI.query({ scope, path, parameters: sortedParameters,
+    staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
+}
+
+let foregroundRefresh = null;
+function foregroundBlocked() {
+  if (!state.tokens || !state.gameId || location.pathname.startsWith("/account") || document.visibilityState === "hidden") return true;
+  if (roomCapture?.recording || roomCapture?.stopping || roomCapture?.archiving || elements.previewDialog.open) return true;
+  if (document.activeElement?.matches("input, textarea, select, [contenteditable=true]")) return true;
+  return [...document.querySelectorAll("form[data-dirty=true]")].some(form => form.getClientRects().length > 0);
+}
+function foregroundPreservesView(section) {
+  const host = section === "media" ? elements.explorer : section === "novel" ? elements.novel : document.getElementById("session-library");
+  if (section === "media" && mediaListing.loadedPages > 1) return true;
+  if (["audio", "transcripts", "videos"].includes(section) && host.dataset.paged === "true") return true;
+  const visible = element => element.getClientRects().length > 0;
+  if ([...host.querySelectorAll('input[type="search"]')].some(input => visible(input) && input.value.trim())) return true;
+  if ([...host.querySelectorAll("select")].some(select => visible(select) && select.options.length && select.value !== select.options[0].value)) return true;
+  return [...document.querySelectorAll("audio, video")].some(player => visible(player) && (!player.paused || player.currentTime > 0));
+}
+async function revalidateForeground() {
+  if (foregroundRefresh || foregroundBlocked()) return;
+  const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section;
+  if (!section || (section === "novel" && !novel.reader.hidden)) return;
+  const gameId = state.gameId, epoch = routeEpoch, scope = apiScope();
+  const paths = ["/games", "/game"], filters = {};
+  if (section === "dashboard") paths.push("/dashboard-recent");
+  if (section === "media") {paths.push("/objects");filters["/objects"] = {prefix:state.currentPrefix};}
+  if (section === "characters") {
+    if (!elements.characterProfile.hidden && state.currentCharacter) {
+      paths.push("/character-details", "/character-details/history");
+      for (const path of paths.slice(2)) filters[path] = {characterId:state.currentCharacter.characterId};
+    } else paths.push("/characters");
+  }
+  if (section === "novel") paths.push("/novel", "/novel-stories", "/novel-books");
+  if (["audio", "transcripts", "videos"].includes(section)) {
+    paths.push("/assets"); filters["/assets"] = {section};
+    if (section === "videos") paths.push("/video-collections", "/tv-series", "/tv-episodes");
+  }
+  foregroundRefresh = (async () => {
+    const changed = await window.PantherUI.revalidate({scope, paths, gameId, filters});
+    if (!changed.length || epoch !== routeEpoch || gameId !== state.gameId || foregroundBlocked()) return;
+    const game = changed.find(item => item.path === "/game");
+    if (game) applyGameDetail(game.data);
+    const games = changed.find(item => item.path === "/games");
+    if (games) {
+      state.games = games.data.games;
+      elements.gameSelector.replaceChildren(...state.games.map(game => new Option(game.name, game.id)));
+      elements.gameSelector.value = gameId; window.PantherUI.syncGameSelector();
+    }
+    if (foregroundPreservesView(section)) {
+      if (section === "media") state.mediaLoaded = false;
+      return;
+    }
+    document.dispatchEvent(new CustomEvent("panther-data-updated", {detail:{gameId,section,paths:changed.map(item=>item.path)}}));
+    if (section === "media") await loadPrefix(state.currentPrefix);
+    else if (section === "dashboard") {renderDashboard();await loadDashboardRecent(epoch);}
+    else if (section === "characters") {
+      if (!elements.characterProfile.hidden && state.currentCharacter) await loadCharacterFacts(state.currentCharacter.gameId, state.currentCharacter.characterId, epoch);
+      else await loadCharacters();
+    } else if (section === "novel") await loadNovel(null, epoch);
+    else if (["audio", "transcripts", "videos"].includes(section)) await loadLibrary(section, epoch);
+  })().catch(() => { /* Retain visible content through a temporary refresh failure. */ }).finally(() => {foregroundRefresh = null;});
+  return foregroundRefresh;
+}
+window.addEventListener("focus", () => {void revalidateForeground();});
+document.addEventListener("visibilitychange", () => {if (document.visibilityState === "visible") void revalidateForeground();});
+document.addEventListener("input", event => {const form = event.target.closest?.("form");if (form) form.dataset.dirty = "true";}, true);
+
 function showWelcome(message = "") {
+  closeAccountSettings();
   document.getElementById("page-loading").hidden = true;
   clearLibrary();
   elements.gameToolbar.hidden = true;
@@ -420,13 +509,14 @@ async function selectGame(requested, epoch) {
     for (const game of state.games) {
       const option = document.createElement("option");
       option.value = game.id;
-      option.textContent = game.name + (game.purpose === "test" ? " (Test)" : "");
+      option.textContent = game.name;
       elements.gameSelector.append(option);
     }
   }
   let remembered = null;
   try { remembered = sessionStorage.getItem("panther.game"); } catch { /* Optional preference. */ }
   const selected = requested || state.gameId || remembered || state.games[0]?.id;
+  if ((roomCapture?.recording || roomCapture?.stopping || roomCapture?.archiving) && selected !== roomCapture.draft.gameId) throw new Error("Finish saving the room recording before switching games.");
   if (!state.games.some(g => g.id === selected)) throw new Error("Game not found. Choose an available game.");
   elements.gameToolbar.hidden = false;
   document.getElementById("game-context").hidden = false;
@@ -439,6 +529,7 @@ async function selectGame(requested, epoch) {
     state.currentCharacter = null;
     state.currentPrefix = `games/${selected}/`;
     listingEpoch += 1;
+    window.PantherUI.unmountMediaBrowser(elements.entries);
     elements.entries.replaceChildren();
     elements.characterList.replaceChildren();
     elements.characterProfile.hidden = true;
@@ -450,6 +541,7 @@ async function selectGame(requested, epoch) {
     closePreview();
   }
   elements.gameSelector.value = selected;
+  window.PantherUI.syncGameSelector();
   elements.gamePurpose.textContent = state.games.find(g => g.id === selected).purpose === "test" ? "Test game · separate from campaign material" : "";
   if (!state.gameDetail) {
     showLoading(document.getElementById("page-loading"), "Fetching the selected game and player roster…");
@@ -483,9 +575,9 @@ function renderDashboard() {
   const {game, players, memberships, characters} = state.gameDetail;
   document.getElementById("dashboard-name").textContent = game.name;
   document.getElementById("dashboard-purpose").textContent = game.purpose === "test" ? "Test game" : "Your campaign";
-  document.getElementById("dashboard-description").textContent = state.gameDetail.gameSettings?.description || "This game’s source material and stories, together in one place.";
+  document.getElementById("dashboard-description").textContent = state.gameDetail.gameSettings?.description || "";
   const facts = document.getElementById("dashboard-facts"); facts.replaceChildren();
-  for (const text of [game.ruleset || "System not set", `${players.length} ${players.length === 1 ? "player" : "players"} in the roster`, `${characters.length} ${characters.length === 1 ? "character" : "characters"}`]) {
+  for (const text of [`${players.length} ${players.length === 1 ? "player" : "players"} in the roster`, `${characters.length} ${characters.length === 1 ? "character" : "characters"}`]) {
     const fact = document.createElement("span"); fact.textContent = text; facts.append(fact);
   }
   const sections = [
@@ -502,7 +594,7 @@ function renderDashboard() {
     const top = document.createElement("span"); top.className = "dashboard-card-top";
     const number = document.createElement("span"); number.className = "dashboard-card-number"; number.textContent = String(index + 1).padStart(2,"0"); number.setAttribute("aria-hidden","true");
     const arrow = document.createElement("span"); arrow.className = "dashboard-card-arrow"; arrow.append(navigationArrow()); arrow.setAttribute("aria-hidden","true"); top.append(number, arrow);
-    const copy = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p"); title.textContent = label; detail.textContent = description; copy.append(title, detail); card.append(top, copy); cards.append(card);
+    const copy = document.createElement("div"), title = document.createElement("h3"); title.textContent = label; copy.append(title); card.append(top, copy); cards.append(card);
   }
   elements.playerRoster.replaceChildren();
   for (const player of players) {
@@ -510,24 +602,49 @@ function renderDashboard() {
     const row = document.createElement("li"), initial = document.createElement("span"), copy = document.createElement("span"), title = document.createElement("strong"), role = document.createElement("small");
     initial.className = "crew-initial"; initial.textContent = player.name.split(/\s+/).map(v=>v[0]).join("").slice(0,2); initial.setAttribute("aria-hidden","true");
     copy.className = "crew-copy"; title.textContent = player.name;
-    role.textContent = member?.role === "dungeon-master" ? "Dungeon Master" : member?.role === "player" ? "Player" : "Role not recorded";
+    role.textContent = member?.role === "dungeon-master" ? "Dungeon Master" : member?.role === "player" ? "Player" : "";
     copy.append(title, role); row.append(initial, copy); elements.playerRoster.append(row);
   }
-  if (!players.length) { const row = document.createElement("li"); row.textContent = "No player roster has been recorded for this game yet."; elements.playerRoster.append(row); }
+  if (!players.length) { const row = document.createElement("li"); row.textContent = "No players yet."; elements.playerRoster.append(row); }
   for (const link of document.querySelectorAll("[data-game-section]")) gameLink(link, link.dataset.gameSection);
+}
+
+async function loadDashboardRecent(epoch) {
+  const host = document.getElementById("dashboard-recent"), gameId = state.gameId;
+  host.replaceChildren(); showLoading(host, "Loading recent activity");
+  try {
+    const result=await api("/dashboard-recent",{gameId});
+    if(epoch!==routeEpoch || gameId!==state.gameId)return;
+    if(result.complete!==true || !result.groups)throw new Error("Recent activity unavailable");
+    host.replaceChildren();
+    for(const [label,section,key] of [["Characters","characters","characters"],["Transcripts","transcripts","transcripts"],["Videos","videos","videos"],["Chapters","novel","chapters"]]) {
+      const panel=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ul");
+      heading.textContent=`Recent ${label.toLowerCase()}`;panel.append(heading,list);host.append(panel);
+      for(const item of result.groups[key]) {
+        const row=document.createElement("li");let link;
+        if(section==="characters"){link=document.createElement("a");link.href=characterPath({...item,gameId});link.textContent=item.name;link.addEventListener("click",event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname);});}
+        else if(section==="novel")link=novelLink(item.title,item.id);
+        else link=assetLink(item,item.title||item.name);
+        row.append(link);list.append(row);
+      }
+      if(!list.children.length){const note=document.createElement("li");note.className="recent-empty";note.textContent=`No ${label.toLowerCase()} yet`;list.append(note);}
+      const all=document.createElement("a");gameLink(all,section);all.textContent=`View ${label.toLowerCase()}`;panel.append(all);
+    }
+  }catch(error){if(epoch===routeEpoch && gameId===state.gameId){host.replaceChildren();const message=document.createElement("p");message.setAttribute("role","status");message.textContent=error.message;host.append(message);}}
 }
 
 function applyGameDetail(detail) {
   state.gameDetail = detail;
   const entry = state.games.find(g => g.id === state.gameId); if (entry) Object.assign(entry, detail.game);
   const option = Array.from(elements.gameSelector.options).find(o => o.value === state.gameId);
-  if (option) option.textContent = detail.game.name + (detail.game.purpose === "test" ? " (Test)" : "");
+  if (option) option.textContent = detail.game.name;
   elements.gameRuleset.textContent = detail.game.ruleset ? `System: ${detail.game.ruleset}` : "System not set";
 }
 
 function renderGameSettings() {
   const detail = state.gameDetail, gameId = state.gameId, epoch = routeEpoch, canEdit = detail.canEditGame === true;
   const form = document.getElementById("game-settings-form"), status = document.getElementById("game-settings-status"), button = form.querySelector("button");
+  form.dataset.dirty = "false";
   const fields = {name: document.getElementById("game-name"), description: document.getElementById("game-description"), ruleset: document.getElementById("game-system")};
   fields.name.value = detail.game.name; fields.description.value = detail.gameSettings?.description || ""; fields.ruleset.value = detail.game.ruleset || "";
   for (const field of Object.values(fields)) field.readOnly = !canEdit;
@@ -558,6 +675,7 @@ function renderGameSettings() {
 function renderGameStyle() {
   const panel = document.getElementById("game-style");
   const form = document.getElementById("game-style-form");
+  form.dataset.dirty = "false";
   const select = document.getElementById("visual-style");
   const status = document.getElementById("style-status");
   const detail = state.gameDetail;
@@ -645,6 +763,7 @@ function renderCharacterCard(character) {
 async function loadCharacters() {
   const epoch = routeEpoch;
   elements.characterProfile.hidden = true;
+  document.getElementById("character-create").hidden = false;
   elements.characterList.hidden = false;
   elements.charactersStatus.hidden = false;
   showLoading(elements.charactersStatus, "Fetching character profiles…");
@@ -689,6 +808,62 @@ async function loadCharacters() {
       elements.charactersStatus.textContent = error.message;
     }
   }
+}
+
+async function createCharacter() {
+  const host = document.getElementById("character-create-form");
+  if (!host.hidden) return;
+  host.hidden = false;
+  const name = host.querySelector("input"), status = host.querySelector("[role=status]");
+  name.value = ""; name.disabled = false; name.focus();
+  let pending = null;
+  host.onsubmit = async event => {
+    event.preventDefault();
+    const button = host.querySelector("button[type=submit]"); button.disabled = true;
+    const gameId = state.gameId;
+    const id = pending?.id || `${name.value.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48) || "character"}-${crypto.randomUUID().slice(0,8)}`;
+    try {
+      pending ||= {gameId,id,name:name.value.trim()};
+      name.disabled = true;
+      await api("/game/characters", {}, {body:pending});
+      if (gameId !== state.gameId) return;
+      state.gameDetail.characters.push({id,gameId,name:name.value.trim()});
+      host.hidden = true;
+      navigate(characterPath({id,gameId}));
+    } catch(error) {status.textContent = error.message; if(error.status === 400 || error.status === 409) {pending = null;name.disabled = false;} else button.textContent = "Retry create";}
+    finally {button.disabled = false;}
+  };
+  host.querySelector("button[type=button]").onclick = () => {host.hidden = true;};
+}
+
+async function loadCharacterHistory(gameId, characterId, host, epoch) {
+  const list = host.querySelector("ol"), more = host.querySelector("button");
+  let cursor = null;
+  const load = async () => {
+    more.disabled = true;
+    try {
+      const result = await api("/character-details/history", {gameId,characterId,cursor});
+      if (epoch !== routeEpoch || !host.isConnected) return;
+      for (const entry of result.history || []) {
+        const li = document.createElement("li"), disclosure = document.createElement("details"), summary = document.createElement("summary");
+        summary.textContent = `${new Date(entry.recordedAt).toLocaleString()} · ${entry.reason}`;
+        const changes = document.createElement("dl"); changes.className = "character-fact-grid";
+        for (const [key,value] of Object.entries(entry.details || {})) {
+          if (key === "schemaVersion" || JSON.stringify(value) === JSON.stringify(entry.previousDetails?.[key])) continue;
+          const dt = document.createElement("dt"), dd = document.createElement("dd");
+          dt.textContent = key; dd.textContent = value == null ? "Cleared" : typeof value === "object" ? JSON.stringify(value) : String(value);
+          changes.append(dt,dd);
+        }
+        if (entry.name && entry.previousName !== entry.name) {const p = document.createElement("p"); p.textContent = `Name: ${entry.previousName} → ${entry.name}`; disclosure.append(p);}
+        disclosure.prepend(summary); disclosure.append(changes); li.append(disclosure); list.append(li);
+      }
+      cursor = result.cursor; more.hidden = !cursor;
+      if (!list.children.length) {const li = document.createElement("li"); li.textContent = "No changes yet."; list.append(li);}
+    } catch(error) {const p = document.createElement("p"); p.textContent = error.message; host.append(p); more.hidden = true;}
+    finally {more.disabled = false;}
+  };
+  more.onclick = load;
+  await load();
 }
 
 async function loadCharacterThumbnails(epoch) {
@@ -805,6 +980,7 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
         result.appearances=[...result.appearances,pinned.appearance];
     }
     state.appearanceVersions = result;
+    if (!result.selections.length && !result.appearances.length) {document.getElementById("appearance-history").hidden = true; return result;}
     const states = document.getElementById("appearance-state");
     states.replaceChildren();
     for (const appearance of result.appearances) states.add(new Option(appearance.name, appearance.id));
@@ -841,7 +1017,7 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
     }
     return true;
   } catch(error) {
-    if (epoch===routeEpoch) status.textContent=`Appearance history unavailable: ${error.message}. Refresh to retry.`;
+    if (epoch===routeEpoch) status.textContent=`Appearance history unavailable: ${error.message}. Reload the page to try again.`;
     return false;
   }
 }
@@ -964,10 +1140,17 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
   try {
     const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),30000);
     let result;
-    try { result = await api("/character-details", {gameId, characterId}, {signal:controller.signal}); }
+    try {
+      try {result = await api("/character-details", {gameId, characterId}, {signal:controller.signal});}
+      catch(error) {
+        if (error.status !== 400 || !/migration/i.test(error.message)) throw error;
+        const prepared = await api("/character-details/migrate", {}, {body:{gameId,characterId,mode:"migrate",details:{},expectedRevision:null,expectedSourceHash:null,operationId:crypto.randomUUID().replaceAll("-",""),reason:"Initialize profile from existing recorded facts",dryRun:true}});
+        result = prepared.character ? prepared : await api("/character-details/migrate", {}, {body:prepared.plan});
+      }
+    }
     finally {clearTimeout(timer);}
     if (!current()) return;
-    if (!result.character?.details || !result.character.revision) throw new Error("Structured character information is not ready. Refresh to retry.");
+    if (!result.character?.details || !result.character.revision) throw new Error("Character profile is unavailable.");
     const record = result.character;
     state.currentCharacterFacts = record;
     const render = () => {
@@ -982,8 +1165,9 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
       const players = membership.map(m => state.gameDetail.players.find(p => p.id === m.playerId)?.name).filter(Boolean);
       for (const [label, value] of [["Played by", players.join(", ")], ["Aliases", record.details.aliases.join(", ")],
         ["Pronouns", record.details.pronouns], ["Role", record.details.role], ["Status", record.details.status]]) {
+        if (!value) continue;
         const row = document.createElement("div"), dt = document.createElement("dt"), dd = document.createElement("dd");
-        dt.textContent = label; dd.textContent = value || "Not recorded"; row.append(dt, dd); facts.append(row);
+        dt.textContent = label; dd.textContent = value; row.append(dt, dd); facts.append(row);
       }
       host.append(facts);
       for (const [field, label] of [["overview","Overview"],["backstory","Backstory"],["notes","Notes"]]) if (record.details[field]) {
@@ -1008,13 +1192,19 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         }
         host.append(h,list);
       }
+      const history = document.createElement("section"); history.className = "character-change-history";
+      const historyHeading = document.createElement("h3"), changes = document.createElement("ol"), more = document.createElement("button");
+      historyHeading.textContent = "Change history"; more.textContent = "Load earlier changes"; more.type = "button"; more.className = "quiet-button"; more.hidden = true;
+      history.append(historyHeading,changes,more); host.append(history);
+      void loadCharacterHistory(gameId,characterId,history,epoch);
       edit.onclick = () => editor();
     };
     const editor = () => {
       host.replaceChildren();
       const form = document.createElement("form"); form.className = "character-edit-form";
       const h = document.createElement("h2"); h.textContent = "Edit character information"; form.append(h);
-      const note = document.createElement("p"); note.textContent = "Leave unknown facts blank. This edits recorded facts, not the official portrait or model. Previous facts are retained."; form.append(note);
+      const nameLabel = document.createElement("label"), nameInput = document.createElement("input");
+      nameLabel.textContent = "Character name"; nameInput.value = record.name; nameInput.required = true; nameInput.maxLength = 120; nameLabel.append(nameInput); form.append(nameLabel);
       const inputs = {};
       for (const [field,label,max,multi] of [["aliases","Aliases (one per line)",2500,true],["pronouns","Pronouns",80,false],["role","Role",120,false],["status","Status",120,false],["subtitle","Card subtitle",160,false],["overview","Overview",1000,true],["backstory","Backstory",8000,true],["notes","Notes",4000,true]]) {
         const wrapper = document.createElement("label"), input = document.createElement(multi ? "textarea" : "input");
@@ -1039,16 +1229,39 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
       };
       record.details.statistics.forEach(addStat);
       const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button"; add.textContent = "Add statistic"; add.onclick = () => {if (rows.filter(r => r.row.isConnected).length < 100) addStat();}; form.append(stats,add);
-      const relationshipsWrap = document.createElement("label"), relationships = document.createElement("textarea");
-      relationshipsWrap.textContent = "Connections (structured JSON)";
-      relationships.value = JSON.stringify(record.details.relationships,null,2); relationships.maxLength = 12000;
-      const connectionHelp = document.createElement("p"); connectionHelp.textContent = 'Each connection uses entityType (Character, Player or Asset), id, and relation. Only existing records in this game are accepted. Use the CLI for larger structured edits.';
-      relationshipsWrap.append(relationships); form.append(relationshipsWrap,connectionHelp);
+      const relationships = document.createElement("fieldset"), connectionsLegend = document.createElement("legend"); connectionsLegend.textContent = "Connections"; relationships.append(connectionsLegend);
+      const connectionRows = [], connectionHelp = document.createElement("p");
+      let connectionAssets = [];
+      const populateTargets = (row, chosen = row.target.value) => {
+        row.target.replaceChildren();
+        const none = document.createElement("option"); none.value = ""; none.textContent = "Choose a reference"; row.target.append(none);
+        const targets = row.type.value === "Character" ? state.gameDetail.characters.map(c=>({id:c.id,name:c.name}))
+          : row.type.value === "Player" ? state.gameDetail.players.map(p=>({id:p.id,name:p.name}))
+          : connectionAssets.map(a=>({id:a.key,name:a.metadata?.title || a.name}));
+        if (chosen && !targets.some(t=>t.id===chosen)) targets.unshift({id:chosen,name:chosen.split("/").at(-1)});
+        for (const target of targets) {const option = document.createElement("option"); option.value = target.id; option.textContent = target.name; row.target.append(option);}
+        row.target.value = chosen;
+      };
+      const addConnection = (ref = {entityType:"Character",id:"",relation:""}) => {
+        const element = document.createElement("div"); element.className = "character-connection-editor";
+        const type = document.createElement("select"), target = document.createElement("select"), relation = document.createElement("input");
+        for(const kind of ["Character","Player","Asset"]) {const option = document.createElement("option");option.value=kind;option.textContent=kind;type.append(option);}
+        type.value=ref.entityType; relation.value=ref.relation; relation.maxLength=120; relation.placeholder="e.g. Ally, Portrait reference";
+        for(const [label,input] of [["Reference type",type],["Reference",target],["Relationship",relation]]) {const wrap=document.createElement("label");wrap.textContent=label;wrap.append(input);element.append(wrap);}
+        const row={element,type,target,relation}; populateTargets(row,ref.id); type.onchange=()=>populateTargets(row,"");
+        const remove=document.createElement("button");remove.type="button";remove.className="quiet-button";remove.textContent="Remove connection";remove.onclick=()=>element.remove();element.append(remove);
+        connectionRows.push(row);relationships.append(element);
+      };
+      record.details.relationships.forEach(addConnection);
+      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add connection";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
+      form.append(relationships,addConnectionButton,connectionHelp);
       const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Character-list thumbnail";
       const none = document.createElement("option"); none.value = ""; none.textContent = "No thumbnail"; cover.append(none);
       if (record.details.thumbnailAssetKey) {const selected = document.createElement("option"); selected.value = record.details.thumbnailAssetKey; selected.textContent = "Current selected thumbnail"; cover.append(selected);}
       cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); form.append(coverWrap);
       void allAssets(gameId).then(assets=>{if (!current() || !cover.isConnected) return;
+        connectionAssets = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" || a.metadata?.category === "reference");
+        for(const row of connectionRows) if(row.type.value === "Asset")populateTargets(row);
         for (const asset of assets) if (asset.contentType?.startsWith("image/") && asset.metadata?.characterIds?.includes(characterId) && ![...cover.options].some(o=>o.value===asset.key)) {
           const option = document.createElement("option"); option.value = asset.key; option.textContent = asset.metadata.title || asset.name; cover.append(option);
         }
@@ -1065,7 +1278,10 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           if (!pending) {
             const details = structuredClone(record.details);
             for (const [field,input] of Object.entries(inputs)) details[field] = field === "aliases" ? input.value.split("\n").map(s=>s.trim()).filter(Boolean) : input.value.trim() || null;
-            details.relationships = JSON.parse(relationships.value);
+            details.relationships = connectionRows.filter(r=>r.element.isConnected).map(row=>{
+              if (!row.target.value || !row.relation.value.trim()) throw new Error("Choose a reference and describe its relationship.");
+              return {entityType:row.type.value,id:row.target.value,relation:row.relation.value.trim()};
+            });
             details.thumbnailAssetKey = cover.value || null;
             details.statistics = rows.filter(r=>r.row.isConnected).map(r => {
               let value = r.Value.value.trim();
@@ -1074,7 +1290,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
               else if (r.Type.value === "Boolean") { if (!["true","false"].includes(value)) throw new Error("Boolean statistics must be true or false."); value = value === "true"; }
               return {group:r.Group.value.trim() || null,name:r.Name.value.trim(),value};
             });
-            pending = {gameId,characterId,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,
+            pending = {gameId,characterId,name:nameInput.value.trim(),mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,
               operationId:crypto.randomUUID().replaceAll("-",""),reason:reason.value.trim(),dryRun:false};
           }
           for (const control of form.querySelectorAll("input,textarea,select,fieldset,button")) control.disabled = true;
@@ -1083,8 +1299,11 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           let response;
           try { response = await api("/character-details",{}, {body:pending,signal:controller.signal}); } finally {clearTimeout(timer);}
           if (!current()) return;
-          Object.assign(record,response.character); render();
-          const message = document.createElement("p"); message.setAttribute("role","status"); message.textContent = "Character information saved. Previous facts retained."; host.append(message);
+          Object.assign(record,response.character);
+          elements.characterName.textContent = record.name;
+          const registered = state.gameDetail.characters.find(c => c.id === characterId); if (registered) registered.name = record.name;
+          render();
+          const message = document.createElement("p"); message.setAttribute("role","status"); message.textContent = "Character information saved."; host.append(message);
         } catch (error) {
           if (!current()) return;
           if (!pending || error.status === 400) {
@@ -1094,19 +1313,18 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
             status.textContent = `${error.message}. Correct the fields and try again.`;
             return;
           }
-          status.textContent = error.status === 409 ? "Another update changed this character. Cancel and reload before editing again. Your edit was not substituted for that revision." : `${error.message}. Retry submits the exact same operation; cancel and reload before changing it.`;
+          status.textContent = error.status === 409 ? "Another update changed this character. Cancel to review the latest version." : `${error.message}. Retry saves the same revision.`;
           save.disabled = error.status === 409;
           save.textContent = "Retry exact save"; cancel.disabled = false;
           cancel.onclick = () => {void loadCharacterFacts(gameId,characterId,epoch);};
         }
       };
-      inputs.aliases.focus();
+      nameInput.focus();
     };
     render();
   } catch (error) {
     if (!current()) return;
-    host.textContent = `${error.message}. Structured facts require the character migration; artwork remains separate.`;
-    const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry character information"; retry.onclick = () => {void loadCharacterFacts(gameId,characterId,epoch);}; host.append(retry);
+    host.textContent = error.status === 403 ? "A game administrator needs to initialize this profile." : error.message;
   }
 }
 
@@ -1114,6 +1332,8 @@ async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   state.currentCharacterFacts = null;
   document.getElementById("characters-more").hidden = true;
+  document.getElementById("character-create").hidden = true;
+  document.getElementById("character-create-form").hidden = true;
   void loadCharacterFacts(gameId, characterId, epoch);
   document.getElementById("character-assets-list").replaceChildren();
   document.getElementById("appearance-history").hidden = true;
@@ -1161,13 +1381,26 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
       const purpose = asset.metadata?.category || "Unclassified";
       const group = `${asset.kind} · ${purpose}`;
       if (group !== previousGroup) {const header = document.createElement("li"), h = document.createElement("h3"); h.textContent = group; header.append(h); list.append(header); previousGroup = group;}
-      li.append(assetLink(asset), document.createTextNode(` · ${asset.kind} · ${purpose}`));
+      const link = assetLink(asset);
+      if (asset.contentType?.startsWith("image/")) {
+        const image = document.createElement("img"); image.alt = asset.metadata?.title || asset.name;
+        image.loading = "lazy"; image.dataset.characterReference = asset.key;
+        link.prepend(image); li.className = "character-reference-card";
+      }
+      li.append(link, document.createTextNode(` · ${asset.kind} · ${purpose}`));
       list.append(li);
     }
-    status.textContent = matching.length ? "Assets explicitly tagged with this character, across all media types and versions."
-      : "No assets have been tagged with this character yet. Untagged appearances are not inferred.";
+    const images = [...list.querySelectorAll("img[data-character-reference]")];
+    for (let offset=0; offset<images.length; offset+=60) {
+      const batch = images.slice(offset,offset+60);
+      void api("/image-links", {}, {body:{gameId,keys:batch.map(img=>img.dataset.characterReference)}}).then(links=>{
+        if (!current()) return;
+        for (const img of batch) { const url = links.images?.[img.dataset.characterReference]?.url; if (url) img.src = url; else img.remove(); }
+      }).catch(()=>batch.forEach(img=>img.remove()));
+    }
+    status.textContent = matching.length ? "" : "No media yet.";
   } catch (error) {
-    if (current()) status.textContent = `${error.message}. Use Refresh assets to retry.`;
+    if (current()) status.textContent = error.message;
   }
 }
 
@@ -1302,6 +1535,13 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  if (location.pathname === "/account" || location.pathname === "/account/recovery") {
+    const epoch = ++routeEpoch;
+    await roomCapture?.render("account", epoch);
+    await openAccountSettings(location.pathname === "/account/recovery");
+    return;
+  }
+  closeAccountSettings();
   dismissNarrativePreview(true);
   const epoch = ++routeEpoch;
   const pageLoading = document.getElementById("page-loading");
@@ -1325,6 +1565,7 @@ async function renderRoute() {
     if (epoch !== routeEpoch) return;
     elements.characters.hidden = true;
     elements.explorer.hidden = false;
+    window.PantherUI.unmountMediaBrowser(elements.entries);
     elements.entries.replaceChildren();
     elements.status.hidden = false;
     elements.status.textContent = error.message;
@@ -1334,9 +1575,11 @@ async function renderRoute() {
   }
   if (epoch !== routeEpoch) return;
   const section = gameRoute?.[2] || window.location.pathname.slice(1);
+  await roomCapture.render(section, epoch);
+  if (epoch !== routeEpoch) return;
   if (section === "dashboard" || location.pathname === "/") {
     setActiveNavigation("dashboard"); elements.characters.hidden = true; elements.explorer.hidden = true;
-    document.getElementById("dashboard").hidden = false; renderDashboard(); return;
+    document.getElementById("dashboard").hidden = false; renderDashboard(); void loadDashboardRecent(epoch); return;
   }
   if (section === "settings") {
     setActiveNavigation("settings"); elements.characters.hidden = true; elements.explorer.hidden = true;
@@ -1373,9 +1616,11 @@ async function renderRoute() {
   setActiveNavigation("media");
   elements.characters.hidden = true;
   elements.explorer.hidden = false;
-  if (!state.mediaLoaded) {
+  const folder = new URLSearchParams(location.search).get("folder");
+  const destination = folder?.startsWith(`games/${state.gameId}/`) ? folder : `games/${state.gameId}/`;
+  if (!state.mediaLoaded || destination !== mediaListing.prefix) {
     state.mediaLoaded = true;
-    await loadPrefix(state.currentPrefix);
+    await loadPrefix(destination);
   }
   const key = new URLSearchParams(location.search).get("asset");
   const physicalAsset = typeof key === "string" && key.startsWith(`games/${state.gameId}/content/`)
@@ -1410,38 +1655,45 @@ function appendFile(file) {
   elements.entries.append(fragment);
 }
 
+
+let mediaListing = {prefix:null,folders:[],files:[],loading:false,error:"",hasMore:false,loadedPages:0};
+function drawMediaBrowser() {
+  const mount=window.PantherUI?.mountMediaBrowser;
+  if (!mount) return false;
+  elements.breadcrumbs.hidden=true;elements.status.hidden=true;elements.loadMore.hidden=true;
+  elements.entries.classList.add("react-media-host");
+  mount(elements.entries,{...mediaListing,gameId:state.gameId,gameName:state.gameDetail?.game.name || state.gameId,
+    onFolder:prefix=>navigate(gamePath("media")+"?folder="+encodeURIComponent(prefix)), onFile:previewFile,
+    onMore:()=>loadPrefix(state.currentPrefix,state.nextCursor)});
+  return true;
+}
 async function loadPrefix(prefix, cursor = null) {
   if (!state.gameId || !prefix.startsWith(`games/${state.gameId}/`)) return;
   const epoch = ++listingEpoch;
-  elements.status.hidden = false;
-  showLoading(elements.status, cursor ? "Fetching the next files…" : "Fetching folders and files…");
-  elements.loadMore.hidden = true;
-  if (!cursor) {
-    state.currentPrefix = prefix;
-    elements.entries.replaceChildren();
-    renderBreadcrumbs(prefix);
+  const sameFolder = mediaListing.prefix === prefix;
+  mediaListing={prefix,folders:sameFolder?mediaListing.folders:[],files:sameFolder?mediaListing.files:[],loading:true,error:"",hasMore:false,loadedPages:cursor?(sameFolder?mediaListing.loadedPages:0)+1:1};
+  state.currentPrefix=prefix;
+  const mounted=drawMediaBrowser();
+  if (!mounted) {
+    elements.status.hidden=false;showLoading(elements.status,"Loading files");
+    if(!cursor) {elements.entries.replaceChildren();renderBreadcrumbs(prefix);}
   }
-
   try {
-    const result = await api("/objects", { prefix, cursor });
-    if (epoch !== listingEpoch || !state.tokens) return;
-    for (const childPrefix of result.prefixes) appendFolder(childPrefix);
-    for (const file of result.objects) appendFile(file);
-    state.nextCursor = result.nextCursor;
-    elements.loadMore.hidden = !state.nextCursor;
-    elements.status.hidden = true;
-    if (!elements.entries.children.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent = "There is nothing in this folder yet.";
-      elements.entries.append(empty);
-    }
-  } catch (error) {
-    if (epoch !== listingEpoch) return;
-    if (error.message !== "Session expired") {
-      elements.status.textContent = error.message;
-      elements.status.hidden = false;
-    }
+    const result=await api("/objects",{prefix,cursor});
+    if(epoch!==listingEpoch || !state.tokens)return;
+    const folders=cursor?[...mediaListing.folders,...result.prefixes]:result.prefixes;
+    const files=cursor?[...mediaListing.files,...result.objects]:result.objects;
+    state.nextCursor=result.nextCursor;
+    mediaListing={prefix,folders:[...new Set(folders)],files:[...new Map(files.map(f=>[f.key,f])).values()],loading:false,error:"",hasMore:Boolean(result.nextCursor),loadedPages:mediaListing.loadedPages};
+    if(drawMediaBrowser())return;
+    if(!cursor)elements.entries.replaceChildren();
+    result.prefixes.forEach(appendFolder);result.objects.forEach(appendFile);
+    elements.status.hidden=true;elements.loadMore.hidden=!state.nextCursor;
+    if(!elements.entries.children.length){const empty=document.createElement("div");empty.className="empty";empty.textContent="This folder is empty.";elements.entries.append(empty);}
+  } catch(error) {
+    if(epoch!==listingEpoch)return;
+    mediaListing.loading=false;mediaListing.error=error.message;
+    if(!drawMediaBrowser()){elements.status.textContent=error.message;elements.status.hidden=false;}
   }
 }
 
@@ -1502,7 +1754,7 @@ async function previewFile(file) {
     const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
     if (structured) showLoading(elements.previewBody, "Reading the document and its metadata…");
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
-    elements.previewDetails.textContent = `${formatBytes(result.size)} · link valid for ${Math.round(result.expiresIn / 60)} minutes`;
+    elements.previewDetails.textContent = `${formatBytes(result.size)}${Number.isFinite(result.expiresIn) ? ` · link valid for ${Math.round(result.expiresIn / 60)} minutes` : ""}`;
     elements.openOriginal.href = result.url;
     if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
     if (result.contentType.startsWith("video/")) configureVideoPreview({...result,key:assetRef},elements.previewBody.firstChild,epoch);
@@ -2107,14 +2359,16 @@ function chapterDetails(chapter, versions) {
   const heading = document.createElement("h2"); heading.textContent = "About this chapter";
   const summary = document.createElement("p");
   summary.textContent = `Session: ${chapter.sessionId} · Published ${chapterDate(chapter)} · ${chapter.publicationStatus} · ${chapter.reviewStatus}. An adaptation, not a factual transcript.`;
-  const reviewTitle = document.createElement("h3"); reviewTitle.textContent = "Editorial review and notes";
+  const authored = chapter.details.authorship === "human";
+  if (authored) summary.textContent = `Written manually · ${chapterDate(chapter)}`;
+  const reviewTitle = document.createElement("h3"); reviewTitle.textContent = "Editorial review and notes"; reviewTitle.hidden = authored;
   const review = document.createElement("div");
-  proseMarkdown(review, chapter.details.review.markdown || "No review text recorded.");
+  proseMarkdown(review, chapter.details.review.markdown || "No review text recorded."); review.hidden = authored;
   const notes = document.createElement("ul");
   for (const note of chapter.details.review.uncertainties || []) {
     const li = document.createElement("li"); li.textContent = note; notes.append(li);
   }
-  const versionsTitle = document.createElement("h3"); versionsTitle.textContent = "Versions of this session";
+  const versionsTitle = document.createElement("h3"); versionsTitle.textContent = authored ? "Chapter versions" : "Versions of this session";
   const versionList = document.createElement("ul");
   for (const [index, version] of versions.entries()) {
     const li = document.createElement("li");
@@ -2136,7 +2390,7 @@ function chapterDetails(chapter, versions) {
     appendFinishedConnections(sources, connections);
     if (connections.incomplete) sources.append("Some recorded connections are unavailable.");
   }).catch(() => {
-    if (epoch === routeEpoch && state.gameId === gameId && state.tokens) sources.textContent = "Connections unavailable. Refresh chapters to retry.";
+    if (epoch === routeEpoch && state.gameId === gameId && state.tokens) sources.textContent = "Connections unavailable. Reload the page to try again.";
   });
   const provenance = document.createElement("details");
   const label = document.createElement("summary"); label.textContent = "Full provenance and revision history";
@@ -2145,7 +2399,55 @@ function chapterDetails(chapter, versions) {
   novel.details.replaceChildren(heading, summary, creation, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
 }
 
+function manualChapterEditor(previous = null) {
+  const host = document.getElementById("manual-chapter-form");
+  host.hidden = false; host.replaceChildren();
+  const gameId = state.gameId, epoch = routeEpoch;
+  const titleLabel = document.createElement("label"), title = document.createElement("input");
+  titleLabel.textContent = "Chapter title"; title.required = true; title.maxLength = 160; title.value = previous?.title || ""; titleLabel.append(title);
+  const proseLabel = document.createElement("label"), prose = document.createElement("textarea");
+  proseLabel.textContent = "Chapter text"; prose.required = true; prose.maxLength = 100000; prose.rows = 16; prose.value = previous?.markdown || ""; proseLabel.append(prose);
+  const selectedSources = new Set(previous?.details.sourceKeys || []);
+  const references = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "References (optional)"; references.append(legend);
+  const save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p"), buttons = document.createElement("div");
+  save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Add chapter";
+  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true;};
+  status.setAttribute("role","status"); buttons.className = "model-control-row"; buttons.append(save,cancel); host.append(titleLabel,proseLabel,references,buttons,status);
+  void allAssets(gameId).then(assets=>{
+    if(epoch !== routeEpoch || !host.isConnected) return;
+    const available = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" && !a.lineageWarning);
+    if (!available.length) {references.hidden = true; return;}
+    for (const asset of available) {
+      const label = document.createElement("label"), check = document.createElement("input"); check.type = "checkbox"; check.value = asset.key; check.checked = selectedSources.has(asset.key); check.onchange = () => {if(check.checked)selectedSources.add(asset.key);else selectedSources.delete(asset.key);};
+      label.append(check,document.createTextNode(asset.metadata?.title || asset.name)); references.append(label);
+    }
+  }).catch(()=>{references.hidden = true;});
+  let pending = null;
+  host.onsubmit = async event => {
+    event.preventDefault(); save.disabled = true;
+    try {
+      pending ||= {gameId,title:title.value.trim(),markdown:prose.value.trim(),sourceKeys:[...selectedSources],
+        operationId:crypto.randomUUID().replaceAll("-",""),previousChapterId:previous?.id || null};
+      for (const control of host.querySelectorAll("input,textarea,button")) control.disabled = true;
+      const result = await api("/novel-chapters", {}, {body:pending});
+      if (epoch !== routeEpoch || gameId !== state.gameId) return;
+      host.hidden = true; navigate(`${gamePath("novel")}/${result.chapterId}`);
+    } catch(error) {
+      if (epoch !== routeEpoch) return;
+      status.textContent = error.message;
+      if(error.status === 400 || error.status === 409) {pending = null; for(const c of host.querySelectorAll("input,textarea,button"))c.disabled = false;}
+      else {save.disabled = false; save.textContent = "Retry save";cancel.disabled = false;}
+    }
+  };
+  title.focus();
+}
+
 async function loadNovel(chapterId, epoch) {
+  document.getElementById("manual-chapter-create").onclick = () => manualChapterEditor();
+  document.getElementById("manual-chapter-form").hidden = true;
+  document.getElementById("manual-chapter-edit")?.remove();
+  renderEditorialComposer("novel",epoch);
+  document.getElementById("editorial-novel-composer").hidden=Boolean(chapterId);
   const gameId = state.gameId;
   const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
   const loading = showLoading(novel.status, "Fetching the chapter list…");
@@ -2210,12 +2512,12 @@ async function loadNovel(chapterId, epoch) {
       if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
       const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters · source editions";novel.list.append(sourceHeading);
       novel.status.hidden = Boolean(ordered.length || organization.stories.length);
-      novel.status.textContent = "No chapters yet. Completed novel chapters will appear here automatically.";
+      novel.status.textContent = "No chapters yet.";
       for (const [index, chapter] of ordered.entries()) {
         const card = document.createElement("div"); card.className = "novel-card";
-        const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1} · not an approved book selection`;
+        const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
         const title = document.createElement("h2"); title.append(novelLink(chapter.title, chapter.id));
-        const meta = document.createElement("p"); meta.textContent = `${chapter.sessionId} · ${chapterDate(chapter)}${chapter.publicationStatus === "accepted-with-notes" ? " · Working draft" : ""}`;
+        const meta = document.createElement("p"); meta.textContent = `${chapterDate(chapter)}${chapter.publicationStatus === "accepted-with-notes" ? " · Working draft" : ""}`;
         card.append(number, title, meta); novel.list.append(card);
       }
       void novelCovers(gameId,current);
@@ -2229,6 +2531,10 @@ async function loadNovel(chapterId, epoch) {
     novel.title.textContent = chapter.title;
     proseMarkdown(novel.prose, chapter.markdown);
     chapterDetails(chapter, sessions.get(chapter.sessionId) || [chapter]);
+    if (chapter.details?.authorship === "human") {
+      const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button"; edit.textContent = "Edit chapter"; edit.id = "manual-chapter-edit"; edit.onclick = () => manualChapterEditor(chapter); document.querySelector("#novel-reader .novel-tools").append(edit);
+      if (chapter.details.previousChapterId) novel.details.append(novelLink("Previous chapter version",chapter.details.previousChapterId));
+    }
     novel.notice.textContent = [chapter.notice,
       state.gameDetail.game.purpose === "test" ? "Test-game adaptation · not campaign canon." : "",
       chapter.publicationStatus === "accepted-with-notes" ? "Working draft · AI review left unresolved notes. See Details." : "",
@@ -2249,7 +2555,7 @@ async function loadNovel(chapterId, epoch) {
     void Promise.all([allAssets(gameId),collectionReferences]).then(([assets,collections]) => {
       if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters,collections));
     }).catch(() => {
-      if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Refresh chapters to retry."; }
+      if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Reload the page to try again."; }
     });
     const index = ordered.findIndex(c => selectedBook ? c.id === chapter.id : c.sessionId === chapter.sessionId);
     if (index > 0) novel.pagination.append(novelLink(`← ${ordered[index - 1].title}`, ordered[index - 1].id,selectedBook?.id));
@@ -2258,7 +2564,7 @@ async function loadNovel(chapterId, epoch) {
     if (!current()) return;
     novel.status.hidden = false;
     novel.list.replaceChildren();
-    novel.status.textContent = `${error.message}. Use Refresh chapters to retry.`;
+    novel.status.textContent = `${error.message}. Use Reload the page to try again.`;
   }
 }
 
@@ -2428,10 +2734,79 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   const character = field("Featuring character",document.createElement("select"),"video-character"); character.add(new Option("All characters",""));
   for (const c of state.gameDetail?.characters || []) character.add(new Option(c.name,c.id));
   character.value = view.character;
-  const collection = field("Ordered collection",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
+  const collection = field("Scene",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
   const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
   controls.append(collectionsStatus,retry,summary); videoHost.append(controls,cards);
   let displayed = assets, chosen = null, sequence = 0;
+  const sceneActions = document.createElement("div"); sceneActions.className = "model-control-row";
+  const createScene = document.createElement("button"), editScene = document.createElement("button"), sceneForm = document.createElement("form");
+  createScene.type = editScene.type = "button"; createScene.className = editScene.className = "quiet-button";
+  createScene.textContent = "Create scene"; editScene.textContent = "Edit scene"; editScene.disabled = true;
+  sceneForm.className = "scene-edit-form character-edit-form"; sceneForm.hidden = true;
+  sceneActions.append(createScene,editScene); controls.append(sceneActions); videoHost.insertBefore(sceneForm,cards);
+  let sceneGeneration = 0;
+  async function editSceneClips(existing = null) {
+    const generation = ++sceneGeneration; sceneForm.hidden = false; sceneForm.replaceChildren();
+    const loading = document.createElement("p"), closeLoading = document.createElement("button");
+    closeLoading.type="button";closeLoading.className="quiet-button";closeLoading.textContent="Cancel";closeLoading.onclick=()=>{sceneGeneration++;sceneForm.hidden=true;};
+    sceneForm.append(loading,closeLoading); showLoading(loading,"Loading available clips");
+    try {
+      const catalog = await allAssets(gameId,()=>{},"videos");
+      if (!current() || generation !== sceneGeneration || !sceneForm.isConnected) return;
+      const clips = catalog.filter(a=>a.contentType?.startsWith("video/") && a.metadata?.extra?.relationshipRole === "finished" && !a.lineageWarning);
+      const byKey = new Map(clips.map(a=>[a.key,a])); let ordered = [...(existing?.assetKeys || [])];
+      const name = document.createElement("input"), description = document.createElement("input"), picker = document.createElement("fieldset"), order = document.createElement("ol");
+      name.required = true; name.maxLength = 120; name.value = existing?.name || ""; description.maxLength = 1000; description.value = existing?.description || "";
+      const nameLabel = document.createElement("label"), descriptionLabel = document.createElement("label"), legend = document.createElement("legend"), orderHeading = document.createElement("h3");
+      nameLabel.textContent = "Scene title"; descriptionLabel.textContent = "Scene description"; nameLabel.append(name); descriptionLabel.append(description); legend.textContent = "Clips"; picker.append(legend); orderHeading.textContent = "Clip order";
+      const checks = new Map(); const title = key => byKey.get(key)?.metadata?.title || byKey.get(key)?.name || "Unavailable clip";
+      const save = document.createElement("button"), cancel = document.createElement("button"), message = document.createElement("p"), actions = document.createElement("div");
+      save.type = "submit"; save.className = "primary-button"; save.textContent = "Save scene"; cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; message.setAttribute("role","status"); actions.className = "model-control-row";actions.append(save,cancel);
+      const drawOrder = () => {
+        order.replaceChildren();
+        for(const [index,key] of ordered.entries()) {
+          const li = document.createElement("li"), text = document.createElement("span"); text.textContent = title(key); li.append(text);
+          for(const [label,delta] of [["Move up",-1],["Move down",1],["Remove",0]]) {
+            const button = document.createElement("button");button.type="button";button.className="quiet-button";button.textContent=label;button.setAttribute("aria-label",`${label} ${title(key)}`);
+            button.disabled=delta<0 && index===0 || delta>0 && index===ordered.length-1;
+            button.onclick=()=>{if(delta){[ordered[index],ordered[index+delta]]=[ordered[index+delta],ordered[index]];}else{ordered.splice(index,1);if(checks.has(key))checks.get(key).checked=false;}drawOrder();};li.append(button);
+          }
+          order.append(li);
+        }
+        save.disabled=!ordered.length || ordered.some(key=>!byKey.has(key));
+        message.textContent=ordered.some(key=>!byKey.has(key)) ? "Remove unavailable clips before saving." : "";
+      };
+      for(const clip of clips) {
+        const label=document.createElement("label"), check=document.createElement("input");check.type="checkbox";check.checked=ordered.includes(clip.key);checks.set(clip.key,check);
+        check.onchange=()=>{if(check.checked){if(ordered.length>=50){check.checked=false;message.textContent="Choose up to 50 clips.";return;}ordered.push(clip.key);}else ordered=ordered.filter(key=>key!==clip.key);drawOrder();};label.append(check,document.createTextNode(title(clip.key)));picker.append(label);
+      }
+      sceneForm.replaceChildren(nameLabel,descriptionLabel,picker,orderHeading,order,actions,message);
+      if(!clips.length){const empty=document.createElement("p");empty.textContent="No finished clips yet.";picker.append(empty);}
+      cancel.onclick=()=>{sceneGeneration++;sceneForm.hidden=true;};
+      let pending = null;
+      sceneForm.onsubmit=async event=>{
+        event.preventDefault();
+        pending ||= {gameId,id:existing?.id || `scene-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),assetKeys:[...ordered],expectedRevision:existing?.revision || null,operationId:crypto.randomUUID().replaceAll("-","")};
+        for(const control of sceneForm.querySelectorAll("input,button"))control.disabled=true;
+        try {
+          const response=await api("/video-collections",{},{body:pending});
+          if(!current() || generation!==sceneGeneration)return;
+          const saved=response.collection;
+          if(![...collection.options].some(option=>option.value===saved.id))collection.add(new Option(`${saved.name} (${saved.assetKeys.length})`,saved.id));
+          else [...collection.options].find(option=>option.value===saved.id).textContent=`${saved.name} (${saved.assetKeys.length})`;
+          collection.disabled=false;collection.value=saved.id;sceneForm.hidden=true;await choose();
+        } catch(error) {
+          if(!current() || generation!==sceneGeneration)return;
+          message.textContent=error.status===409 ? "This scene changed. Cancel to review its latest version." : error.message;
+          if(error.status===400){pending=null;for(const control of sceneForm.querySelectorAll("input,button"))control.disabled=false;drawOrder();message.textContent=error.message;}
+          else {save.disabled=error.status===409;save.textContent="Retry save";cancel.disabled=false;}
+        }
+      };
+      drawOrder();name.focus();
+    } catch(error) {if(current() && generation===sceneGeneration)loading.textContent=error.message;}
+  }
+  createScene.onclick=()=>void editSceneClips();editScene.onclick=()=>{if(chosen)void editSceneClips(chosen);};
+
   const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; videoHost.append(more);
   more.onclick = () => { more.disabled = true; more.textContent = "Loading more…"; loadMore(); };
   const posters = new Map(), posterLinks = new Map(), posterRequests = new Map(); let imageGeneration=0;
@@ -2466,29 +2841,31 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   function draw() {
     if (!current()) return;
     cards.replaceChildren(); posters.clear();
+    editScene.disabled = !chosen;
     const needle = view.search.trim().toLocaleLowerCase();
     const selected = displayed.filter(a => (!needle || [a.metadata?.title,a.metadata?.description,...(a.metadata?.tags || [])].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle))
       && (view.category === "all" || (a.metadata?.category || "unclassified") === view.category)
       && (!view.tag || a.metadata?.tags?.includes(view.tag)) && (!view.character || a.metadata?.characterIds?.includes(view.character)));
-    summary.textContent = `${selected.length} of ${displayed.length} ${chosen ? "collection members" : "loaded videos"} match. ${chosen ? "Collection order is preserved; playback never starts automatically." : "Load more to search additional catalog pages."}`;
-    status.textContent = chosen ? `${chosen.name} · ${chosen.description || "No description supplied."}` : displayed.length ? "Episodes, experiments and playful derivatives share this private library. Classification is explicit, never inferred from appearance." : "No videos yet for this game.";
+    summary.textContent = `${selected.length} clip${selected.length===1 ? "" : "s"}`;
+    status.textContent = chosen ? chosen.description || "" : displayed.length ? "" : "No videos yet.";
     more.hidden = Boolean(chosen) || !loadMore;
     videoPlaylist = chosen ? {gameId,collection:chosen,assets:displayed} : null;
     for (const asset of selected) {
       const card = document.createElement("article"); card.className = "novel-card session-card video-card";
       const poster = document.createElement("div"); poster.className = "video-card-poster"; poster.textContent = "No preview image selected";
       const imageKey = asset.metadata?.extra?.preview?.schemaVersion === 1 ? asset.metadata.extra.preview.imageKey : null;
+      poster.hidden = !imageKey;
       if (sameGameKey(imageKey) && /\.(png|jpe?g|webp|avif|gif|svg)$/i.test(imageKey)) {
         poster.textContent = "Loading selected preview…"; poster.dataset.alt = `Preview of ${asset.metadata?.title || asset.name}`;
         if (!posters.has(imageKey)) posters.set(imageKey,[]); posters.get(imageKey).push(poster);
       }
       const title = document.createElement("h2"); title.append(assetLink(asset));
-      const description = document.createElement("p"); description.textContent = asset.metadata?.description || "No description supplied.";
+      const description = document.createElement("p"); description.textContent = asset.metadata?.description || "";
       const categoryText = document.createElement("p"); categoryText.className = "video-category-label";
-      categoryText.textContent = (asset.metadata?.category || "unclassified").replaceAll("-"," ");
+      categoryText.textContent = (asset.metadata?.category || "").replaceAll("-"," ");
       if (asset.metadata?.category === "playful-derivative") card.classList.add("playful-video");
       const info = document.createElement("p"); info.textContent = `${asset.kind} · ${new Date(asset.lastModified).toLocaleString()} · ${(asset.metadata?.tags || []).join(", ") || "No tags"}`;
-      const creator = asset.metadata?.extra?.creator; const credit = document.createElement("p"); credit.textContent = `Creator: ${typeof creator === "string" ? creator : "Not recorded"}`;
+      const creator = asset.metadata?.extra?.creator; const credit = document.createElement("p"); credit.textContent = typeof creator === "string" ? `Creator: ${creator}` : "";
       card.append(poster,categoryText,title,description,info,credit);
       const related = document.createElement("p");
       for (const id of asset.metadata?.characterIds || []) { const c = state.gameDetail?.characters.find(c=>c.id===id); if (!c) continue; const link=document.createElement("a"); link.href=gamePath("characters")+`/${encodeURIComponent(id)}`; link.textContent=c.name; related.append(link,document.createTextNode(" · ")); }
@@ -2526,11 +2903,11 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
         cursor=result.cursor;
         if(cursor && seen.has(cursor)) throw new Error("Repeated collection cursor"); if(cursor)seen.add(cursor);
         collection.disabled=false;
-        collectionsStatus.textContent=`${count} loaded collections. Saving collections uses Panther CLI; it does not classify videos or alter source assets.`;
+        collectionsStatus.textContent=count ? `${count} scenes` : "";
         collectionMore.hidden=!cursor; collectionMore.disabled=false;
       };
       const collectionMore=document.createElement("button"); collectionMore.type="button"; collectionMore.className="quiet-button"; collectionMore.textContent="Load more collections"; collectionMore.hidden=true; controls.append(collectionMore);
-      collectionMore.onclick=async()=>{ collectionMore.disabled=true; try{await nextPage();}catch(error){if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. Refresh to retry.`;} };
+      collectionMore.onclick=async()=>{ collectionMore.disabled=true; try{await nextPage();}catch(error){if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. Reload the page to try again.`;} };
       await nextPage();
       if(view.collection) { if(![...collection.options].some(o=>o.value===view.collection)) collection.add(new Option("Selected collection",view.collection)); collection.value=view.collection; await choose(); }
     } catch(error) { if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. The loaded video library remains usable.`; }
@@ -2607,16 +2984,21 @@ function configureVideoPreview(asset, video, epoch) {
 }
 
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
+  document.getElementById("session-library").dataset.paged = String(previousAssets.length > 0 || Boolean(cursor));
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
-  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section);
+  if(section === "videos") renderEditorialComposer("video",epoch);
+  const videoComposer=document.getElementById("editorial-video-composer");
+  if(videoComposer)videoComposer.hidden=section!=="videos";
+  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section) || (!liveRecords.length && !liveFailure);
   if (["transcripts", "audio"].includes(section)) {
     drawLive();
     for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
   document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
   status.hidden = false;
+  status.dataset.empty = "false";
   const loading = showLoading(status, `Fetching ${section} from the catalog…`);
   try {
     // A bounded page of the selected section, never an automatic whole-game scan.
@@ -2638,6 +3020,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       : section === "videos" ? a.contentType.startsWith("video/") || /\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name)
       : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
         && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
+    status.dataset.empty=String(!selected.length);
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     if (section === "videos") {
       renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
@@ -2647,6 +3030,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
         : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
       : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
+    if (!selected.length && roomCapture?.draft && !roomCapture.el.result.hidden) status.hidden=true;
     const sessionGroups = new Map();
     for (const asset of selected) {
       const card = document.createElement("article"); card.className = "novel-card session-card";
@@ -2686,7 +3070,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       if (!selected.length) status.textContent = `No ${section} to display in these entries. More entries are available.`;
     }
   } catch (error) {
-    if (current()) status.textContent = `${error.message}. Use Refresh to retry.`;
+    if (current()) status.textContent = `${error.message}. Reload the page to try again.`;
   }
 }
 
@@ -2798,7 +3182,7 @@ async function renderAssetLinks(key, epoch) {
     const assets = await allAssets(gameId);
     if (!current()) return;
     const item = assets.find(a => a.key === key);
-    if (!item) { host.textContent = "This asset is not in the current catalog. Refresh to retry."; return; }
+    if (!item) { host.textContent = "This asset is not in the current catalog. Reload the page to try again."; return; }
     host.replaceChildren();
     const connections = finishedAssetConnections(assets, key, gameId);
     appendFinishedConnections(host, connections);
@@ -2895,7 +3279,7 @@ async function loadMovies(assets, epoch) {
     drawMovieWorkspace(host, data, key, assets, current);
   } catch (error) {
     if (!current()) return;
-    host.replaceChildren(movieNode("p", `${error.message}. Use Refresh to retry.`, "error"),
+    host.replaceChildren(movieNode("p", `${error.message}. Reload the page to try again.`, "error"),
       movieButton("← All videos", () => navigate(gamePath("videos"))));
   }
 }
@@ -3115,26 +3499,24 @@ function timestamp(seconds) {
 
 function attachMediaRecovery(audio, key, current) {
   audio.preload = "metadata";
-  const activity = document.createElement("p"); audio.after(activity);
-  const waiting = () => { if (current()) { activity.hidden = false; showLoading(activity, "Buffering audio/video for playback…"); } };
-  const ready = () => { activity.hidden = true; activity.replaceChildren(); };
-  audio.addEventListener("loadstart", waiting); audio.addEventListener("waiting", waiting);
-  for (const event of ["loadedmetadata", "canplay", "playing", "ended", "error"]) audio.addEventListener(event, ready);
-  const warning = document.createElement("p"), retry = document.createElement("button");
-  warning.hidden = true; warning.className = "error";
-  retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Refresh playback link";
-  warning.append("Playback failed or the link expired. Refresh the link, or download the original if this browser cannot decode it. ", retry);
-  audio.after(warning);
-  audio.addEventListener("error", () => { if (current()) warning.hidden = false; });
-  retry.addEventListener("click", async () => {
-    const time = audio.currentTime;
+  const activity=document.createElement("p"), warning=document.createElement("p");audio.after(activity,warning);warning.hidden=true;warning.className="error";
+  let recovering=false, attempts=0;
+  const waiting=()=>{if(current()){activity.hidden=false;showLoading(activity,"Loading playback");}};
+  const ready=()=>{activity.hidden=true;activity.replaceChildren();};
+  audio.addEventListener("loadstart",waiting);audio.addEventListener("waiting",waiting);
+  for(const event of ["loadedmetadata","canplay","playing","ended","error"])audio.addEventListener(event,ready);
+  audio.addEventListener("playing",()=>{attempts=0;warning.hidden=true;});
+  audio.addEventListener("error",async()=>{
+    if(!current() || recovering)return;
+    if(attempts>=1){warning.textContent="Playback unavailable. You can download the original.";warning.hidden=false;return;}
+    recovering=true;attempts++;const position=audio.currentTime, resume=!audio.paused;waiting();
     try {
-      const result = await api("/object-url", {key});
-      if (!current()) return;
-      audio.src = result.url;
-      audio.addEventListener("loadedmetadata", () => { if (current()) audio.currentTime = time; }, {once:true});
-      warning.hidden = true;
-    } catch { if (current()) warning.hidden = false; }
+      const result=await api("/object-url",{key});if(!current())return;
+      audio.src=result.url;
+      audio.addEventListener("loadedmetadata",()=>{if(current()){audio.currentTime=position;if(resume)void audio.play().catch(()=>{});}},{once:true});
+      warning.hidden=true;
+    }catch{if(current()){warning.textContent="Playback unavailable. You can download the original.";warning.hidden=false;ready();}}
+    finally{recovering=false;}
   });
 }
 
@@ -3142,17 +3524,23 @@ function renderStructuredAsset(asset, epoch) {
   const doc = asset.document;
   if (!doc) { elements.previewBody.textContent = "Structured preview unavailable. Use Open original; the source is unchanged."; return; }
   const host = document.createElement("div"); host.className = "structured-asset";
-  const transcript = doc.entityType === "PlayerTranscript" ? doc : ["corrected-transcript", "edited-transcript"].includes(doc.stage) ? doc.payload?.transcript : null;
+  const transcript = ["PlayerTranscript", "BrowserTranscript"].includes(doc.entityType) ? doc : ["corrected-transcript", "edited-transcript"].includes(doc.stage) ? doc.payload?.transcript : null;
   if (transcript && Array.isArray(transcript.segments)) {
     const notice = document.createElement("p"); notice.className = "novel-notice";
     const edited = [asset.kind, doc.stage, doc.artifactType].some(kind => ["corrected-transcript", "edited-transcript"].includes(kind));
     notice.textContent = `${edited ? "Corrected / edited transcript" : "Raw transcript"} · ${doc.reviewStatus || "unreviewed"}. Speakers identify players, not characters.`;
     if (doc.publicationStatus === "accepted-with-notes") notice.textContent += " Working draft with unresolved review notes.";
     if (!transcript.captureIntegrity) notice.textContent += " Capture integrity was not recorded in this version.";
+    if (doc.entityType === "BrowserTranscript") notice.textContent = "Full browser transcription · unreviewed. Speakers are unassigned. Timestamps mark transcription windows, not individual utterances.";
     host.append(notice);
     if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
-    const navigation = transcriptNavigation(host, asset, transcript, epoch, people);
+    const bundle=transcript.entityType==='EditorialTranscriptBundle';
+    if(bundle)notice.textContent+=' Times belong to each source session; this collection has no shared audio timeline.';
+    const navigation = bundle ? {
+      add(line,segment) {if(sameGameKey(segment.sourceKey)){const source=assetLink({key:segment.sourceKey},'Source transcript');line.append(source);}},
+      finish() {},
+    } : transcriptNavigation(host, asset, transcript, epoch, people);
     for (const segment of transcript.segments) {
       const line = document.createElement("section"); line.className = "transcript-segment";
       const heading = document.createElement("h3"), text = document.createElement("p");
@@ -3170,7 +3558,7 @@ function renderStructuredAsset(asset, epoch) {
     )));
     if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
     navigation.finish();
-  } else if (doc.entityType === "Recording" && Array.isArray(doc.parts)) {
+  } else if (["Recording", "BrowserRecording"].includes(doc.entityType) && Array.isArray(doc.parts)) {
     const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} lossless original parts retained. One continuous listening copy; assembly does not repair capture gaps.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
     const status = document.createElement("p"); status.setAttribute("role", "status"); showLoading(status, "Finding the continuous audio playback file…");
@@ -3353,7 +3741,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
 
 document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 novel.refresh.addEventListener("click", () => { assetIndex = null; void renderRoute(); });
-document.getElementById("character-assets-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
+document.getElementById("character-create").addEventListener("click", createCharacter);
 novel.back.addEventListener("click", () => navigate(gamePath("novel") + (currentNovelBook ? `?book=${encodeURIComponent(currentNovelBook.id)}&bookRevision=${encodeURIComponent(currentNovelBook.revision)}` : "")));
 novel.read.addEventListener("click", () => novelView(false));
 novel["show-details"].addEventListener("click", () => novelView(true));
@@ -3373,6 +3761,218 @@ elements.previewDialog.addEventListener("cancel", event => { event.preventDefaul
 elements.previewDialog.addEventListener("click", (event) => {
   if (event.target === elements.previewDialog) closePreview();
 });
+// Room capture v1. IndexedDB retains closed PCM parts before any network request.
+class RoomRecorder {
+  constructor() {
+    this.host=document.getElementById('room-recorder'); this.recording=false; this.draft=null; this.liveEnabled=false;
+    this.writeChain=Promise.resolve(); this.uploadChain=Promise.resolve(); this.nodes=new Map();
+    this.el=Object.fromEntries(['start','stop','status','state','timer','level','live-toggle','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
+    this.el.audio=document.createElement('audio');this.el.audio.id='room-audio';this.el.audio.controls=true;this.el.audio.preload='metadata';this.el.audio.hidden=true;
+    this.el.start.onclick=()=>this.start(); this.el.stop.onclick=()=>this.stop();
+    this.el['live-toggle'].onclick=()=>{this.liveEnabled=!this.liveEnabled; this.buttons(); this.say(this.liveEnabled?'Live transcription enabled for new audio.':'New live requests paused. A full pass will still run after Stop.');};
+    this.el.resume.onclick=async()=>{this.uploadError=false; this.el.resume.disabled=true; try {await this.upload(); if(!this.recording) await this.archive();} catch(error) {this.say(error.message,true);} finally {this.el.resume.disabled=false;}};
+    this.el.download.onclick=()=>this.download();
+    window.addEventListener('beforeunload',event=>{if(this.recording){event.preventDefault();event.returnValue='';}});
+  }
+  owner() {if(!state.tokens?.id_token) return null;try {const claims=decodeToken(state.tokens.id_token);return claims.sub || claims["cognito:username"] || null;} catch {return null;}}
+  async db() {
+    if(!this.database) this.database=new Promise((resolve,reject)=>{
+      const request=indexedDB.open('panther-room-audio-v1',1);
+      request.onupgradeneeded=()=>{request.result.createObjectStore('drafts',{keyPath:'id'});request.result.createObjectStore('parts',{keyPath:'id'});};
+      request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(new Error('Browser storage is unavailable. Recording has not started.'));
+    });
+    return this.database;
+  }
+  async store(store, operation, value) {
+    const db=await this.db(); return new Promise((resolve,reject)=>{
+      const tx=db.transaction(store,['put','delete'].includes(operation)?'readwrite':'readonly'), request=tx.objectStore(store)[operation](value);
+      tx.oncomplete=()=>resolve(request.result); tx.onerror=()=>reject(new Error('Could not save audio in this browser. Stop and download retained parts.')); tx.onabort=tx.onerror;
+    });
+  }
+  persist() {const draft=this.draft; this.writeChain=this.writeChain.then(()=>this.store('drafts','put',structuredClone(draft))); return this.writeChain;}
+  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;}
+  buttons() {
+    this.host.dataset.recording=String(this.recording); this.el.start.hidden=this.recording; this.el.stop.hidden=!this.recording;
+    this.el.start.disabled=!!this.archiving || !!this.stopping || (!!this.draft && this.draft.status!=='archived');
+    this.el['live-toggle'].disabled=!this.capabilities?.transcriptionAvailable;this.el['live-toggle'].hidden=!this.recording || !this.capabilities?.transcriptionAvailable;
+    this.el['live-toggle'].setAttribute('aria-pressed',String(this.liveEnabled)); this.el['live-toggle'].textContent=this.liveEnabled?'Live text on':'Live text off';
+    this.el.state.textContent=this.stopping?'Finishing…':'Recording';this.el.state.hidden=!this.recording && !this.stopping;this.el.timer.hidden=!this.recording && !this.stopping;this.el.level.hidden=!this.recording;
+    elements.gameSelector.disabled=this.recording || !!this.stopping || !!this.archiving;
+  }
+  async render(section,epoch) {
+    const visible=section==='audio' || this.recording || this.stopping;
+    this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
+    if(['audio','transcripts'].includes(section)) document.getElementById('session-library').insertBefore(this.host,document.getElementById('live-transcript'));
+    else document.getElementById('game-context').after(this.host);
+    try {
+      this.capabilities ||= await api('/browser-recording/capabilities');
+      if(epoch!==routeEpoch) return;
+      if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;return;}
+      if(!this.capabilities.canRecord) {this.host.hidden=true; return;}
+      if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
+        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
+        const held=await navigator.locks?.query();
+        if(held?.held.some(lock=>lock.name==='panther-room-capture')) {this.say('Another tab is using the room recorder.',true);this.el.start.disabled=true;return;}
+        const drafts=await this.store('drafts','getAll');
+        this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived').sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
+        if(this.draft) {this.draft.status='interrupted';if(!this.draft.manifestDoc) this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');await this.persist();this.showResult('Audio retained','error');this.el.recovery.hidden=false;this.say('Closed audio parts were recovered from this browser. Save them without recording again.');}
+        this.liveEnabled=!!this.capabilities.transcriptionAvailable;
+      }
+      this.buttons();
+    } catch(error) {this.host.hidden=true;}
+  }
+  async start() {
+    if(this.recording || this.stopping || !this.capabilities?.canRecord || this.el.start.disabled) return;
+    if(!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode || !navigator.locks) {this.say('Use a current browser on HTTPS or localhost with microphone, AudioWorklet and Web Locks support.',true);return;}
+    await navigator.locks.request('panther-room-capture',{ifAvailable:true},async lock=>{
+      if(!lock) {this.say('Another tab is already recording. Return to that tab to stop it.',true);return;}
+      this.el.start.disabled=true;
+      try {
+        await this.db();
+        this.stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:32000,echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
+        this.context=new AudioContext({sampleRate:32000});
+        if(this.context.sampleRate!==32000) throw new Error('This browser cannot provide the supported 32 kHz capture format.');
+        await this.context.audioWorklet.addModule(document.querySelector('meta[name="panther-pcm-worklet"]').content);
+        const track=this.stream.getAudioTracks()[0];
+        this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+new Date().toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
+        this.writeChain=Promise.resolve(); await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
+        this.node=new AudioWorkletNode(this.context,'panther-pcm-capture-v1'); this.source=this.context.createMediaStreamSource(this.stream);
+        this.node.port.onmessage=event=>{
+          if(event.data.type==='level') this.el.level.value=event.data.peak;
+          if(event.data.type==='part') this.writeChain=this.writeChain.then(()=>this.savePart(event.data.samples)).catch(error=>{this.say(error.message,true);void this.stop('Browser storage failed; the active part may be incomplete.');});
+          if(event.data.type==='stopped') {if(this.stopping) this.stopped?.();else if(this.recording) void this.stop('The supported recording length was reached; captured parts are retained.',true);}
+        };
+        this.node.onprocessorerror=()=>void this.stop('The audio processor failed; the unfinished part may be missing.');
+        track.onended=()=>{if(this.recording) void this.stop('The microphone disconnected.');};
+        this.source.connect(this.node);this.node.connect(this.context.destination);await this.context.resume();
+        this.context.onstatechange=()=>{if(this.recording && this.context.state==='suspended') {this.draft.captureWarnings.push('The browser suspended capture; audio may be missing.');this.say('Audio capture is suspended by the browser. Return to this tab and Stop to retain captured parts.',true);}};
+        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();this.say('Recording. Closed parts are saved in this browser before backup.');
+        this.timer=setInterval(()=>{this.el.timer.textContent=timestamp((performance.now()-this.started)/1000);},1000);
+        await new Promise(resolve=>{this.unlock=resolve;});
+      } catch(error) {
+        this.stream?.getTracks().forEach(track=>track.stop());await this.context?.close();this.recording=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
+        this.say(error.name==='NotAllowedError'?'Microphone access was denied. Allow microphone access to start recording.':error.message,true);this.buttons();
+      }
+    });
+  }
+  async savePart(buffer) {
+    const count=buffer.byteLength/2, blob=this.wav(new Int16Array(buffer));
+    const bytes=await blob.arrayBuffer(), hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+    const sha=Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('');
+    const index=this.draft.parts.length, start=this.draft.parts.reduce((sum,p)=>sum+p.duration,0);
+    const part={file:`part-${String(index).padStart(4,'0')}.wav`,start,duration:count/32000,size:blob.size,sha256:sha,sampleRate:32000,channels:1,bitsPerSample:16,uploaded:false,liveWanted:this.liveEnabled};
+    await this.store('parts','put',{id:this.draft.id+'#'+index,blob});this.draft.parts.push(part);
+    await this.store('drafts','put',structuredClone(this.draft));
+    void this.upload();
+    if(this.draft.parts.length>=this.capabilities.maxParts && this.recording) void this.stop('The supported recording length was reached; captured audio is retained.');
+  }
+  wav(samples) {
+    const bytes=new ArrayBuffer(44+samples.length*2), view=new DataView(bytes);
+    const text=(at,value)=>{for(let i=0;i<value.length;i++) view.setUint8(at+i,value.charCodeAt(i));};
+    text(0,'RIFF');view.setUint32(4,bytes.byteLength-8,true);text(8,'WAVE');text(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,32000,true);view.setUint32(28,64000,true);view.setUint16(32,2,true);view.setUint16(34,16,true);text(36,'data');view.setUint32(40,samples.length*2,true);
+    samples.forEach((sample,i)=>view.setInt16(44+i*2,sample,true));return new Blob([bytes],{type:'audio/wav'});
+  }
+  async put(blob,filename,kind,extra,sources=[]) {
+    const bytes=await blob.arrayBuffer(), hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+    const sha=btoa(String.fromCharCode(...hash)), key=`games/${this.draft.gameId}/assets/${this.draft.id}/original/${filename}`;
+    try {const old=await api('/object-url',{key});if(old.size===blob.size && old.metadata?.extra?.sha256===sha) return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};throw new Error('An existing archive object differs. Retained audio will not be overwritten.');} catch(error) {if(error.status!==404) throw error;}
+    const signed=await api('/uploads',{}, {body:{gameId:this.draft.gameId,assetId:this.draft.id,kind,filename,size:blob.size,sha256:sha,contentType:blob.type,metadata:{title:kind==='recording-manifest'?this.draft.sessionName:filename,sessionId:this.draft.sessionId,category:kind==='recording'?'canonical-source':'unclassified',characterIds:[],sourceKeys:sources,extra:{...extra,sha256:sha,chunkSetId:this.draft.id,generation:{schemaVersion:1,method:kind==='recording'?'capture':'procedural',inference:'not-applicable',execution:'local',tool:kind==='recording'?'Browser Web Audio PCM capture':'Panther browser recording manifest',cost:{status:'not-applicable'}}}}}});
+    const headers={...signed.headers};delete headers['Content-Length'];
+    const response=await fetch(signed.url,{method:'PUT',headers,body:blob});
+    if(!response.ok) throw new Error('Audio backup did not finish. Retained browser audio can be saved again.');
+    return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};
+  }
+  upload() {
+    this.uploadChain=this.uploadChain.then(async()=>{
+      if(this.uploadError || !this.draft) return;
+      if(this.draft.owner!==this.owner()) throw new Error('Sign in to the capturing account to save retained audio.');
+      for(let i=0;i<this.draft.parts.length;i++) {
+        const part=this.draft.parts[i];
+        if(!part.uploaded) {
+          const saved=await this.store('parts','get',this.draft.id+'#'+i);
+          const original={recordingId:this.draft.id,...Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted'].includes(key)))};
+          const uploaded=await this.put(saved.blob,part.file,'recording',{browserPart:original,recordingId:this.draft.id});
+          part.key=uploaded.key;part.uploaded=true;await this.persist();
+        }
+        if(part.liveWanted && this.liveEnabled && !part.liveSubmitted && this.capabilities.transcriptionAvailable) {
+          try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'live',inputKey:part.key}});part.liveSubmitted=true;await this.persist();this.schedulePoll();}
+          catch {this.say('Live transcription is unavailable for this part. Source audio is retained for the full pass.',true);}
+        }
+      }
+    }).catch(error=>{this.uploadError=true;this.el.recovery.hidden=false;this.say(error.message,true);});
+    return this.uploadChain;
+  }
+  async stop(warning=null,alreadyStopped=false) {
+    if(!this.recording || this.stopping) return;
+    this.stopping=true;this.el.stop.disabled=true;this.showResult('Saving audio…');let flushFailed=false;if(warning) this.draft.captureWarnings.push(warning);
+    if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
+    this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream.getTracks().forEach(track=>track.stop());this.source.disconnect();this.node.disconnect();await this.context.close();
+    await this.writeChain;this.unlock?.();if(!this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=true;this.el.result.hidden=true;this.say('No audio was captured. You can start a new recording.');return;}
+    this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
+    this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=false;this.el.download.hidden=false;
+    try {await this.archive();} catch(error) {this.say(error.message,true);}
+  }
+  interrupt() {if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
+  async archive() {
+    if(this.archiving) return this.archiving;
+    this.archiving=this.saveArchive().finally(()=>{this.archiving=null;this.buttons();});this.buttons();return this.archiving;
+  }
+  async saveArchive() {
+    if(this.recording || this.stopping || !this.draft?.parts.length) {this.say('No completed audio parts to save yet.',true);return;}
+    if(this.draft.owner!==this.owner()) throw new Error('Sign in to the capturing account to save retained audio.');
+    await this.upload();if(this.uploadError) return;
+    const doc=this.draft.manifestDoc || {schemaVersion:1,entityType:'BrowserRecording',id:this.draft.id,gameId:this.draft.gameId,sessionId:this.draft.sessionId,sessionName:this.draft.sessionName,startedAt:this.draft.startedAt,device:this.draft.device,status:this.draft.status==='interrupted'?'interrupted':'complete',sourceFormat:'wav',captureWarnings:this.draft.captureWarnings,parts:this.draft.parts.map(part=>Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted','key'].includes(key))))};
+    this.draft.manifestDoc=doc;await this.persist();
+    const manifest=await this.put(new Blob([JSON.stringify(doc)],{type:'application/json'}),'recording.json','recording-manifest',{recordingId:this.draft.id});
+    const completed=await api('/browser-recording/complete',{}, {body:{gameId:this.draft.gameId,recordingKey:manifest.key,manifestSha256:manifest.hex,status:'COMPLETE'}});
+    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;await this.persist();this.buttons();this.say('Audio saved.');this.showResult('Preparing audio…');
+    this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;this.schedulePoll();
+    if(this.capabilities?.transcriptionAvailable) {
+      this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='processing';this.el['final-status'].textContent='Transcribing…';
+      try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'final',playbackJobId:completed.jobId}});this.draft.finalRequested=true;await this.persist();this.schedulePoll();}
+      catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say('Audio saved. Retry to finish transcription.',true);this.buttons();}
+    }
+  }
+  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=!(this.draft.manifestDoc?.status==='interrupted' || this.draft.status==='interrupted');this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
+  schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
+  async poll() {
+    if(!this.draft || !state.tokens) return;
+    const draft=this.draft;
+    try {
+      let pending=false;
+      for(const mode of ['live',...(this.draft.finalRequested?['final']:[])]) {
+        const result=await api('/browser-transcriptions',{gameId:draft.gameId,recordingId:draft.id,mode,...(draft.playbackJobId?{playbackJobId:draft.playbackJobId}:{})});
+        if(this.draft!==draft || state.gameId!==draft.gameId || !state.tokens) return;
+        if(result.playback) {
+          const playback=result.playback;pending ||= !['DONE','FAILED'].includes(playback.status);
+          this.showResult(playback.status==='DONE'?'Audio ready':playback.status==='FAILED'?'Audio processing failed':'Preparing audio…',playback.status==='DONE'?'ready':playback.status==='FAILED'?'error':'processing');
+          if(playback.audioKey && this.audioKey!==playback.audioKey) {const link=await api('/object-url',{key:playback.audioKey});if(this.draft!==draft || state.gameId!==draft.gameId) return;this.audioKey=playback.audioKey;this.el.audio.src=link.url;this.el.audio.hidden=false;this.el.result.insertBefore(this.el.audio,this.el['final-link']);}
+        }
+        pending ||= result.jobs.some(job=>['SUBMITTED','RUNNING'].includes(job.status));
+        if(mode==='live') {
+          for(const job of result.jobs) if(job.status==='DONE' && !this.nodes.has(job.id)) {
+            this.el.live.hidden=false;const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
+          }
+          if(result.jobs.some(job=>job.status==='UNKNOWN')) this.say('Some live transcription outcomes are unknown. Audio is retained; paid requests will not be repeated automatically.',true);
+        } else {
+          pending ||= !result.transcriptKey && !result.jobs.some(job=>job.status==='UNKNOWN');
+          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':result.jobs.some(job=>job.status==='UNKNOWN')?'error':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':result.jobs.some(job=>job.status==='UNKNOWN')?'Transcription unavailable':'Transcribing…';
+          if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}
+        }
+      }
+      if(this.recording || pending) this.pollTimer=setTimeout(()=>void this.poll(),5000);
+    } catch {if(this.draft===draft && state.tokens) this.pollTimer=setTimeout(()=>void this.poll(),15000);}
+  }
+  async download() {
+    if(!this.draft) return;
+    // Separate closed originals are retained; no listening derivative is assembled by the uploader.
+    for(let i=0;i<this.draft.parts.length;i++) {
+      const saved=await this.store('parts','get',this.draft.id+'#'+i);const link=document.createElement('a');link.href=URL.createObjectURL(saved.blob);link.download=this.draft.parts[i].file;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),30000);
+    }
+  }
+}
+roomCapture = new RoomRecorder();
+
 elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
 elements.gameSelector.addEventListener("change", () => {
   const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
@@ -3491,6 +4091,8 @@ function liveState(record) {
 function drawLive() {
   if (!state.tokens || !liveGame || liveGame !== state.gameId) return;
   const badge = document.getElementById("recording-badge"), status = document.getElementById("live-status");
+  const section=elements.primaryNav.querySelector("[aria-current]")?.dataset.section;
+  document.getElementById("live-transcript").hidden = !["audio","transcripts"].includes(section) || (!liveRecords.length && !liveFailure);
   const active = liveRecords.find(r => liveState(r) === "recording");
   const current = active || liveRecords[0];
   const mode = current ? liveState(current) : liveFailure ? "lost" : "none";
@@ -3615,6 +4217,7 @@ async function start() {
     const initial = document.getElementById("page-loading"); initial.hidden = false;
     showLoading(initial, "Restoring your Panther session…");
     await completeLogin();
+    if (location.pathname === "/account/recovery") { await renderRoute(); return; }
     await ensureSession();
     await renderRoute();
   } catch (error) {
@@ -3624,14 +4227,126 @@ async function start() {
   }
 }
 
+// Creation requests select immutable sources; subscription workers own every editorial stage.
+const editorialComposers = new Map();
+const editorialPolls = new WeakMap();
+function renderEditorialComposer(target, epoch) {
+  const gameId=state.gameId, key=`${gameId}:${target}`;
+  let host=document.getElementById(`editorial-${target}-composer`);
+  if(!host) {host=document.createElement('section');host.id=`editorial-${target}-composer`;host.className='editorial-composer';}
+  const parent=document.getElementById(target==='novel'?'novel':'session-library');
+  parent.querySelector('.explorer-heading').after(host);
+  host.hidden=target==='novel'&&Boolean(currentChapter);
+  if(host.dataset.key===key) {
+    const existing=editorialComposers.get(key);
+    if(existing)void showEditorialProgress(existing.jobId,existing.progress,gameId,target);
+    return;
+  }
+  host.dataset.key=key;host.replaceChildren();
+  const current=()=>state.gameId===gameId&&host.dataset.key===key&&host.isConnected;
+  const open=document.createElement('button');open.type='button';open.className='primary-button';open.textContent=target==='novel'?'Generate chapter':'Create video project';host.append(open);
+  const panel=document.createElement('div');panel.className='editorial-creation-panel';panel.hidden=true;host.append(panel);
+  const projects=document.createElement('div');projects.className='editorial-existing-projects';host.append(projects);
+  const loadProjects=async(cursor)=>{
+    try {const result=await api('/editorial-jobs',{gameId,cursor});if(!current())return;
+      for(const job of result.jobs||[])if(job.creation?.target===target){
+        const button=document.createElement('button');button.type='button';button.className='quiet-button';button.textContent=job.creation.title;
+        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
+      }
+      if(result.cursor){const more=document.createElement('button');more.type='button';more.className='text-link-button';more.textContent='More projects';more.onclick=()=>{more.remove();void loadProjects(result.cursor);};projects.append(more);}
+    }catch{/* Creation remains available if the optional project list is unavailable. */}
+  };
+  void loadProjects();
+  open.onclick=async()=>{
+    if(panel.dataset.project==='true'){panel.replaceChildren();panel.dataset.project='false';panel.hidden=true;}
+    panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
+    if(panel.hidden||panel.childNodes.length)return;
+    const form=document.createElement('form'), fields=document.createElement('div'), status=document.createElement('p');status.setAttribute('role','status');
+    const field=(label,multiline=false)=>{const wrapper=document.createElement('label'), caption=document.createElement('span'), input=document.createElement(multiline?'textarea':'input');caption.textContent=label;wrapper.append(caption,input);fields.append(wrapper);return input;};
+    const title=field('Title');title.required=true;title.maxLength=160;
+    const brief=field('Direction',true);brief.maxLength=4000;brief.placeholder=target==='novel'?'Tone, point of view, and what to focus on':'Story, tone, and visual direction';
+    const sources=document.createElement('fieldset'), legend=document.createElement('legend');legend.textContent='Transcripts';sources.append(legend);
+    const references=document.createElement('details'), summary=document.createElement('summary'), contexts=document.createElement('div');summary.textContent='Add context';references.append(summary,contexts);
+    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=target==='novel'?'Generate chapter':'Create project';submit.disabled=true;
+    form.append(fields,sources,references,submit,status);panel.append(form);
+    const selected=new Set(), selectedContext=new Set();
+    const choices=(assets,destination,set)=>{for(const asset of assets){const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);submit.disabled=!selected.size;};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
+    const page=async(section,destination,set,predicate,cursor)=>{
+      showLoading(status,'Loading sources…');
+      try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
+        choices(result.assets.filter(predicate),destination,set);status.textContent='';
+        if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='Load more';more.onclick=()=>{more.remove();void page(section,destination,set,predicate,result.cursor);};destination.append(more);}
+        if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed raw transcripts yet.':'No context sources yet.';destination.append(empty);}
+      }catch(error){if(current())status.textContent=error.message;}
+    };
+    await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
+    references.addEventListener('toggle',()=>{if(references.open&&!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout'].includes(a.kind)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='evidence'||['canonical-source','reference'].includes(a.metadata?.category)||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));},{once:true});
+    form.onsubmit=async event=>{
+      event.preventDefault();if(!selected.size)return;
+      if(selected.size>8||selectedContext.size>12){status.textContent='Choose up to 8 transcripts and 12 context sources.';return;}
+      submit.disabled=true;status.textContent=target==='novel'?'Starting chapter…':'Starting project…';
+      try {const job=await api('/editorial-jobs',{}, {body:{gameId,creation:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]}}});
+        if(!current())return;form.hidden=true;open.hidden=true;
+        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',target==='novel'?'Chapter progress':'Video project progress');panel.append(progress);
+        editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
+      }catch(error){if(current()){status.textContent=error.message;submit.disabled=false;}}
+    };
+  };
+}
+
+async function showEditorialProgress(jobId, host, gameId, target) {
+  clearTimeout(editorialPolls.get(host));
+  if(state.gameId!==gameId||host.closest('[hidden]')||!host.isConnected)return;
+  try {
+    const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
+    const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
+    heading.textContent=result.job.creation?.title||'Editorial project';
+    const terminal=['FAILED','NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
+    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Planning ready':result.job.status==='FAILED'?'Processing failed':'Processing';
+    const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Processing details';activity.append(summary,stages);
+    host.replaceChildren(heading,copy,activity);
+    for(const task of result.tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
+      if(task.status==='DONE'&&task.output?.key){const link=document.createElement('a');link.textContent='View';link.href=`/games/${gameId}/media?asset=${encodeURIComponent(task.output.key)}`;item.append(' ',link);}stages.append(item);}
+    if(target==='video'&&result.tasks.some(t=>t.stage==='video-storyboards'&&t.status==='DONE')) {
+      const task=result.tasks.find(t=>t.stage==='video-storyboards');
+      const link=await api('/object-url',{key:task.output.key});const response=await fetch(link.url);if(!response.ok)throw new Error('Storyboard unavailable');
+      const bytes=await response.arrayBuffer();if(bytes.byteLength!==task.output.size||bytes.byteLength>2*1024**2)throw new Error('Storyboard size mismatch');
+      const checksum=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))));if(checksum!==task.output.sha256)throw new Error('Storyboard changed');
+      const artifact=JSON.parse(new TextDecoder().decode(bytes));if(artifact.jobId!==jobId||artifact.gameId!==gameId||artifact.stage!=='video-storyboards')throw new Error('Invalid storyboard');
+      if(state.gameId!==gameId||!host.isConnected)return;
+      const boardKey=artifact.payload?.storyboardKey;
+      if(sameGameKey(boardKey)) {
+        const boardLink=await api('/object-url',{key:boardKey});if(state.gameId!==gameId||!host.isConnected)return;
+        const image=document.createElement('img');image.className='editorial-storyboard-image';image.alt='Schematic storyboard panels';image.src=boardLink.url;host.append(image);
+      }
+      const grid=document.createElement('div');grid.className='editorial-storyboard-grid';
+      for(const shot of artifact.payload?.shots||artifact.payload?.review?.shots||[]){const card=document.createElement('article'), title=document.createElement('h3'), description=document.createElement('p');title.textContent=shot.shotId;description.textContent=shot.description;card.append(title,description);grid.append(card);}host.append(grid);
+    }
+    if(!terminal)editorialPolls.set(host,setTimeout(()=>void showEditorialProgress(jobId,host,gameId,target),5000));
+  } catch(error) {if(host.isConnected&&state.gameId===gameId){host.textContent=error.message;editorialPolls.set(host,setTimeout(()=>void showEditorialProgress(jobId,host,gameId,target),15000));}}
+}
+
 // Account operations use the first-party HttpOnly session. Credentials never go
 // into storage, URLs, generic asset APIs, or browser logs.
 let accountSettingsEpoch = 0;
+let accountReturnPath = "/";
 function closeAccountSettings() {
   accountSettingsEpoch += 1;
-  const dialog = document.getElementById("account-settings-dialog");
-  if (dialog.open) dialog.close();
+  document.getElementById("account-page").hidden = true;
   document.getElementById("account-settings-body").replaceChildren();
+  document.getElementById("account-section-nav").replaceChildren();
+  document.getElementById("account-settings-button").removeAttribute("aria-current");
+}
+
+function visitAccount(recovery = false) {
+  if (!location.pathname.startsWith("/account")) accountReturnPath = location.pathname + location.search;
+  navigate(recovery ? "/account/recovery" : "/account");
+}
+
+function leaveAccount() {
+  const recovery = location.pathname === "/account/recovery";
+  navigate(recovery ? "/" : accountReturnPath);
+  if (recovery) document.getElementById("password-recovery-button").focus();
 }
 
 async function accountRequest(action, values = {}, recovery = false) {
@@ -3650,7 +4365,12 @@ async function accountRequest(action, values = {}, recovery = false) {
 
 function accountSection(host, title, description) {
   const section=document.createElement("section"), heading=document.createElement("h3"), copy=document.createElement("p");
-  heading.textContent=title; copy.textContent=description; section.append(heading,copy); host.append(section); return section;
+  section.className="account-section";
+  section.id="account-"+title.toLowerCase().replace(/[^a-z0-9]+/g,"-");
+  heading.textContent=title; copy.textContent=description; section.append(heading,copy); host.append(section);
+  const link=document.createElement("a"); link.href="#"+section.id; link.textContent=title;
+  document.getElementById("account-section-nav").append(link);
+  return section;
 }
 
 function accountField(form, label, type="text", value="") {
@@ -3682,9 +4402,24 @@ function accountForm(section, title, action) {
 
 async function openAccountSettings(recovery=false) {
   closeAccountSettings(); const epoch=accountSettingsEpoch;
-  const dialog=document.getElementById("account-settings-dialog"), host=document.getElementById("account-settings-body");
-  document.getElementById("account-settings-title").textContent=recovery?"Password recovery":"Account settings";
-  dialog.showModal();
+  const panel=document.getElementById("account-page"), host=document.getElementById("account-settings-body");
+  document.getElementById("page-loading").hidden=true;
+  clearLibrary(); closePreview(); clearNovel();
+  for(const id of ["welcome","dashboard","game-settings","characters","explorer","novel","game-context"]) document.getElementById(id).hidden=true;
+  elements.primaryNav.hidden=true;
+  elements.gameToolbar.hidden=true;
+  panel.hidden=false;
+  document.getElementById("account-settings-title").textContent=recovery?"Password recovery":"Account";
+  document.getElementById("account-page-subtitle").textContent=recovery?"Get back into your account.":"Manage your profile and security.";
+  document.getElementById("account-settings-back").textContent=recovery?"Back to sign in":"Back to game";
+  document.getElementById("account-settings-title").tabIndex=-1;
+  document.getElementById("account-settings-title").focus({preventScroll:true});
+  document.getElementById("account-settings-button").setAttribute("aria-current","page");
+  if(!recovery) {
+    try {await ensureSession();} catch(error) {if(epoch===accountSettingsEpoch)showWelcome(error.message);return;}
+    if(epoch!==accountSettingsEpoch)return;
+    elements.account.hidden=false;
+  }
   if (recovery) {
     const section=accountSection(host,"Recover your account","Enter your username. Recovery requires a previously verified email address. We do not disclose whether an account exists.");
     let username;
@@ -3697,7 +4432,7 @@ async function openAccountSettings(recovery=false) {
     const confirm=accountForm(section,"Reset password",async()=>{
       if(password.value!==confirmation.value) throw new Error("The new passwords do not match.");
       await accountRequest("confirm",{username:username.value.trim(),code:code.value.trim(),password:password.value},true);
-      return "Password reset. Close this window and sign in with your new password.";
+      return "Password reset. Return to sign in with your new password.";
     });
     code=accountField(confirm,"Recovery code"); code.required=true; code.autocomplete="one-time-code";
     password=accountField(confirm,"New password","password"); password.required=true; password.minLength=16;
@@ -3713,7 +4448,7 @@ async function openAccountSettings(recovery=false) {
   }
   if(epoch!==accountSettingsEpoch) return;
   host.replaceChildren();
-  const identity=accountSection(host,"Profile",`Signed in as ${profile.username}. Your login username stays unchanged.`);
+  const identity=accountSection(host,"Profile",`Username: ${profile.username}`);
   let displayName,avatar;
   const profileForm=accountForm(identity,"Save profile",async()=>{
     const selected=["","panther","moon","star"].some(name=>avatar.value===(name?`${window.location.origin}/avatars/${name}.svg`:""));
@@ -3741,13 +4476,13 @@ async function openAccountSettings(recovery=false) {
   let emailCode;
   const verifyForm=accountForm(emailSection,"Verify email",async()=>{
     await accountRequest("verify-email",{code:emailCode.value.trim()});
-    if(epoch===accountSettingsEpoch) emailSection.querySelector("p").textContent="Email verification completed. Reopen account settings to see the active address.";
-    return "Email verified. Reopen account settings to see the active address.";
+    if(epoch===accountSettingsEpoch) emailSection.querySelector("p").textContent="Email verification completed. Return to Account to see the active address.";
+    return "Email verified. Return to Account to see the active address.";
   });
   emailCode=accountField(verifyForm,"Email verification code"); emailCode.required=true; emailCode.autocomplete="one-time-code";
   accountForm(emailSection,"Resend email code",async()=>{await accountRequest("resend-email");return "Verification requested. Check the pending or current address.";});
 
-  const passwordSection=accountSection(host,"Password","Use at least 16 characters, with upper/lowercase letters, a number and a symbol. Cognito stores and verifies your password.");
+  const passwordSection=accountSection(host,"Password","At least 16 characters, including uppercase and lowercase letters, a number and a symbol.");
   let previous,proposed,confirmation;
   const passwordForm=accountForm(passwordSection,"Change password",async()=>{
     if(proposed.value!==confirmation.value) throw new Error("The new passwords do not match.");
@@ -3766,7 +4501,7 @@ async function openAccountSettings(recovery=false) {
       const secretLabel=document.createElement("label"), secret=document.createElement("input"), label=document.createElement("span");
       label.textContent="Authenticator setup key"; secret.value=result.secretCode; secret.readOnly=true; secret.autocomplete="off";
       secretLabel.append(label,secret); enrollment.append(secretLabel);
-      const help=document.createElement("p"); help.textContent="Add this key manually to your authenticator as a time-based (TOTP) account. This secret is only displayed here and is removed when you close this window."; enrollment.append(help);
+      const help=document.createElement("p"); help.textContent="Add this key manually to your authenticator as a time-based (TOTP) account. This secret is only displayed here and is removed when you leave this page."; enrollment.append(help);
       let code;
       const confirmMfa=accountForm(enrollment,"Enable authenticator",async()=>{
         const result=await accountRequest("mfa-confirm",{code:code.value.trim()});
@@ -3774,7 +4509,7 @@ async function openAccountSettings(recovery=false) {
         if(epoch!==accountSettingsEpoch)return;
         setupForm.hidden=true;
         mfaSection.querySelector("p").textContent="Authenticator MFA is enabled. Keep a secure authenticator backup. Email password recovery does not remove MFA; losing the authenticator requires administrator help.";
-        const done=document.createElement("p"); done.textContent="Authenticator enabled. Reopen account settings to see the current status.";
+        const done=document.createElement("p"); done.textContent="Authenticator enabled. Return to Account to see the current status.";
         enrollment.replaceChildren(done); return "Authenticator enabled.";
       });
       code=accountField(confirmMfa,"Authenticator code"); code.required=true; code.inputMode="numeric"; code.pattern="[0-9]{6}"; code.autocomplete="one-time-code";
@@ -3786,8 +4521,8 @@ async function openAccountSettings(recovery=false) {
     const disable=accountForm(mfaSection,"Disable authenticator",async()=>{
       if(!acknowledge.checked)throw new Error("Confirm that you want to remove authenticator protection.");
       await accountRequest("mfa-disable");
-      if(epoch===accountSettingsEpoch) mfaSection.querySelector("p").textContent="Authenticator MFA is disabled. Reopen settings to enroll again.";
-      return "Authenticator disabled. Reopen account settings for the current status.";
+      if(epoch===accountSettingsEpoch) mfaSection.querySelector("p").textContent="Authenticator MFA is disabled. Return to Account to enroll again.";
+      return "Authenticator disabled. Return to Account for the current status.";
     });
     acknowledge=accountField(disable,"I understand this removes authenticator protection","checkbox");
   }
@@ -3798,10 +4533,20 @@ async function openAccountSettings(recovery=false) {
     await accountRequest("sign-out-everywhere"); await logout();
   });
   confirmed=accountField(allSessions,"Sign out all my devices","checkbox");
+  if(config.development === true) {
+    const development=accountSection(host,"Development","Regenerate demo records. Uploaded files and authored chapters are kept.");
+    accountForm(development,"Regenerate demo data",async()=>{
+      const response=await fetch("/development/seed",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:"{}",signal:AbortSignal.timeout(30000)});
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error || "Could not regenerate demo data.");
+      window.PantherUI?.clear();
+      state.games=null; state.gameDetail=null; state.charactersLoaded=false; state.mediaLoaded=false;
+      return "Demo data regenerated.";
+    });
+  }
 }
-document.getElementById("account-settings-button").addEventListener("click",()=>openAccountSettings());
-document.getElementById("password-recovery-button").addEventListener("click",()=>openAccountSettings(true));
-document.getElementById("account-settings-close").addEventListener("click",closeAccountSettings);
-document.getElementById("account-settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeAccountSettings();});
+document.getElementById("account-settings-button").addEventListener("click",()=>visitAccount());
+document.getElementById("password-recovery-button").addEventListener("click",()=>visitAccount(true));
+document.getElementById("account-settings-back").addEventListener("click",leaveAccount);
 
 start();

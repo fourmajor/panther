@@ -36,7 +36,7 @@ export class GameCatalog extends Construct {
         ASSET_MIGRATORS: props.accessEnvironment.ASSET_MIGRATORS },
     });
     fn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"],
+      actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"],
       resources: [table.tableArn],
     }));
     fn.addToRolePolicy(new iam.PolicyStatement({
@@ -50,7 +50,7 @@ export class GameCatalog extends Construct {
       resources: [props.bucket.arnForObjects("games/*/content/*"), props.bucket.arnForObjects("games/*/catalog/assets/*"),
         props.bucket.arnForObjects("games/*/characters/*/profile.json")] }));
     const integration = new integrations.HttpLambdaIntegration("CatalogIntegration", fn);
-    for (const route of ["/games", "/game", "/players", "/characters", "/character-details", "/character-details/inventory", "/character-details/verify"]) {
+    for (const route of ["/dashboard-recent", "/games", "/game", "/players", "/characters", "/character-details", "/character-details/history", "/character-details/inventory", "/character-details/verify"]) {
       props.api.addRoutes({ path: route, methods: [api.HttpMethod.GET], integration, authorizer: props.authorizer });
     }
     props.api.addRoutes({ path: "/games", methods: [api.HttpMethod.POST], integration, authorizer: props.authorizer });

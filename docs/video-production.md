@@ -178,3 +178,9 @@ the real subscription reviewer; never enable it in CI or mount personal credenti
 - [Codex non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode) and
   [CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli): fresh sessions,
   image attachments and structured results. ChatGPT-only auth, tools disabled, no agent credentials.
+
+Captioned browser delivery requires an FFmpeg build with the `subtitles` filter
+(libass), in addition to the documented video/audio codecs. Check
+`ffmpeg -hide_banner -filters` before running captioned finishing. The integration
+tests explicitly skip captioned delivery when that optional local capability is
+absent; schema, source-integrity and other available-tool tests still run.

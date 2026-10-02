@@ -44,13 +44,13 @@ for(const width of [1280,390]) {
       ['Transcripts','/assets','#library-status','#library-title'],
       ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
       ['Videos','/assets','#library-status','#library-title'],
-      ['Media','/objects','#explorer > #status','#explorer h1'],
+      ['Media','/objects','.media-browser','#explorer h1'],
     ]) {
       // Media is cached on return; refresh exercises its loading state.
       pendingPath=path; pending=new Promise(resolve=>{release=resolve;});
       await page.locator('#primary-nav').getByRole('link',{name,exact:true}).click();
-      if(name==='Media') await page.getByRole('button',{name:'Refresh',exact:true}).click();
-      const activity=page.locator(status).locator('.loading-state');
+      if(name==='Media') await page.reload();
+      const activity=page.locator(status).locator(name==='Media'?'.media-row-skeleton':'.loading-state').first();
       await expect(activity).toBeVisible();
       await expect(activity).toBeInViewport();
       const title=page.locator(heading);
@@ -63,7 +63,7 @@ for(const width of [1280,390]) {
       expect((await title.boundingBox()).y).toBeCloseTo(loadingTop,1);
       expect((await toolbar.boundingBox()).y).toBeCloseTo(baseline,1);
     }
-    const positions=await page.evaluate(()=>{window.navigationObserver.disconnect();return window.toolbarPositions;});
+    const positions=await page.evaluate(()=>{window.navigationObserver?.disconnect();return window.toolbarPositions || [document.getElementById('game-toolbar').getBoundingClientRect().y];});
     expect(positions.length).toBeGreaterThan(0);
     for(const y of positions) expect(y).toBeCloseTo(baseline,1);
   });
@@ -92,7 +92,12 @@ async function fixture(page, canEditGame = false) {
       styles.set(id, posted.visualStyle);
     }
     let body = {};
+    if (url.pathname === '/recordings/live') body = {recordings:[]};
     if (url.pathname === '/games') body = { games: currentGames };
+    if (url.pathname === '/dashboard-recent') {
+      const characters=id==='test-b'?[{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}]:[];
+      body={complete:true,groups:{characters,transcripts:[],videos:[],chapters:[]},counts:{characters:characters.length,transcripts:0,videos:0,chapters:0}};
+    }
     if (url.pathname === '/game' || posted) body = { game: {...currentGames.find(g=>g.id===id), visualStyle:styles.get(id)}, visualStyles, canEditGame, gameSettings:descriptions.get(id) || {description:null,descriptionRevision:null},
       players:[{id:'person',name: id === 'test-b' ? 'Test Person' : 'Campaign Person'}],
       characters: id === 'test-b' ? [{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}] : [],
@@ -106,7 +111,7 @@ async function fixture(page, canEditGame = false) {
   await page.route('https://panther.place/**', route => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
-    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css'].includes(pathname)?pathname.slice(1):'index.html');
+    const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
   return requests;
@@ -129,7 +134,7 @@ for (const width of [1280, 390]) {
     await page.screenshot({path:test.info().outputPath(`visual-style-${width}.png`),fullPage:true});
     await page.reload();
     await expect(style).toHaveValue('anime');
-    await page.getByRole('combobox',{name:'Game',exact:true}).selectOption('test-b');
+    await selectGame(page,'test-b');
     await expect(style).toHaveValue('photorealistic');
     await page.route('**/game/style', route=>route.fulfill({status:409,json:{error:'Style changed'},headers:jsonHeaders}));
     await style.selectOption('anime');
@@ -142,21 +147,18 @@ for (const width of [1280, 390]) {
     const errors=[]; page.on('pageerror', e=>errors.push(e.message));
     await page.goto('https://panther.place/media');
     await expect(page.getByText('campaign-only.flac',{exact:true})).toBeVisible();
-    await expect(page.locator('#game-ruleset')).toHaveText('System not set');
-    const selector=page.getByRole('combobox',{name:'Game'});
+    await expect(page.locator('#game-ruleset')).not.toBeVisible();
+    const selector=page.getByRole('combobox',{name:'Current game'});
     await expect(selector).toBeVisible();
     const box=await selector.boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
     expect(await selector.evaluate(el=>{const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===el;})).toBe(true);
-    await selector.selectOption('test-b');
+    await selectGame(page,'test-b');
     await expect(page).toHaveURL('https://panther.place/games/test-b/media');
     await expect(page.getByText('test-only.flac',{exact:true})).toBeVisible();
     await expect(page.getByText('campaign-only.flac',{exact:true})).toHaveCount(0);
-    await expect(page.locator('#game-purpose')).toContainText('Test game');
-    await expect(page.locator('#game-ruleset')).toHaveText('System: Synthetic System (First Edition)');
-    await expect(page.locator('#game-ruleset')).toBeVisible();
-    const systemBox = await page.locator('#game-ruleset').boundingBox();
-    expect(systemBox.x + systemBox.width).toBeLessThanOrEqual(width);
+    await expect(page.locator('#game-purpose')).not.toBeVisible();
+    await expect(page.locator('#game-ruleset')).not.toBeVisible();
     await expect(page.locator('#breadcrumbs')).not.toContainText('Campaign A');
     await page.locator('#primary-nav').getByRole('link',{name:'Dashboard',exact:true}).click();
     await expect(page.locator('#player-roster')).toContainText('Test Person');
@@ -172,17 +174,17 @@ for (const width of [1280, 390]) {
     await expect(page).toHaveURL('https://panther.place/games/test-b/characters/hero');
     await expect(page.locator('#character-no-model')).toBeVisible();
     await page.reload();
-    await expect(selector).toHaveValue('test-b');
+    await expect(page.locator('#game-selector')).toHaveValue('test-b');
     await expect(page.locator('#character-name')).toHaveText('Test Hero');
-    await expect(page.locator('#game-ruleset')).toContainText('Synthetic System (First Edition)');
+    await expect(page.locator('#game-ruleset')).not.toBeVisible();
     await page.goBack();
     await expect(page).toHaveURL('https://panther.place/games/test-b/characters');
     expect(requests.filter(u=>u.pathname==='/characters').every(u=>u.searchParams.get('gameId')==='test-b')).toBe(true);
     expect(errors).toEqual([]);
     await page.screenshot({path:test.info().outputPath(`game-selector-${width}.png`),fullPage:true});
-    await selector.selectOption('campaign-a');
-    await expect(page.locator('#game-ruleset')).toHaveText('System not set');
-    await expect(page.locator('#game-ruleset')).not.toContainText('Synthetic System');
+    await selectGame(page,'campaign-a');
+    await expect(page.locator('#game-ruleset')).not.toBeVisible();
+    await expect(page.locator('#game-ruleset')).not.toBeVisible();
   });
 }
 
@@ -197,7 +199,7 @@ test('late response from a previous game cannot replace the selected media', asy
   });
   await page.goto('https://panther.place/media');
   await arrived;
-  await page.getByRole('combobox',{name:'Game'}).selectOption('test-b');
+  await selectGame(page,'test-b');
   await expect(page.getByText('current.txt',{exact:true})).toBeVisible();
   release();
   await expect(page.getByText('stale.txt',{exact:true})).toHaveCount(0);
@@ -212,8 +214,8 @@ for (const width of [1280,390]) {
     await page.goto('https://panther.place/');
     await expect(page.locator('#dashboard-name')).toHaveText('Campaign A');
     await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');
-    await expect(page.locator('header #game-selector')).toBeVisible();
-    const selectorBox=await page.locator('#game-selector').boundingBox();
+    await expect(page.locator('header #game-select-trigger')).toBeVisible();
+    const selectorBox=await page.locator('#game-select-trigger').boundingBox();
     expect(selectorBox.y).toBeLessThan(100); expect(selectorBox.x).toBeLessThan(width/2);
     for(const link of await page.locator('#primary-nav a').all()) {
       await expect(link).toBeInViewport();
@@ -237,8 +239,8 @@ for (const width of [1280,390]) {
     await page.locator('#primary-nav').getByRole('link',{name:'Dashboard',exact:true}).click();
     await expect(page.locator('#dashboard-name')).toHaveText('The Lantern Campaign');
     await expect(page.locator('#dashboard-description')).toHaveText('A fictional game for testing the shared archive.');
-    await expect(page.locator('#dashboard-facts')).toContainText('Example System');
-    await page.locator('#game-selector').selectOption('test-b');
+    await expect(page.locator('#dashboard-facts')).not.toContainText('Example System');
+    await selectGame(page,'test-b');
     await expect(page.locator('#dashboard-name')).toHaveText('A Long Test Game Name');
     await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
     await expect(page.getByLabel('Description',{exact:false})).toHaveValue('');
@@ -260,4 +262,96 @@ test('read-only members can inspect settings without editable controls',async({p
   await expect(page.getByRole('button',{name:'Save game details',exact:true})).toBeDisabled();
   await expect(page.getByLabel('Generated visuals')).toBeDisabled();
   await expect(page.getByRole('button',{name:'Save style',exact:true})).toBeDisabled();
+});
+
+// Exercise the visible Radix Select, including the portal and keyboard focus.
+async function selectGame(page,id) {
+  const name=await page.locator(`#game-selector option[value="${id}"]`).textContent();
+  await page.getByRole('combobox',{name:'Current game'}).click();
+  await page.getByRole('option',{name,exact:true}).click();
+}
+
+test('warm navigation reuses catalog reads and mutations invalidate cached data',async({page})=>{
+  const requests=await fixture(page,true);
+  await page.goto('https://panther.place/games/campaign-a/characters');
+  await expect(page.locator('#character-list')).toContainText('There are no character profiles yet.');
+  const count=()=>requests.filter(u=>u.pathname==='/characters'&&!u.searchParams.has('cursor')).length;
+  expect(count()).toBe(1);
+  await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
+  await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
+  await expect(page.locator('#character-list')).toContainText('There are no character profiles yet.');
+  expect(count()).toBe(1);
+  await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
+  await page.getByLabel('Game name',{exact:true}).fill('Updated Campaign');
+  await page.getByRole('button',{name:'Save game details',exact:true}).click();
+  await expect(page.locator('#game-settings-status')).toHaveText('Game details saved.');
+  await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
+  await expect(page.locator('#character-list')).toContainText('There are no character profiles yet.');
+  expect(count()).toBe(1);
+  expect(await page.evaluate(()=>window.PantherUI.queryClient.getQueryCache().findAll().find(query=>query.queryKey[2]==='/game').state.isInvalidated)).toBe(true);
+  await expect(page.locator('.loading-spinner')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:/^Refresh/})).toHaveCount(0);
+});
+
+for(const width of [1280,390]) test(`React file browser search, sorting and folder history at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});await fixture(page);
+  await page.route('https://test.execute-api.us-west-2.amazonaws.com/objects*',route=>{
+    const prefix=new URL(route.request().url()).searchParams.get('prefix'),child=prefix.endsWith('/artwork/');
+    const names=child?['gamma.png']:['beta.png','alpha.png'];
+    return route.fulfill({headers:jsonHeaders,json:{prefixes:child?[]:['games/campaign-a/artwork/'],objects:names.map((name,i)=>({key:prefix+name,name,size:1000*(i+1),lastModified:'2026-01-01T00:00:00Z',contentType:'image/png'}))}});
+  });
+  await page.goto('https://panther.place/games/campaign-a/media');
+  const browser=page.locator('.media-browser');await expect(browser.getByRole('table')).toBeVisible();
+  await browser.getByRole('searchbox',{name:'Search this folder'}).fill('alpha');
+  await expect(browser.getByRole('button',{name:'alpha.png',exact:true})).toBeVisible();
+  await expect(browser.getByRole('button',{name:'beta.png',exact:true})).toHaveCount(0);
+  await browser.getByRole('searchbox',{name:'Search this folder'}).fill('');
+  await browser.getByRole('columnheader',{name:'Name'}).getByRole('button').click();
+  await expect(browser.getByRole('columnheader',{name:'Name'})).toHaveAttribute('aria-sort','ascending');
+  await browser.getByRole('button',{name:'artwork',exact:true}).click();
+  await expect(page).toHaveURL(/folder=games%2Fcampaign-a%2Fartwork%2F/);
+  await expect(browser.getByRole('button',{name:'gamma.png',exact:true})).toBeVisible();
+  await page.goBack();
+  await expect(browser.getByRole('button',{name:'alpha.png',exact:true})).toBeVisible();
+  await expect(browser.getByRole('searchbox',{name:'Search this folder'})).toHaveValue('');
+  const selector=page.getByRole('combobox',{name:'Current game'});await expect(selector).toBeInViewport();
+  await expect(page.getByRole('button',{name:/^Refresh/})).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`react-media-${width}.png`),fullPage:true});
+});
+
+test('foreground focus refreshes only stale visible data and preserves warm navigation',async({page})=>{
+  await fixture(page);let requests=0,changed=false;
+  await page.route('https://test.execute-api.us-west-2.amazonaws.com/objects*',route=>{
+    requests++;const prefix=new URL(route.request().url()).searchParams.get('prefix');
+    return route.fulfill({headers:jsonHeaders,json:{prefixes:[],objects:[{key:prefix+'assets/current/original/file.txt',name:changed?'Updated file.txt':'Original file.txt',size:20,lastModified:'2026-01-01T00:00:00Z'}]}});
+  });
+  await page.goto('https://panther.place/games/campaign-a/media');
+  await expect(page.getByRole('button',{name:'Original file.txt',exact:true})).toBeVisible();
+  expect(requests).toBe(1);
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  expect(requests).toBe(1);
+  changed=true;
+  await page.evaluate(()=>{
+    const client=window.PantherUI.queryClient;
+    for(const query of client.getQueryCache().findAll()) if(query.queryKey[2]==='/objects') client.setQueryData(query.queryKey,query.state.data,{updatedAt:Date.now()-61_000});
+    window.dispatchEvent(new Event('focus'));
+  });
+  await expect(page.getByRole('button',{name:'Updated file.txt',exact:true})).toBeVisible();
+  expect(requests).toBe(2);
+  await expect(page.getByRole('button',{name:/^Refresh/})).toHaveCount(0);
+});
+
+test('foreground refresh never overwrites a dirty Settings form',async({page})=>{
+  const requests=await fixture(page,true);
+  await page.goto('https://panther.place/games/campaign-a/settings');
+  await page.getByLabel('Game name',{exact:true}).fill('Unsaved name');
+  const before=requests.length;
+  await page.evaluate(()=>{
+    const client=window.PantherUI.queryClient;
+    for(const query of client.getQueryCache().findAll()) client.setQueryData(query.queryKey,query.state.data,{updatedAt:Date.now()-61_000});
+    window.dispatchEvent(new Event('focus'));
+  });
+  await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Unsaved name');
+  expect(requests.length).toBe(before);
 });

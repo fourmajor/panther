@@ -297,3 +297,10 @@ under that same recording asset. Transcript metadata points to the source manife
 speaker runs, import provenance, and intermediate outputs remain available locally; upload them
 separately when explicitly needed. A single oversized imported file is rejected, not silently split
 or transcoded to bypass the upload limit. Captured short parts normally stay well below it.
+
+## Browser alternative
+
+The Audio and Transcripts pages also offer [browser room capture](browser-recording.md),
+with immutable PCM WAV parts, optional server-configured OpenAI live transcription, and a
+separate final pass. This is a distinct capture and unassigned-speaker transcript contract;
+local CLI FLAC capture and recognition continue to work without API credentials.
