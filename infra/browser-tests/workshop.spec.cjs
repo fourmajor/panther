@@ -4,7 +4,15 @@ const path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 
 function sample(id,kind,status,title,stages,extra={}) {
-  return {schemaVersion:1,id:kind+'~'+id,kind,gameId:'synthetic-game',title,status,createdAt:100,observedAt:Date.now()/1000,source:'durable-job',note:'Screen planning stops before paid generation.',stages,activeStages:stages.filter(s=>!['done','pending'].includes(s.status)),totalStages:stages.length,completedStages:stages.filter(s=>s.status==='done').length,...extra};
+  const common=stages.filter(s=>!s.id.startsWith('novel-')&&!s.id.startsWith('video-')).map(s=>s.id);
+  const lanes=kind==='editorial'?[
+    {id:'shared',label:'Shared context & correction',stageIds:common},
+    ...['novel','video'].map(prefix=>({id:prefix,label:prefix==='novel'?'Novel adaptation':'Screen planning',stageIds:stages.filter(s=>s.id.startsWith(prefix+'-')).map(s=>s.id)})),
+  ].filter(l=>l.stageIds.length):[{id:'sequence',label:'Reported steps',stageIds:stages.map(s=>s.id)}];
+  const edges=lanes.flatMap(l=>l.stageIds.slice(1).map((to,i)=>({from:l.stageIds[i],to})));
+  if(kind==='editorial'&&common.length)for(const l of lanes.filter(l=>l.id!=='shared'))edges.push({from:common.at(-1),to:l.stageIds[0]});
+  const flow={schemaVersion:1,mode:kind==='editorial'?'branched':'sequence',lanes,edges,note:'Arrows show dependencies, not time remaining.'};
+  return {schemaVersion:1,id:kind+'~'+id,kind,gameId:'synthetic-game',title,status,createdAt:100,observedAt:Date.now()/1000,source:'durable-job',note:'Screen planning stops before paid generation.',stages,flow,activeStages:stages.filter(s=>!['done','pending'].includes(s.status)),totalStages:stages.length,completedStages:stages.filter(s=>s.status==='done').length,...extra};
 }
 async function fixture(page) {
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-reader'}))+'.test'})));
@@ -45,6 +53,9 @@ for(const width of [1440,390]) for(const design of ['studio','chronicle','cinema
     await fixture(page);
     await page.goto(`https://panther.place/games/synthetic-game/workflows?ui=${design}`);
     await expect(page.locator('.workshop-card')).toHaveCount(4);
+    await expect(page.locator('.workshop-group')).toHaveCount(6);
+    await expect(page.locator('.workshop-group[data-kind=editorial]')).toContainText('The Lanterns at Dawn');
+    await expect(page.locator('.workshop-group[data-kind=playback]')).toContainText('Continuous session audio');
     await expect(page.locator('#primary-nav a[aria-current]')).toHaveText('Workflows');
     await expect(page.locator('.workshop-card .is-working')).toHaveCount(1);
     await expect(page.locator('#workshop')).toContainText('Local worker signal lost');
@@ -64,6 +75,8 @@ for(const width of [1440,390]) test(`Workflow detail, filters and pagination at 
   await page.locator('.workshop-card').click();
   await expect(page.locator('#workshop-detail')).toBeVisible();
   await expect(page.locator('.workshop-stages li')).toHaveCount(3);
+  await expect(page.locator('.workshop-flowchart')).toBeVisible();
+  await expect(page.locator('.workshop-flow-lines path')).toHaveCount(4);
   await expect(page.locator('.workshop-stages .is-working')).toHaveCount(1);
   await expect(page.locator('#workshop-detail')).toContainText('Attempt 2');
   await expect(page.locator('#workshop-detail')).toContainText('Preflight review');
@@ -80,16 +93,40 @@ test('Live polling stays fresh, stops on navigation, and respects reduced motion
   await page.clock.install();await page.emulateMedia({reducedMotion:'reduce'});const state=await fixture(page);state.next=false;
   await page.goto('https://panther.place/games/synthetic-game/workflows');
   await expect(page.locator('.workshop-card')).toHaveCount(4);
-  expect(await page.locator('.is-working .pixel-cat').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
+  await page.locator('.workshop-group[data-kind=playback] > summary').click();
+  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeHidden();
+  expect(await page.locator('.workshop-card .is-working .pixel-cat').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   state.jobs[0].stages[1].status='done';state.jobs[0].completedStages=2;state.jobs[0].activeStages=[];
   await page.clock.fastForward(16000);
   await expect(page.locator('#workshop')).toContainText('2 of 3 stages complete');
+  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeHidden();
   expect(state.reads.filter(u=>u.pathname==='/workflows').length).toBeGreaterThan(1);
   await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
   await expect(page.locator('#workshop')).toBeHidden();
   const count=state.reads.filter(u=>u.pathname==='/workflows').length;
   await page.clock.fastForward(32000);
   expect(state.reads.filter(u=>u.pathname==='/workflows').length).toBe(count);
+});
+
+for(const width of [1440,390]) test(`Parallel adaptation flowchart at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:1000});const state=await fixture(page);
+  const job=sample('f'.repeat(64),'editorial','running','Two paths from one transcript',[
+    {id:'context',label:'Context',status:'done'},
+    {id:'corrected-transcript',label:'Corrected transcript',status:'done'},
+    {id:'novel-draft',label:'Novel draft',status:'running',leaseUntil:Date.now()/1000+600},
+    {id:'novel-proof',label:'Novel proof',status:'pending'},
+    {id:'video-screenplay',label:'Screenplay',status:'running',leaseUntil:Date.now()/1000+600},
+    {id:'video-preflight',label:'Preflight',status:'pending'},
+  ]);state.jobs.push(job);
+  await page.goto('https://panther.place/games/synthetic-game/workflows?workflow='+job.id);
+  await expect(page.locator('.workshop-flow-lane')).toHaveCount(3);
+  await expect(page.locator('.workshop-flow-lines path')).toHaveCount(10);
+  await expect(page.locator('.workshop-stages .is-working')).toHaveCount(2);
+  const positions=await page.locator('.workshop-flow-lane').evaluateAll(lanes=>lanes.map(l=>{const r=l.getBoundingClientRect();return {top:r.top,left:r.left,width:r.width};}));
+  if(width>600) {expect(Math.abs(positions[1].top-positions[2].top)).toBeLessThan(2);expect(positions[2].left).toBeGreaterThan(positions[1].left);}
+  else expect(positions[2].top).toBeGreaterThan(positions[1].top);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`flowchart-parallel-${width}.png`),fullPage:true});
 });
 
 test('Incomplete history and refresh failures are visible, never a fake empty library',async({page})=>{
