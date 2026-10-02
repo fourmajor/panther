@@ -41,9 +41,11 @@ for(const width of [1280,390])test(`Explicit episode order and continuous previe
  const down=host.getByRole('button',{name:'Move City gate down',exact:true});await expect(down).toBeInViewport();await down.click();
  await expect(host.locator('.scene-order-row .scene-card').first()).toHaveText('River crossing');expect(changes[0].sceneIds).toEqual(['river','gate']);
  await host.getByRole('button',{name:'Move City gate up',exact:true}).click();await expect(host.locator('.scene-order-row .scene-card').first()).toHaveText('City gate');
+ await host.getByRole('button',{name:'Edit episode',exact:true}).click();await page.getByRole('form',{name:'Episode editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(3);expect(changes[2].expectedRevision).toBe('d'.repeat(32));
  await host.getByRole('button',{name:'City gate',exact:true}).click();const first=host.getByRole('button',{name:'Use in episode: City gate take',exact:true});await first.scrollIntoViewIfNeeded();await expect(first).toBeInViewport();await first.click();
+ await host.getByRole('button',{name:'Edit scene',exact:true}).click();await page.getByRole('form',{name:'Scene editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(5);expect(changes[4].expectedRevision).toBe('f'.repeat(32));
  await host.getByRole('button',{name:'River crossing',exact:true}).click();const second=host.getByRole('button',{name:'Use in episode: River crossing take',exact:true});await second.scrollIntoViewIfNeeded();await expect(second).toBeInViewport();await second.click();
- expect(changes.filter(body=>body.selectedOutputKey).map(body=>body.selectedOutputKey)).toEqual([key('gate'),key('river')]);
+ expect([...new Set(changes.filter(body=>body.selectedOutputKey).map(body=>body.selectedOutputKey))]).toEqual([key('gate'),key('river')]);
  const start=host.getByRole('button',{name:'Preview episode',exact:true});await expect(start).toBeEnabled();await start.scrollIntoViewIfNeeded();await start.click();
  const player=host.getByLabel('Episode preview',{exact:true});await expect(player).toBeVisible();await expect(player).toHaveAttribute('src','https://audio.example/gate.webm');
  await expect(player).toHaveAttribute('src','https://audio.example/river.webm',{timeout:10000});await expect(host.locator('.episode-preview-status')).toContainText('2 of 2');
