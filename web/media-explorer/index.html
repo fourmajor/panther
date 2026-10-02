@@ -50,7 +50,7 @@
         <a href="/sessions">Sessions</a>
         <a href="/novel">Novel</a>
         <a href="/videos">Videos</a>
-        <a href="/media">Media</a>
+        <a href="/assets">Assets</a>
         <a href="/settings">Settings</a>
       </nav>
       <div class="account" id="account" hidden>
@@ -292,10 +292,13 @@
         <div class="explorer-heading">
           <div>
 
-            <h1>Media</h1>
+            <h1 id="assets-heading">Assets</h1>
           </div>
           <button class="quiet-button" id="refresh-button" type="button" hidden>Refresh</button>
         </div>
+
+        <div id="asset-view-actions" class="model-control-row" hidden><button class="quiet-button" id="asset-browse-files" type="button">Browse files</button><a class="quiet-button link-button" id="asset-back-library" href="/assets" hidden>Back to assets</a></div>
+        <div id="assets-library" hidden></div>
 
         <nav class="breadcrumbs" id="breadcrumbs" aria-label="Current folder"></nav>
         <div class="status" id="status" role="status">Loading…</div>

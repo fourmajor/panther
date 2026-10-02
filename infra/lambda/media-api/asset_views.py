@@ -4,6 +4,14 @@ import re
 
 import asset_metadata
 
+MAP_SCENE_INSTRUCTIONS = (
+    "Treat the input image as a map and use it as the first frame. Preserve its geography, "
+    "labels and map style. Show a red dot at the initial location and animate red footprints "
+    "following the travelers' route to the destination described in the scene prompt. "
+    "Keep the map readable; do not turn it into a landscape or invent geographic facts. "
+    "If a location is not identifiable, disclose the ambiguity in planning rather than guess."
+)
+
 
 def session_asset(asset):
     """Audio/recording and transcript union, excluding raw parts and processing artifacts."""

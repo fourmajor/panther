@@ -17,7 +17,7 @@ import organization_records as records
 from novel_library import slug, text
 
 PREFIX = "episode-scenes-v1"
-TYPES = {"general", "opener", "travel", "action", "dialogue"}
+TYPES = {"general", "opener", "travel", "map", "action", "dialogue"}
 
 
 def public(record):
@@ -99,6 +99,33 @@ def selected_output(media, game, episode, scene, key):
         raise ValueError("Output must explicitly belong to this scene")
     pin_scene(game, ref)
     return ref["revision"], guard(db, pointer, "observed", row["observed"])
+
+
+def map_asset(media, game, key):
+    """Resolve one explicit image from the bounded catalog; never scan source storage."""
+    if not isinstance(key, str) or not asset_library.valid_key(media, game, key):
+        raise ValueError("Choose a same-game map image")
+    db = browse_index.table()
+    pointer = {"pk": browse_index.partition(game, "all"), "sk": key}
+    row = db.get_item(Key=pointer, ConsistentRead=True).get("Item")
+    value = records.decode(row)
+    if not isinstance(value, dict):
+        raise ValueError("Map image is unavailable in the catalog")
+    metadata = value.get("metadata") or {}
+    if not isinstance(metadata, dict) or not isinstance(value.get("kind", ""), str):
+        raise ValueError("Invalid map metadata")
+    extra = metadata.get("extra") or {}
+    if not isinstance(extra, dict):
+        raise ValueError("Invalid map metadata")
+    if (
+        value.get("key") != key
+        or value.get("contentType") not in {"image/png", "image/jpeg", "image/webp"}
+        or value.get("lineageWarning")
+        or asset_metadata.internal(value.get("kind", ""))
+        or extra.get("relationshipRole") in {"processing", "intermediate", "internal"}
+    ):
+        raise ValueError("Choose a finished PNG, JPEG or WebP map image")
+    return value, guard(db, pointer, "observed", row["observed"])
 
 
 def pin_episode(game, reference):
@@ -210,7 +237,9 @@ def pin_episode(game, reference):
 def save(media, body, claims, kind):
     common = {"gameId", "id", "name", "description", "expectedRevision", "operationId"}
     allowed = common | (
-        {"episodeId", "type", "selectedOutputKey"} if kind == "scene" else {"sceneIds"}
+        {"episodeId", "type", "selectedOutputKey", "mapAssetKey"}
+        if kind == "scene"
+        else {"sceneIds"}
     )
     required = common - {"description"}
     if kind == "scene":
@@ -269,6 +298,13 @@ def save(media, body, claims, kind):
             ),
             selectedOutputSceneRevision=None,
         )
+        map_key = body.get("mapAssetKey", (previous or {}).get("mapAssetKey"))
+        if "mapAssetKey" in body or "mapAssetKey" in (previous or {}):
+            record["mapAssetKey"] = map_key
+        if map_key is not None:
+            _, map_guard = map_asset(media, game, map_key)
+            guards.append(map_guard)
+            record["mapAssetKey"] = map_key
         if record["selectedOutputKey"] is not None:
             output_revision, output_guard = selected_output(
                 media, game, episode, identity, record["selectedOutputKey"]

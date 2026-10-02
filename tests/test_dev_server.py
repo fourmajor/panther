@@ -168,3 +168,183 @@ def test_sessions_local_hides_browser_wav_chunk_without_parent_manifest():
         "metadata": {"extra": {"browserPart": {"chunkSetId": "synthetic-chunks", "index": 1}}}}
     assert dev.local_assets([part], "sessions") == []
     assert dev.local_assets([part], "audio") == [part]
+
+
+def map_scene_store(tmp_path):
+    import json
+    store = dev.Store(tmp_path / "map-scenes.sqlite")
+    store.seed()
+    episode = store.save_story_entity("episode", {"gameId": "preview-campaign", "id": "journey", "name": "Journey", "expectedRevision": None, "operationId": "a" * 32})["record"]
+    key = "games/preview-campaign/assets/route-map/original/map.png"
+    with store.connect() as db:
+        db.execute("INSERT INTO objects VALUES (?,?,?,?,?)", (key, "preview-campaign", json.dumps({"kind": "map", "contentType": "image/png", "extra": {"relationshipRole": "finished"}}), b"original-map-bytes", "now"))
+    body = {"gameId": "preview-campaign", "episodeId": episode["id"], "id": "road", "name": "Travelers move from the city to the badlands", "type": "map", "expectedRevision": None, "operationId": "b" * 32}
+    return store, key, body
+
+
+def test_map_scene_title_only_then_selection_pins_exact_local_image(tmp_path):
+    import base64
+    import hashlib
+    from types import SimpleNamespace
+    store, key, body = map_scene_store(tmp_path)
+    draft = store.save_story_entity("scene", body)["record"]
+    assert draft["description"] == "" and "mapAssetKey" not in draft
+    handler = dev.Handler.__new__(dev.Handler)
+    handler.server = SimpleNamespace(store=store)
+    handler.send = lambda response: response
+    creation = {"schemaVersion": 2, "target": "video", "characterIds": [], "sourceKeys": [], "contextKeys": [], "sceneRef": {"episodeId": draft["episodeId"], "sceneId": draft["id"], "revision": draft["revision"]}}
+    with pytest.raises(ValueError, match="map image"):
+        handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation})
+    selected = store.save_story_entity("scene", {**body, "mapAssetKey": key, "expectedRevision": draft["revision"], "operationId": "c" * 32})["record"]
+    # The chosen historical scene stays pinned after a later edit removes its map.
+    store.save_story_entity("scene", {**body, "mapAssetKey": None, "expectedRevision": selected["revision"], "operationId": "d" * 32})
+    creation["sceneRef"]["revision"] = selected["revision"]
+    job = handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation})
+    assert job["selectedScene"] == selected
+    assert job["selectedMap"] == {"schemaVersion": 1, "key": key, "sha256": base64.b64encode(hashlib.sha256(b"original-map-bytes").digest()).decode(), "size": len(b"original-map-bytes"), "contentType": "image/png", "role": "first-frame", "instructions": dev.production_asset_views().MAP_SCENE_INSTRUCTIONS}
+    assert "red footprints" in job["selectedMap"]["instructions"]
+    assert job["status"] == "SUBMITTED" and job["videoGenerationAuthorized"] is False
+    assert handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation}) == job
+    assert store.get("scene", "preview-campaign:journey:road")["mapAssetKey"] is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"contentType": "image/svg+xml"},
+    {"kind": "editorial-plan"},
+    {"extra": {"relationshipRole": "processing"}},
+    {"extra": {"relationshipRole": "internal"}},
+    {"extra": {"relationshipRole": "intermediate"}},
+    {"lineageWarning": "Unverified"},
+])
+def test_local_map_selection_rejects_unsupported_and_processing_assets(tmp_path, changes):
+    import json
+    store, key, body = map_scene_store(tmp_path)
+    metadata, _ = store.object(key)
+    with store.connect() as db:
+        db.execute("UPDATE objects SET metadata=? WHERE key=?", (json.dumps({**metadata, **changes}), key))
+    with pytest.raises(ValueError, match="finished.*map image"):
+        store.save_story_entity("scene", {**body, "mapAssetKey": key})
+    assert store.list("scene", "preview-campaign") == []
+    assert store.get("episode", "preview-campaign:journey")["sceneIds"] == []
+
+
+def test_local_map_selection_rejects_cross_game_and_missing_images(tmp_path):
+    store, key, body = map_scene_store(tmp_path)
+    for invalid in (key.replace("preview-campaign", "preview-sandbox"), key.replace("map.png", "missing.png"), "https://example.test/map.png"):
+        with pytest.raises(ValueError, match="map image|unavailable"):
+            store.save_story_entity("scene", {**body, "mapAssetKey": invalid})
+    assert store.list("scene", "preview-campaign") == []
+
+
+def test_local_map_generation_rejects_empty_image(tmp_path):
+    store, key, body = map_scene_store(tmp_path)
+    scene = store.save_story_entity("scene", {**body, "mapAssetKey": key})["record"]
+    with store.connect() as db:
+        db.execute("UPDATE objects SET data=? WHERE key=?", (b"", key))
+    with pytest.raises(ValueError, match="20 MiB"):
+        store.pin_map("preview-campaign", scene)
+
+
+@pytest.mark.parametrize("mime", ["image/png", "image/jpeg", "image/webp"])
+def test_local_map_selection_accepts_ordinary_images_without_guessing_kind(tmp_path, mime):
+    import json
+    store, key, body = map_scene_store(tmp_path)
+    with store.connect() as db:
+        db.execute("UPDATE objects SET metadata=? WHERE key=?", (json.dumps({"kind": "document", "contentType": mime}), key))
+    scene = store.save_story_entity("scene", {**body, "mapAssetKey": key})["record"]
+    assert scene["mapAssetKey"] == key
+    assert store.pin_map("preview-campaign", scene)["contentType"] == mime
+
+
+def test_local_exact_asset_detail_opens_unknown_binary_without_listing(tmp_path, monkeypatch):
+    import json
+    store = dev.Store(tmp_path / "asset-details.sqlite")
+    store.seed()
+    key = "games/preview-campaign/assets/room-take/original/take.wav"
+    data = b"RIFF\x00\xffWAVE"
+    with store.connect() as db:
+        db.execute("INSERT INTO objects VALUES (?,?,?,?,?)", (key, "preview-campaign", json.dumps({"contentType": "audio/wav"}), data, "now"))
+    monkeypatch.setattr(store, "objects", lambda *_: pytest.fail("A detail must not enumerate the browse catalog"))
+    detail = store.describe_asset("preview-campaign", key)
+    assert detail == {"key": key, "name": "take.wav", "size": len(data), "contentType": "audio/wav", "kind": "unclassified", "metadata": {"contentType": "audio/wav"}, "lastModified": "now", "document": None, "sourceKeys": []}
+    assert store.object(key)[1] == data
+    with pytest.raises(ValueError, match="Invalid asset"):
+        store.describe_asset("preview-sandbox", key)
+    with pytest.raises(LookupError, match="not found"):
+        store.describe_asset("preview-campaign", key.replace("take.wav", "missing.wav"))
+
+
+def test_local_unknown_structured_detail_preserves_observed_content(tmp_path):
+    import json
+    store = dev.Store(tmp_path / "structured-detail.sqlite")
+    store.seed()
+    key = "games/preview-campaign/assets/notes/original/notes.json"
+    doc = {"gameId": "preview-campaign", "customField": "Actual source data"}
+    with store.connect() as db:
+        db.execute("INSERT INTO objects VALUES (?,?,?,?,?)", (key, "preview-campaign", '{}', json.dumps(doc).encode(), "now"))
+    assert store.describe_asset("preview-campaign", key)["document"] == doc
+
+
+def test_local_asset_generation_persists_real_queue_and_rejects_changed_retry(tmp_path):
+    store = dev.Store(tmp_path / "generation.sqlite")
+    store.seed()
+    body = {"gameId": "preview-campaign", "type": "map", "name": "Coast", "prompt": "A detailed coastline map", "operationId": "a" * 32}
+    job = store.submit_asset_generation(body)
+    assert job["status"] == "QUEUED" and job["assetKey"] is None
+    assert dev.Store(store.path).submit_asset_generation(body) == job
+    with pytest.raises(ValueError, match="Operation reused"):
+        store.submit_asset_generation({**body, "prompt": "Another map"})
+    assert store.objects("preview-campaign") == []
+    assert store.asset_generation_page("preview-campaign")["jobs"] == [job]
+    assert store.asset_generation_page("preview-sandbox")["jobs"] == []
+
+
+def test_local_asset_generation_pages_are_bounded_and_game_scoped(tmp_path):
+    import uuid
+    store = dev.Store(tmp_path / "generation-pages.sqlite")
+    store.seed()
+    for i in range(26):
+        store.submit_asset_generation({"gameId": "preview-campaign", "type": "location", "name": str(i), "prompt": "A location image", "operationId": uuid.uuid4().hex})
+    first = store.asset_generation_page("preview-campaign")
+    assert len(first["jobs"]) == 25 and first["cursor"]
+    second = store.asset_generation_page("preview-campaign", first["cursor"])
+    assert len(second["jobs"]) == 1 and second["cursor"] is None
+    with pytest.raises(ValueError, match="cursor"):
+        store.asset_generation_page("preview-sandbox", first["cursor"])
+
+
+def test_local_browser_upload_verifies_bytes_and_remains_create_only(tmp_path):
+    import base64
+    import hashlib
+    import json
+    import threading
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+    store = dev.Store(tmp_path / "uploads.sqlite")
+    store.seed()
+    server = dev.Server(("127.0.0.1", 0), store)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_port}"
+    raw = b"original uploaded map bytes"
+    body = {"gameId": "preview-campaign", "assetId": "coast-map", "kind": "map", "filename": "coast.png", "size": len(raw), "contentType": "image/png", "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "metadata": {"title": "Coast", "extra": {"relationshipRole": "finished"}}}
+    try:
+        request = Request(origin + "/uploads", data=json.dumps(body).encode(), headers={"Authorization": "Bearer local", "Content-Type": "application/json"})
+        signed = json.load(urlopen(request))
+        assert signed["key"] == "games/preview-campaign/assets/coast-map/original/coast.png"
+        with pytest.raises(HTTPError) as missing:
+            urlopen(Request(origin + "/object-url?key=" + signed["key"], headers={"Authorization": "Bearer local"}))
+        assert missing.value.code == 404
+        with pytest.raises(HTTPError) as bad:
+            urlopen(Request(signed["url"], data=b"x" * len(raw), headers=signed["headers"], method="PUT"))
+        assert bad.value.code == 400 and store.objects("preview-campaign") == []
+        urlopen(Request(signed["url"], data=raw, headers=signed["headers"], method="PUT")).close()
+        detail = json.load(urlopen(Request(origin + "/object-url?key=" + signed["key"], headers={"Authorization": "Bearer local"})))
+        assert detail["sha256"] == body["sha256"] and detail["size"] == len(raw) and detail["key"] == signed["key"] and detail["kind"] == "map"
+        with pytest.raises(HTTPError) as duplicate:
+            urlopen(Request(signed["url"], data=raw, headers=signed["headers"], method="PUT"))
+        assert duplicate.value.code == 412 and store.object(signed["key"])[1] == raw
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

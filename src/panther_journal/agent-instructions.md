@@ -767,3 +767,32 @@ procedural local generation accurately without relabeling upstream provider char
 Retain uncertain upload identities and inspect metadata before retrying; do not
 create new identities to conceal an unknown submission. See docs/video-production.md
 for bounds, recovery, source-audio handling and the explicit profile.
+
+## Map scenes
+
+A Scene can have `type: map` and an explicit optional `mapAssetKey`. Choose a same-game
+finished/reference PNG, JPEG or WebP through the bounded materialized catalog. Never scan
+source storage, infer a map association from filenames, or use workflow/audit artifacts as a
+map. A map scene can be saved with only its title, but generation requires the image.
+Submission pins its scene revision and the actual image checksum/size/content type as
+`selectedMap` version 1. The local worker verifies and attaches those bytes to video planning.
+The resulting `mapGenerationPacket` version 1 binds the exact image as `firstFrame` and
+records it in `sourceKeys`; carry that binding into approved image-to-video preparation rather
+than asking for a replacement image. Preserve map labels/geography, show a red starting dot
+and red footprints along the user-requested journey, and retain uncertainty about unidentifiable
+locations. Planning and source selection do not authorize paid generation.
+
+## Assets image generation
+
+The Assets workspace creates maps, blueprints and location illustrations through
+`POST /asset-generation` version 1 requests. The subscription-backed laptop worker
+runs with `panther assets worker --work-dir /private/path/asset-generation`.
+Use only Codex's built-in image-generation tool under ChatGPT authentication;
+never use a paid API fallback or silently retry a stopped/ambiguous request.
+Preserve before-generation checkpoints and returned image bytes. Resume publication
+of a saved image with `--resume-job JOB_ID`; do not regenerate to recover an upload.
+Finished images pin their full immutable generation-provenance document with
+`sourceKeys`, carry explicit `extra.assetType` and current semantic version metadata,
+and record actual tool/provider/subscription provenance. Unreported model identity
+stays unknown. Maps remain top-down maps, blueprints remain floor plans, and locations
+remain environment illustrations rather than deceptively relabeled diagrams.

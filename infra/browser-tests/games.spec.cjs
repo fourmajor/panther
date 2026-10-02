@@ -43,13 +43,13 @@ for(const width of [1280,390]) {
       ['Sessions','/assets','#library-status','#library-title'],
       ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
       ['Videos','/assets','#library-status','#library-title'],
-      ['Media','/objects','.media-browser','#explorer h1'],
+      ['Assets','/assets','#assets-library','#explorer h1'],
     ]) {
-      // Media is cached on return; refresh exercises its loading state.
+      // Reload the Assets page to exercise a cold catalog request.
       pendingPath=path; pending=new Promise(resolve=>{release=resolve;});
       await page.locator('#primary-nav').getByRole('link',{name,exact:true}).click();
-      if(name==='Media') await page.reload();
-      const activity=page.locator(status).locator(name==='Media'?'.media-row-skeleton':'.loading-state').first();
+      if(name==='Assets') await page.reload();
+      const activity=page.locator(status).locator(name==='Assets'?'.assets-card-placeholder':'.loading-state').first();
       await expect(activity).toBeVisible();
       await expect(activity).toBeInViewport();
       const title=page.locator(heading);

@@ -108,9 +108,10 @@ def voice_profile_proposals(catalog):
         for person in people
     ]
 
+
 BRIEFS["video-source-brief"] += (
     " Use the pinned scene's name, description and type as the baseline and the explicit creative brief as direction."
-    " Scene types: opener (title/establishing), travel (map/location journey), action, dialogue, general."
+    " Scene types: opener (title/establishing), travel (location journey), map (animated route on a selected map), action, dialogue, general."
     " For travel, retain actual map/location evidence and label unknown geography; prefer deterministic map composition where appropriate."
     " Scene type is a planning choice, never spending authorization."
 )
@@ -121,4 +122,18 @@ BRIEFS["video-generation-packets"] += (
     " otherwise Veo 3.1 Fast for city/opener shots; action takes precedence over city setting."
     " Travel/map shots must cite actual map and location references, not invented geography."
     " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
+)
+
+BRIEFS["video-source-brief"] += (
+    " A map scene has mapInput: an exact checksummed image, first-frame role, and route-animation instructions."
+    " Use the attached image as actual visual evidence; extract only readable locations relevant to the user prompt."
+    " Preserve uncertain or missing locations explicitly."
+)
+BRIEFS["video-generation-packets"] += (
+    " For map scenes, include mapInput.key and sha256 as the exact first-frame image reference."
+    " Return renderPrompt as concise visual/motion direction only: no review, provenance, provider, budget or production boilerplate."
+    " Put the full mapInput.instructions in the executable image-to-video prompt along with the user's journey."
+    " Treat the input image as a map: red starting dot, red footprints moving to the requested destination."
+    " Preserve map labels/geography/style and identify ambiguous locations as planning uncertainty."
+    " This is image-to-video planning, not a landscape shot or authorization for paid execution."
 )

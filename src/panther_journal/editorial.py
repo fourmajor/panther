@@ -93,6 +93,9 @@ def stage_schema(stage, inputs):
             )
         )
         schema["required"].append("sourceFacts")
+    if stage == "video-generation-packets" and inputs.get("mapInput"):
+        schema["properties"]["renderPrompt"] = {"type": "string", "minLength": 1, "maxLength": 4000}
+        schema["required"].append("renderPrompt")
     if stage == "context":
         # STRINGS is reused by other fields; do not constrain their shared schema.
         field = array(copy.deepcopy(TEXT))
@@ -177,6 +180,17 @@ def agent(folder, stage, inputs, heartbeat):
         str(folder),
         "-",
     ]
+    if stage in PLAN["video"] and inputs.get("mapInput"):
+        # This path is created by the worker, never accepted from artifact/user text.
+        image = folder.parent / (
+            "map-first-frame"
+            + {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[
+                inputs["mapInput"]["contentType"]
+            ]
+        )
+        if not image.is_file() or image.is_symlink():
+            raise ValueError("Pinned map image is missing")
+        command[-1:-1] = ["--image", str(image)]
     code = local.run_process(
         command,
         folder=folder,
@@ -208,6 +222,8 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
     if inputs.get("creation"):
         allowed.add("creation")
     allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
+    if inputs.get("mapInput"):
+        allowed.add(inputs["mapInput"]["key"])
     if stage == "context":
         allowed.update(c["key"] for c in inputs["candidates"])
 
@@ -487,6 +503,8 @@ def pinned_cast(job):
     catalog.update(characters=[], players=[], memberships=[], officialArtwork={})
     if job.get("selectedScene"):
         catalog["scene"] = copy.deepcopy(job["selectedScene"])
+    if job.get("selectedMap"):
+        catalog["mapInput"] = copy.deepcopy(job["selectedMap"])
     for character in job.get("selectedCharacters", []):
         catalog["characters"].append(
             {
@@ -498,6 +516,24 @@ def pinned_cast(job):
         appearance = character.get("appearance")
         catalog["officialArtwork"][character["characterId"]] = copy.deepcopy(appearance)
     return catalog
+
+
+def map_generation_packet(job, report):
+    """Carry an executable image-to-video input binding, without authorizing submission."""
+    reference = job["selectedMap"]
+    return {
+        "schemaVersion": 1,
+        "mode": "image-to-video",
+        "firstFrame": {key: reference[key] for key in ("key", "sha256", "size", "contentType")},
+        "sceneRef": copy.deepcopy(job["creation"]["sceneRef"]),
+        "prompt": reference["instructions"]
+        + "\nJourney: "
+        + job["creation"]["brief"]
+        + "\nShot direction: "
+        + report["renderPrompt"],
+        "sourceKeys": [reference["key"]],
+        "generationAuthorized": False,
+    }
 
 
 def transcript_context(documents, references):
@@ -579,7 +615,15 @@ def process(config, root, claim):
         not job.get("creation") or stage in {"correction", "corrected-transcript"}
     ):
         raise ValueError("A transcript correction stage requires original speech evidence")
+    selected_map = job.get("selectedMap")
+    if stage in PLAN["video"] and selected_map:
+        extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[
+            selected_map["contentType"]
+        ]
+        local.download(config, selected_map, folder / ("map-first-frame" + extension))
     sources = [ref["key"] for ref in raw_references]
+    if selected_map:
+        sources.append(selected_map["key"])
     sources.extend(
         ref["key"]
         for character in job.get("selectedCharacters", [])
@@ -698,6 +742,7 @@ def process(config, root, claim):
             "priorStages": prior,
             "candidate": candidate,
             "creation": job.get("creation"),
+            "mapInput": selected_map,
         }
         if stage not in PLAN["video"]:
             inputs["raw"] = raw
@@ -718,6 +763,8 @@ def process(config, root, claim):
             payload = {"transcript": candidate, "review": report}
         if stage == "novel-chapter":
             payload = {"chapter": candidate, "review": report}
+        if stage == "video-generation-packets" and selected_map:
+            payload["mapGenerationPacket"] = map_generation_packet(job, report)
         if stage == "video-voice-casting":
             payload["voiceProfiles"] = voice_profile_proposals(evidence["catalog"])
         if stage == "video-source-brief":
@@ -782,6 +829,7 @@ def process(config, root, claim):
         "inputArtifacts": {name: ref for name, ref in claim["artifacts"].items() if name in needed},
         "characterReferences": job.get("selectedCharacters", []),
         "sceneReference": job.get("selectedScene"),
+        "mapReference": selected_map,
         "rawReference": job.get("raw"),
         "rawReferences": raw_references,
         "creation": job.get("creation"),

@@ -237,10 +237,7 @@ def test_scene_append_is_atomic_revisioned_and_replay_does_not_duplicate(scenes)
     assert unpack(call(scenes, id="harbor", revision=parent["revision"]))["record"] == parent
     assert unpack(call(scenes, "scene", body))["replayed"]
     assert unpack(call(scenes, id="harbor"))["record"]["sceneIds"] == ["arrival"]
-    assert (
-        call(scenes, body=edit(expectedRevision=first["revision"]))["statusCode"]
-        == 409
-    )
+    assert call(scenes, body=edit(expectedRevision=first["revision"]))["statusCode"] == 409
 
 
 def test_explicit_reorder_owned_scenes_and_missing_outputs_are_visible(scenes):
@@ -498,3 +495,101 @@ def test_reorder_is_a_permutation_and_cannot_remove_or_add_scenes(scenes):
         )
     )["record"]
     assert reordered["sceneIds"] == ["departure", "arrival"]
+
+
+def test_map_scene_selection_is_explicit_same_game_and_history_backed(scenes):
+    unpack(call(scenes, body=edit()))
+    key = "games/test-game/assets/map-one/original/map.png"
+    scenes.browse_index.table().put_item(
+        Item={
+            "pk": scenes.browse_index.partition("test-game", "all"),
+            "sk": key,
+            "observed": 1,
+            "payload": json.dumps(
+                {
+                    "key": key,
+                    "contentType": "image/png",
+                    "kind": "map",
+                    "metadata": {"extra": {}},
+                }
+            ),
+        }
+    )
+    initial = unpack(call(scenes, "scene", edit(id="journey", episodeId="harbor", type="map")))[
+        "record"
+    ]
+    assert initial["type"] == "map" and not initial.get("mapAssetKey")
+    body = edit(
+        id="journey",
+        episodeId="harbor",
+        type="map",
+        mapAssetKey=key,
+        expectedRevision=initial["revision"],
+    )
+    selected = unpack(call(scenes, "scene", body))["record"]
+    assert selected["mapAssetKey"] == key
+    assert (
+        scenes.pin_scene(
+            "test-game",
+            {"episodeId": "harbor", "sceneId": "journey", "revision": initial["revision"]},
+        )
+        == initial
+    )
+    for invalid in [key.replace("test-game", "other-game"), "missing", key + ".missing"]:
+        assert (
+            call(
+                scenes,
+                "scene",
+                {
+                    **body,
+                    "expectedRevision": selected["revision"],
+                    "operationId": uuid.uuid4().hex,
+                    "mapAssetKey": invalid,
+                },
+            )["statusCode"]
+            == 400
+        )
+    cleared = unpack(
+        call(
+            scenes,
+            "scene",
+            {
+                **body,
+                "expectedRevision": selected["revision"],
+                "operationId": uuid.uuid4().hex,
+                "mapAssetKey": None,
+            },
+        )
+    )["record"]
+    assert cleared["mapAssetKey"] is None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"contentType": "image/svg+xml"},
+        {"contentType": "video/mp4"},
+        {"lineageWarning": "Missing provenance"},
+        {"metadata": {"extra": {"relationshipRole": "processing"}}},
+    ],
+)
+def test_map_selection_rejects_non_reference_assets(scenes, changes):
+    key = "games/test-game/assets/map-one/original/map.png"
+    scenes.browse_index.table().put_item(
+        Item={
+            "pk": scenes.browse_index.partition("test-game", "all"),
+            "sk": key,
+            "observed": 1,
+            "payload": json.dumps(
+                {
+                    "key": key,
+                    "contentType": "image/png",
+                    "kind": "map",
+                    "metadata": {"extra": {}},
+                    **changes,
+                }
+            ),
+        }
+    )
+    with pytest.raises(ValueError):
+        scenes.map_asset(importlib.import_module("index"), "test-game", key)

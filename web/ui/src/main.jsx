@@ -4,10 +4,20 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient as client } from "./data-layer.js";
 import { GameSelect } from "./components/ui/select.jsx";
 import { MediaBrowser } from "./media-browser.jsx";
+import { AssetsLibrary } from "./assets-library.jsx";
 import "./styles.css";
 
 let root;
 const mediaRoots = new WeakMap();
+const assetsRoots = new WeakMap();
+export function unmountAssetsLibrary(host) {
+  assetsRoots.get(host)?.unmount();
+  assetsRoots.delete(host);
+}
+export function mountAssetsLibrary(host, props) {
+  if (!assetsRoots.has(host)) assetsRoots.set(host, createRoot(host));
+  assetsRoots.get(host).render(<QueryClientProvider client={client}><AssetsLibrary {...props} /></QueryClientProvider>);
+}
 export function unmountMediaBrowser(host) {
   mediaRoots.get(host)?.unmount();
   mediaRoots.delete(host);

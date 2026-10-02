@@ -1,5 +1,6 @@
 import copy
 import importlib
+import hashlib
 import json
 
 import pytest
@@ -805,6 +806,13 @@ def test_prompt_only_video_pins_scene_without_inventing_transcript(editorial, mo
         request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
     )
     assert first["jobId"] == second["jobId"]
+    # Adding map support must not re-identify existing non-map jobs on retry.
+    normalized = {**creation, "title": scene["name"], "brief": scene["name"]}
+    old_identity = [[], [], normalized, [], editorial.pin_game("test-game"), scene, PLAN["version"]]
+    assert (
+        first["jobId"]
+        == hashlib.sha256(json.dumps(old_identity, sort_keys=True).encode()).hexdigest()
+    )
     assert first["raw"] is None and first["rawSources"] == []
     assert first["sourceMode"] == "prompt"
     assert first["creation"]["brief"] == scene["name"]
@@ -1011,8 +1019,9 @@ def test_automatic_creative_context_ignores_technical_indexed_records(editorial,
 
 
 @pytest.mark.parametrize("with_transcript", [False, True])
+@pytest.mark.parametrize("with_map", [False, True])
 def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
-    tmp_path, monkeypatch, with_transcript
+    tmp_path, monkeypatch, with_transcript, with_map
 ):
     scene = {
         "episodeId": "pilot",
@@ -1020,7 +1029,7 @@ def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
         "revision": "b" * 32,
         "name": "A lantern on the quay",
         "description": "A scout arrives in the rain.",
-        "type": "opener",
+        "type": "map" if with_map else "opener",
     }
     portrait = "games/test-game/assets/scout-portrait/original/portrait.png"
     cast = [
@@ -1066,6 +1075,27 @@ def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
         },
     }
 
+    map_reference = {
+        "key": "games/test-game/assets/map/original/map.png",
+        "sha256": "map-checksum",
+        "size": 100,
+        "contentType": "image/png",
+        "role": "first-frame",
+        "instructions": "Treat the input image as a map. Show red footprints.",
+    }
+    if with_map:
+        job["selectedMap"] = map_reference
+        job["creation"]["sceneRef"] = {
+            "episodeId": "pilot",
+            "sceneId": "arrival",
+            "revision": "b" * 32,
+        }
+    downloaded_maps = []
+
+    def download(config, ref, destination):
+        downloaded_maps.append(ref)
+        destination.write_bytes(b"verified-map-fixture")
+
     def api(config, method, route, **kwargs):
         assert route in {"/editorial-jobs/heartbeat", "/editorial-jobs/complete"}
         if route.endswith("complete"):
@@ -1083,9 +1113,14 @@ def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
 
     def agent(folder, stage, inputs, heartbeat):
         seen[stage] = copy.deepcopy(inputs)
+        if with_map and stage in PLAN["video"]:
+            assert inputs["mapInput"] == map_reference
+            assert (folder.parent / "map-first-frame.png").read_bytes() == b"verified-map-fixture"
         value = report(
             evidenceIds=["creation", "catalog"], markdown="A source-attributed scene plan."
         )
+        if stage == "video-generation-packets" and with_map:
+            value["renderPrompt"] = "Red footprints move along the marked road."
         if stage == "video-source-brief":
             value["sourceFacts"] = (
                 [
@@ -1117,6 +1152,7 @@ def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
     monkeypatch.setattr(worker, "fetch", fetch)
     monkeypatch.setattr(worker, "upload", upload)
     monkeypatch.setattr(worker, "agent", agent)
+    monkeypatch.setattr(worker.local, "download", download)
     artifacts = {}
     for stage in ["context", *PLAN["video"]]:
         worker.process(
@@ -1138,10 +1174,17 @@ def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
     assert "providerResponse" not in json.dumps(seen["video-source-brief"])
     assert "detailsRevision" not in json.dumps(seen["video-treatment"]["context"])
     assert seen["video-treatment"]["context"]["catalog"]["characters"][0]["name"] == "Lantern Scout"
-    assert seen["video-treatment"]["context"]["catalog"]["scene"]["type"] == "opener"
+    assert seen["video-treatment"]["context"]["catalog"]["scene"]["type"] == (
+        "map" if with_map else "opener"
+    )
     assert "passed" not in seen["video-treatment"]["priorStages"]["video-source-brief"]
     final = storage["video-generation-packets.json"]
     assert final["characterReferences"] == cast and final["sceneReference"] == scene
+    if with_map:
+        assert len(downloaded_maps) == len(PLAN["video"])
+        assert map_reference["key"] in final["sourceKeys"]
+        assert final["mapReference"] == map_reference
+        assert final["payload"]["mapGenerationPacket"]["firstFrame"]["sha256"] == "map-checksum"
     assert portrait in final["sourceKeys"] and final["videoGenerationAuthorized"] is False
     assert final["rawReference"] == (reference if with_transcript else None)
     if with_transcript:
@@ -1212,3 +1255,108 @@ def test_scene_planning_upload_keeps_exact_scene_metadata(tmp_path, monkeypatch)
     assert extra["episodeId"] == "episode-one" and extra["sceneId"] == "scene-one"
     assert captured["sourceKeys"] == [source]
     assert captured["sessionId"] is None
+
+
+def test_map_generation_pins_actual_image_and_requires_reference(editorial, monkeypatch):
+    import video_scenes
+
+    creation, scene = scene_creation_fixture(editorial, monkeypatch)
+    scene["type"] = "map"
+    # Restore the real bounded image validator to the scene-reference fixture module.
+    __import__("sys").modules["video_scenes"].map_asset = video_scenes.map_asset
+    assert (
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})[
+            "statusCode"
+        ]
+        == 400
+    )
+    key = "games/test-game/assets/journey-map/original/map.png"
+    put(editorial, key, b"synthetic-map-image", "image/png")
+    scene["mapAssetKey"] = key
+    first = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    ref = first["selectedMap"]
+    assert ref["key"] == key and ref["role"] == "first-frame"
+    assert ref["sha256"] and ref["size"] == len(b"synthetic-map-image")
+    assert "Treat the input image as a map" in ref["instructions"]
+    assert "red footprints" in ref["instructions"] and "red dot" in ref["instructions"]
+    assert first["videoGenerationAuthorized"] is False
+    assert (
+        unpack(
+            request(
+                editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation}
+            )
+        )["jobId"]
+        == first["jobId"]
+    )
+    # A checksummed change cannot silently reuse the old job; its pinned reference is unchanged.
+    put(editorial, key, b"changed-map-bytes", "image/png")
+    changed = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert changed["jobId"] != first["jobId"]
+    assert first["selectedMap"]["sha256"] != changed["selectedMap"]["sha256"]
+
+
+def test_map_planning_contract_preserves_actual_visual_reference():
+    from panther_journal.editorial_contract import BRIEFS
+
+    reference = {
+        "key": "games/test-game/assets/map/original/map.png",
+        "sha256": "exact",
+        "role": "first-frame",
+    }
+    catalog = worker.pinned_cast({"gameId": "test-game", "selectedMap": reference})
+    assert catalog["mapInput"] == reference
+    assert "mapInput.key and sha256" in BRIEFS["video-generation-packets"]
+    assert "red footprints" in BRIEFS["video-generation-packets"]
+
+
+def test_map_packet_binds_first_frame_without_a_second_asset_selection():
+    reference = {
+        "key": "games/test-game/assets/map/original/map.png",
+        "sha256": "exact",
+        "size": 100,
+        "contentType": "image/png",
+        "instructions": "Treat the input image as a map. Show a red dot and red footprints.",
+    }
+    job = {
+        "selectedMap": reference,
+        "creation": {
+            "sceneRef": {"episodeId": "trip", "sceneId": "route", "revision": "a" * 32},
+            "brief": "Travel from the harbor to the hills",
+        },
+    }
+    packet = worker.map_generation_packet(job, {"renderPrompt": "Follow the marked road"})
+    assert packet["firstFrame"] == {
+        k: reference[k] for k in ("key", "sha256", "size", "contentType")
+    }
+    assert packet["sourceKeys"] == [reference["key"]]
+    assert "Travel from the harbor to the hills" in packet["prompt"]
+    assert "red footprints" in packet["prompt"] and "marked road" in packet["prompt"]
+    assert packet["generationAuthorized"] is False
+
+
+def test_map_agent_attaches_verified_image_to_codex(tmp_path, monkeypatch):
+    attempt = tmp_path / "revision-01-video-treatment"
+    attempt.mkdir()
+    image = tmp_path / "map-first-frame.png"
+    image.write_bytes(b"synthetic-verified-raster")
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        (attempt / "agent-result.json").write_text(json.dumps(report()))
+        return 0
+
+    monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
+    monkeypatch.setattr(worker.local, "run_process", run)
+    inputs = {"context": {}, "creation": {}, "mapInput": {"contentType": "image/png"}}
+    worker.agent(attempt, "video-treatment", inputs, lambda: None)
+    assert commands[0][commands[0].index("--image") + 1] == str(image)
+    image.unlink()
+    missing_attempt = tmp_path / "revision-02-video-treatment"
+    missing_attempt.mkdir()
+    with pytest.raises(ValueError, match="Pinned map image is missing"):
+        worker.agent(missing_attempt, "video-treatment", inputs, lambda: None)

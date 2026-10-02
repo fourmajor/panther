@@ -25,14 +25,20 @@ def details():
 
 
 
-def session_asset(asset):
-    """Use the production logical Sessions contract for persistent local data."""
+def production_asset_views():
+    """Load pure catalog predicates without importing cloud clients."""
     import sys
     module_path = str(ROOT / "infra/lambda/media-api")
     if module_path not in sys.path:
         sys.path.insert(0, module_path)
     import asset_views
-    return asset_views.session_asset(asset)
+    return asset_views
+
+
+
+def session_asset(asset):
+    """Use the production logical Sessions contract for persistent local data."""
+    return production_asset_views().session_asset(asset)
 
 
 def local_assets(assets, section):
@@ -161,8 +167,8 @@ class Store:
     def save_story_entity(self, kind, body):
         game, identity, operation = body["gameId"], body["id"], body["operationId"]
         self.game(game)
-        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey"} if kind == "scene" else {"sceneIds"})
-        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "sceneIds"}
+        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey"} if kind == "scene" else {"sceneIds"})
+        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "sceneIds"}
         if not required_fields <= set(body) <= expected_fields:
             raise ValueError("Invalid episode or scene edit")
         if kind not in ("episode", "scene") or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity) or not re.fullmatch(r"[a-f0-9]{32}", operation):
@@ -170,7 +176,7 @@ class Store:
         if not isinstance(body.get("name"), str) or not 1 <= len(body["name"].strip()) <= 160 or not isinstance(body.get("description", ""), str) or len(body.get("description", "")) > 4000:
             raise ValueError("Enter a title and a description under 4000 characters")
         episode_id = body.get("episodeId") if kind == "scene" else None
-        if kind == "scene" and (not isinstance(episode_id, str) or not self.get("episode", game + ":" + episode_id) or body.get("type", "general") not in {"general", "opener", "travel", "action", "dialogue"}):
+        if kind == "scene" and (not isinstance(episode_id, str) or not self.get("episode", game + ":" + episode_id) or body.get("type", "general") not in {"general", "opener", "travel", "map", "action", "dialogue"}):
             raise ValueError("Choose an episode in this game and a valid scene type")
         key = game + ":" + ((episode_id + ":") if episode_id else "") + identity
         payload = json.dumps(body, sort_keys=True)
@@ -213,7 +219,13 @@ class Store:
                     if not historical:
                         raise ValueError("Selected output has no exact scene revision")
                     selected_revision = ref["revision"]
-                record.update(episodeId=episode_id, type=body.get("type", "general"), position=previous["position"] if previous else count, selectedOutputKey=selected, selectedOutputSceneRevision=selected_revision)
+                map_key = body.get("mapAssetKey", previous.get("mapAssetKey") if previous else None)
+                if "mapAssetKey" in body or "mapAssetKey" in (previous or {}):
+                    record["mapAssetKey"] = map_key
+                if map_key is not None:
+                    self.map_asset(game, map_key, db)
+                    record["mapAssetKey"] = map_key
+                record.update( episodeId=episode_id, type=body.get("type", "general"), position=previous["position"] if previous else count, selectedOutputKey=selected, selectedOutputSceneRevision=selected_revision)
             db.execute("INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload", (kind, key, game, json.dumps(record)))
             history = {"record": record, "previousRecord": previous, "recordedAt": record["updatedAt"]}
             db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind + "-history", key + ":" + record["revision"], game, json.dumps(history)))
@@ -229,6 +241,35 @@ class Store:
                 response["episodeRecord"] = updated_parent
             db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, kind + ":" + payload, json.dumps(response)))
         return response
+
+    def map_asset(self, game, key, db=None):
+        """Resolve a single explicitly selected local catalog record, preserving cloud rules."""
+        if not isinstance(key, str) or not re.fullmatch(r"games/" + re.escape(game) + r"/assets/[a-z0-9-]+/(?:original|derived/[a-z0-9-]+|metadata)/[^/]+", key):
+            raise ValueError("Choose a same-game map image")
+        if db is None:
+            with self.connect() as connection:
+                return self.map_asset(game, key, connection)
+        row = db.execute("SELECT metadata,data FROM objects WHERE key=? AND game=?", (key, game)).fetchone()
+        if not row:
+            raise ValueError("Map image is unavailable in the catalog")
+        meta, data = json.loads(row[0]), row[1]
+        production_asset_views()
+        import asset_metadata
+        extra = meta.get("extra") or {}
+        if not isinstance(extra, dict) or not isinstance(meta.get("kind", ""), str):
+            raise ValueError("Invalid map metadata")
+        if meta.get("contentType") not in {"image/png", "image/jpeg", "image/webp"} or meta.get("lineageWarning") or asset_metadata.internal(meta.get("kind", "")) or extra.get("relationshipRole") in {"processing", "intermediate", "internal"}:
+            raise ValueError("Choose a finished PNG, JPEG or WebP map image")
+        return meta, data
+
+    def pin_map(self, game, scene):
+        if not scene or scene.get("type") != "map":
+            return None
+        key = scene.get("mapAssetKey")
+        meta, data = self.map_asset(game, key)
+        if not 0 < len(data) <= 20 * 1024**2:
+            raise ValueError("Choose a checksummed map image under 20 MiB")
+        return {"schemaVersion": 1, "key": key, "sha256": base64.b64encode(hashlib.sha256(data).digest()).decode(), "size": len(data), "contentType": meta["contentType"], "role": "first-frame", "instructions": production_asset_views().MAP_SCENE_INSTRUCTIONS}
 
     def episode_composition(self, game, episode_id, revision):
         history = self.get("episode-history", game + ":" + episode_id + ":" + revision)
@@ -265,6 +306,88 @@ class Store:
         with self.connect() as db:
             rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? ORDER BY created DESC", (game,)).fetchall()
         return [{"key": key, "name": key.rsplit("/", 1)[-1], "metadata": json.loads(meta), "contentType": json.loads(meta).get("contentType", "application/octet-stream"), "kind": json.loads(meta).get("kind", "other"), "size": size, "lastModified": created} for key, meta, size, created in rows]
+
+    def submit_asset_generation(self, body):
+        if not isinstance(body, dict) or set(body) != {"gameId", "type", "name", "prompt", "operationId"}:
+            raise ValueError("Choose an asset type, name and prompt")
+        game = self.game(body["gameId"])
+        if body["type"] not in {"map", "blueprint", "location"} or not isinstance(body["operationId"], str) or not re.fullmatch(r"[a-f0-9]{32}", body["operationId"]):
+            raise ValueError("Invalid generation operation or asset type")
+        for field, maximum in (("name", 160), ("prompt", 4000)):
+            if not isinstance(body[field], str) or not 1 <= len(body[field].strip()) <= maximum:
+                raise ValueError("Choose an asset name and prompt")
+        request = {**body, "schemaVersion": 1}
+        identity = hashlib.sha256(json.dumps({"gameId": body["gameId"], "operationId": body["operationId"]}, sort_keys=True).encode()).hexdigest()
+        job = {**request, "jobId": identity, "status": "QUEUED", "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True}
+        with self.connect() as db:
+            db.execute("INSERT OR IGNORE INTO records VALUES ('asset-generation',?,?,?)", (identity, body["gameId"], json.dumps(job)))
+        saved = self.get("asset-generation", identity)
+        if any(saved.get(field) != value for field, value in request.items()):
+            raise ValueError("Operation reused with different generation request")
+        return saved
+
+    def asset_generation_page(self, game, cursor=None):
+        self.game(game)
+        offset = 0
+        if cursor:
+            try:
+                pointer = json.loads(base64.urlsafe_b64decode(cursor))
+            except (ValueError, UnicodeError):
+                raise ValueError("Invalid generation cursor") from None
+            if not isinstance(pointer, dict) or set(pointer) != {"gameId", "offset"} or pointer["gameId"] != game or type(pointer["offset"]) is not int or pointer["offset"] < 0:
+                raise ValueError("Invalid generation cursor")
+            offset = pointer["offset"]
+        with self.connect() as db:
+            rows = db.execute("SELECT payload FROM records WHERE kind='asset-generation' AND game=? ORDER BY rowid DESC LIMIT 26 OFFSET ?", (game, offset)).fetchall()
+        next_cursor = base64.urlsafe_b64encode(json.dumps({"gameId": game, "offset": offset + 25}).encode()).decode() if len(rows) > 25 else None
+        return {"jobs": [json.loads(row[0]) for row in rows[:25]], "cursor": next_cursor}
+
+    def upload_request(self, body):
+        self.game(body["gameId"])
+        for field in ("assetId", "kind"):
+            if not isinstance(body.get(field), str) or len(body[field]) > 96 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", body[field]):
+                raise ValueError("Invalid asset ID or kind")
+        filename = body.get("filename")
+        if not isinstance(filename, str) or not 1 <= len(filename.encode()) <= 180 or filename in {".", ".."} or any(ord(character) < 32 or character in "/\\" for character in filename):
+            raise ValueError("Invalid filename")
+        if type(body.get("size")) is not int or not 0 <= body["size"] <= 100 * 1024**2:
+            raise ValueError("Uploads must be at most 100 MiB")
+        if not isinstance(body.get("contentType"), str) or len(body["contentType"]) > 120 or not re.fullmatch(r"[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+", body["contentType"]):
+            raise ValueError("Invalid content type")
+        try:
+            valid_checksum = isinstance(body.get("sha256"), str) and len(base64.b64decode(body["sha256"], validate=True)) == 32
+        except ValueError:
+            valid_checksum = False
+        if not valid_checksum or not isinstance(body.get("metadata", {}), dict):
+            raise ValueError("Invalid checksum or metadata")
+        key = f"games/{body['gameId']}/assets/{body['assetId']}/original/{filename}"
+        return key
+
+    def describe_asset(self, game, key):
+        """Exact immutable-key detail, independent of a currently loaded browse page."""
+        self.game(game)
+        if not isinstance(key, str) or len(key) > 1024 or not key.startswith(f"games/{game}/assets/") or key.endswith("/") or ".." in key.split("/") or any(ord(character) < 32 for character in key):
+            raise ValueError("Invalid asset for selected game")
+        with self.connect() as db:
+            row = db.execute("SELECT metadata,data,created FROM objects WHERE key=? AND game=?", (key, game)).fetchone()
+        if not row:
+            raise LookupError("Asset not found")
+        meta, raw, created = json.loads(row[0]), row[1], row[2]
+        result = {"key": key, "name": key.rsplit("/", 1)[-1], "size": len(raw), "contentType": meta.get("contentType", "application/octet-stream"), "kind": meta.get("kind", "unclassified"), "metadata": meta, "lastModified": created, "document": None, "sourceKeys": []}
+        result["sourceKeys"] = sorted({source for source in meta.get("sourceKeys", []) if isinstance(source, str) and source.startswith(f"games/{game}/assets/") and source != key}) if isinstance(meta.get("sourceKeys", []), list) else []
+        if key.endswith(".json") and 0 < len(raw) <= 2 * 1024**2:
+            try:
+                doc = json.loads(raw)
+                if isinstance(doc, dict):
+                    if doc.get("gameId", game) != game:
+                        result["lineageWarning"] = "Document game identity does not match; structured content excluded."
+                    else:
+                        result["document"] = doc
+            except (ValueError, UnicodeError):
+                result["lineageWarning"] = "Structured provenance could not be read. Original retained."
+        elif key.endswith(".json") and len(raw) > 2 * 1024**2:
+            result["lineageWarning"] = "Large document: only compact metadata links are indexed."
+        return result
 
     def object(self, key):
         with self.connect() as db:
@@ -376,12 +499,18 @@ class Handler(BaseHTTPRequestHandler):
                 game = prefix.split("/")[1]
                 assets = [a for a in store.objects(game) if a["key"].startswith(prefix)]
                 result = {"objects": [a for a in assets if "/" not in a["key"][len(prefix):]], "prefixes": sorted({prefix + a["key"][len(prefix):].split("/")[0] + "/" for a in assets if "/" in a["key"][len(prefix):]}), "nextCursor": None}
+            elif path == "/asset-generation":
+                if q.get("jobId"):
+                    result = store.get("asset-generation", q["jobId"])
+                    if not result or result["gameId"] != game:
+                        raise LookupError("Generation job not found")
+                else:
+                    result = store.asset_generation_page(game, q.get("cursor"))
             elif path == "/asset-document":
-                meta, raw = store.object(q["key"])
-                result = {"key": q["key"], "kind": meta.get("kind", "other"), "metadata": meta, "document": json.loads(raw)}
+                result = store.describe_asset(game, q["key"])
             elif path == "/object-url":
                 meta, raw = store.object(q["key"])
-                result = {"url": self.origin + "/development/object?key=" + q["key"], "size": len(raw), "metadata": meta, "expiresIn": None, "contentType": meta.get("contentType", "application/octet-stream")}
+                result = {"key": q["key"], "kind": meta.get("kind", "unclassified"), "filename": q["key"].rsplit("/", 1)[-1], "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "url": self.origin + "/development/object?key=" + q["key"], "size": len(raw), "metadata": meta, "expiresIn": None, "contentType": meta.get("contentType", "application/octet-stream")}
             elif path == "/browser-recording/capabilities":
                 result = {"canRecord": True, "transcriptionAvailable": False, "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
             elif path == "/browser-transcriptions":
@@ -512,8 +641,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not key.startswith(f"games/{game}/assets/"):
                     raise ValueError("Choose same-game sources")
                 store.object(key)
-            identity = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 4 if video else 3, "status": "SUBMITTED", "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "sourceMode": "transcript" if creation["sourceKeys"] else "prompt"} if video else {})}
+            selected_map = store.pin_map(game, scene) if video else None
+            identity_body = {**body, **({"selectedMap": selected_map} if selected_map else {})}
+            identity = hashlib.sha256(json.dumps(identity_body, sort_keys=True).encode()).hexdigest()
+            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 4 if video else 3, "status": "SUBMITTED", "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "sourceMode": "transcript" if creation["sourceKeys"] else "prompt", **({"selectedMap": selected_map} if selected_map else {})} if video else {})}
             store.put("editorial", identity, job, game)
             return self.send(job)
         if path == "/novel-chapters":
@@ -547,10 +678,15 @@ class Handler(BaseHTTPRequestHandler):
                 db.execute("INSERT INTO records VALUES ('chapter',?,?,?)", (identity, game, json.dumps(chapter)))
                 db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, json.dumps(body), json.dumps(response)))
             return self.send(response, status=201)
+        if path == "/asset-generation":
+            return self.send(store.submit_asset_generation(body))
+        if path.startswith("/asset-generation/"):
+            return self.send({"error": "The local queue persists requests but does not support generation workers. Run the subscription worker against the authenticated Panther service."}, status=501)
         if path == "/uploads":
+            key = store.upload_request(body)
             identity = uuid.uuid4().hex
             store.put("upload", identity, body, body["gameId"])
-            return self.send({"url": self.origin + "/development/upload/" + identity, "headers": {"Content-Type": body["contentType"]}})
+            return self.send({"key": key, "url": self.origin + "/development/upload/" + identity, "headers": {"Content-Type": body["contentType"], "x-amz-checksum-sha256": body["sha256"], "If-None-Match": "*"}})
         if path == "/browser-recording/complete":
             meta, raw = store.object(body["recordingKey"])
             doc = json.loads(raw)
@@ -572,11 +708,16 @@ class Handler(BaseHTTPRequestHandler):
         if not upload:
             return self.send({"error": "Upload not found"}, status=404)
         size = int(self.headers.get("Content-Length", "0"))
-        if not 0 < size <= 25 * 1024**2:
+        if not 0 <= size <= 100 * 1024**2 or size != upload["size"]:
             return self.send({"error": "Invalid upload size"}, status=400)
         raw = self.rfile.read(size)
+        if len(raw) != size or base64.b64encode(hashlib.sha256(raw).digest()).decode() != upload["sha256"]:
+            return self.send({"error": "Upload checksum mismatch"}, status=400)
         key = f"games/{upload['gameId']}/assets/{upload['assetId']}/original/{upload['filename']}"
-        meta = {**upload.get("metadata", {}), "kind": upload["kind"], "contentType": upload["contentType"]}
+        production_asset_views()
+        import asset_metadata
+        metadata = asset_metadata.defaults(upload["kind"], upload.get("metadata", {}), upload["filename"], upload["contentType"], key)
+        meta = {**metadata, "kind": upload["kind"], "contentType": upload["contentType"]}
         try:
             with store.connect() as db:
                 db.execute("INSERT INTO objects VALUES (?,?,?,?,?)", (key, upload["gameId"], json.dumps(meta), raw, datetime.now(timezone.utc).isoformat()))

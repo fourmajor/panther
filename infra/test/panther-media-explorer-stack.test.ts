@@ -582,7 +582,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 106);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 113);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -735,4 +735,27 @@ test("dashboard recent reuses the catalog reader and metadata permissions", () =
     .filter(([id]) => id.startsWith("GameCatalog")));
   assert.match(policies, /dynamodb:BatchGetItem/);
   assert.match(policies, /dynamodb:Query/);
+});
+
+test("asset generation stores bounded subscription-worker jobs without hosted inference", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::DynamoDB::Table", {
+    BillingMode: "PAY_PER_REQUEST",
+    GlobalSecondaryIndexes: Match.arrayWith([
+      Match.objectLike({IndexName:"StatusIndex"}), Match.objectLike({IndexName:"GameIndex"})
+    ]),
+  });
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler:"asset_generation.handler",
+    Environment:{Variables:Match.objectLike({MODEL_WORKERS:"example-operator",ASSET_GENERATION_TABLE:Match.anyValue(),ASSET_BUCKET_NAME:Match.anyValue()})},
+  });
+  for(const route of ["GET /asset-generation","POST /asset-generation","POST /asset-generation/claim","POST /asset-generation/resume"])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:route,AuthorizationType:"JWT"});
+  const brokers = Object.values(template.findResources("AWS::Lambda::Function")) as any[];
+  const worker = brokers.find(fn=>fn.Properties.Handler==="asset_generation.handler");
+  assert.ok(worker);
+  assert.equal(worker.Properties.Environment.Variables.OPENAI_API_KEY,undefined);
+  assert.equal(worker.Properties.Environment.Variables.FAL_KEY,undefined);
+  template.resourceCountIs("AWS::EC2::Instance",0);
+  template.resourceCountIs("AWS::EC2::NatGateway",0);
 });

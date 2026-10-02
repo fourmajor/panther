@@ -390,3 +390,26 @@ has run with deployment credentials; code/test completion does not imply data ba
 Legacy `/tv-series` and `/tv-episodes` API routes remain GET-only for recovery; their
 Lambda has no write permissions and the CLI no longer exposes their save commands.
 New episode creation and edits use the Episode/Scene endpoints exclusively.
+
+### Map scenes
+
+An episode-owned Scene may use `type: map` and optional `mapAssetKey`. Title-only scene
+creation remains valid; generating a map scene requires an explicitly selected same-game
+PNG, JPEG or WebP image from the bounded materialized catalog. Ordinary map references need
+no invented generation history. Internal, processing, unresolved-lineage and non-raster assets
+are excluded. Existing scene revisions remain unchanged; no geographic or map association is
+inferred for earlier scenes.
+
+Submission freezes the scene revision plus `selectedMap` version 1: immutable asset key,
+SHA-256, byte count and content type. The worker verifies the downloaded image and attaches
+it to each subscription-backed video planning stage. Generation packets contain a structured
+`mapGenerationPacket` version 1 with `mode: image-to-video`, exact `firstFrame`, frozen
+`sceneRef`, prompt and `sourceKeys`. This binding travels with the packet; it does not require
+another map selection. The prompt treats the image as a map, preserves its geography and
+labels, and animates a red starting dot and red footprints toward the requested destination.
+Unreadable or unidentified locations remain explicit planning uncertainties.
+
+All derived planning assets include the map in immutable `sourceKeys`; private references
+and image bytes remain outside Git. Provider/model/rights/budget authorization is still
+required before actual paid image-to-video submission. Map selection or completed planning
+alone never triggers a paid request.

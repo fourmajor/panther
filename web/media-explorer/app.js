@@ -284,6 +284,7 @@ function storeTokens(tokens) {
 
 function clearSession() {
   roomCapture?.interrupt();
+  assetUploads.clear();assetGenerationJobs.clear();assetListing={gameId:null,assets:[],cursor:null,loading:false,error:'',pages:0};
   window.PantherUI.clear();
   resetLive();
   state.games = null;
@@ -432,7 +433,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|jobs|object-url|image-links)/.test(path);
+  const sensitive = /(?:live|transcriptions|jobs|asset-generation|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -446,8 +447,9 @@ function foregroundBlocked() {
   return [...document.querySelectorAll("form[data-dirty=true]")].some(form => form.getClientRects().length > 0);
 }
 function foregroundPreservesView(section) {
-  const host = section === "media" ? elements.explorer : section === "novel" ? elements.novel : document.getElementById("session-library");
-  if (section === "media" && mediaListing.loadedPages > 1) return true;
+  const host = ["media","assets"].includes(section) ? elements.explorer : section === "novel" ? elements.novel : document.getElementById("session-library");
+  if (["media","assets"].includes(section) && !elements.entries.hidden && mediaListing.loadedPages > 1) return true;
+  if(section==='assets'&&elements.entries.hidden&&(assetListing.pages>1||host.querySelector('.assets-filter[aria-pressed=true]:not(:first-child)')))return true;
   if (["sessions", "videos"].includes(section) && host.dataset.paged === "true") return true;
   const visible = element => element.getClientRects().length > 0;
   if ([...host.querySelectorAll('input[type="search"]')].some(input => visible(input) && input.value.trim())) return true;
@@ -461,7 +463,8 @@ async function revalidateForeground() {
   const gameId = state.gameId, epoch = routeEpoch, scope = apiScope();
   const paths = ["/games", "/game"], filters = {};
   if (section === "dashboard") paths.push("/dashboard-recent");
-  if (section === "media") {paths.push("/objects");filters["/objects"] = {prefix:state.currentPrefix};}
+  if (["media","assets"].includes(section) && !elements.entries.hidden) {paths.push("/objects");filters["/objects"] = {prefix:state.currentPrefix};}
+  if (section === "assets" && elements.entries.hidden) {paths.push("/assets");filters["/assets"] = {section:"all"};}
   if (section === "characters") {
     if (!elements.characterProfile.hidden && state.currentCharacter) {
       paths.push("/character-details", "/character-details/history");
@@ -489,7 +492,8 @@ async function revalidateForeground() {
       return;
     }
     document.dispatchEvent(new CustomEvent("panther-data-updated", {detail:{gameId,section,paths:changed.map(item=>item.path)}}));
-    if (section === "media") await loadPrefix(state.currentPrefix);
+    if (["media","assets"].includes(section)&&!elements.entries.hidden) await loadPrefix(state.currentPrefix);
+    else if(section === "assets") await loadAssetLibrary(epoch);
     else if (section === "dashboard") {renderDashboard();await loadDashboardRecent(epoch);}
     else if (section === "characters") {
       if (!elements.characterProfile.hidden && state.currentCharacter) await loadCharacterFacts(state.currentCharacter.gameId, state.currentCharacter.characterId, epoch);
@@ -674,7 +678,7 @@ function renderDashboard() {
     ["sessions", "Sessions", "Record, listen and read your sessions."],
     ["novel", "Novel", "Explore narrative retellings, chapters and books from your game."],
     ["videos", "Videos", "Watch episodes, trailers and other creative reimaginings."],
-    ["media", "Media", "Browse the full archive of images, maps, models and other assets."],
+    ["assets", "Assets", "Maps, blueprints, locations and other assets."],
   ];
   const cards = document.getElementById("dashboard-sections"); cards.replaceChildren();
   for (const [index, [section, label, description]] of sections.entries()) {
@@ -1647,12 +1651,15 @@ async function renderRoute() {
   document.getElementById("game-settings").hidden = true;
   clearLibrary();
   closePreview();
+  window.PantherUI.unmountAssetsLibrary?.(document.getElementById('assets-library'));
+  document.getElementById('assets-library').hidden=true;document.getElementById('asset-view-actions').hidden=true;
+  elements.entries.hidden=false;elements.breadcrumbs.hidden=false;elements.status.hidden=false;
   elements.novel.hidden = true;
   clearNovel();
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|sessions|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1682,6 +1689,16 @@ async function renderRoute() {
     setActiveNavigation("settings"); elements.characters.hidden = true; elements.explorer.hidden = true;
     document.getElementById("game-settings").hidden = false; renderGameSettings(); return;
   }
+  if(section==='assets') {
+    setActiveNavigation('assets');elements.characters.hidden=true;elements.explorer.hidden=false;
+    const files=new URLSearchParams(location.search).has('folder');
+    document.getElementById('asset-view-actions').hidden=false;document.getElementById('asset-browse-files').hidden=files;
+    const back=document.getElementById('asset-back-library');back.hidden=!files;back.href=gamePath('assets');back.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(back.href);};
+    document.getElementById('asset-browse-files').onclick=()=>navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${state.gameId}/`));
+    if(!files){elements.entries.hidden=true;elements.breadcrumbs.hidden=true;elements.status.hidden=true;elements.loadMore.hidden=true;await loadAssetLibrary(epoch);}
+    else {const folder=new URLSearchParams(location.search).get('folder');await loadPrefix(folder?.startsWith(`games/${state.gameId}/`)?folder:`games/${state.gameId}/`);}
+    const key=new URLSearchParams(location.search).get('asset');if(epoch===routeEpoch&&sameGameKey(key))await previewFile({key,name:key.split('/').at(-1)});return;
+  }
   if (["sessions", "videos"].includes(section)) {
     setActiveNavigation(section);
     elements.characters.hidden = true;
@@ -1710,7 +1727,7 @@ async function renderRoute() {
     navigate("/media", { replace: true });
     return;
   }
-  setActiveNavigation("media");
+  setActiveNavigation("assets");
   elements.characters.hidden = true;
   elements.explorer.hidden = false;
   const folder = new URLSearchParams(location.search).get("folder");
@@ -1754,13 +1771,55 @@ function appendFile(file) {
 
 
 let mediaListing = {prefix:null,folders:[],files:[],loading:false,error:"",hasMore:false,loadedPages:0};
+let assetListing={gameId:null,assets:[],cursor:null,loading:false,error:'',pages:0};
+const assetUploads=new Map(),assetGenerationJobs=new Map();
+function describeResolvedAsset(result){return {...result,name:result.metadata?.title||result.filename||result.key?.split('/').at(-1),kind:result.kind||'unknown',sourceKeys:result.metadata?.sourceKeys||[]};}
+async function uploadGameAsset(gameId,request){
+  let pending=assetUploads.get(request.operationId);
+  if(!pending){
+    const file=request.file;if(!file||!file.size||file.size>100*1024**2)throw Object.assign(new Error('Choose a file under 100 MiB.'),{status:400});
+    const raster=['map','blueprint','location'].includes(request.type);if(raster&&(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>20*1024**2))throw Object.assign(new Error('Choose a PNG, JPEG or WebP image under 20 MiB.'),{status:400});
+    const bytes=await file.arrayBuffer(),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))));
+    pending={bytes,body:{gameId,assetId:`${request.type||'asset'}-${request.operationId}`,kind:request.type||'unknown',filename:file.name,size:file.size,contentType:file.type||'application/octet-stream',sha256,metadata:{title:(request.name||file.name).trim(),category:'reference',extra:{relationshipRole:'finished',generation:{schemaVersion:1,method:'unknown',cost:{status:'unknown'}}}}}};
+    assetUploads.set(request.operationId,pending);
+  }
+  try{
+    const signed=await api('/uploads',{},{body:pending.body});
+    let existing=null;try{existing=await api('/object-url',{key:signed.key});}catch(error){if(error.status!==404)throw error;}
+    if(!existing){const headers={...signed.headers};delete headers['Content-Length'];delete headers['content-length'];const response=await fetch(signed.url,{method:'PUT',headers,body:pending.bytes,signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('Upload could not finish. Retry to continue.');existing=await api('/object-url',{key:signed.key});}
+    if(existing.sha256!==pending.body.sha256||existing.size!==pending.body.size)throw new Error('Uploaded file verification failed. The original was not replaced.');
+    const asset=describeResolvedAsset(existing);assetUploads.delete(request.operationId);await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;
+    if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets.filter(item=>item.key!==asset.key)];drawAssetLibrary(routeEpoch);}return asset;
+  }catch(error){if(error.status===400)assetUploads.delete(request.operationId);if(error instanceof TypeError)throw new Error('Upload interrupted. Your file is still selected; retry to continue.');throw error;}
+}
+function drawAssetLibrary(epoch){
+  const host=document.getElementById('assets-library'),gameId=state.gameId;host.hidden=false;
+  window.PantherUI.mountAssetsLibrary?.(host,{...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
+    onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
+    onThumbnail:async asset=>(await api('/object-url',{key:asset.key})).url,
+    onUpload:request=>uploadGameAsset(gameId,request),
+    onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request}});assetGenerationJobs.set(job.jobId,job);return job;},
+    onGenerationStatus:async job=>{const result=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,result);if(result.status==='PUBLISHED'&&result.assetKey&&!assetListing.assets.some(asset=>asset.key===result.assetKey)){const asset=describeResolvedAsset(await api('/object-url',{key:result.assetKey}));await window.PantherUI.invalidate(apiScope(),['/assets','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets];drawAssetLibrary(epoch);}}return result;}});
+}
+async function loadAssetLibrary(epoch,cursor=null){
+  const gameId=state.gameId,current=()=>epoch===routeEpoch&&state.gameId===gameId;
+  if(assetListing.gameId!==gameId)assetListing={gameId,assets:[],cursor:null,loading:false,error:'',pages:0};
+  assetListing.loading=true;assetListing.error='';drawAssetLibrary(epoch);
+  const jobsRequest=!cursor?api('/asset-generation',{gameId}).catch(()=>null):Promise.resolve(null);
+  try{const [result,jobs]=await Promise.all([api('/assets',{gameId,section:'all',cursor}),jobsRequest]);if(!current())return;if(!Array.isArray(result.assets))throw new Error('Assets are temporarily unavailable.');
+    for(const job of jobs?.jobs||[])assetGenerationJobs.set(job.jobId,job);
+    const assets=cursor?[...assetListing.assets,...result.assets]:result.assets;assetListing={gameId,assets:[...new Map(assets.map(asset=>[asset.key,asset])).values()],cursor:result.cursor||null,loading:false,error:'',pages:cursor?assetListing.pages+1:1};drawAssetLibrary(epoch);
+    const missing=(jobs?.jobs||[]).filter(job=>job.status==='PUBLISHED'&&sameGameKey(job.assetKey)&&!assetListing.assets.some(asset=>asset.key===job.assetKey));
+    const resolved=await Promise.allSettled(missing.map(job=>api('/object-url',{key:job.assetKey})));if(!current())return;for(const result of resolved)if(result.status==='fulfilled'){const asset=describeResolvedAsset(result.value);if(!assetListing.assets.some(existing=>existing.key===asset.key))assetListing.assets.push(asset);}if(resolved.length)drawAssetLibrary(epoch);
+  }catch(error){if(current()){assetListing.loading=false;assetListing.error=error.message;drawAssetLibrary(epoch);}}
+}
 function drawMediaBrowser() {
   const mount=window.PantherUI?.mountMediaBrowser;
   if (!mount) return false;
   elements.breadcrumbs.hidden=true;elements.status.hidden=true;elements.loadMore.hidden=true;
   elements.entries.classList.add("react-media-host");
   mount(elements.entries,{...mediaListing,gameId:state.gameId,gameName:state.gameDetail?.game.name || state.gameId,
-    onFolder:prefix=>navigate(gamePath("media")+"?folder="+encodeURIComponent(prefix)), onFile:previewFile,
+    onFolder:prefix=>navigate(gamePath(new URLSearchParams(location.search).has('folder')&&location.pathname.endsWith('/assets')?'assets':'media')+"?folder="+encodeURIComponent(prefix)), onFile:previewFile,
     onMore:()=>loadPrefix(state.currentPrefix,state.nextCursor)});
   return true;
 }
@@ -1843,6 +1902,7 @@ async function previewFile(file) {
   try {
     const result = await api("/object-url", { key: file.key });
     if (epoch !== previewEpoch) return;
+    elements.previewTitle.textContent=result.metadata?.title||file.name;
     renderGeneration(document.getElementById("asset-generation"), result.metadata);
     // Physical folders may change; connections/readers use the API's stable asset identity.
     const assetRef = result.key || file.key;
@@ -1855,7 +1915,7 @@ async function previewFile(file) {
     elements.openOriginal.href = result.url;
     if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
     if (result.contentType.startsWith("video/")) configureVideoPreview({...result,key:assetRef},elements.previewBody.firstChild,epoch);
-    void renderAssetLinks(assetRef, epoch);
+    void renderAssetLinks(assetRef, epoch, {...result,key:assetRef,name:result.filename||file.name,kind:result.kind||'unknown',sourceKeys:result.metadata?.sourceKeys||[]});
     void renderAssetVersions(assetRef, epoch);
     if (structured) {
       const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef});
@@ -2724,6 +2784,35 @@ function assetLink(asset, label) {
 
 let videoLibraryView = {gameId:null, search:"", category:"all", tag:"", character:"", collection:""};
 let videoPlaylist = null;
+function sceneMapPicker(gameId, selectedKey, current, onChange = () => {}) {
+  const host=document.createElement('section');host.className='scene-map-picker';
+  const label=document.createElement('label'),caption=document.createElement('span'),select=document.createElement('select');
+  caption.textContent='Map image';select.setAttribute('aria-label','Map image');select.add(new Option('Choose a map','none'));
+  if(selectedKey)select.add(new Option('Selected map',selectedKey));select.value=selectedKey||'none';label.append(caption,select);
+  const image=document.createElement('img'),status=document.createElement('p'),more=document.createElement('button');
+  image.alt='Selected map';image.hidden=true;status.setAttribute('role','status');more.type='button';more.className='quiet-button';more.textContent='More images';more.hidden=true;
+  host.append(label,image,status,more);window.PantherUI.enhanceSelect(select,'Map image');
+  let started=false,cursor=null,generation=0;const seen=new Set();
+  const active=()=>current()&&host.isConnected;
+  const value=()=>select.value==='none'?null:select.value;
+  async function preview(){const request=++generation;image.hidden=true;image.removeAttribute('src');if(!value())return;
+    try{const result=await api('/object-url',{key:value()});if(!active()||request!==generation)return;if(!result.url||!/^image\/(png|jpeg|webp)$/.test(result.contentType||''))throw new Error('Map image unavailable');const option=[...select.options].find(option=>option.value===value());if(option&&result.metadata?.title)option.textContent=result.metadata.title;image.src=result.url;image.hidden=false;}
+    catch(error){if(active()&&request===generation)status.textContent=error.message;}
+  }
+  select.onchange=()=>{status.textContent='';void preview();onChange(value());};
+  image.onerror=()=>{image.hidden=true;status.textContent='Map preview unavailable.';};
+  async function load(){if(!active())return;more.disabled=true;showLoading(status,'Loading images…');
+    try{const result=await api('/assets',{gameId,section:'all',cursor});if(!active())return;
+      for(const asset of result.assets||[]){if(!sameGameKey(asset.key)||!/^image\/(png|jpeg|webp)$/.test(asset.contentType||'')||asset.lineageWarning||['processing','intermediate','internal'].includes(asset.metadata?.extra?.relationshipRole)||['provenance','migration-report','audit-report','generation-metadata'].includes(asset.kind)||asset.kind?.startsWith('editorial-')||asset.kind?.includes('provenance'))continue;
+        const title=asset.metadata?.title||asset.name||asset.key.split('/').at(-1),existing=[...select.options].find(option=>option.value===asset.key);if(existing)existing.textContent=title;else select.add(new Option(title,asset.key));
+      }
+      cursor=result.cursor||null;if(cursor&&(seen.has(cursor)||seen.size>=200))throw new Error('Image catalog pagination is unavailable.');if(cursor)seen.add(cursor);
+      more.hidden=!cursor;more.disabled=false;status.textContent=select.options.length===1&&!cursor?'No images yet. Add a map in Assets.':'';
+    }catch(error){if(active()){status.textContent=error.message;more.hidden=false;more.disabled=false;more.textContent='Retry loading images';}}
+  }
+  more.onclick=()=>void load();
+  return {host,value,select,start(){if(started)return;started=true;void load();void preview();}};
+}
 function renderEpisodeWorkspace(epoch) {
   const gameId=state.gameId, parent=document.getElementById('session-library');
   let host=document.getElementById('episode-workspace');
@@ -2745,9 +2834,10 @@ function renderEpisodeWorkspace(epoch) {
     const label=(text,node)=>{const wrapper=document.createElement('label');wrapper.append(document.createTextNode(text),node);form.append(wrapper);return node;};
     const name=label(kind==='episode'?'Episode title':'Scene title',document.createElement('input'));name.required=true;name.maxLength=160;name.value=record?.name||'';
     const description=label('Description',document.createElement('textarea'));description.maxLength=4000;description.value=record?.description||'';
-    let type;if(kind==='scene'){type=label('Scene type',document.createElement('select'));for(const [value,text] of [['general','General'],['opener','Opener'],['travel','Travel'],['action','Action'],['dialogue','Dialogue']])type.add(new Option(text,value));type.value=record?.type||'general';window.PantherUI.enhanceSelect(type,'Scene type');}
+    let type,map;if(kind==='scene'){type=label('Scene type',document.createElement('select'));for(const [value,text] of [['general','General'],['opener','Opener'],['map','Map'],['travel','Travel'],['action','Action'],['dialogue','Dialogue']])type.add(new Option(text,value));type.value=record?.type||'general';window.PantherUI.enhanceSelect(type,'Scene type');map=sceneMapPicker(gameId,record?.mapAssetKey,current);form.append(map.host);map.host.hidden=type.value!=='map';type.addEventListener('change',()=>{map.host.hidden=type.value!=='map';if(!map.host.hidden)map.start();});}
     const actions=document.createElement('div'),save=button(record?'Save changes':kind==='episode'?'Create episode':'Add scene',null,true),cancel=button('Cancel',()=>clearEditor()),status=document.createElement('p');save.type='submit';status.setAttribute('role','status');actions.append(save,cancel);form.append(actions,status);editor.append(form);name.focus();let pending=null;
-    form.onsubmit=async event=>{event.preventDefault();pending||={gameId,id:record?.id||`${kind}-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),expectedRevision:record?.revision||null,operationId:crypto.randomUUID().replaceAll('-',''),...(kind==='scene'?{episodeId:parentEpisode.id,type:type.value,selectedOutputKey:record?.selectedOutputKey||null}:{sceneIds:record?.sceneIds||[]})};save.disabled=true;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=true;
+    if(map&&!map.host.hidden)map.start();
+    form.onsubmit=async event=>{event.preventDefault();pending||={gameId,id:record?.id||`${kind}-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),expectedRevision:record?.revision||null,operationId:crypto.randomUUID().replaceAll('-',''),...(kind==='scene'?{episodeId:parentEpisode.id,type:type.value,mapAssetKey:type.value==='map'?map.value():null,selectedOutputKey:record?.selectedOutputKey||null}:{sceneIds:record?.sceneIds||[]})};save.disabled=true;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=true;
       try{const response=await api(kind==='episode'?'/episodes':'/scenes',{},{body:pending});if(!current()||!form.isConnected||(kind==='scene'&&selectedEpisode?.id!==parentEpisode?.id))return;const saved=response.record;clearEditor();
         if(kind==='episode'){const index=episodes.findIndex(item=>item.id===saved.id);if(index<0)episodes.unshift(saved);else episodes[index]=saved;drawEpisodes();await chooseEpisode(saved);}
         else {if(response.episodeRecord){selectedEpisode=response.episodeRecord;const parentIndex=episodes.findIndex(item=>item.id===selectedEpisode.id);episodes[parentIndex]=selectedEpisode;drawEpisodes();}const index=scenes.findIndex(item=>item.id===saved.id);if(index<0)scenes.push(saved);else scenes[index]=saved;drawScenes();drawPlayback();chooseScene(saved);}
@@ -2771,8 +2861,8 @@ function renderEpisodeWorkspace(epoch) {
   };
   host.updateOutputs=assets=>{host.sceneAssets=assets;drawOutputs();if(!previewHost?.querySelector('video'))drawPlayback();};
   function drawScenes(){sceneCards.replaceChildren();for(const [index,scene] of orderedScenes().entries()){const row=document.createElement('div');row.className='scene-order-row';if(!scene){row.textContent='Scene unavailable';sceneCards.append(row);continue;}const card=button(scene.name,()=>chooseScene(scene));card.className='scene-card';card.setAttribute('aria-label',scene.name);card.dataset.order=String(index+1)+'.';card.setAttribute('aria-pressed',String(selectedScene?.id===scene.id));const state=document.createElement('small');state.textContent=scene.selectedOutputKey?'Video selected':'Choose a video';const move=(direction)=>{const node=button(direction<0?'Move up':'Move down',()=>{const ids=[...selectedEpisode.sceneIds],next=index+direction;[ids[index],ids[next]]=[ids[next],ids[index]];void saveOrder(ids);});node.setAttribute('aria-label',`Move ${scene.name} ${direction<0?'up':'down'}`);node.disabled=mutationPending||mutationUncertain||!scenesComplete||index+direction<0||index+direction>=selectedEpisode.sceneIds.length;return node;};row.append(card,state,move(-1),move(1));sceneCards.append(row);}if(!scenes.length){const empty=document.createElement('p');empty.textContent='No scenes yet.';sceneCards.append(empty);}}
-  function chooseScene(scene){clearEditor();selectedScene=scene;updateURL(selectedEpisode.id,scene.id);drawScenes();sceneDetail.replaceChildren();const heading=document.createElement('h3');heading.textContent=scene.name;const description=document.createElement('p');description.textContent=scene.description;description.hidden=!scene.description;
-    const actions=document.createElement('div');actions.className='scene-actions';actions.append(button('Generate video',()=>openSceneVideoComposer(selectedScene,epoch),true),button('Edit scene',()=>edit('scene',selectedScene)));const composer=document.createElement('section');composer.id='scene-video-composer';const work=document.createElement('section'),outputs=document.createElement('div');work.id='scene-work-progress';outputs.className='scene-output-list';sceneDetail.append(heading,description,actions,composer,work,outputs);drawOutputs();
+  function chooseScene(scene){clearEditor();selectedScene=scene;updateURL(selectedEpisode.id,scene.id);drawScenes();for(const native of sceneDetail.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);sceneDetail.replaceChildren();const heading=document.createElement('h3');heading.textContent=scene.name;const description=document.createElement('p');description.textContent=scene.description;description.hidden=!scene.description;
+    const actions=document.createElement('div');actions.className='scene-actions';actions.append(button('Generate video',()=>openSceneVideoComposer(selectedScene,epoch,saved=>{const index=scenes.findIndex(item=>item.id===saved.id);if(index>=0)scenes[index]=saved;if(selectedScene?.id===saved.id)selectedScene=saved;drawScenes();drawOutputs();drawPlayback();}),true),button('Edit scene',()=>edit('scene',selectedScene)));const composer=document.createElement('section');composer.id='scene-video-composer';const work=document.createElement('section'),outputs=document.createElement('div');work.id='scene-work-progress';outputs.className='scene-output-list';sceneDetail.append(heading,description,actions,composer,work,outputs);drawOutputs();
     void restoreSceneVideoProgress(scene,work,gameId,epoch);
   }
   async function chooseEpisode(episode,restoreScene=null){clearEditor();if(selectedEpisode?.id!==episode.id)mutationUncertain=false;selectedEpisode=episode;selectedScene=null;host.stopPreview();const generation=++sceneGeneration;scenes.length=0;scenesComplete=false;updateURL(episode.id,restoreScene);drawEpisodes();detail.hidden=false;detail.replaceChildren();
@@ -3237,15 +3327,16 @@ function appendFinishedConnections(host, connections) {
   }
 }
 
-async function renderAssetLinks(key, epoch) {
+async function renderAssetLinks(key, epoch, resolved = null) {
   const host = document.getElementById("asset-links"), gameId = state.gameId;
   const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
   if (!sameGameKey(key)) { host.textContent = "Connections are available for game assets."; return; }
   try {
-    const assets = await allAssets(gameId);
+    const assets = [...await allAssets(gameId)];
     if (!current()) return;
-    const item = assets.find(a => a.key === key);
-    if (!item) { host.textContent = "This asset is not in the current catalog. Reload the page to try again."; return; }
+    // A resolved file is already an asset. Catalog pages project metadata and may omit
+    // raw recording parts; their absence must not invalidate an existing file.
+    if (!assets.some(a => a.key === key) && resolved?.key === key) assets.push(resolved);
     host.replaceChildren();
     const connections = finishedAssetConnections(assets, key, gameId);
     appendFinishedConnections(host, connections);
@@ -4050,7 +4141,7 @@ roomCapture = new RoomRecorder();
 
 elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
 elements.gameSelector.addEventListener("change", () => {
-  const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
+  const section = location.pathname.endsWith("/media") ? "media" : elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
   navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${section}`);
 });
 elements.modelLoad.addEventListener("click", loadCharacterModel);
@@ -4312,10 +4403,10 @@ async function restoreSceneVideoProgress(scene,host,gameId,epoch) {
   }catch{/* A bounded page that cannot be read is not evidence that no generation exists. */}
 }
 
-function openSceneVideoComposer(scene, epoch) {
-  renderEditorialComposer('video', epoch, scene);
+function openSceneVideoComposer(scene, epoch, onSceneSaved) {
+  renderEditorialComposer('video', epoch, scene, onSceneSaved);
 }
-function renderEditorialComposer(target, epoch, scene = null) {
+function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () => {}) {
   if(target==='video'&&!scene){const old=document.getElementById('editorial-video-composer');if(old)old.hidden=true;return;}
   const gameId=state.gameId, key=`${gameId}:${target}:${scene?.sceneId||scene?.id||''}`;
   let host=document.getElementById(`editorial-${target}-composer`);
@@ -4353,7 +4444,8 @@ function renderEditorialComposer(target, epoch, scene = null) {
     const isVideo=target==='video';
     const title=isVideo?null:field('Title');if(title){title.required=true;title.maxLength=160;}
     const brief=field(isVideo?'Prompt':'Direction',true);brief.maxLength=4000;brief.required=isVideo;
-    brief.placeholder=isVideo?'Describe the scene you want to create…':'Tone, point of view, and what to focus on';
+    const isMap=isVideo&&scene.type==='map';
+    brief.placeholder=isMap?'The travelers move from the city to the badlands…':isVideo?'Describe the scene you want to create…':'Tone, point of view, and what to focus on';
     if(isVideo)brief.value=[scene.name||scene.title,scene.description].filter(Boolean).join('\n\n');
     const selected=new Set(), selectedContext=new Set(), selectedCharacters=new Set();
     const cast=document.createElement('fieldset'),castLegend=document.createElement('legend'),castOptions=document.createElement('div'),castPreview=document.createElement('p');
@@ -4362,9 +4454,11 @@ function renderEditorialComposer(target, epoch, scene = null) {
     const references=document.createElement('details'), summary=document.createElement('summary'), contexts=document.createElement('div');summary.textContent=isVideo?'Sources':'Add context';references.append(summary,isVideo?sources:contexts);
     const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=isVideo?'Generate':'Generate chapter';submit.disabled=true;
     const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
-    if(isVideo)form.append(cast,fields,references,submit,note,status);else form.append(fields,sources,references,submit,status);
+    const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
+    if(isMap)references.insertBefore(cast,sources);
+    if(isVideo)form.append(...(map?[map.host]:[]),...(isMap?[]:[cast]),fields,references,submit,note,status);else form.append(fields,sources,references,submit,status);
     panel.append(form);
-    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim():!selected.size;};brief.addEventListener('input',updateSubmit);
+    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!selected.size;};brief.addEventListener('input',updateSubmit);if(map)map.start();
     const choices=(assets,destination,set)=>{for(const asset of assets){const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
       showLoading(status,'Loading sources…');
@@ -4385,21 +4479,27 @@ function renderEditorialComposer(target, epoch, scene = null) {
         if(!castOptions.childNodes.length){const empty=document.createElement('p');empty.textContent='No characters yet.';castOptions.append(empty);}
       }catch(error){if(current())status.textContent=error.message;}
     };
-    if(isVideo){updateSubmit();void loadCast();references.addEventListener('toggle',()=>{if(references.open&&!sources.querySelector('label,p'))void page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));});}
+    if(isVideo){updateSubmit();if(!isMap)void loadCast();let castStarted=false;references.addEventListener('toggle',()=>{if(references.open&&isMap&&!castStarted){castStarted=true;void loadCast();}if(references.open&&!sources.querySelector('label,p'))void page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));});}
     else {
       await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
       references.addEventListener('toggle',()=>{if(references.open&&!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout','provenance','migration-report','audit-report','generation-metadata'].includes(a.kind)&&!/(?:^|[\/_-])(audit|migration|provenance|manifest|processing)(?:[\/_.-]|$)/i.test(a.key)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='creative-evidence'||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));});
     }
+    let pendingMap=null;
     form.onsubmit=async event=>{
-      event.preventDefault();if(isVideo?!brief.value.trim():!selected.size)return;
+      event.preventDefault();if(isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!selected.size)return;
       if(selected.size>8||selectedContext.size>12||selectedCharacters.size>12){status.textContent='Choose up to 8 transcripts and 12 characters.';return;}
-      submit.disabled=true;status.textContent=isVideo?'Preparing video…':'Starting chapter…';
-      const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
-      try {const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
+      const controls=[...form.querySelectorAll('input,textarea,select,button')];for(const control of controls)control.disabled=true;status.textContent=isVideo?'Preparing video…':'Starting chapter…';
+      try {
+        if(map&&(pendingMap||map.value()!==scene.mapAssetKey)){
+          pendingMap||={gameId,id:scene.id,episodeId:scene.episodeId,name:scene.name,description:scene.description||'',type:'map',mapAssetKey:map.value(),selectedOutputKey:scene.selectedOutputKey||null,expectedRevision:scene.revision,operationId:crypto.randomUUID().replaceAll('-','')};
+          const saved=await api('/scenes',{},{body:pendingMap});if(!current())return;scene=saved.record;pendingMap=null;onSceneSaved(scene);
+        }
+        const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
+        const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
         if(!current())return;form.hidden=true;open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
         const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);
         editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
-      }catch(error){if(current()){status.textContent=error.message;updateSubmit();}}
+      }catch(error){if(current()){status.textContent=error.status===409?'This scene changed. Reopen it before generating.':error.message;if(error.status===400)pendingMap=null;for(const control of controls)control.disabled=false;if(map&&pendingMap)map.select.disabled=true;updateSubmit();if(error.status===409)submit.disabled=true;}}
     };
   };
   if(target==='video'){open.hidden=true;void open.onclick();}

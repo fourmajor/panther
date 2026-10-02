@@ -15,6 +15,7 @@ from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer
 from botocore.exceptions import ClientError
 import index as media
+from asset_views import MAP_SCENE_INSTRUCTIONS
 
 table = boto3.resource("dynamodb").Table(os.environ["EDITORIAL_TABLE"])
 states = boto3.client("stepfunctions")
@@ -60,6 +61,31 @@ def asset(key, game):
     if not head.get("ChecksumSHA256") or not 0 < head["ContentLength"] <= 2 * 1024**2:
         raise ValueError("Expected checksummed text artifact under 2 MiB")
     return {"key": key, "sha256": head["ChecksumSHA256"], "size": head["ContentLength"]}, head
+
+
+def pin_map(game, scene):
+    if not scene or scene.get("type") != "map":
+        return None
+    import video_scenes
+
+    key = scene.get("mapAssetKey")
+    video_scenes.map_asset(media, game, key)
+    head = media.s3.head_object(Bucket=media.BUCKET_NAME, Key=key, ChecksumMode="ENABLED")
+    if (
+        head.get("ContentType") not in {"image/png", "image/jpeg", "image/webp"}
+        or not head.get("ChecksumSHA256")
+        or not 0 < head.get("ContentLength", 0) <= 20 * 1024**2
+    ):
+        raise ValueError("Choose a checksummed map image under 20 MiB")
+    return {
+        "schemaVersion": 1,
+        "key": key,
+        "sha256": head["ChecksumSHA256"],
+        "size": head["ContentLength"],
+        "contentType": head["ContentType"],
+        "role": "first-frame",
+        "instructions": MAP_SCENE_INSTRUCTIONS,
+    }
 
 
 def document(reference):
@@ -325,7 +351,10 @@ def submit(body):
         else []
     )
     game_context = pin_game(body["gameId"]) if creation and creation["schemaVersion"] == 2 else None
-    snapshot_size = len(json.dumps([cast, game_context, selected_scene], default=str).encode())
+    selected_map = pin_map(body["gameId"], selected_scene)
+    snapshot_size = len(
+        json.dumps([cast, game_context, selected_scene, selected_map], default=str).encode()
+    )
     if snapshot_size > 256 * 1024:
         raise ValueError("Selected character snapshots exceed the durable job limit")
     if (
@@ -338,13 +367,19 @@ def submit(body):
         if creation
         else [references[0], PLAN["version"]]
     )
+    if selected_map is not None:
+        identity.append(selected_map)
     job_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     job = {
         "pk": "RUNS",
         "sk": job_id,
         "jobId": job_id,
         "gameId": body["gameId"],
-        "sessionId": raws[0]["sessionId"] if len(raws) == 1 else "collection-" + job_id[:16] if raws else None,
+        "sessionId": raws[0]["sessionId"]
+        if len(raws) == 1
+        else "collection-" + job_id[:16]
+        if raws
+        else None,
         "raw": references[0] if references else None,
         "sourceMode": "transcript" if references else "prompt",
         "workflowVersion": PLAN["version"],
@@ -363,6 +398,7 @@ def submit(body):
             selectedCharacters=cast,
             gameContext=game_context,
             selectedScene=selected_scene,
+            selectedMap=selected_map,
         )
     try:
         table.put_item(Item=job, ConditionExpression="attribute_not_exists(pk)")
