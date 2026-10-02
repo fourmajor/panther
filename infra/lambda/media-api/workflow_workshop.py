@@ -141,6 +141,40 @@ def project(kind, key):
     raise RuntimeError("Workflow projection conflict; retry safely")
 
 
+def flow(item):
+    """Read-time topology from the implemented pipeline, never inferred execution."""
+    ids = [stage["id"] for stage in item["stages"]]
+    lanes, edges = [], []
+    if item["kind"] == "editorial":
+        common = [name for name in ids if not name.startswith(("novel-", "video-"))]
+        branches = [("novel", "Novel adaptation", [name for name in ids if name.startswith("novel-")]),
+                    ("video", "Screen planning", [name for name in ids if name.startswith("video-")])]
+        if common:
+            lanes.append({"id": "shared", "label": "Shared context & correction", "stageIds": common})
+        for identity, label, names in branches:
+            if names:
+                lanes.append({"id": identity, "label": label, "stageIds": names})
+                if common:
+                    edges.append({"from": common[-1], "to": names[0]})
+        for lane in lanes:
+            edges.extend({"from": a, "to": b} for a, b in zip(lane["stageIds"], lane["stageIds"][1:]))
+        mode = "branched"
+        note = "Adaptation branches may proceed independently after shared correction. Screen planning stops before paid generation."
+    elif item["kind"] in {"video-generation", "transcription"}:
+        independent = ids[:-1] if item["kind"] == "transcription" else ids
+        lanes = [{"id": name, "label": "Independent task", "stageIds": [name]} for name in independent]
+        if item["kind"] == "transcription":
+            lanes.append({"id": "join", "label": "After all windows", "stageIds": ids[-1:]})
+            edges = [{"from": name, "to": ids[-1]} for name in independent]
+        mode = "independent"
+        note = "Tasks have no dependency on one another. This does not imply simultaneous execution or permission to generate."
+    else:
+        lanes = [{"id": "sequence", "label": "Reported steps", "stageIds": ids}]
+        edges = [{"from": a, "to": b} for a, b in zip(ids, ids[1:])]
+        mode, note = "sequence", "Arrows show step order, not time remaining."
+    return {"schemaVersion": 1, "mode": mode, "lanes": lanes, "edges": edges, "note": note}
+
+
 def public(item, detail=False):
     allowed = {"schemaVersion", "id", "kind", "gameId", "title", "status", "sourceStatus", "createdAt", "sessionId", "note", "observedAt", "source", "workflowVersion", "reportedAt", "revision"}
     result = {k: v for k, v in item.items() if k in allowed}
@@ -149,6 +183,7 @@ def public(item, detail=False):
                   activeStages=[s for s in stages if s["status"] in {"running", "queued", "failed", "paused", "unknown"}])
     if detail:
         result["stages"] = stages
+        result["flow"] = flow(item)
     return result
 
 

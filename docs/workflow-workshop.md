@@ -1,7 +1,11 @@
 # The Workshop
 
-The per-game Workflows page shows reported workflow state and a clickable stage
-trail. Animated pixel cats indicate recently confirmed work, not merely queued
+The per-game Workflows page groups individual runs beneath expandable workflow
+types. A run shows a responsive step flowchart with dependency arrows, parallel
+adaptation branches and independently queued tasks as appropriate. The graph is
+a read-time projection of the implemented pipeline, not a new execution plan;
+it applies to historical and future observations without altering job evidence.
+Animated pixel cats indicate recently confirmed work, not merely queued
 jobs. Stage counts measure completed steps, not elapsed-time percentages, quality
 approval, publication, or predicted completion. Expired leases and stale local
 reports are explicitly shown; the browser never starts, retries, or funds work.

@@ -77,6 +77,8 @@ def test_editorial_real_stages_no_secrets_no_foreign_game(workshop):
     detail = unpack(request(m, query={"gameId": "synthetic-game", "id": view["id"]}))["workflow"]
     assert detail["stages"][0]["status"] == "done"
     assert detail["stages"][2]["status"] == "pending"
+    assert detail["flow"]["mode"] == "branched"
+    assert {"from": "corrected-transcript", "to": "video-screenplay"} in detail["flow"]["edges"]
     assert "secret" not in json.dumps(detail) and "private" not in json.dumps(detail)
     assert request(m, query={"gameId": "other-game", "id": view["id"]})["statusCode"] == 404
     # Projection is re-read from current source, not the old stream image.
@@ -157,3 +159,15 @@ def test_local_reporter_records_only_real_stage_events(tmp_path, monkeypatch):
     assert sends[-1]["stages"][1]["status"] == "running"
     assert json.loads((tmp_path / "workshop-progress.json").read_text())["expectedRevision"] == "new-revision"
     assert w.CURRENT.get() is None
+
+
+def test_flow_preserves_parallel_branches_and_independent_tasks(workshop):
+    m = workshop
+    stages = [{"id": name, "status": "pending"} for name in ("context", "corrected-transcript", "novel-draft", "novel-proof", "video-screenplay", "video-preflight")]
+    graph = m.flow({"kind": "editorial", "stages": stages})
+    assert [lane["id"] for lane in graph["lanes"]] == ["shared", "novel", "video"]
+    assert {"from": "corrected-transcript", "to": "novel-draft"} in graph["edges"]
+    assert {"from": "corrected-transcript", "to": "video-screenplay"} in graph["edges"]
+    assert not any(edge["from"].startswith("novel-") and edge["to"].startswith("video-") for edge in graph["edges"])
+    assert m.flow({"kind": "video-generation", "stages": stages[:2]})["edges"] == []
+    assert m.flow({"kind": "video-production", "stages": stages[:2]})["edges"] == [{"from": "context", "to": "corrected-transcript"}]

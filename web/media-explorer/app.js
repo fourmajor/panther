@@ -4651,6 +4651,7 @@ const workshop = (() => {
   const health=document.getElementById("workshop-health"), more=document.getElementById("workshop-more"), filters=document.getElementById("workshop-filters");
   const labels={editorial:"Story & screen planning",model:"3D modeling",playback:"Audio assembly",transcription:"Transcription","video-production":"Video finishing","video-generation":"Video generation"};
   let timer=null, controller=null, rows=[], cursor=null, filter="all", epoch=0, game=null, busy=false, selected=null, loadedCursors=[], generation=0;
+  const groupOpen=new Map();let graphObserver=null;
   function node(tag,text,className) {const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element;}
   function observation(job,stage) {
     const now=Date.now()/1000;
@@ -4677,37 +4678,86 @@ const workshop = (() => {
     const stage=lead(job), view=observation(job,stage), link=node("a",undefined,"workshop-card");
     link.href=gamePath("workflows")+"?workflow="+encodeURIComponent(job.id);
     link.addEventListener("click",event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname+link.search);});
-    const text=node("div",undefined,"workshop-card-copy");text.append(node("p",labels[job.kind] || "Workflow","workshop-kind"),node("h2",job.title),badge(view),node("p",stage?.label || (job.status==="done"?"All reported stages finished":"Awaiting the first stage"),"workshop-current"),meter(job));
+    const text=node("div",undefined,"workshop-card-copy");text.append(node("p",`Run · ${new Date(job.createdAt*1000).toLocaleDateString()}`,"workshop-kind"),node("h3",job.title),badge(view),node("p",stage?.label || (job.status==="done"?"All reported stages finished":"Awaiting the first stage"),"workshop-current"),meter(job));
     link.append(worker(job.kind,view.live),text,node("span","↗","workshop-go"));return link;
   }
   function drawList() {
     list.replaceChildren();const visible=[...rows].sort((a,b)=>b.createdAt-a.createdAt).filter(matches);
-    if(!visible.length)list.append(node("div",rows.length?"No loaded workflows match this filter.":"The workshop is quiet. New reported work will appear here.","workshop-empty"));
-    else list.append(...visible.map(row));
+    for(const [kind,label] of Object.entries(labels)) {
+      const runs=visible.filter(job=>job.kind===kind), all=rows.filter(job=>job.kind===kind);
+      const group=node("details",undefined,"workshop-group");group.dataset.kind=kind;group.open=groupOpen.get(kind) ?? Boolean(runs.length);
+      const heading=node("summary"), copy=node("div"), active=all.filter(job=>observation(job,lead(job)).live).length;
+      copy.append(node("h2",label),node("p",`${all.length} loaded run${all.length===1?"":"s"}${active?` · ${active} working now`:""}${cursor?" · history continues":""}`));
+      heading.append(worker(kind,active>0),copy,node("span","⌄","workshop-group-chevron"));
+      const contents=node("div",undefined,"workshop-group-runs");
+      if(runs.length)contents.append(...runs.map(row));
+      else contents.append(node("p",all.length?"No loaded runs match this filter.":cursor?"No runs loaded for this type yet. Load more history below.":"No reported runs for this type yet.","workshop-group-empty"));
+      group.append(heading,contents);group.addEventListener("toggle",()=>{if(group.isConnected)groupOpen.set(kind,group.open);});list.append(group);
+    }
     const summary=document.getElementById("workshop-summary");summary.replaceChildren();
     for(const [title,states] of [["Working",["running"]],["Waiting",["queued","pending","paused"]],["Finished",["done"]],["Needs attention",["failed","unknown"]]]) {
       const panel=node("div");panel.append(node("strong",String(rows.filter(j=>states.includes(observation(j,lead(j)).status)).length)),node("span",title));summary.append(panel);
     }
-    document.getElementById("workshop-intro").textContent=`${rows.length} loaded workflows${cursor?" · more history available":""}. Click a workbench to follow its stages.`;
+    document.getElementById("workshop-intro").textContent=`Browse by workflow type, then choose a run. ${rows.length} loaded runs${cursor?" · more history available":""}.`;
     more.hidden=!cursor;more.disabled=busy;
   }
   function drawDetail(job) {
+    const focusedStage=detail.contains(document.activeElement)?document.activeElement.closest("[data-stage]")?.dataset.stage:null;
     document.getElementById("workshop-intro").textContent="Follow this workflow’s reported stages.";
     detail.replaceChildren();const back=node("a","← All workflows","workshop-back");back.href=gamePath("workflows");back.addEventListener("click",event=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(back.pathname);});
     const stage=lead(job), view=observation(job,stage), hero=node("div",undefined,"workshop-detail-hero");
     const text=node("div");text.append(node("p",labels[job.kind],"workshop-kind"),node("h2",job.title),badge(view),meter(job),node("p",job.note,"workshop-note"));hero.append(worker(job.kind,view.live),text);
     const facts=node("dl",undefined,"workshop-facts");
     for(const [name,value] of [["Source",job.source==="local-worker"?"Local laptop worker":"Durable Panther job"],["Workflow version",job.workflowVersion || "Not reported"],["Session",job.sessionId || "Not reported"],["Last observed",new Date((job.reportedAt || job.observedAt)*1000).toLocaleString()],["Source status",job.sourceStatus || job.status]]) {facts.append(node("dt",name),node("dd",String(value)));}
-    const stages=node("ol",undefined,"workshop-stages");
+    graphObserver?.disconnect();
+    const chart=node("div",undefined,"workshop-flowchart");chart.setAttribute("aria-label","Workflow step flowchart");
+    const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("workshop-flow-lines");svg.setAttribute("aria-hidden","true");chart.append(svg);
+    const nodes=new Map(), topology=job.flow;
     for(const [index,part] of job.stages.entries()) {
       const state=part.status==="done"?{status:"done",label:"Complete",live:false}:part.status==="pending"?{status:"pending",label:"Not started",live:false}:observation(job,part);
       const item=node("li");item.dataset.state=state.status;const copy=node("div");copy.append(node("h3",part.label),badge(state));
+      const parents=(topology?.edges || []).filter(edge=>edge.to===part.id).map(edge=>job.stages.find(s=>s.id===edge.from)?.label).filter(Boolean);
+      copy.append(node("span",parents.length?`Depends on: ${parents.join(", ")}.`:"No preceding step in this chart.","sr-only"));
       if(part.attempts) copy.append(node("p",`Attempt ${part.attempts}`));
       if(part.outputKey && sameGameKey(part.outputKey)) {const output=node("button","View stage artifact","quiet-button");output.type="button";output.addEventListener("click",()=>previewFile({key:part.outputKey,name:part.outputKey.split("/").at(-1)}));copy.append(output);}
       item.append(node("span",part.status==="done"?"✓":String(index+1).padStart(2,"0"),"workshop-step-number"),copy);
-      if(state.live)item.append(worker(job.kind,true));stages.append(item);
+      if(state.live)item.append(worker(job.kind,true));item.dataset.stage=part.id;nodes.set(part.id,item);
     }
-    detail.append(back,hero,facts,node("h2","Stage trail","workshop-trail-heading"),stages,node("p",`Run ${job.id}`,"workshop-run-id"));
+    if(!topology || topology.schemaVersion!==1 || !topology.lanes?.length) {
+      detail.append(back,hero,facts,node("p","Step topology unavailable. Check progress to retry.","workshop-note"));return;
+    }
+    chart.dataset.mode=topology.mode;
+    for(const lane of topology.lanes) {
+      const column=node("section",undefined,"workshop-flow-lane");column.dataset.lane=lane.id;
+      column.append(node("h3",lane.label,"workshop-lane-label"));const steps=node("ol",undefined,"workshop-stages");
+      for(const id of lane.stageIds)if(nodes.has(id))steps.append(nodes.get(id));column.append(steps);chart.append(column);
+    }
+    const legend=node("p","✓ Complete · animated worker: confirmed activity · muted node: not started","workshop-note");
+    detail.append(back,hero,node("h2","Step flowchart","workshop-trail-heading"),node("p",topology.note,"workshop-note"),legend,chart,facts,node("p",`Run ${job.id}`,"workshop-run-id"));
+    if(focusedStage)nodes.get(focusedStage)?.querySelector("button")?.focus({preventScroll:true});
+    function connectors() {
+      if(!chart.isConnected || host.hidden)return;
+      svg.replaceChildren();const bounds=chart.getBoundingClientRect();svg.setAttribute("viewBox",`0 0 ${bounds.width} ${bounds.height}`);
+      for(const edge of topology.edges) {
+        const from=nodes.get(edge.from), to=nodes.get(edge.to);if(!from || !to)continue;
+        const a=from.getBoundingClientRect(), b=to.getBoundingClientRect();
+        const x=a.left+a.width/2-bounds.left,y=a.bottom-bounds.top,xx=b.left+b.width/2-bounds.left,yy=b.top-bounds.top;
+        const line=document.createElementNS(svg.namespaceURI,"path"), arrow=document.createElementNS(svg.namespaceURI,"path");
+        if(topology.mode==="independent") {
+          const right=bounds.width-5, ay=a.top+a.height/2-bounds.top, by=b.top+b.height/2-bounds.top, end=b.right-bounds.left+7;
+          line.setAttribute("d",`M ${a.right-bounds.left} ${ay} H ${right} V ${by} H ${end}`);
+          arrow.setAttribute("d",`M ${end+5} ${by-4} L ${end} ${by} L ${end+5} ${by+4}`);
+        } else if(innerWidth<=600 && from.closest(".workshop-flow-lane")!==to.closest(".workshop-flow-lane")) {
+          line.setAttribute("d",`M ${a.left-bounds.left} ${a.top+a.height/2-bounds.top} H 5 V ${yy-20} H ${xx} V ${yy-7}`);
+          arrow.setAttribute("d",`M ${xx-4} ${yy-12} L ${xx} ${yy-7} L ${xx+4} ${yy-12}`);
+        } else {
+          const middle=y+(yy-y)/2;line.setAttribute("d",`M ${x} ${y} V ${middle} H ${xx} V ${yy-7}`);
+          arrow.setAttribute("d",`M ${xx-4} ${yy-12} L ${xx} ${yy-7} L ${xx+4} ${yy-12}`);
+        }
+        svg.append(line,arrow);
+      }
+    }
+    graphObserver=new ResizeObserver(connectors);graphObserver.observe(chart);requestAnimationFrame(connectors);
   }
   async function refresh(append=false) {
     if(busy || document.hidden || host.hidden || epoch!==routeEpoch || state.gameId!==game)return;
@@ -4745,7 +4795,7 @@ const workshop = (() => {
   more.addEventListener("click",()=>refresh(true));document.getElementById("workshop-refresh").addEventListener("click",()=>refresh());
   document.addEventListener("visibilitychange",()=>{if(!document.hidden)void refresh();});
   return {
-    stop(){generation++;clearInterval(timer);controller?.abort();},
+    stop(){generation++;clearInterval(timer);controller?.abort();graphObserver?.disconnect();},
     async open(route){epoch=route;game=state.gameId;selected=new URLSearchParams(location.search).get("workflow");rows=[];cursor=null;loadedCursors=[];busy=false;host.hidden=false;
       list.replaceChildren();detail.replaceChildren();list.hidden=Boolean(selected);detail.hidden=!selected;filters.hidden=Boolean(selected);document.getElementById("workshop-summary").hidden=Boolean(selected);more.hidden=true;
       health.textContent="Checking the workshop’s reported progress…";await refresh();if(epoch===routeEpoch)timer=setInterval(()=>void refresh(),15000);
