@@ -24,3 +24,10 @@ test("React runtime and design-system CSS participate in the immutable release",
   assert.match(release.html, /ui-system\.[a-f0-9]{20}\.css/);
   assert.notEqual(release.version, webRelease(html,{...assets,"ui-system.css":".ui-input{color:red}"}).version);
 });
+
+test("favicon updates use immutable URLs and change the release identity", () => {
+  const html = '<head><link rel="icon" href="/favicon.svg"></head>';
+  const release = webRelease(html, {"favicon.svg":"<svg/>"});
+  assert.match(release.html, /favicon\.[a-f0-9]{20}\.svg/);
+  assert.notEqual(release.version, webRelease(html, {"favicon.svg":"<svg><path/></svg>"}).version);
+});

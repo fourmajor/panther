@@ -23,7 +23,7 @@ test("deployed model viewer has no unresolved static imports", () => {
 test("static assets resolve from nested character URLs", () => {
   const html = readFileSync(path.join(__dirname, "../../../web/media-explorer/index.html"), "utf8");
   const assets = [...html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="([^"]+)"/g)];
-  assert.equal(assets.length, 6);
+  assert.equal(assets.length, 7);
   for (const [, asset] of assets) {
     assert.ok(asset.startsWith("/"), `${asset} must resolve from the site root`);
     assert.equal(new URL(asset, "https://panther.place/characters/game/character").pathname, asset);

@@ -605,7 +605,7 @@ export class PantherMediaExplorerStack extends Stack {
       fs.readFileSync(path.join(siteDirectory, "index.html"), "utf8")
         .replace("</head>", '<script src="/release.js" defer></script>\n  </head>'),
       Object.fromEntries([
-        ...["app.js", "styles.css", "release.js", "pcm-capture-v1.js", "ui-runtime.js", "ui-system.css"].map(name =>
+        ...["app.js", "styles.css", "release.js", "pcm-capture-v1.js", "ui-runtime.js", "ui-system.css", "favicon.svg"].map(name =>
           [name, fs.readFileSync(path.join(siteDirectory, name), "utf8")]),
         ["vendor/model-viewer.min.js", fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8")],
       ]),
