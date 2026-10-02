@@ -734,3 +734,11 @@ the worker's bundle records each segment's exact source asset and index. Each ad
 all raw inputs. Update the subscription worker before processing version 3 jobs; preserve
 older executions and outputs under their original version. Video creation plans scripts,
 shots and schematic storyboards only; it never authorizes or submits paid generation.
+# Completed session automation
+
+After verified recording-set completion, the configured owned-compute session worker preserves
+raw ASR, creates separate conservative enrolled-player annotations, and commits the editorial
+pipeline. Follow Session finalization and Story & screen planning in Workshop. Novel completion
+is automatic; video preparation stops for approval of the exact script/storyboard. The standing
+session ceiling is $10 with the established fal models, not automatic spending permission or
+authority to retry, reset budgets, buy credits or clone voices. See `docs/session-automation.md`.

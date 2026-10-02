@@ -519,6 +519,7 @@ def register(group):
     from panther_journal.live_transcript import live
     from panther_journal.speaker_profiles import enroll
     from panther_journal.live_finalize import finish_live
+    from panther_journal.session_worker import automation
 
     group.add_command(model)
     group.add_command(share)
@@ -538,5 +539,6 @@ def register(group):
     recording.add_command(live)
     recording.add_command(enroll)
     recording.add_command(finish_live)
+    recording.add_command(automation)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

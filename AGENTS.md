@@ -94,6 +94,13 @@
 
 ## Editorial workflows
 
+- Completed recording sets automatically enter the owned-compute session finalization workflow
+  in `docs/session-automation.md`, then the corrected-transcript, novel and screen-planning branches.
+  Paid session video generation must wait for owner approval of the exact script/storyboard.
+  The owner-authorized ceiling is $10 per session using the established fal models, including
+  other generated media in that project. Never treat Stop, preflight, or this cap as approval
+  of an unseen plan, paid retries, credit purchases, cloning or provider changes.
+
 - High-quality speech is a standing production requirement. Use ElevenLabs Eleven v3 through
   fal for separately generated narration/voice performances via `panther narration`; see
   `docs/narration-workflow.md`. Do not use Chatterbox, macOS/system TTS, or another cheaper

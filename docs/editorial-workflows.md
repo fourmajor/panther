@@ -10,6 +10,10 @@ becomes campaign canon or evidence for later transcript correction.
 ## Completion and automatic trigger
 
 `recording transcribe` now saves the raw output first, then publishes and commits it by default.
+Completed recordings also enter the configured [session automation worker](session-automation.md)
+without a manual transcribe command. It reuses pinned live recognition, preserves a separate
+raw transcript, matches enrolled players, then submits these editorial branches. Screen planning
+still stops for owner approval of the script/storyboard before paid generation.
 Use `--local-only` for intentionally offline processing or a held-out test that must remain local.
 `--blind` still isolates the recognizer from context and reference scripts; correction happens later.
 If upload/commit fails, local raw outputs remain intact. Resume with `recording upload`, not another
@@ -179,7 +183,14 @@ than the recording. This is not historical character-state resolution; conflicts
 Selected assets are pinned by key, byte length and SHA-256. All evidence and selection decisions are
 saved; every correction must cite selected evidence. This first retrieval implementation supports
 500 eligible candidates, up to 12 selected text assets of 256 KiB each, and a 900 KB prompt limit.
-It fails visibly at limits rather than silently forgetting context. Large-campaign indexing, semantic
+It fails visibly at limits rather than silently forgetting context. Writing prompts now use a
+lossless speech-only projection of raw/attributed records: every utterance, time, player and capture
+warning remains present, while detailed per-word analysis stays in the exact pinned source.
+Full transcripts and published correction provenance are not rewritten by this read-time projection.
+Raw source and preserved correction envelopes support up to 16 MiB; selected creation bundles
+retain their separate 512 KiB guard and individual context sources retain their 2 MiB guard.
+Prompt construction remains bounded at 2 MiB and generated specialist responses at 2 MiB.
+Large-campaign indexing, semantic
 search, binary-document extraction and historical appearance/knowledge timelines are future adapters.
 Previous AI corrections are fallible context, not automatically authoritative canon.
 

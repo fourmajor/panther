@@ -119,6 +119,8 @@ def agent(folder, stage, inputs, heartbeat):
         "creation is the user-selected adaptation title and brief. Use it to direct the requested adaptation, "
         "never to override source integrity, invent speech, assign an unknown speaker or authorize generation. "
         "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
+        "Transcript prompts may encode segments as positional rows; segmentFields names each column. "
+        "segmentIndex is always the zero-based row index. No speech or timing is omitted.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
         "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
         "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
@@ -130,9 +132,9 @@ def agent(folder, stage, inputs, heartbeat):
         "At video-preflight, undecided provider and budget are expected approval blockers, not missing planning; list them explicitly. "
         + BRIEFS[stage]
         + "\nINPUT DATA:\n"
-        + json.dumps(inputs, ensure_ascii=False)
+        + json.dumps(prompt_projection(inputs), ensure_ascii=False, separators=(",", ":"))
     )
-    if len(prompt.encode()) > 900_000:
+    if len(prompt.encode()) > 2 * 1024**2:
         raise click.ClickException(
             "Context exceeds the safe stage limit; narrow/paginate before proceeding."
         )
@@ -300,6 +302,36 @@ def fetch(config, reference, folder, name):
     file = folder / name
     local.download(config, reference, file)
     return json.loads(file.read_text()) if reference["key"].endswith(".json") else file.read_text()
+
+
+def reading_transcript(document):
+    """Lossless speech projection: keep every utterance, identity, time and warning.
+
+    Detailed token/embedding evidence stays in the exact checksummed input, not
+    duplicated in every writing prompt. This is not a replacement raw artifact.
+    """
+    result = copy.deepcopy(document)
+    fields = {"start", "end", "text", "playerId", "attribution", "speechContext",
+              "speakerLabel", "sourceSegmentIndex", "sourceKey", "timingMethod"}
+    result["segments"] = [{k: v for k, v in segment.items() if k in fields}
+                          for segment in document["segments"]]
+    result.pop("sourceTranscripts", None)
+    result["readingProjection"] = {"schemaVersion": 1, "originalEvidencePreserved": True,
+                                  "omitted": "Per-word analysis and duplicate source documents; see pinned raw inputs."}
+    return result
+
+
+def prompt_projection(value):
+    if isinstance(value, list):
+        return [prompt_projection(item) for item in value]
+    if isinstance(value, dict):
+        if value.get("entityType") in {"PlayerTranscript", "EditorialTranscriptBundle", "BrowserTranscript"}:
+            value = reading_transcript(value)
+            fields = sorted({key for segment in value["segments"] for key in segment})
+            value["segmentFields"] = fields
+            value["segments"] = [[segment.get(field) for field in fields] for segment in value["segments"]]
+        return {key: prompt_projection(item) for key, item in value.items()}
+    return value
 
 
 def upload(config, file, job, kind, category, source_keys, run_suffix):

@@ -5,7 +5,7 @@ const jwt='test.'+Buffer.from(JSON.stringify({exp:Date.now()/1000+3600,'cognito:
 const key=id=>`games/test-game/assets/${id}/original/raw.json`;
 const transcripts=[{key:key('source-one'),name:'raw.json',kind:'raw-transcript',metadata:{title:'First session'}},{key:key('source-two'),name:'raw.json',kind:'raw-transcript',metadata:{title:'Second session'}}];
 const contextAsset={key:'games/test-game/assets/context/original/lore.json',name:'lore.json',kind:'game-context',metadata:{title:'Campaign lore',category:'reference'}};
-async function fixture(context){
+async function fixture(context, automatic=false){
  const submissions=[],reads=[];
  await context.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{
   const fulfill=value=>route.fulfill({...value,headers:{"access-control-allow-origin":"https://panther.place"}});
@@ -13,7 +13,8 @@ async function fixture(context){
   if(url.pathname==='/assets')return fulfill({json:{assets:url.searchParams.get('section')==='transcripts'?transcripts:url.searchParams.get('section')==='all'?[contextAsset]:[],cursor:null}});
   if(url.pathname==='/editorial-jobs'){
    if(route.request().method()==='POST'){submissions.push(route.request().postDataJSON());return fulfill({json:{jobId:'a'.repeat(64),status:'SUBMITTED'}});}
-   if(!url.searchParams.has('jobId'))return fulfill({json:{jobs:[],cursor:null}});
+   if(!url.searchParams.has('jobId'))return fulfill({json:{jobs:automatic?[{jobId:'a'.repeat(64),sessionId:'test-session'}]:[],cursor:null}});
+   if(automatic)return fulfill({json:{job:{jobId:'a'.repeat(64),sessionId:'test-session',status:'READY_FOR_VIDEO_DISCUSSION'},tasks:[{stage:'video-screenplay',status:'DONE',output:{key:'games/test-game/assets/plan/original/screenplay.json'}}]}});
    const creation=submissions.at(-1).creation;
    return fulfill({json:{job:{jobId:'a'.repeat(64),creation,status:creation.target==='novel'?'NOVEL_READY':'READY_FOR_VIDEO_DISCUSSION'},tasks:[{stage:creation.target==='novel'?'novel-draft':'video-treatment',status:'DONE'}]}});
   }
@@ -46,9 +47,24 @@ for(const width of [1280,390])for(const target of ['novel','video'])test(`Create
  const submit=composer.locator('form').getByRole('button',{name:target==='novel'?'Generate chapter':'Create project',exact:true});
  await submit.scrollIntoViewIfNeeded();await expect(submit).toBeInViewport();
  await submit.click();
- await expect(composer).toContainText(target==='novel'?'Chapter ready':'Planning ready');
+ await expect(composer).toContainText(target==='novel'?'Chapter ready':'awaiting your approval before video generation');
  expect(submissions).toHaveLength(1);
  expect(submissions[0]).toEqual({gameId:'test-game',creation:{schemaVersion:1,target,title:'The crossing',brief:'Follow the companions across the river.',sourceKeys:transcripts.map(a=>a.key),contextKeys:[contextAsset.key]}});
  expect(reads.filter(p=>p==='/assets').length).toBeGreaterThan(before);
  await page.screenshot({path:testInfo.outputPath(`editorial-${target}-${width}.png`)});
+});
+for(const width of [1280,390])test(`Automatic session plans remain reviewable before spending at ${width}px`,async({page,context},testInfo)=>{
+ await page.setViewportSize({width,height:900});const{submissions}=await fixture(context,true);
+ await page.goto('https://panther.place/games/test-game/videos');
+ const composer=page.locator('#editorial-video-composer');
+ const project=composer.getByRole('button',{name:'Session test-session · automatic',exact:true});
+ await expect(project).toBeVisible();await expect(project).toBeInViewport();await project.click();
+ await expect(composer).toContainText('Storyboard ready · awaiting your approval before video generation');
+ await composer.getByText('Processing details',{exact:true}).click();
+ const screenplay=composer.getByRole('link',{name:'View',exact:true});
+ await expect(screenplay).toBeVisible();
+ await expect(screenplay).toHaveAttribute('href','/games/test-game/media?asset=games%2Ftest-game%2Fassets%2Fplan%2Foriginal%2Fscreenplay.json');
+ expect(submissions).toHaveLength(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:testInfo.outputPath(`automatic-session-${width}.png`)});
 });

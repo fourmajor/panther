@@ -162,7 +162,9 @@ def label_lines(lines, result, profiles, offset):
 @click.option('--output', required=True, type=click.Path(path_type=Path))
 @click.option('--runtime', default=audio.DEFAULT_RUNTIME, type=click.Path(exists=True, path_type=Path))
 @click.option('--model', default=audio.DEFAULT_SPEAKER_MODEL, type=click.Path(exists=True, path_type=Path))
-def enroll(manifest, output, runtime, model):
+@click.option('--minimum-speech-seconds', default=10.0, type=click.FloatRange(3, 120),
+              help='Explicitly accept shorter confirmed samples (lower evidence quality); default 10 seconds.')
+def enroll(manifest, output, runtime, model, minimum_speech_seconds):
     """Enroll explicitly identified, clean single-speaker WAV samples from a private manifest."""
     from panther_journal.live_transcript import read_json
     import os
@@ -189,12 +191,15 @@ def enroll(manifest, output, runtime, model):
         attempt = output.parent / f'enrollment-{uuid.uuid4().hex}'
         attempt.mkdir(mode=0o700)
         result = analyze(source, model, runtime, attempt)
-        if len(result['embeddings']) != 1 or sum(t['end']-t['start'] for t in result['turns']) < 10:
-            raise click.ClickException('Need at least ten seconds of clean, single-speaker speech')
+        speech_seconds = sum(t['end']-t['start'] for t in result['turns'])
+        if len(result['embeddings']) != 1 or speech_seconds < minimum_speech_seconds:
+            raise click.ClickException(f'Need at least {minimum_speech_seconds:g} seconds of clean, single-speaker speech')
         if audio.digest(source) != sample['sha256']:
             raise click.ClickException('Enrollment audio changed during processing')
         profiles.append({**sample, 'embedding': vector(next(iter(result['embeddings'].values()))),
-                         'analysisSha256': audio.digest(attempt / 'speaker-result.json')})
+                         'analysisSha256': audio.digest(attempt / 'speaker-result.json'),
+                         'detectedSpeechSeconds': speech_seconds,
+                         'sampleQuality': 'short-confirmed-reference' if speech_seconds < 10 else 'standard-reference'})
     document = {'schemaVersion': 1, 'entityType': 'SpeakerRecognitionProfiles',
                 'gameId': request['gameId'], 'modelFiles': pins, 'profiles': profiles,
                 'purpose': 'speaker-recognition-only', 'manifestSha256': manifest_hash}
