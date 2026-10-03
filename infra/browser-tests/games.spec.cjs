@@ -40,17 +40,16 @@ for(const width of [1280,390]) {
     });
     for(const [name,path,status,heading] of [
       ['Characters','/characters','#characters-status','#characters > .explorer-heading h1'],
-      ['Audio','/assets','#library-status','#library-title'],
-      ['Transcripts','/assets','#library-status','#library-title'],
+      ['Sessions','/assets','#library-status','#library-title'],
       ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
       ['Videos','/assets','#library-status','#library-title'],
-      ['Media','/objects','.media-browser','#explorer h1'],
+      ['Assets','/assets','#assets-library','#explorer h1'],
     ]) {
-      // Media is cached on return; refresh exercises its loading state.
+      // Reload the Assets page to exercise a cold catalog request.
       pendingPath=path; pending=new Promise(resolve=>{release=resolve;});
       await page.locator('#primary-nav').getByRole('link',{name,exact:true}).click();
-      if(name==='Media') await page.reload();
-      const activity=page.locator(status).locator(name==='Media'?'.media-row-skeleton':'.loading-state').first();
+      if(name==='Assets') await page.reload();
+      const activity=page.locator(status).locator(name==='Assets'?'.assets-card-placeholder':'.loading-state').first();
       await expect(activity).toBeVisible();
       await expect(activity).toBeInViewport();
       const title=page.locator(heading);
@@ -74,7 +73,7 @@ async function fixture(page, canEditGame = false) {
   const descriptions = new Map();
   const requests = [];
   const styles = new Map(games.map(g => [g.id, 'photorealistic']));
-  const visualStyles = ['photorealistic','anime','illustrated-fantasy','comic-book','watercolor','oil-painting','stylized-3d','pixel-art'].map(id=>({id,label:id === 'photorealistic' ? 'Photorealistic' : id === 'anime' ? 'Anime' : id}));
+  const visualStyles = ['photorealistic','anime','illustrated-fantasy','comic-book','watercolor','oil-painting','stylized-3d','pixel-art'].map(id=>({id,label:id === 'photorealistic' ? 'Photorealistic' : id === 'anime' ? 'Anime' : id,previewImage:`/style-previews/${id}.webp`}));
   await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({ id_token: 'test.' + btoa(JSON.stringify({ exp: Date.now()/1000+3600, 'cognito:username': 'example-member' })) + '.test' })));
   await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
     const url = new URL(route.request().url());
@@ -110,6 +109,7 @@ async function fixture(page, canEditGame = false) {
   });
   await page.route('https://panther.place/**', route => {
     const pathname = new URL(route.request().url()).pathname;
+    if(pathname.startsWith('/style-previews/'))return route.fulfill({contentType:'image/webp',body:fs.readFileSync(path.join(__dirname,'../../web/media-explorer',pathname.slice(1)))});
     if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
     const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
@@ -124,11 +124,11 @@ for (const width of [1280, 390]) {
     await page.goto('https://panther.place/settings');
     const style = page.getByLabel('Generated visuals');
     await expect(style).toHaveValue('photorealistic');
-    await expect(style.locator('option')).toHaveCount(8);
-    await style.selectOption('anime');
-    await page.getByRole('button',{name:'Save style'}).click();
+    await expect(page.locator('.visual-style-card')).toHaveCount(8);for(const image of await page.locator(".visual-style-card img").all()){await image.scrollIntoViewIfNeeded();await expect.poll(()=>image.evaluate(el=>el.naturalWidth)).toBe(1536);}await expect(page.getByRole('heading',{name:'Visual style',exact:true})).toBeVisible();expect(await page.getByRole('heading',{name:'Game details',exact:true}).evaluate(el=>getComputedStyle(el).fontFamily)).toContain('Georgia');
+    await page.getByRole('button',{name:'Zoom Anime',exact:true}).click();await expect(page.locator('#style-preview-dialog')).toBeVisible();await expect(page.locator('#style-preview-image')).toBeVisible();await expect.poll(()=>page.locator('#style-preview-image').evaluate(image=>image.naturalWidth)).toBe(1536);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(page.getByRole('button',{name:'Zoom Anime',exact:true})).toBeFocused();
+    await page.getByRole('button',{name:'Select Anime',exact:true}).click();
     await expect(page.getByRole('status').filter({hasText:'Style saved'})).toBeVisible();
-    const box = await style.boundingBox();
+    const box = await page.locator("#visual-style-cards").boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(width);
     await page.screenshot({path:test.info().outputPath(`visual-style-${width}.png`),fullPage:true});
@@ -137,8 +137,8 @@ for (const width of [1280, 390]) {
     await selectGame(page,'test-b');
     await expect(style).toHaveValue('photorealistic');
     await page.route('**/game/style', route=>route.fulfill({status:409,json:{error:'Style changed'},headers:jsonHeaders}));
-    await style.selectOption('anime');
-    await page.getByRole('button',{name:'Save style'}).click();
+    await page.getByRole('button',{name:'Zoom Anime',exact:true}).click();await expect(page.locator('#style-preview-dialog')).toBeVisible();await expect(page.locator('#style-preview-image')).toBeVisible();await expect.poll(()=>page.locator('#style-preview-image').evaluate(image=>image.naturalWidth)).toBe(1536);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(page.getByRole('button',{name:'Zoom Anime',exact:true})).toBeFocused();
+    await page.getByRole('button',{name:'Select Anime',exact:true}).click();
     await expect(page.locator('#style-status')).toContainText('Could not save');
   });
   test(`ordinary member game selector scopes media, roster, character links and reload at ${width}px`, async ({page})=>{
@@ -161,8 +161,9 @@ for (const width of [1280, 390]) {
     await expect(page.locator('#game-ruleset')).not.toBeVisible();
     await expect(page.locator('#breadcrumbs')).not.toContainText('Campaign A');
     await page.locator('#primary-nav').getByRole('link',{name:'Dashboard',exact:true}).click();
-    await expect(page.locator('#player-roster')).toContainText('Test Person');
-    await expect(page.locator('#player-roster')).not.toContainText('Lantern Guide');
+    await expect(page.locator('#player-roster')).toBeHidden();
+    await expect(page.locator('#dashboard-sections').getByRole('link',{name:'Lantern Guide',exact:true})).toBeVisible();
+    await expect(page.locator('#dashboard .dashboard-open')).toBeHidden();
     await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
     await expect(page.locator('#character-list')).toContainText('Played by Test Person');
     await expect(page.locator('#characters #player-roster')).toHaveCount(0);
@@ -172,7 +173,7 @@ for (const width of [1280, 390]) {
     await page.goBack();
     await page.getByRole('button',{name:/Test Hero/}).click();
     await expect(page).toHaveURL('https://panther.place/games/test-b/characters/hero');
-    await expect(page.locator('#character-no-model')).toBeVisible();
+    await expect(page.locator('#character-portrait-empty')).toBeVisible();await expect(page.locator('#character-portrait-upload')).toBeVisible();await expect(page.locator('#character-portrait-generate')).toBeVisible();
     await page.reload();
     await expect(page.locator('#game-selector')).toHaveValue('test-b');
     await expect(page.locator('#character-name')).toHaveText('Test Hero');
@@ -221,9 +222,10 @@ for (const width of [1280,390]) {
       await expect(link).toBeInViewport();
       expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     }
-    await expect(page.locator('#dashboard-sections a')).toHaveCount(6);
+    await expect(page.locator('#dashboard-sections a')).toHaveCount(5);
     for(const card of await page.locator('#dashboard-sections a').all()) await expect(card).toHaveAttribute('href',/^\/games\/campaign-a\//);
     await page.screenshot({path:test.info().outputPath(`dashboard-${width}.png`),fullPage:true});
+    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
     await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
     await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Campaign A');
     await page.getByLabel('Game name',{exact:true}).fill('The Lantern Campaign');
@@ -261,7 +263,7 @@ test('read-only members can inspect settings without editable controls',async({p
   await expect(page.getByLabel('Game name',{exact:true})).toHaveAttribute('readonly','');
   await expect(page.getByRole('button',{name:'Save game details',exact:true})).toBeDisabled();
   await expect(page.getByLabel('Generated visuals')).toBeDisabled();
-  await expect(page.getByRole('button',{name:'Save style',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Select Anime',exact:true})).toBeDisabled();
 });
 
 // Exercise the visible Radix Select, including the portal and keyboard focus.
@@ -354,4 +356,14 @@ test('foreground refresh never overwrites a dirty Settings form',async({page})=>
   });
   await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Unsaved name');
   expect(requests.length).toBe(before);
+});
+
+for(const width of [1280,390])test(`Current Media folder is a plain label including the game root at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page);
+ await page.route('https://test.execute-api.us-west-2.amazonaws.com/objects*',route=>{const prefix=new URL(route.request().url()).searchParams.get('prefix');return route.fulfill({headers:jsonHeaders,json:{objects:[],prefixes:prefix==='games/campaign-a/'?[prefix+'maps/']:[],nextCursor:null}});});
+ await page.goto('https://panther.place/games/campaign-a/media');
+ const path=page.locator('.media-path');await expect(path.locator('[aria-current=location]')).toHaveText('Campaign A');await expect(path.getByRole('button')).toHaveCount(0);
+ await page.locator('.media-browser').getByRole('button',{name:'maps',exact:true}).click();
+ await expect(path.locator('[aria-current=location]')).toHaveText('maps');await expect(path.getByRole('button',{name:'maps',exact:true})).toHaveCount(0);await expect(path.getByRole('button',{name:'Campaign A',exact:true})).toBeVisible();
+ await path.getByRole('button',{name:'Campaign A',exact:true}).click();await expect(path.locator('[aria-current=location]')).toHaveText('Campaign A');
 });

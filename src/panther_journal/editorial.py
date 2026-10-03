@@ -81,6 +81,21 @@ SCHEMA = obj(
 
 def stage_schema(stage, inputs):
     schema = copy.deepcopy(SCHEMA)
+    if stage == "video-source-brief":
+        schema["properties"]["sourceFacts"] = array(
+            obj(
+                {
+                    "sourceKey": TEXT,
+                    "segmentIndex": {"type": "integer", "minimum": 0},
+                    "fact": TEXT,
+                    "uncertainty": TEXT,
+                }
+            )
+        )
+        schema["required"].append("sourceFacts")
+    if stage == "video-generation-packets" and inputs.get("mapInput"):
+        schema["properties"]["renderPrompt"] = {"type": "string", "minLength": 1, "maxLength": 4000}
+        schema["required"].append("renderPrompt")
     if stage == "context":
         # STRINGS is reused by other fields; do not constrain their shared schema.
         field = array(copy.deepcopy(TEXT))
@@ -110,13 +125,13 @@ def agent(folder, stage, inputs, heartbeat):
         "catalog.officialArtwork pins complete portrait/model pairs and physical appearance revisions. Never mix members of different selections. "
         "Current artwork is a visual reference, not proof of historical appearance or story timing. Missing artwork and timing stay unknown. "
         "Do not use held-out reading scripts. Do not invent missing dialogue. "
-        "Evidence IDs are 'raw', 'catalog', selected asset keys or prior stage IDs. "
+        "Evidence IDs are 'creation', 'raw' only when a transcript exists, 'catalog', selected asset keys or prior stage IDs. "
         "selectedKeys is ONLY for exact object keys from candidates, never catalog paths, raw paths, or evidence IDs. "
-        "Catalog and raw are already included automatically. If candidates is empty, selectedKeys MUST be empty. "
+        "Catalog and any supplied raw evidence are included automatically; absent transcripts stay absent. If candidates is empty, selectedKeys MUST be empty. "
         "Return the required JSON; use empty arrays for unused fields. Set passed=false on a substantive unresolved "
         "quality failure instead of calling weak output finished. AI review is not human approval. "
         "No video provider/model/budget is approved; no video generation is possible in this workflow.\n"
-        "creation is the user-selected adaptation title and brief. Use it to direct the requested adaptation, "
+        "creation is the user’s creative direction and title, which can independently define a requested chapter or video without any transcript. Use it to direct the requested adaptation, "
         "never to override source integrity, invent speech, assign an unknown speaker or authorize generation. "
         "A multi-source transcript bundle retains source-local times; never treat repeated timestamps as one common clock.\n"
         "Transcript prompts may encode segments as positional rows; segmentFields names each column. "
@@ -172,6 +187,17 @@ def agent(folder, stage, inputs, heartbeat):
         str(folder),
         "-",
     ]
+    if stage in PLAN["video"] and inputs.get("mapInput"):
+        # This path is created by the worker, never accepted from artifact/user text.
+        image = folder.parent / (
+            "map-first-frame"
+            + {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[
+                inputs["mapInput"]["contentType"]
+            ]
+        )
+        if not image.is_file() or image.is_symlink():
+            raise ValueError("Pinned map image is missing")
+        command[-1:-1] = ["--image", str(image)]
     code = local.run_process(
         command,
         folder=folder,
@@ -197,7 +223,14 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
     valid = None
     candidate = inputs.get("candidate")
     evidence = inputs.get("context", {})
-    allowed = {"raw", "catalog", *evidence, *inputs.get("priorStages", {})}
+    allowed = {"catalog", *evidence, *inputs.get("priorStages", {})}
+    if inputs.get("raw") is not None or inputs.get("sourceTranscripts"):
+        allowed.add("raw")
+    if inputs.get("creation"):
+        allowed.add("creation")
+    allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
+    if inputs.get("mapInput"):
+        allowed.add(inputs["mapInput"]["key"])
     if stage == "context":
         allowed.update(c["key"] for c in inputs["candidates"])
 
@@ -224,6 +257,16 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 raise ValueError("Empty editorial deliverable")
             if role == "context" and len(set(value["selectedKeys"])) != len(value["selectedKeys"]):
                 raise ValueError("Duplicate context selection")
+            if role == "video-source-brief":
+                source_map = {source["key"]: source for source in data.get("sourceTranscripts", [])}
+                for fact in value["sourceFacts"]:
+                    source = source_map.get(fact["sourceKey"])
+                    if (
+                        not source
+                        or fact["segmentIndex"] >= len(source["segments"])
+                        or not fact["fact"].strip()
+                    ):
+                        raise ValueError("Source fact must cite an existing source-local utterance")
             if role == "correction":
                 apply_corrections(data["raw"], value, evidence)
             if role in {"video-shot-list", "video-storyboards"}:
@@ -381,6 +424,16 @@ def upload(config, file, job, kind, category, source_keys, run_suffix):
     key = f"games/{job['gameId']}/assets/{asset_id}/original/{file.name}"
     checksum = base64.b64encode(hashlib.sha256(file.read_bytes()).digest()).decode()
     meta = file.parent / f"{file.name}.metadata.json"
+    scene_ref = (job.get("creation") or {}).get("sceneRef")
+    scene_metadata = (
+        {
+            "sceneRef": scene_ref,
+            "episodeId": scene_ref["episodeId"],
+            "sceneId": scene_ref["sceneId"],
+        }
+        if scene_ref
+        else {}
+    )
     write_json(
         meta,
         {
@@ -390,6 +443,7 @@ def upload(config, file, job, kind, category, source_keys, run_suffix):
             "sourceKeys": source_keys[:2],
             "extra": {
                 "generation": generation.subscription(),
+                **scene_metadata,
                 "jobId": job["jobId"],
                 "sha256": checksum,
                 "artifactType": kind,
@@ -435,6 +489,8 @@ def storyboard(shots):
 
 def transcript_bundle(documents, references, job):
     """Read-time projection preserves every source's original timing and speaker identity."""
+    if not documents:
+        return None
     if len(documents) == 1:
         return copy.deepcopy(documents[0])
     return {
@@ -467,6 +523,114 @@ def transcript_bundle(documents, references, job):
     }
 
 
+AUDIT_FIELDS = {
+    "sourceKeys",
+    "inputArtifacts",
+    "rawReference",
+    "rawReferences",
+    "revisionHistory",
+    "metadata",
+    "generation",
+    "engine",
+    "workflowVersion",
+    "reviewStatus",
+    "publicationStatus",
+    "passed",
+    "decisions",
+    "evidenceIds",
+    "selectedKeys",
+    "review",
+    "reference",
+    "detailsRevision",
+    "appearanceRevision",
+    "revision",
+    "createdBy",
+    "updatedBy",
+    "uploadedBy",
+    "provenanceKey",
+    "providerResponse",
+    "providerResponses",
+    "taskToken",
+    "lease",
+    "actor",
+    "audit",
+    "provenance",
+    "sha256",
+    "checksum",
+}
+
+
+def creative_content(value):
+    """A read-time creative projection; immutable artifacts keep their complete audit trail."""
+    if isinstance(value, dict):
+        return {k: creative_content(v) for k, v in value.items() if k not in AUDIT_FIELDS}
+    if isinstance(value, list):
+        return [creative_content(v) for v in value]
+    return value
+
+
+def pinned_cast(job):
+    """Use the submitted structured revision and selected physical state, never today's roster."""
+    catalog = copy.deepcopy(job.get("gameContext") or {"game": {"id": job["gameId"]}})
+    catalog.update(characters=[], players=[], memberships=[], officialArtwork={})
+    if job.get("selectedScene"):
+        catalog["scene"] = copy.deepcopy(job["selectedScene"])
+    if job.get("selectedMap"):
+        catalog["mapInput"] = copy.deepcopy(job["selectedMap"])
+    for character in job.get("selectedCharacters", []):
+        catalog["characters"].append(
+            {
+                "id": character["characterId"],
+                "name": character["name"],
+                "details": copy.deepcopy(character["details"]),
+            }
+        )
+        appearance = character.get("appearance")
+        catalog["officialArtwork"][character["characterId"]] = copy.deepcopy(appearance)
+    return catalog
+
+
+def map_generation_packet(job, report):
+    """Carry an executable image-to-video input binding, without authorizing submission."""
+    reference = job["selectedMap"]
+    return {
+        "schemaVersion": 1,
+        "mode": "image-to-video",
+        "firstFrame": {key: reference[key] for key in ("key", "sha256", "size", "contentType")},
+        "sceneRef": copy.deepcopy(job["creation"]["sceneRef"]),
+        "prompt": reference["instructions"]
+        + "\nJourney: "
+        + job["creation"]["brief"]
+        + "\nShot direction: "
+        + report["renderPrompt"],
+        "sourceKeys": [reference["key"]],
+        "generationAuthorized": False,
+    }
+
+
+def transcript_context(documents, references):
+    result = []
+    for doc, reference in zip(documents, references, strict=True):
+        result.append(
+            {
+                "key": reference["key"],
+                "players": copy.deepcopy(doc.get("players", [])),
+                "segments": [
+                    {
+                        k: copy.deepcopy(v)
+                        for k, v in segment.items()
+                        if k in {"start", "end", "playerId", "text", "originalText", "uncertainty"}
+                    }
+                    for segment in doc["segments"]
+                ],
+                "captureWarnings": copy.deepcopy(
+                    doc.get("captureIntegrity", {}).get("warnings", [])
+                ),
+            }
+        )
+    return result
+
+
 def process(config, root, claim):
     job, task = claim["job"], claim["task"]
     if task["stage"] not in STAGES or job["workflowVersion"] != PLAN["version"]:
@@ -484,43 +648,90 @@ def process(config, root, claim):
             last_heartbeat = time.monotonic()
 
     heartbeat()
-    raw_references = job.get("rawSources", [job["raw"]])
-    raw_documents = [
-        fetch(config, ref, folder, f"raw-{index}.json") for index, ref in enumerate(raw_references)
-    ]
-    raw = transcript_bundle(raw_documents, raw_references, job)
-    previous = {
-        stage: fetch(config, ref, folder, f"input-{stage}.json")
-        for stage, ref in claim["artifacts"].items()
-    }
+    raw_references = job.get("rawSources")
+    if raw_references is None:
+        raw_references = [job["raw"]] if job.get("raw") else []
     stage = task["stage"]
+    # Later video stages consume the preprocessed source brief, never repeated raw downloads.
+    raw_documents = (
+        [
+            fetch(config, ref, folder, f"raw-{index}.json")
+            for index, ref in enumerate(raw_references)
+        ]
+        if (
+            stage not in PLAN["video"]
+            and not (stage == "context" and (job.get("creation") or {}).get("schemaVersion") == 2)
+        )
+        or stage == "video-source-brief"
+        else []
+    )
+    raw = transcript_bundle(raw_documents, raw_references if raw_documents else [], job)
+    branch = (
+        PLAN["video"]
+        if stage in PLAN["video"]
+        else PLAN["novel"]
+        if stage in PLAN["novel"]
+        else PLAN["correction"]
+    )
+    needed = set(branch[: branch.index(stage)])
+    if stage in PLAN["video"]:
+        needed.add("context")
+    elif stage in PLAN["novel"]:
+        needed.update(PLAN["correction"])
+    previous = {
+        name: fetch(config, ref, folder, f"input-{name}.json")
+        for name, ref in claim["artifacts"].items()
+        if name in needed
+    }
+    if not raw_references and (
+        not job.get("creation") or stage in {"correction", "corrected-transcript"}
+    ):
+        raise ValueError("A transcript correction stage requires original speech evidence")
+    selected_map = job.get("selectedMap")
+    if stage in PLAN["video"] and selected_map:
+        extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[
+            selected_map["contentType"]
+        ]
+        local.download(config, selected_map, folder / ("map-first-frame" + extension))
     sources = [ref["key"] for ref in raw_references]
+    if selected_map:
+        sources.append(selected_map["key"])
+    sources.extend(
+        ref["key"]
+        for character in job.get("selectedCharacters", [])
+        for ref in character.get("appearanceAssets", [])
+    )
     if stage == "context":
-        catalog = cloud.api(config, "GET", "/game", params={"gameId": job["gameId"]})
-        catalog["officialArtwork"] = {}
-        for character in catalog.get("characters", []):
-            history = cloud.api(
-                config,
-                "GET",
-                "/character-versions",
-                params={"gameId": job["gameId"], "characterId": character["id"]},
-            )
-            if history.get("schemaVersion") != 2 or not isinstance(history.get("selections"), list):
-                raise click.ClickException(
-                    "Complete typed appearance history is required for visual context"
+        if (job.get("creation") or {}).get("schemaVersion") == 2:
+            catalog = pinned_cast(job)
+        else:
+            catalog = cloud.api(config, "GET", "/game", params={"gameId": job["gameId"]})
+            catalog["officialArtwork"] = {}
+            for character in catalog.get("characters", []):
+                history = cloud.api(
+                    config,
+                    "GET",
+                    "/character-versions",
+                    params={"gameId": job["gameId"], "characterId": character["id"]},
                 )
-            selected = next(
-                (s for s in history["selections"] if s["id"] == history["current"]), None
-            )
-            if history["current"] is not None and selected is None:
-                raise click.ClickException("Pinned official artwork selection is missing")
-            catalog["officialArtwork"][character["id"]] = selected
-            if selected:
-                sources.extend(
-                    selected[field]
-                    for field in ("portraitKey", "modelKey", "sourceKey", "provenanceKey")
-                    if selected.get(field)
+                if history.get("schemaVersion") != 2 or not isinstance(
+                    history.get("selections"), list
+                ):
+                    raise click.ClickException(
+                        "Complete typed appearance history is required for visual context"
+                    )
+                selected = next(
+                    (s for s in history["selections"] if s["id"] == history["current"]), None
                 )
+                if history["current"] is not None and selected is None:
+                    raise click.ClickException("Pinned official artwork selection is missing")
+                catalog["officialArtwork"][character["id"]] = selected
+                if selected:
+                    sources.extend(
+                        selected[field]
+                        for field in ("portraitKey", "modelKey", "sourceKey", "provenanceKey")
+                        if selected.get(field)
+                    )
         sources = list(dict.fromkeys(sources))
         candidates, cursor = list(job.get("selectedContext", [])), None
         while not job.get("creation"):
@@ -544,7 +755,9 @@ def process(config, root, claim):
             stage,
             {
                 "raw": raw,
-                "catalog": catalog,
+                "catalog": creative_content(catalog)
+                if (job.get("creation") or {}).get("schemaVersion") == 2
+                else catalog,
                 "candidates": candidates,
                 "creation": job.get("creation"),
             },
@@ -580,8 +793,15 @@ def process(config, root, claim):
             else PLAN["correction"]
         )
         permitted = set(PLAN["correction"] + branch[: branch.index(stage)])
+        if stage in PLAN["video"]:
+            permitted -= set(PLAN["correction"])
+            evidence = creative_content(evidence)
         # Novel and video are independent: neither uses the other's inventions as evidence.
-        prior = {k: v["payload"] for k, v in previous.items() if k in permitted}
+        prior = {
+            k: creative_content(v["payload"]) if stage in PLAN["video"] else v["payload"]
+            for k, v in previous.items()
+            if k in permitted
+        }
         candidate = (
             apply_corrections(raw, previous["correction"]["payload"], evidence)
             if stage == "corrected-transcript"
@@ -589,19 +809,24 @@ def process(config, root, claim):
             if stage == "novel-chapter"
             else None
         )
-        report, candidate, history, publication = autonomous_stage(
-            folder,
-            stage,
-            {
-                "raw": raw,
-                "context": evidence,
-                "priorStages": prior,
-                "candidate": candidate,
-                "creation": job.get("creation"),
-            },
-            heartbeat,
-        )
-        if not set(report["evidenceIds"]) <= {"raw", "catalog", *evidence, *prior}:
+        inputs = {
+            "context": evidence,
+            "priorStages": prior,
+            "candidate": candidate,
+            "creation": job.get("creation"),
+            "mapInput": selected_map,
+        }
+        if stage not in PLAN["video"]:
+            inputs["raw"] = raw
+        if stage == "video-source-brief":
+            inputs["sourceTranscripts"] = transcript_context(raw_documents, raw_references)
+        report, candidate, history, publication = autonomous_stage(folder, stage, inputs, heartbeat)
+        allowed = {"catalog", *evidence, *prior, *sources}
+        if raw is not None:
+            allowed.add("raw")
+        if job.get("creation"):
+            allowed.add("creation")
+        if not set(report["evidenceIds"]) <= allowed:
             raise ValueError("Unknown evidence citation")
         payload = report
         if stage == "correction":
@@ -610,10 +835,26 @@ def process(config, root, claim):
             payload = {"transcript": candidate, "review": report}
         if stage == "novel-chapter":
             payload = {"chapter": candidate, "review": report}
+        if stage == "video-generation-packets" and selected_map:
+            payload["mapGenerationPacket"] = map_generation_packet(job, report)
         if stage == "video-voice-casting":
             payload["voiceProfiles"] = voice_profile_proposals(evidence["catalog"])
+        if stage == "video-source-brief":
+            source_map = {source["key"]: source for source in inputs["sourceTranscripts"]}
+            for fact in payload["sourceFacts"]:
+                segment = source_map[fact["sourceKey"]]["segments"][fact["segmentIndex"]]
+                fact.update(
+                    {key: copy.deepcopy(segment.get(key)) for key in ("start", "end", "playerId")}
+                )
+                fact["sourceUncertainty"] = copy.deepcopy(segment.get("uncertainty"))
         if stage in PLAN["novel"] + PLAN["video"]:
-            sources.append(claim["artifacts"]["corrected-transcript"]["key"])
+            if "corrected-transcript" in claim["artifacts"]:
+                sources.append(claim["artifacts"]["corrected-transcript"]["key"])
+            sources.extend(claim["artifacts"][name]["key"] for name in prior)
+            sources.extend(
+                job.get("selectedContext", [])[i]["key"]
+                for i in range(len(job.get("selectedContext", [])))
+            )
         if stage == "video-storyboards":
             expected = previous["video-shot-list"]["payload"]["shots"]
             if [(s["shotId"], s["sceneId"], s["durationSeconds"]) for s in report["shots"]] != [
@@ -635,12 +876,13 @@ def process(config, root, claim):
                 cursor += shot["durationSeconds"]
     category = (
         "grounded-adaptation"
-        if stage in PLAN["novel"]
+        if stage in PLAN["novel"] and raw_references
         else "creative-reimagining"
-        if stage in PLAN["video"]
+        if stage in PLAN["video"] or stage in PLAN["novel"]
         else "unclassified"
     )
     kind = stage
+    sources.extend(ref["key"] for name, ref in claim["artifacts"].items() if name in needed)
     envelope = {
         "schemaVersion": 1,
         "entityType": "EditorialArtifact",
@@ -655,9 +897,12 @@ def process(config, root, claim):
         "structuralValidation": "passed",
         "revisionHistory": history,
         "videoGenerationAuthorized": False,
-        "sourceKeys": sources,
-        "inputArtifacts": claim["artifacts"],
-        "rawReference": job["raw"],
+        "sourceKeys": list(dict.fromkeys(sources)),
+        "inputArtifacts": {name: ref for name, ref in claim["artifacts"].items() if name in needed},
+        "characterReferences": job.get("selectedCharacters", []),
+        "sceneReference": job.get("selectedScene"),
+        "mapReference": selected_map,
+        "rawReference": job.get("raw"),
         "rawReferences": raw_references,
         "creation": job.get("creation"),
         "engine": "codex-cli-chatgpt",

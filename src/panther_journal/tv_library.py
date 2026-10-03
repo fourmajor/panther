@@ -1,12 +1,11 @@
-"""Guarded TV organization through the existing Panther sign-in."""
+"""Read-only access to historical TV organization through Panther sign-in."""
 
 import json
-from pathlib import Path
 
 import click
 
 from panther_journal import cloud
-from panther_journal.character_details import pages, read_json
+from panther_journal.character_details import pages
 
 
 def listing(kind):
@@ -17,7 +16,7 @@ def listing(kind):
     def command(game, identity, revision):
         config = cloud.configuration()
         params = {"gameId": cloud.slug(game)}
-        path = "/tv-series" if kind == "series" else "/tv-episodes"
+        path = {"series": "/tv-series", "legacy-episodes": "/tv-episodes", "episodes": "/episodes"}[kind]
         if identity:
             params["id"] = cloud.slug(identity)
             if revision:
@@ -32,29 +31,6 @@ def listing(kind):
     return command
 
 
-def saving(kind):
-    @click.command("save-" + kind)
-    @click.argument("manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-    def command(manifest):
-        body = read_json(manifest)
-        if not isinstance(body, dict) or not body.get("operationId"):
-            raise click.ClickException("Use a complete guarded envelope with a stable operationId.")
-        click.echo(f"TV organization operation: {body['operationId']}", err=True)
-        click.echo(
-            json.dumps(
-                cloud.api(
-                    cloud.configuration(),
-                    "POST",
-                    "/tv-series" if kind == "series" else "/tv-episodes",
-                    json=body,
-                ),
-                indent=2,
-            )
-        )
-
-    return command
-
-
 def register(group):
-    for command in [listing("series"), listing("episodes"), saving("series"), saving("episode")]:
+    for command in [listing("series"), listing("legacy-episodes"), listing("episodes")]:
         group.add_command(command)

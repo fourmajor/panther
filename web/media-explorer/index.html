@@ -15,17 +15,6 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <aside id="design-dock" class="design-dock" aria-label="Interface comparison">
-      <button id="design-open" type="button" aria-haspopup="dialog" aria-controls="design-atlas"><span aria-hidden="true">▦</span> Design Atlas <span id="design-current">Studio</span></button>
-      <div id="design-preview-tools" hidden>
-        <button id="design-previous" type="button" aria-label="Previous interface">←</button>
-        <button id="design-next" type="button" aria-label="Next interface">→</button>
-        <button id="design-compare" type="button" aria-pressed="false">Compare saved</button>
-        <button id="design-keep" type="button">Keep this look</button>
-        <button id="design-cancel" type="button" aria-label="Cancel interface preview">×</button>
-      </div>
-      <span id="design-feedback" class="sr-only" role="status"></span>
-    </aside>
     <dialog id="design-atlas" class="design-atlas" aria-labelledby="design-atlas-title" aria-describedby="design-atlas-description">
       <header class="atlas-heading"><div><p>Six ways into the same world</p><h2 id="design-atlas-title">Design Atlas</h2></div><button id="design-close" type="button" aria-label="Close Design Atlas">×</button></header>
       <p id="design-atlas-description">Choose a layout to try it on this very page. Your drafts, playback and place stay intact. Only the interface changes—not your game’s visual style.</p>
@@ -47,32 +36,43 @@
       <nav class="primary-nav" id="primary-nav" aria-label="Panther sections" hidden>
         <a href="/dashboard">Dashboard</a>
         <a href="/characters">Characters</a>
-        <a href="/audio">Audio</a>
-        <a href="/transcripts">Transcripts</a>
+        <a href="/sessions">Sessions</a>
         <a href="/novel">Novel</a>
         <a href="/videos">Videos</a>
-        <a href="/media">Media</a>
+        <a href="/assets">Assets</a>
         <a href="/workflows">Workflows</a>
         <a href="/settings">Settings</a>
       </nav>
       <div class="account" id="account" hidden>
+    <aside id="design-dock" class="design-dock" aria-label="Interface comparison">
+      <button id="design-open" type="button" aria-label="Design Atlas" title="Design Atlas" aria-haspopup="dialog" aria-controls="design-atlas"><span aria-hidden="true">▦</span><span class="sr-only">Design Atlas</span><span id="design-current" class="sr-only">Studio</span></button>
+      <span id="design-feedback" class="sr-only" role="status"></span>
+    </aside>
+
         <span id="username" hidden></span>
         <button class="quiet-button" id="account-settings-button" type="button" aria-label="Account"><span class="account-action-label">Account</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>
         <button class="quiet-button" id="logout-button" type="button" aria-label="Sign out"><span class="account-action-label">Sign out</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4"/></svg></button>
+      </div>
+      <div id="design-preview-tools" hidden>
+        <button id="design-previous" type="button" aria-label="Previous interface">←</button>
+        <button id="design-next" type="button" aria-label="Next interface">→</button>
+        <button id="design-compare" type="button" aria-pressed="false">Compare saved</button>
+        <button id="design-keep" type="button">Keep this look</button>
+        <button id="design-cancel" type="button" aria-label="Cancel interface preview">×</button>
       </div>
     </header>
 
     <main>
       <div id="page-loading" hidden></div>
       <section id="workshop" class="workshop" aria-label="Workflow workshop" hidden>
-        <header class="workshop-heading"><div><p class="workshop-eyebrow">A tiny crew. Real progress.</p><h1>The Workshop</h1><p id="workshop-intro">Follow the work behind your world.</p></div><button id="workshop-refresh" class="quiet-button" type="button">Check progress</button></header>
+        <header class="workshop-heading"><div><p class="workshop-eyebrow" hidden>A tiny crew. Real progress.</p><h1>The Workshop</h1><p id="workshop-intro" hidden>Follow the work behind your world.</p></div><button hidden id="workshop-refresh" class="quiet-button" type="button">Check progress</button></header>
         <p id="workshop-health" role="status"></p>
         <div id="workshop-summary" class="workshop-summary"></div>
         <div id="workshop-filters" class="workshop-filters" aria-label="Filter workflows"></div>
         <div id="workshop-list" class="workshop-list"></div>
         <button id="workshop-more" class="quiet-button" type="button" hidden>Load more workflows</button>
         <div id="workshop-detail" hidden></div>
-        <p class="workshop-footnote">Progress counts completed stages, not time remaining. Pixel workers illustrate reported activity—not proof of quality. Local-only work appears after its worker reports to Panther.</p>
+        <p class="workshop-footnote" hidden>Progress counts completed stages, not time remaining. Pixel workers illustrate reported activity—not proof of quality. Local-only work appears after its worker reports to Panther.</p>
       </section>
       <div class="game-context" id="game-context" hidden>
         <span id="game-purpose" class="game-purpose" hidden></span>
@@ -94,7 +94,7 @@
           <a id="room-final-link" hidden>Transcript</a>
         </div>
         <div id="room-recovery" class="room-recovery" hidden><button id="room-resume" class="quiet-button" type="button">Retry save</button><button id="room-download" class="quiet-button" type="button">Download audio</button></div>
-        <div id="room-live" class="room-live" hidden><h3 title="Provisional recognition; speakers are unassigned">Live transcript <span>Provisional</span></h3><div id="room-live-text" aria-live="polite" role="log"></div></div>
+        <div id="room-live" class="room-live" hidden><div id="room-live-text" aria-live="polite" role="log"></div></div>
       </section>
       <section id="dashboard" class="dashboard" aria-label="Game dashboard" hidden>
         <div class="dashboard-hero">
@@ -122,14 +122,15 @@
             <div class="settings-form-footer"><button class="primary-button" type="submit">Save game details</button><p id="game-settings-status" role="status"></p></div>
           </form>
         </section>
-        <section class="settings-card" id="game-style" hidden><div class="settings-card-intro"><h2>Generation defaults</h2><p>The visual direction for new images created for this game.</p></div>
+        <section class="settings-card" id="game-style" hidden><div class="settings-card-intro"><h2>Visual style</h2></div>
           <form id="game-style-form">
-            <label for="visual-style">Generated visuals</label><select id="visual-style" aria-describedby="style-help"></select>
-            <p id="style-help" class="field-help">Used for future generated images. Your existing images and uploaded originals stay as they are.</p>
-            <div class="settings-form-footer"><button class="primary-button" type="submit">Save style</button><p id="style-status" role="status"></p></div>
+            <select id="visual-style" aria-label="Generated visuals" hidden></select>
+
+            <p id="style-status" role="status"></p>
           </form>
         </section>
       </section>
+      <dialog id="style-preview-dialog" class="style-preview-dialog" aria-labelledby="style-preview-title"><div><h2 id="style-preview-title"></h2><button id="style-preview-close" class="quiet-button" type="button">Close preview</button></div><img id="style-preview-image" alt=""></dialog>
       <section class="welcome" id="welcome">
 
         <h1>Your game’s source material and finished stories, together.</h1>
@@ -162,19 +163,18 @@
 
         <article class="character-profile" id="character-profile" hidden>
           <button class="back-button" id="character-back" type="button">← All characters</button>
-          <div class="character-heading">
-            <div>
-              <p class="eyebrow" id="character-title"></p>
+          <div class="character-heading"><div class="character-avatar"><img id="character-portrait-only" class="character-portrait-only" alt="" hidden><div id="character-portrait-empty" class="character-portrait-empty" aria-label="Portrait"></div><div class="character-portrait-actions"><button id="character-portrait-upload" class="quiet-button" type="button">Upload portrait</button><button id="character-portrait-generate" class="quiet-button" type="button">Generate portrait</button></div><input id="character-portrait-file" type="file" accept="image/png,image/jpeg,image/webp" hidden><p id="character-portrait-status" role="status"></p></div>
+            <div class="character-bio-heading">
+              <p id="character-title" class="character-role"></p>
               <h1 id="character-name"></h1>
               <p class="lede" id="character-summary"></p>
             </div>
+            <section id="character-facts" class="character-facts" aria-label="Character information"></section>
           </div>
-
-          <section id="character-facts" class="character-facts" aria-label="Character information"></section>
-          <p id="character-no-model" hidden>No portrait or 3D model has been added yet.</p>
-          <img id="character-portrait-only" class="character-portrait-only" alt="" hidden>
+          <p id="character-no-model" hidden></p>
+          <section id="character-appearance-panel" aria-label="Artwork"><h2>Artwork</h2><div id="character-artwork-empty" class="character-reference-empty"><button class="quiet-button" type="button" data-character-upload="portrait">Upload artwork</button><button class="quiet-button" type="button" data-character-generate>Generate artwork</button></div>
           <section class="appearance-history" id="appearance-history" aria-label="Appearance versions">
-            <div><h2>Appearances</h2></div>
+
             <div class="appearance-pickers">
               <label for="appearance-state">Physical appearance <select id="appearance-state" aria-label="Physical appearance"></select></label>
               <label for="model-version">Artwork edition <select id="model-version" aria-label="Artwork edition"></select></label>
@@ -182,7 +182,6 @@
             </div>
             <p id="appearance-status" role="status"></p>
             <p id="appearance-story"></p>
-            <details><summary>Recorded selection changes</summary><ol id="appearance-events"></ol></details>
             <div id="appearance-downloads" class="appearance-pickers" aria-label="Download selected appearances"></div>
             <img id="portrait-version-preview" class="portrait-version-preview" alt="" hidden>
           </section>
@@ -244,8 +243,9 @@
               </dl>
             </aside>
           </div>
-          <section id="character-assets" aria-label="Assets featuring this character">
-            <div class="explorer-heading"><h2>Featuring this character</h2><button id="character-assets-refresh" class="quiet-button" type="button" hidden>Refresh assets</button></div>
+          </section>
+          <section id="character-assets" aria-label="References">
+            <div class="explorer-heading"><h2>References</h2><button class="quiet-button" type="button" data-character-upload="reference">Upload reference</button></div><input id="character-reference-file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div id="character-reference-empty" class="character-reference-empty" hidden></div>
             <p id="character-assets-status" role="status"></p>
             <ul id="character-assets-list"></ul>
           </section>
@@ -256,7 +256,6 @@
         <div class="explorer-heading">
           <div><h1>Novel</h1></div>
           <button class="quiet-button" id="novel-refresh" type="button" hidden>Refresh chapters</button>
-          <button class="quiet-button" id="manual-chapter-create" type="button">Add chapter</button>
         </div>
         <form id="manual-chapter-form" class="character-edit-form" hidden></form>
         <p id="novel-status" class="status" role="status"></p>
@@ -291,11 +290,9 @@
           <button class="quiet-button" id="library-refresh" type="button" hidden>Refresh</button>
         </div>
         <section id="live-transcript" class="live-transcript" aria-label="Live transcript" hidden>
-          <div class="explorer-heading"><h2>Live transcript</h2><button id="live-refresh" class="quiet-button" type="button" hidden>Refresh live feed</button></div>
-          <p>Provisional preview · player labels are tentative; unlabeled speakers are not yet identified.</p>
-          <p id="live-status" role="status">Checking for live recordings…</p>
+          <button id="live-reader-back" class="quiet-button" type="button">Back to sessions</button>
+          <p id="live-status" role="status" hidden></p>
           <div id="live-recordings"></div>
-          <details><summary>About this preview</summary><p>Browse the full session with Beginning, Earlier and Later; choose Live to follow new speech. Earlier audio may still be transcribing or uploading. Provisional history is kept for seven days after its last sync; saved raw and corrected transcripts appear separately below. A ~ timestamp marks approximate chunk-boundary timing. Recording presence does not confirm sound quality or cloud backup.</p></details>
         </section>
         <section id="movie-workspace" aria-label="Movie planning and review" hidden></section>
         <p id="library-status" class="status" role="status"></p>
@@ -306,10 +303,13 @@
         <div class="explorer-heading">
           <div>
 
-            <h1>Media</h1>
+            <h1 id="assets-heading">Assets</h1>
           </div>
           <button class="quiet-button" id="refresh-button" type="button" hidden>Refresh</button>
         </div>
+
+        <div id="asset-view-actions" class="model-control-row" hidden><button class="quiet-button" id="asset-browse-files" type="button">Browse files</button><a class="quiet-button link-button" id="asset-back-library" href="/assets" hidden>Back to assets</a></div>
+        <div id="assets-library" hidden></div>
 
         <nav class="breadcrumbs" id="breadcrumbs" aria-label="Current folder"></nav>
         <div class="status" id="status" role="status">Loading…</div>
@@ -326,7 +326,6 @@
     <dialog class="preview" id="preview-dialog">
       <div class="preview-header">
         <div>
-          <p class="eyebrow">Preview</p>
           <h2 id="preview-title"></h2>
         </div>
         <button class="icon-button" id="preview-close" type="button" aria-label="Close preview">×</button>

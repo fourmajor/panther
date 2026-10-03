@@ -13,7 +13,7 @@ for(const width of [1440,390]) test(`Session finalization is visible and inspect
   ],{source:'local-worker',reportedAt:Date.now()/1000});state.jobs.unshift(job);
   await page.goto('https://panther.place/games/synthetic-game/workflows');
   const group=page.locator('.workshop-group[data-kind=session-finalization]');
-  await expect(group).toBeVisible();await expect(group.locator('summary')).toContainText('Session finalization');
+  await expect(group).toBeVisible();await expect(group.getByRole('heading',{name:'Session finalization',exact:true})).toBeVisible();
   await group.locator('.workshop-card').click();
   await expect(page.locator('.workshop-stages li')).toHaveCount(4);
   await expect(page.locator('#workshop-detail')).toContainText('Match players');
@@ -80,8 +80,9 @@ for(const width of [1440,390]) for(const design of ['studio','chronicle','cinema
     await expect(page.locator('#workshop')).toContainText('Local worker signal lost');
     await expect(page.locator('#workshop')).toContainText('1 of 3 stages complete');
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-    const button=page.locator('#workshop-refresh');await expect(button).toBeInViewport();
-    expect(await button.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+    await expect(page.locator('#workshop-refresh')).toBeHidden();
+    await expect(page.locator('#workshop details,#workshop summary,.workshop-group-chevron')).toHaveCount(0);
+    await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeVisible();
     await page.screenshot({path:test.info().outputPath(`workshop-${design}-${width}.png`),fullPage:true});
   });
 }
@@ -112,13 +113,13 @@ test('Live polling stays fresh, stops on navigation, and respects reduced motion
   await page.clock.install();await page.emulateMedia({reducedMotion:'reduce'});const state=await fixture(page);state.next=false;
   await page.goto('https://panther.place/games/synthetic-game/workflows');
   await expect(page.locator('.workshop-card')).toHaveCount(4);
-  await page.locator('.workshop-group[data-kind=playback] > summary').click();
-  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeHidden();
+  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeVisible();
+  await expect(page.locator('#workshop details,#workshop summary')).toHaveCount(0);
   expect(await page.locator('.workshop-card .is-working .pixel-cat').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   state.jobs[0].stages[1].status='done';state.jobs[0].completedStages=2;state.jobs[0].activeStages=[];
   await page.clock.fastForward(16000);
   await expect(page.locator('#workshop')).toContainText('2 of 3 stages complete');
-  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeHidden();
+  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeVisible();
   expect(state.reads.filter(u=>u.pathname==='/workflows').length).toBeGreaterThan(1);
   await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
   await expect(page.locator('#workshop')).toBeHidden();
@@ -148,13 +149,14 @@ for(const width of [1440,390]) test(`Parallel adaptation flowchart at ${width}px
   await page.screenshot({path:test.info().outputPath(`flowchart-parallel-${width}.png`),fullPage:true});
 });
 
-test('Incomplete history and refresh failures are visible, never a fake empty library',async({page})=>{
-  const state=await fixture(page);state.error=true;
+test('Incomplete history and polling failures are visible, never a fake empty library',async({page})=>{
+  await page.clock.install();const state=await fixture(page);state.error=true;
   await page.goto('https://panther.place/games/synthetic-game/workflows');
   await expect(page.locator('#workshop-health')).toContainText('being indexed');
   await expect(page.locator('.workshop-empty')).toHaveCount(0);
-  state.error=false;await page.locator('#workshop-refresh').click();await expect(page.locator('.workshop-card')).toHaveCount(4);
-  state.error=true;await page.locator('#workshop-refresh').click();
+  await expect(page.locator('#workshop-refresh')).toBeHidden();
+  state.error=false;await page.clock.fastForward(16000);await expect(page.locator('.workshop-card')).toHaveCount(4);
+  state.error=true;await page.clock.fastForward(16000);
   await expect(page.locator('#workshop-health')).toContainText('out of date');
   await expect(page.locator('.workshop-card')).toHaveCount(4);
 });

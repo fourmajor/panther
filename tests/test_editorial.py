@@ -1,5 +1,6 @@
 import copy
 import importlib
+import hashlib
 import json
 
 import pytest
@@ -355,6 +356,10 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch, multi
             "shots": [],
             "edits": [],
         }
+        if stage in PLAN["video"]:
+            report["evidenceIds"] = ["catalog"]
+        if stage == "video-source-brief":
+            report["sourceFacts"] = []
         if stage in {"video-shot-list", "video-storyboards"}:
             report["shots"] = [
                 {
@@ -666,7 +671,7 @@ def test_creation_pins_multiple_sources_and_context_idempotently(editorial):
         request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
     )
     assert first["jobId"] == second["jobId"]
-    assert first["workflowVersion"] == 3
+    assert first["workflowVersion"] == PLAN["version"]
     assert [ref["key"] for ref in first["rawSources"]] == keys
     assert first["selectedContext"][0]["key"] == context
     assert first["videoGenerationAuthorized"] is False
@@ -758,6 +763,648 @@ def test_catalog_reader_can_follow_progress_but_cannot_create(editorial):
     assert [value["jobId"] for value in listed["jobs"]] == [job["jobId"]]
 
 
+def scene_creation_fixture(editorial, monkeypatch):
+    import boto3
+    from types import SimpleNamespace
+    import sys
+
+    game = {
+        "id": "test-game",
+        "name": "Synthetic game",
+        "ruleset": "Synthetic system",
+        "visualStyle": "anime",
+    }
+    boto3.resource("dynamodb").Table("test-job-catalog").put_item(
+        Item={"pk": "GAMES", "sk": "test-game", **game}
+    )
+    scene = {
+        "schemaVersion": 1,
+        "entityType": "Scene",
+        "gameId": "test-game",
+        "episodeId": "episode-one",
+        "id": "scene-one",
+        "name": "Cross the river",
+        "description": "A storm approaches.",
+        "revision": "c" * 32,
+    }
+
+    def pin(game_id, reference):
+        if game_id != scene["gameId"] or reference != {
+            "episodeId": scene["episodeId"],
+            "sceneId": scene["id"],
+            "revision": scene["revision"],
+        }:
+            raise ValueError("Unknown scene revision")
+        return copy.deepcopy(scene)
+
+    monkeypatch.setitem(sys.modules, "video_scenes", SimpleNamespace(pin_scene=pin))
+    creation = {
+        "schemaVersion": 2,
+        "target": "video",
+        "sceneRef": {"episodeId": "episode-one", "sceneId": "scene-one", "revision": "c" * 32},
+        "characterIds": [],
+        "sourceKeys": [],
+        "contextKeys": [],
+    }
+    return creation, scene
+
+
+def test_prompt_only_video_pins_scene_without_inventing_transcript(editorial, monkeypatch):
+    creation, scene = scene_creation_fixture(editorial, monkeypatch)
+    first = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    second = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert first["jobId"] == second["jobId"]
+    # Adding map support must not re-identify existing non-map jobs on retry.
+    normalized = {**creation, "title": scene["name"], "brief": scene["name"]}
+    old_identity = [[], [], normalized, [], editorial.pin_game("test-game"), scene, PLAN["version"]]
+    assert (
+        first["jobId"]
+        == hashlib.sha256(json.dumps(old_identity, sort_keys=True).encode()).hexdigest()
+    )
+    assert first["raw"] is None and first["rawSources"] == []
+    assert first["sourceMode"] == "prompt"
+    assert first["creation"]["brief"] == scene["name"]
+    assert first["creation"]["title"] == scene["name"]
+    assert first["selectedScene"] == scene
+    assert first["videoGenerationAuthorized"] is False
+    assert first["gameContext"]["visualStyles"][0]["id"] == "anime"
+    assert first["workflowVersion"] == 4
+    creation["brief"] = "Cross at dusk, in a tense silence."
+    revised = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert revised["jobId"] != first["jobId"]
+    assert revised["selectedScene"] == first["selectedScene"]
+    invalid = {**creation, "sceneRef": {**creation["sceneRef"], "revision": "d" * 32}}
+    assert (
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": invalid})[
+            "statusCode"
+        ]
+        == 400
+    )
+    invalid = {k: v for k, v in creation.items() if k != "sceneRef"}
+    assert (
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": invalid})[
+            "statusCode"
+        ]
+        == 400
+    )
+
+
+def test_selected_cast_pins_structured_revision_and_official_appearance(editorial, monkeypatch):
+    import boto3
+    import character_details
+    import character_appearances as looks
+
+    creation, _ = scene_creation_fixture(editorial, monkeypatch)
+    creation["characterIds"] = ["hero"]
+    db = boto3.resource("dynamodb").Table("test-job-catalog")
+    db.put_item(
+        Item={
+            "pk": "GAME#test-game",
+            "sk": "CHARACTER#hero",
+            "entityType": "Character",
+            "schemaVersion": 2,
+            "gameId": "test-game",
+            "id": "hero",
+            "name": "Synthetic hero",
+            "detailsRevision": "a" * 32,
+            "detailsJson": json.dumps(character_details.empty_details()),
+        }
+    )
+    browse = looks.browse_index.table()
+    browse.put_item(Item={"pk": "character-looks-migration#test-game#hero", "sk": "complete"})
+    portrait = "games/test-game/assets/portrait/original/image.png"
+    import base64
+
+    editorial.media.s3.put_object(
+        Bucket=editorial.media.BUCKET_NAME,
+        Key=portrait,
+        Body=b"synthetic-image",
+        ContentType="image/png",
+        ChecksumAlgorithm="SHA256",
+        Metadata={
+            "panther": base64.b64encode(json.dumps({"characterIds": ["hero"]}).encode()).decode()
+        },
+    )
+    physical = {
+        "id": "ordinary",
+        "name": "Ordinary",
+        "revision": "b" * 32,
+        "description": "Recorded appearance",
+        "state": {},
+        "developedFrom": None,
+        "story": {"date": None, "eventId": None, "sessionId": None},
+    }
+    selection = {
+        "id": "pair-one",
+        "appearanceId": "ordinary",
+        "appearanceRevision": "b" * 32,
+        "portraitKey": portrait,
+        "modelKey": None,
+        "revision": "e" * 32,
+    }
+    browse.put_item(
+        Item={
+            **looks.records.pointer(
+                looks.PREFIX, "test-game", looks.kind("activation", "hero"), "current"
+            ),
+            "payload": json.dumps({"appearanceId": "ordinary", "selectionId": "pair-one"}),
+        }
+    )
+    browse.put_item(
+        Item={
+            **looks.records.pointer(
+                looks.PREFIX, "test-game", looks.kind("selection", "hero"), "pair-one"
+            ),
+            "payload": json.dumps(selection),
+        }
+    )
+    browse.put_item(
+        Item={
+            "pk": f"{looks.PREFIX}-history#{looks.kind('appearance', 'hero')}#test-game#ordinary",
+            "sk": "b" * 32,
+            "payload": json.dumps(physical),
+        }
+    )
+    job = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    pin = job["selectedCharacters"][0]
+    assert pin["detailsRevision"] == "a" * 32
+    assert pin["appearance"]["selection"] == selection
+    assert pin["appearanceAssets"][0]["key"] == portrait
+    assert pin["appearanceAssets"][0]["sha256"]
+    changed = {**creation, "characterIds": ["unknown-hero"]}
+    assert (
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": changed})[
+            "statusCode"
+        ]
+        == 400
+    )
+
+
+def test_creative_context_excludes_technical_reference_categories(editorial):
+    from creative_context import eligible
+
+    for kind in ("provenance", "migration-audit", "generation-verification"):
+        assert not eligible(kind, {"category": "reference"})
+        assert not eligible(
+            "game-context", {"category": "reference", "extra": {"artifactType": kind}}
+        )
+        assert not eligible(kind, {"extra": {"contextUse": "creative-evidence"}})
+    assert not eligible("document", {"category": "reference", "extra": {"contextUse": "evidence"}})
+    assert eligible("game-context", {"category": "reference"})
+    assert eligible("document", {"extra": {"contextUse": "creative-evidence"}})
+    assert not eligible("lore", {"extra": {"relationshipRole": "intermediate"}})
+    assert not eligible("lore", {"category": "creative-reimagining"})
+    body, _ = submitted(editorial)
+    import base64
+
+    for kind in ("provenance", "migration-audit", "generation-verification"):
+        key = f"games/test-game/assets/{kind}/original/context.json"
+        editorial.media.s3.put_object(
+            Bucket=editorial.media.BUCKET_NAME,
+            Key=key,
+            Body=b"{}",
+            ContentType="application/json",
+            ChecksumAlgorithm="SHA256",
+            Metadata={
+                "kind": kind,
+                "panther": base64.b64encode(
+                    json.dumps({"category": "reference"}).encode()
+                ).decode(),
+            },
+        )
+        creation = {
+            "schemaVersion": 1,
+            "target": "novel",
+            "title": "Chapter",
+            "brief": "",
+            "sourceKeys": [body["rawKey"]],
+            "contextKeys": [key],
+        }
+        assert (
+            request(
+                editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation}
+            )["statusCode"]
+            == 400
+        )
+
+
+def test_automatic_creative_context_ignores_technical_indexed_records(editorial, monkeypatch):
+    import base64
+    import browse_index
+    from unittest.mock import Mock
+
+    db = browse_index.table()
+    db.put_item(Item={"pk": f"v{browse_index.VERSION}#catalog", "sk": "ready"})
+    for kind in ("game-context", "provenance", "migration-audit", "generation-verification"):
+        key = f"games/test-game/assets/{kind}/original/context.json"
+        metadata = {"category": "reference"}
+        editorial.media.s3.put_object(
+            Bucket=editorial.media.BUCKET_NAME,
+            Key=key,
+            Body=b"{}",
+            ChecksumAlgorithm="SHA256",
+            Metadata={
+                "kind": kind,
+                "panther": base64.b64encode(json.dumps(metadata).encode()).decode(),
+            },
+        )
+        db.put_item(
+            Item={
+                "pk": browse_index.partition("test-game", "all"),
+                "sk": key,
+                "payload": json.dumps({"key": key, "size": 2, "kind": kind, "metadata": metadata}),
+            }
+        )
+    head = Mock(wraps=editorial.media.s3.head_object)
+    monkeypatch.setattr(editorial.media.s3, "head_object", head)
+    page = editorial.context_page("test-game", None, 9999999999)
+    assert [item["kind"] for item in page["items"]] == ["game-context"]
+    assert head.call_count == 1
+
+
+@pytest.mark.parametrize("with_transcript", [False, True])
+@pytest.mark.parametrize("with_map", [False, True])
+def test_prompt_led_scene_planning_preprocesses_optional_sources_and_pins_cast(
+    tmp_path, monkeypatch, with_transcript, with_map
+):
+    scene = {
+        "episodeId": "pilot",
+        "sceneId": "arrival",
+        "revision": "b" * 32,
+        "name": "A lantern on the quay",
+        "description": "A scout arrives in the rain.",
+        "type": "map" if with_map else "opener",
+    }
+    portrait = "games/test-game/assets/scout-portrait/original/portrait.png"
+    cast = [
+        {
+            "characterId": "scout",
+            "name": "Lantern Scout",
+            "detailsRevision": "c" * 32,
+            "details": {
+                "overview": "A cautious fictional scout.",
+                "backstory": "Raised near the quay.",
+            },
+            "appearance": {
+                "appearance": {"id": "raincoat", "description": "A blue raincoat"},
+                "selection": {"id": "pair-one", "revision": "d" * 32, "portraitKey": portrait},
+            },
+            "appearanceAssets": [
+                {"key": portrait, "sha256": "e" * 64, "size": 100, "contentType": "image/png"}
+            ],
+        }
+    ]
+    source_key = "games/test-game/assets/source/original/raw.json"
+    original = raw()
+    original["providerResponse"] = {"audit": "DO NOT ADD THIS TO THE STORY"}
+    reference = {"key": source_key, "sha256": "f" * 64, "size": 100}
+    storage, fetched, completed, seen = {source_key: copy.deepcopy(original)}, [], [], {}
+    job = {
+        "jobId": "a" * 64,
+        "gameId": "test-game",
+        "sessionId": None,
+        "workflowVersion": PLAN["version"],
+        "contextCutoff": 1,
+        "sourceMode": "transcript" if with_transcript else "prompt",
+        "raw": reference if with_transcript else None,
+        "rawSources": [reference] if with_transcript else [],
+        "selectedContext": [],
+        "selectedCharacters": cast,
+        "selectedScene": scene,
+        "creation": {
+            "schemaVersion": 2,
+            "target": "video",
+            "title": scene["name"],
+            "brief": "Open on the scout arriving by the quay.",
+        },
+    }
+
+    map_reference = {
+        "key": "games/test-game/assets/map/original/map.png",
+        "sha256": "map-checksum",
+        "size": 100,
+        "contentType": "image/png",
+        "role": "first-frame",
+        "instructions": "Treat the input image as a map. Show red footprints.",
+    }
+    if with_map:
+        job["selectedMap"] = map_reference
+        job["creation"]["sceneRef"] = {
+            "episodeId": "pilot",
+            "sceneId": "arrival",
+            "revision": "b" * 32,
+        }
+    downloaded_maps = []
+
+    def download(config, ref, destination):
+        downloaded_maps.append(ref)
+        destination.write_bytes(b"verified-map-fixture")
+
+    def api(config, method, route, **kwargs):
+        assert route in {"/editorial-jobs/heartbeat", "/editorial-jobs/complete"}
+        if route.endswith("complete"):
+            completed.append(kwargs["json"])
+        return {}
+
+    def fetch(config, ref, *args):
+        fetched.append(ref["key"])
+        return copy.deepcopy(storage[ref["key"]])
+
+    def upload(config, file, job, kind, category, sources, suffix):
+        key = file.name
+        storage[key] = json.loads(file.read_text()) if key.endswith(".json") else file.read_text()
+        return key
+
+    def agent(folder, stage, inputs, heartbeat):
+        seen[stage] = copy.deepcopy(inputs)
+        if with_map and stage in PLAN["video"]:
+            assert inputs["mapInput"] == map_reference
+            assert (folder.parent / "map-first-frame.png").read_bytes() == b"verified-map-fixture"
+        value = report(
+            evidenceIds=["creation", "catalog"], markdown="A source-attributed scene plan."
+        )
+        if stage == "video-generation-packets" and with_map:
+            value["renderPrompt"] = "Red footprints move along the marked road."
+        if stage == "video-source-brief":
+            value["sourceFacts"] = (
+                [
+                    {
+                        "sourceKey": source_key,
+                        "segmentIndex": 0,
+                        "fact": "An explicitly supplied source event.",
+                        "uncertainty": "Speech remains unverified.",
+                    }
+                ]
+                if with_transcript
+                else []
+            )
+        if stage in {"video-shot-list", "video-storyboards"}:
+            value["shots"] = [
+                {
+                    "sceneId": "arrival",
+                    "shotId": "arrival-1",
+                    "durationSeconds": 4,
+                    "description": "Scout on the quay",
+                    "camera": "wide",
+                    "color": "#223344",
+                    "subjects": [],
+                }
+            ]
+        return value
+
+    monkeypatch.setattr(worker.cloud, "api", api)
+    monkeypatch.setattr(worker, "fetch", fetch)
+    monkeypatch.setattr(worker, "upload", upload)
+    monkeypatch.setattr(worker, "agent", agent)
+    monkeypatch.setattr(worker.local, "download", download)
+    artifacts = {}
+    for stage in ["context", *PLAN["video"]]:
+        worker.process(
+            {},
+            tmp_path,
+            {
+                "job": job,
+                "task": {"stage": stage},
+                "artifacts": dict(artifacts),
+                "lease": "synthetic",
+            },
+        )
+        artifacts[stage] = {"key": completed[-1]["outputKey"]}
+    assert storage[source_key] == original
+    assert "correction" not in seen and "corrected-transcript" not in seen
+    assert (
+        "raw" not in seen["video-treatment"] and "sourceTranscripts" not in seen["video-treatment"]
+    )
+    assert "providerResponse" not in json.dumps(seen["video-source-brief"])
+    assert "detailsRevision" not in json.dumps(seen["video-treatment"]["context"])
+    assert seen["video-treatment"]["context"]["catalog"]["characters"][0]["name"] == "Lantern Scout"
+    assert seen["video-treatment"]["context"]["catalog"]["scene"]["type"] == (
+        "map" if with_map else "opener"
+    )
+    assert "passed" not in seen["video-treatment"]["priorStages"]["video-source-brief"]
+    final = storage["video-generation-packets.json"]
+    assert final["characterReferences"] == cast and final["sceneReference"] == scene
+    if with_map:
+        assert len(downloaded_maps) == len(PLAN["video"])
+        assert map_reference["key"] in final["sourceKeys"]
+        assert final["mapReference"] == map_reference
+        assert final["payload"]["mapGenerationPacket"]["firstFrame"]["sha256"] == "map-checksum"
+    assert portrait in final["sourceKeys"] and final["videoGenerationAuthorized"] is False
+    assert final["rawReference"] == (reference if with_transcript else None)
+    if with_transcript:
+        fact = storage["video-source-brief.json"]["payload"]["sourceFacts"][0]
+        assert (
+            fact["start"] == original["segments"][0]["start"]
+            and fact["playerId"] == original["segments"][0]["playerId"]
+        )
+        assert (
+            fetched.count(source_key) == 1
+        )  # context and preprocessing; never later composition stages.
+    else:
+        assert seen["context"]["raw"] is None
+        assert seen["video-source-brief"]["sourceTranscripts"] == []
+        assert final["rawReferences"] == []
+
+
+def test_source_preprocessing_cannot_cite_invented_transcript_segments(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        worker,
+        "agent",
+        lambda *args: report(
+            evidenceIds=["creation"],
+            sourceFacts=[
+                {
+                    "sourceKey": "invented",
+                    "segmentIndex": 0,
+                    "fact": "Not observed",
+                    "uncertainty": "",
+                }
+            ],
+        ),
+    )
+    with pytest.raises(worker.local.Deferred, match="No structurally valid"):
+        worker.autonomous_stage(
+            tmp_path,
+            "video-source-brief",
+            {
+                "creation": {"brief": "A scene"},
+                "context": {},
+                "sourceTranscripts": [],
+                "priorStages": {},
+            },
+            lambda: None,
+        )
+
+
+def test_scene_planning_upload_keeps_exact_scene_metadata(tmp_path, monkeypatch):
+    output = tmp_path / "video-generation-packets.json"
+    output.write_text('{"shots": []}')
+    scene_ref = {"episodeId": "episode-one", "sceneId": "scene-one", "revision": "c" * 32}
+    captured = {}
+
+    def callback(**kwargs):
+        captured.update(json.loads(kwargs["metadata"].read_text()))
+
+    monkeypatch.setattr(worker.cloud.upload, "callback", callback)
+    job = {
+        "jobId": "a" * 64,
+        "gameId": "test-game",
+        "sessionId": None,
+        "creation": {"schemaVersion": 2, "sceneRef": scene_ref},
+    }
+    source = "games/test-game/assets/portrait/original/front.png"
+    worker.upload({}, output, job, "video-generation-packets", "video", [source], "test-run")
+    extra = captured["extra"]
+    assert extra["sceneRef"] == scene_ref
+    assert extra["episodeId"] == "episode-one" and extra["sceneId"] == "scene-one"
+    assert captured["sourceKeys"] == [source]
+    assert captured["sessionId"] is None
+
+
+def test_map_generation_pins_actual_image_and_requires_reference(editorial, monkeypatch):
+    import video_scenes
+
+    creation, scene = scene_creation_fixture(editorial, monkeypatch)
+    scene["type"] = "map"
+    # Restore the real bounded image validator to the scene-reference fixture module.
+    __import__("sys").modules["video_scenes"].map_asset = video_scenes.map_asset
+    assert (
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})[
+            "statusCode"
+        ]
+        == 400
+    )
+    key = "games/test-game/assets/journey-map/original/map.png"
+    put(editorial, key, b"synthetic-map-image", "image/png")
+    scene["mapAssetKey"] = key
+    first = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    ref = first["selectedMap"]
+    assert ref["key"] == key and ref["role"] == "first-frame"
+    assert ref["sha256"] and ref["size"] == len(b"synthetic-map-image")
+    assert "Treat the input image as a map" in ref["instructions"]
+    assert "red footprints" in ref["instructions"] and "red dot" in ref["instructions"]
+    assert first["videoGenerationAuthorized"] is False
+    assert (
+        unpack(
+            request(
+                editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation}
+            )
+        )["jobId"]
+        == first["jobId"]
+    )
+    # A checksummed change cannot silently reuse the old job; its pinned reference is unchanged.
+    put(editorial, key, b"changed-map-bytes", "image/png")
+    changed = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert changed["jobId"] != first["jobId"]
+    assert first["selectedMap"]["sha256"] != changed["selectedMap"]["sha256"]
+
+
+def test_map_planning_contract_preserves_actual_visual_reference():
+    from panther_journal.editorial_contract import BRIEFS
+
+    reference = {
+        "key": "games/test-game/assets/map/original/map.png",
+        "sha256": "exact",
+        "role": "first-frame",
+    }
+    catalog = worker.pinned_cast({"gameId": "test-game", "selectedMap": reference})
+    assert catalog["mapInput"] == reference
+    assert "mapInput.key and sha256" in BRIEFS["video-generation-packets"]
+    assert "red footprints" in BRIEFS["video-generation-packets"]
+
+
+def test_map_packet_binds_first_frame_without_a_second_asset_selection():
+    reference = {
+        "key": "games/test-game/assets/map/original/map.png",
+        "sha256": "exact",
+        "size": 100,
+        "contentType": "image/png",
+        "instructions": "Treat the input image as a map. Show a red dot and red footprints.",
+    }
+    job = {
+        "selectedMap": reference,
+        "creation": {
+            "sceneRef": {"episodeId": "trip", "sceneId": "route", "revision": "a" * 32},
+            "brief": "Travel from the harbor to the hills",
+        },
+    }
+    packet = worker.map_generation_packet(job, {"renderPrompt": "Follow the marked road"})
+    assert packet["firstFrame"] == {
+        k: reference[k] for k in ("key", "sha256", "size", "contentType")
+    }
+    assert packet["sourceKeys"] == [reference["key"]]
+    assert "Travel from the harbor to the hills" in packet["prompt"]
+    assert "red footprints" in packet["prompt"] and "marked road" in packet["prompt"]
+    assert packet["generationAuthorized"] is False
+
+
+def test_map_agent_attaches_verified_image_to_codex(tmp_path, monkeypatch):
+    attempt = tmp_path / "revision-01-video-treatment"
+    attempt.mkdir()
+    image = tmp_path / "map-first-frame.png"
+    image.write_bytes(b"synthetic-verified-raster")
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        (attempt / "agent-result.json").write_text(json.dumps(report()))
+        return 0
+
+    monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
+    monkeypatch.setattr(worker.local, "run_process", run)
+    inputs = {"context": {}, "creation": {}, "mapInput": {"contentType": "image/png"}}
+    worker.agent(attempt, "video-treatment", inputs, lambda: None)
+    assert commands[0][commands[0].index("--image") + 1] == str(image)
+    image.unlink()
+    missing_attempt = tmp_path / "revision-02-video-treatment"
+    missing_attempt.mkdir()
+    with pytest.raises(ValueError, match="Pinned map image is missing"):
+        worker.agent(missing_attempt, "video-treatment", inputs, lambda: None)
+
+
+def test_prompt_led_novel_has_optional_sources_and_no_required_title(editorial):
+    creation = {
+        "schemaVersion": 3,
+        "target": "novel",
+        "brief": "Write a tense chapter about the harbor crossing.",
+        "sourceKeys": [],
+        "contextKeys": [],
+    }
+    job = unpack(
+        request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
+    )
+    assert job["creation"]["title"] == creation["brief"]
+    assert job["raw"] is None and job["sourceMode"] == "prompt"
+    assert (
+        unpack(
+            request(
+                editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation}
+            )
+        )["jobId"]
+        == job["jobId"]
+    )
+    for change in [{"brief": ""}, {"target": "video"}, {"title": ""}]:
+        assert (
+            request(
+                editorial,
+                "POST /editorial-jobs",
+                {"gameId": "test-game", "creation": {**creation, **change}},
+            )["statusCode"]
+            == 400
+        )
+
 def test_prompt_overlay_reconstructs_complete_candidate_without_duplicate_speech():
     from panther_journal import editorial as worker
     original = raw()
@@ -792,3 +1439,31 @@ def test_prompt_overlay_reconstructs_complete_candidate_without_duplicate_speech
     changed = copy.deepcopy(corrected)
     changed['players'] = [{'id': 'someone-else', 'name': 'Different fictional person'}]
     assert worker.correction_overlay(changed, original) is None
+
+
+def test_prompt_projection_keeps_multisource_timing_identity_and_prompt_only_inputs():
+    from panther_journal import editorial as worker
+
+    first, second = raw(), raw()
+    second["segments"][0]["playerId"] = None
+    second["segments"][0]["timingNote"] = "Source-local interval."
+    refs = [{"key": "first"}, {"key": "second"}]
+    bundle = worker.transcript_bundle(
+        [first, second], refs,
+        {"jobId": "a" * 64, "gameId": "test-game", "sessionId": "collection"},
+    )
+    before = copy.deepcopy(bundle)
+    projected = worker.prompt_projection({"raw": bundle})["raw"]
+    rows = [
+        dict(zip(projected["segmentFields"], row, strict=True))
+        for row in projected["segments"]
+    ]
+    # Missing fields use null in positional rows; every present speech fact is exact.
+    for source, projected_row in zip(bundle["segments"], rows, strict=True):
+        assert all(projected_row[key] == value for key, value in source.items())
+    assert [row["sourceKey"] for row in rows] == ["first", "second"]
+    assert rows[1]["playerId"] is None
+    assert projected["sourceKeys"] == ["first", "second"]
+    assert bundle == before
+    prompt_only = {"raw": None, "creation": {"brief": "A river crossing."}}
+    assert worker.prompt_projection(prompt_only) == prompt_only

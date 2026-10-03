@@ -184,3 +184,56 @@ Captioned browser delivery requires an FFmpeg build with the `subtitles` filter
 `ffmpeg -hide_banner -filters` before running captioned finishing. The integration
 tests explicitly skip captioned delivery when that optional local capability is
 absent; schema, source-integrity and other available-tool tests still run.
+
+## Assemble an episode from finished scenes
+
+Episodes contain an explicit ordered scene list. Each scene selects exactly one already
+finished, same-game video output with an exact generation scene revision. Reordering an
+episode creates an Episode revision; changing its scene selection creates a Scene revision.
+Missing selections block rendering of the whole episode rather than silently omitting a scene.
+
+```sh
+panther videos render-episode --game GAME_ID --episode EPISODE_ID --work-dir /private/path/episode-renders
+# Optional explicit publication after rendering:
+panther videos render-episode --game GAME_ID --episode EPISODE_ID --work-dir /private/path/episode-renders --publish
+# Recover/inspect local output first, then publish separately:
+panther videos publish-episode /private/path/episode-renders/RUN_HASH
+```
+
+This separate deterministic assembly uses **FFmpeg only**, without an AI review, regeneration,
+paid provider request, or additional voice production. It pins an authenticated EpisodeComposition
+and downloads every selected original through Panther signed object access, verifying its exact
+SHA-256 and byte length. The content-addressed run retains its private manifest, original scene
+files, technical logs, normalization attempts and completed-output receipts outside Git. An
+identical pinned composition resumes a verified completed checkpoint; changing order, Scene
+revision or selected output creates a new run. Incomplete downloads and failed attempts remain
+recoverable and never overwrite successful source files.
+
+The version-1 profile supports 1–20 scenes, at most five minutes per scene and thirty minutes
+in total. MP4, MOV and MKV inputs have one SDR video track and at most one selected mixed
+audio track through 4K; HDR is rejected without a tone-map
+profile. It explicitly normalizes picture to letterboxed 1280×720 at 24 fps, H.264 CRF 18,
+and sound to stereo 48 kHz. Selected scenes' existing mixed soundtracks are preserved, including
+dialogue, music and ambience; a scene with no audio receives an explicitly recorded silent track.
+This operation does not default to mute, infer separate stems, insert transitions, change gain,
+apply creative trims, generate missing narration, or invent captions. Normalized intermediate
+clips retain PCM audio so scene boundaries avoid repeated AAC encoder padding; the final
+continuous browser MP4 receives AAC 192 kbps and fast-start layout. The original files remain
+unchanged. Duration and a complete technical decode are verified, with explicit limits: these
+checks do not constitute a new perceptual listening or creative continuity review.
+
+Publication is explicit and uses Panther's immutable upload operation and server path builder.
+A hidden `episode-composition` JSON records the exact ordered scene references, original
+generation scene references, selected source keys/checksums/sizes, Episode revision and actual
+FFmpeg version. The finished `tv-episode` browser output points to that intermediate artifact,
+allowing Inputs/Outputs to traverse to all finished scene inputs without crowding metadata or
+presenting manifests as ordinary media. `extra.episodeRef` and `extra.compositionHash` identify
+its exact episode selection. Generation metadata reports procedural local FFmpeg with no
+inference charge; it does not relabel or duplicate upstream provider charges. Publication stops
+before a browser file exceeding 1 GiB and preserves the local output. Interrupted uploads may
+already have succeeded: storage rejects duplicate writes, so inspect Panther metadata and retain
+the original upload identity rather than choosing another identity to hide the uncertainty.
+
+`pytest -q tests/test_episode_rendering.py` exercises real synthetic colored scenes and different
+audio tones, checking visible scene order, audible tone order, continuous duration, unchanged
+sources, strict checksums and no-overwrite behavior. It performs no cloud or paid calls.

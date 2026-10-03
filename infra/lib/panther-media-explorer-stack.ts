@@ -34,6 +34,9 @@ import { Construct } from "constructs";
 import { ModelProcessing } from "./model-processing";
 import { GameCatalog } from "./game-catalog";
 import { TVLibrary } from "./tv-library";
+import { TranscriptSummaries } from "./transcript-summaries";
+import { AssetGeneration } from "./asset-generation";
+import { VideoScenes } from "./video-scenes";
 import { CharacterAppearances } from "./character-appearances";
 import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
@@ -478,6 +481,10 @@ export class PantherMediaExplorerStack extends Stack {
       browseTable:assetBrowse.table,catalogTable:gameCatalog.table,accessEnvironment});
     new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
       catalogTable:gameCatalog.table,publishers:accessEnvironment.MODEL_PUBLISHERS});
+    new VideoScenes(this,"VideoScenes",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
+      catalogTable:gameCatalog.table,accessEnvironment});
+    new TranscriptSummaries(this,"TranscriptSummaries",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
+    new AssetGeneration(this,"AssetGeneration",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
     const editorial = new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     const browserRecording = new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
@@ -612,6 +619,16 @@ export class PantherMediaExplorerStack extends Stack {
         ["vendor/model-viewer.min.js", fs.readFileSync(MODEL_VIEWER_BUNDLE_PATH, "utf8")],
       ]),
     );
+    // Raster previews are UI assets, separate from immutable game/source storage.
+    new s3deploy.BucketDeployment(this, "VisualStylePreviews", {
+      destinationBucket: siteBucket,
+      destinationKeyPrefix: "style-previews",
+      sources: [s3deploy.Source.asset(path.join(siteDirectory, "style-previews"))],
+      cacheControl: [s3deploy.CacheControl.fromString("public,max-age=3600")],
+      distribution,
+      distributionPaths: ["/style-previews/*"],
+      prune: false,
+    });
     const releaseFiles = new s3deploy.BucketDeployment(this, "VersionedSiteFiles", {
       destinationBucket: siteBucket,
       sources: Object.entries(release.files).map(([name, content]) => s3deploy.Source.data(name, content)),

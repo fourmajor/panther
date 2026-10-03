@@ -129,3 +129,62 @@ def test_chunks_and_exports_dont_become_duplicate_listing_cards(index, monkeypat
     current = {**current, "key": current["key"][:-3] + ".json", "name": "raw.json", "contentType": "application/json"}
     index.refresh(None, current["key"])
     assert index.page("example", "transcripts")["assets"] == [current]
+
+
+def test_sessions_union_uses_existing_catalog_partition_and_hides_internal_parts(index, monkeypatch):
+    library = importlib.import_module("asset_library")
+    values = [
+        {**asset(1), "kind": "recording", "name": "session.flac", "contentType": "audio/flac"},
+        {**asset(2), "kind": "raw-transcript", "name": "raw.json", "contentType": "application/json"},
+        {**asset(3), "kind": "corrected-transcript", "name": "edited.json", "contentType": "application/json"},
+        {**asset(4), "kind": "recording", "name": "part-0001.flac", "contentType": "audio/flac"},
+        {**asset(5), "kind": "recording-manifest", "name": "manifest.json", "contentType": "application/json"},
+        {**asset(6), "kind": "editorial-correction", "name": "intermediate.json", "contentType": "application/json"},
+        asset(7),
+    ]
+    for current in values:
+        monkeypatch.setattr(library, "describe", lambda *_, value=current: value)
+        index.refresh(None, current["key"])
+    monkeypatch.setattr(library, "describe", lambda *_: pytest.fail("Sessions must not read source storage"))
+    assert index.page("example", "sessions")["assets"] == values[:3]
+    assert "sessions" not in index.SECTIONS
+
+
+def test_sessions_sparse_bounded_pages_keep_cursor_and_scope(index):
+    import base64
+    for i in range(105):
+        current = {**asset(i), "kind": "raw-transcript" if i == 104 else "portrait", "contentType": "application/json"}
+        index.table().put_item(Item={"pk": index.partition("example", "all"), "sk": f"{i:03d}", "payload": json.dumps(current)})
+    first = index.page("example", "sessions")
+    assert first["assets"] == [] and first["cursor"]
+    assert len(index.page("example", "sessions", first["cursor"])["assets"]) == 1
+    with pytest.raises(ValueError):
+        index.page("example", "all", first["cursor"])
+    all_cursor = index.page("example", "all")["cursor"]
+    with pytest.raises(ValueError):
+        index.page("example", "sessions", all_cursor)
+    with pytest.raises(ValueError):
+        index.page("other", "sessions", first["cursor"])
+    cursor = json.loads(base64.urlsafe_b64decode(first["cursor"]))
+    assert cursor["section"] == "sessions" and cursor["pk"] == index.partition("example", "all")
+
+
+def test_sessions_suppresses_paired_transcript_export(index, monkeypatch):
+    library = importlib.import_module("asset_library")
+    raw = {**asset(), "key": "games/example/assets/text/original/raw.json", "name": "raw.json", "kind": "raw-transcript", "contentType": "application/json"}
+    markdown = {**raw, "key": raw["key"][:-5] + ".md", "name": "raw.md", "contentType": "text/markdown"}
+    for current in (raw, markdown):
+        monkeypatch.setattr(library, "describe", lambda *_, value=current: value)
+        index.refresh(None, current["key"])
+    assert index.page("example", "sessions")["assets"] == [raw]
+
+
+
+def test_sessions_hides_explicit_browser_wave_parts_before_manifest_exists(index, monkeypatch):
+    library = importlib.import_module("asset_library")
+    part = {**asset(), "name": "part-0001.wav", "kind": "recording", "contentType": "audio/wav",
+        "metadata": {"extra": {"browserPart": {"chunkSetId": "synthetic-chunks", "index": 1}}}}
+    monkeypatch.setattr(library, "describe", lambda *_: part)
+    index.refresh(None, part["key"])
+    assert index.page("example", "sessions")["assets"] == []
+    assert index.page("example", "audio")["assets"] == [part]

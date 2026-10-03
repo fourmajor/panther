@@ -165,7 +165,9 @@ export class PantherFoundationStack extends Stack {
         ? [
             {
               allowedHeaders: ["*"],
-              allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+              // Signed browser uploads (including retained room audio) require a PUT preflight.
+              // CORS does not grant write access; the signed request and conditional-write policy do.
+              allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD, s3.HttpMethods.PUT],
               allowedOrigins: [applicationOrigin],
               exposedHeaders: ["ETag"],
               maxAge: Duration.hours(1).toSeconds(),

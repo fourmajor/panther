@@ -75,9 +75,10 @@ Summaries/images are fetched through existing authenticated APIs on demand and c
 for at most a minute (50 targets). Cache and DOM are cleared on navigation/sign-out; late responses
 cannot paint another game's preview. Errors never prevent following the original link.
 
-Choose a game, then **Audio** or **Transcripts**. Both sections use existing private immutable
+Choose a game, then **Sessions**. Recordings and transcript versions are grouped by their explicit session identity and use existing private immutable
 assets; no conversion, generation, transcription or new workflow is started by browsing.
-Audio opens one continuous MP3 listening derivative produced by the completed-chunk-set
+Old Audio and Transcripts URLs redirect to Sessions, preserving reader links and query parameters.
+Opening a recording plays one continuous MP3 listening derivative produced by the completed-chunk-set
 workflow. It has one source and timeline; part buttons seek within it instead of switching files.
 Playback stops on navigation. Expired-link recovery restores the position in the same listening
 file. Original lossless FLAC chunks remain unchanged under Technical files and original exports.
@@ -87,7 +88,7 @@ Loose audio files without a recording manifest are listed separately, including 
 Capture setup/checkpoint metadata is not a second recording: only structured Recording documents
 with parts become session entries. Setup files remain accessible under Technical files and Media.
 
-Transcripts lists all raw, corrected and edited versions. When a JSON version has a matching Markdown
+Sessions lists all raw, corrected and edited transcript versions alongside recordings. When a JSON version has a matching Markdown
 export, the section shows the structured reader once; its export remains under Related files.
 Standalone Markdown versions are still listed. The JSON reader retains player identity, timestamps, original/correction annotations,
 capture integrity and uncertainty. It renders text, never HTML supplied by an asset. A corrected
@@ -122,7 +123,7 @@ change. Large provenance belongs in a separate structured JSON document when com
 is insufficient. Existing editorial JSON already retains full `inputArtifacts` beyond compact metadata.
 
 `GET /assets?gameId=...&section=videos&cursor=...` queries the durable browsing index, at most
-100 entries per request. Audio/Transcripts/Videos render a bounded page with an explicit Load more
+100 entries per request. Sessions/Videos render a bounded page with an explicit Load more
 button; unrelated game assets are not scanned. See [indexed browsing](asset-browse-index.md) for
 event maintenance, all-game migration, consistency and failure recovery. Authorization is unchanged.
 

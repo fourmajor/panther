@@ -288,10 +288,10 @@ def handle(event, media):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     if not authorized(claims, "MODEL_PUBLISHERS"):
         return media._response(403, {"error": "TV library sign-in required"})
+    if event.get("routeKey", "").startswith("POST "):
+        return media._response(410, {"error": "Create episodes and scenes in the Videos workspace"})
     kind = "series" if event["routeKey"].endswith("/tv-series") else "episode"
     try:
-        if event["routeKey"].startswith("POST "):
-            return save(media, json.loads(event.get("body") or "{}"), claims, kind)
         q = event.get("queryStringParameters") or {}
         game = slug(media, q.get("gameId"))
         result = records.read(browse_index.table(), PREFIX, game, kind, q, media)

@@ -55,7 +55,13 @@ def test_recent_is_complete_beyond_first_page_without_reading_asset_bodies(catal
     assert result["statusCode"] == 200, result
     value = json.loads(result["body"])
     assert value["complete"] is True
-    assert value["counts"] == {"characters": 1, "transcripts": 125, "videos": 6, "chapters": 6}
+    assert value["counts"] == {
+        "characters": 1,
+        "transcripts": 125,
+        "videos": 6,
+        "chapters": 6,
+        "assets": 0,
+    }
     assert [item["title"] for item in value["groups"]["transcripts"]] == [
         f"Source {n}" for n in range(124, 119, -1)
     ]
@@ -108,3 +114,24 @@ def test_dashboard_fails_closed_when_index_not_ready_or_complete_bound_exceeded(
     result = request(catalog, "GET /dashboard-recent", username="example-member")
     assert result["statusCode"] == 503
     assert "groups" not in json.loads(result["body"])
+
+
+def test_dashboard_assets_are_finished_images_from_catalog_metadata(catalog):
+    db, index = prepare(catalog)
+    for number, kind, extra in [
+        (1, "map", {}),
+        (2, "unknown-image", {}),
+        (3, "generation-provenance", {}),
+        (4, "image", {"relationshipRole": "intermediate"}),
+    ]:
+        key = put_asset(db, index, number, kind=kind, suffix="png")
+        row = db.get_item(Key={"pk": index.partition("test-game", "all"), "sk": key})["Item"]
+        asset = json.loads(row["payload"])
+        asset["contentType"] = "image/png"
+        asset["metadata"]["extra"] = extra
+        db.put_item(Item={**row, "payload": json.dumps(asset)})
+    catalog.media.s3 = Mock()
+    value = json.loads(request(catalog, "GET /dashboard-recent", username="example-member")["body"])
+    assert value["counts"]["assets"] == 2
+    assert [a["kind"] for a in value["groups"]["assets"]] == ["unknown-image", "map"]
+    assert not catalog.media.s3.mock_calls

@@ -190,3 +190,33 @@ def test_playback_projection_requires_exact_same_recording_identity(library):
         s3.objects[key]["Body"] = json.dumps(changed).encode()
         item = response_body(call(library, "/asset-document", key=key))
         assert "playback" not in item and item["lineageWarning"]
+
+
+def test_episode_composition_indexes_all_finished_scene_inputs(library):
+    import asset_metadata
+    lib, media, s3 = library
+    first = add(s3, "first/original/scene.mp4", "video")
+    second = add(s3, "second/original/scene.mp4", "video")
+    key = add(s3, "episode/original/composition.json", "episode-composition", {
+        "schemaVersion": 1, "entityType": "EpisodeRender", "gameId": "example-game",
+        "sourceKeys": [first, second],
+        "inputArtifacts": {"scene-0": {"key": first}, "scene-1": {"key": second}},
+    })
+    record = lib.describe(media, "example-game", key)
+    assert record["sourceKeys"] == sorted([first, second])
+    assert asset_metadata.internal("episode-composition")
+
+
+def test_exact_unknown_audio_detail_does_not_depend_on_browse_membership(library, monkeypatch):
+    lib, media, s3 = library
+    key = "games/example-game/assets/room-take/original/take.wav"
+    data = b"RIFF\x00\xffWAVE"
+    s3.objects[key] = {"Body": data, "ContentType": "audio/wav", "Metadata": {}}
+    monkeypatch.setattr(s3, "list_objects_v2", lambda **_: pytest.fail("Exact asset opening must not scan storage"))
+    import browse_index
+    monkeypatch.setattr(browse_index, "page", lambda *_: pytest.fail("Exact details must not depend on a loaded catalog page"))
+    detail = response_body(call(library, "/asset-document", key=key))
+    assert detail["key"] == key and detail["size"] == len(data)
+    assert detail["kind"] == "unclassified" and detail["contentType"] == "audio/wav"
+    assert detail["metadata"] == {} and detail["document"] is None and detail["sourceKeys"] == []
+    assert s3.objects[key]["Body"] == data

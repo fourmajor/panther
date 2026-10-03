@@ -439,3 +439,33 @@ def test_character_routes_fail_closed_without_legacy_storage_fallback(
     )
     assert result["statusCode"] == status
     assert fake.objects == before and not fake.signed_requests
+
+
+def test_browser_pcm_upload_fits_signed_metadata_and_retains_integrity_headers(monkeypatch):
+    from test_browser_recording import manifest, wav
+    doc, raw = manifest(), wav()
+    checksum = base64.b64encode(hashlib.sha256(raw).digest()).decode()
+    part = {"recordingId": doc["id"], **doc["parts"][0]}
+    module, client = load_media_api(monkeypatch)
+    response = module.handler(upload_event(
+        assetId=doc["id"], kind="recording", filename=part["file"],
+        contentType="audio/wav", size=len(raw), sha256=checksum,
+        metadata={"title": part["file"], "sessionId": doc["sessionId"],
+                  "category": "canonical-source", "characterIds": [], "sourceKeys": [],
+                  "extra": {"browserPart": part, "recordingId": doc["id"],
+                            "chunkSetId": doc["id"], "sha256": checksum,
+                            "generation": {"schemaVersion": 1, "method": "capture", "inference": "not-applicable",
+                                           "execution": "local", "tool": "Browser Web Audio PCM capture",
+                                           "cost": {"status": "not-applicable"}}}},
+    ), None)
+    assert response["statusCode"] == 200
+    result = response_body(response)
+    method, signed, _ = client.signed_requests[-1]
+    assert method == "put_object"
+    assert signed["ContentLength"] == len(raw)
+    assert signed["ContentType"] == "audio/wav"
+    assert result["headers"]["If-None-Match"] == "*"
+    assert result["headers"]["x-amz-checksum-sha256"] == checksum
+    metadata = json.loads(base64.b64decode(signed["Metadata"]["panther"]))
+    assert metadata["extra"]["browserPart"] == part
+    assert metadata["extra"]["sha256"] == checksum

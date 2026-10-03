@@ -1,5 +1,49 @@
 # Repository Agent Instructions
 
+## Application and UI contracts
+
+- The game selector owns the current game. Dashboard links to actual recent records; Settings
+  contains editable game details/defaults without redundant introductory banners. Account is a
+  separate page. Do not add repeated system labels, slogans, environment badges or technical
+  migration/provenance setup copy to ordinary user workflows.
+- Sessions consolidates recording, playback and transcripts. Keep prior Audio/Transcripts routes
+  as navigation redirects, not duplicate libraries. Recording state belongs to its recording
+  controls; do not show it on unrelated pages. Open transcript details in a dialog or nested view,
+  preserving the list position and selection.
+- Videos uses episodes containing ordered, owned scenes, not an extra Video Project entity or
+  reusable scenes across episodes. Creating a scene requires its title only; other direction is
+  optional and multiline. Typed scenes may select appropriate real assets (including a pinned map).
+  Episode playback uses actual selected rendered outputs, never fabricated completion.
+- Assets have open-ended types and user tags. Use tags for user organization rather than imposing
+  opinionated category choices. Preserve existing structured storage/metadata facts and historical
+  categories during migrations; hiding an implementation detail is not permission to erase it.
+- Use the shared React/Radix/Tailwind components and TanStack Query cache/invalidation for new UI.
+  Avoid unnecessary reloads, page spinners and refresh buttons. Loading placeholders should pulse
+  without changing layout; errors must have useful recovery and reflect the operation that failed.
+- Keep primary actions compact and consistently at the top right of section headings/toolbars.
+  Use concise labels, visible controls and honest empty/progress states. Do not hide normal workflows
+  in accordions or add instructional boilerplate when an indicator/control communicates the state.
+  Verify keyboard access, actual hit areas, desktop/mobile layouts and unobstructed actions.
+
+## Persistent local development
+
+- The loopback server (`tools/dev_server.py`) uses SQLite outside Git. App reads must come from the
+  database, never hardcoded preview datasets. Development demo regeneration is an explicit write
+  operation and must preserve user-created records, assets and history. Keep fixtures synthetic.
+- Use the project virtual environment, install dependencies with
+  `.venv/bin/python -m pip install -e ".[dev]"`, and build React with
+  `npm ci --prefix web/ui` / `npm run build --prefix web/ui` before running
+  `.venv/bin/python tools/dev_server.py`. See `docs/local-development.md`.
+- Continuous browser-recording playback is a separate local worker:
+  `.venv/bin/python tools/dev_playback_worker.py --database PRIVATE_DB --work-dir PRIVATE_DIR`.
+  It needs FFmpeg/ffprobe, verifies explicit completed immutable source sets, and publishes real
+  MP3/manifest outputs into the same database. Keep assembly out of the browser/uploader/server
+  request handler. Preserve capture warnings and exact source lineage; never overwrite originals.
+- Local development has no configured transcription or inference worker by default. Persist real
+  requests and show unavailable/waiting/failure states honestly. Never synthesize successful jobs,
+  invented output data, identities or summaries to make a preview seem functional. A separate local
+  database/identity must not grant production access or bypass authenticated production operations.
+
 ## Private account data
 
 - Specific account identities, emails, account rosters and capability assignments are private
@@ -171,9 +215,18 @@
 - After opening a pull request, inspect its diff and available checks.
 - Automatic CI is intentionally deferred; local verification is the normal readiness gate except
   for frontend-affecting changes, which also require self-hosted Playwright verification below.
-- Merge the pull request when the change is ready. Do not ask for routine manual approval unless the
-  user explicitly requests an approval gate or a substantive unresolved decision requires input.
-- After merging, update the local `main` branch when practical.
+- Follow the operator's current merge policy: when green, assign the PR to the owner; do not merge
+  unless the user explicitly authorizes merging. This supersedes the former automatic-merge rule.
+- Commit/push ready changes on the trusted branch without a routine permission question. In a shared
+  checkout inspect `git diff --cached` first so another agent's staged files are not swept in.
+- Run `yarn review:smart` before every push (`--staged` for the index; `--offline` without model access).
+  It is advisory and does not replace required tests or readiness gates.
+- Push all current changes before marking a draft Ready for Review. Shepherd the resulting checks
+  on the exact current SHA with `shepherd-pr` and background `yarn shepherd:wait --pr N`; fix failures
+  rather than stopping at the first red check. Do not replace this with timed checks polling.
+- Do not automatically run review reflection after a merge. Batch reflection is a separately
+  requested/scheduled task; individual feedback is not automatic authority to change project rules.
+- After an explicitly authorized merge, update local `main` when practical.
 
 ## Frontend verification
 

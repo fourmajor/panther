@@ -1,104 +1,106 @@
 # Panther
 
-Panther is a private platform for capturing tabletop roleplaying sessions, organizing game assets,
-and turning play into compelling media.
+Panther is a private workspace for tabletop roleplaying games: record sessions, edit characters,
+organize assets, and adapt game material into novel chapters and episodic videos.
 
-Its foundation is a reliable, speaker-attributed record of each session. From that source material,
-Panther can produce novel-worthy narrative retellings, TV-episode-style reimaginings, and playful
-videos loosely inspired by the game.
+The app is available at [panther.place](https://panther.place). Game content and private account
+data stay outside this repository. The CLI uses the same Panther authentication as the website;
+normal game operations do not require AWS credentials.
 
-Panther keeps the canonical record separate from creative adaptations: transcripts should be
-accurate and reviewable, while derivative works may reinterpret events as long as their source and
-creative nature remain clear.
+## The app
 
-## What Panther Supports
+Choose the current game in the header. Its sections are:
 
-- Session recordings and speaker-attributed transcripts
-- Portraits, maps, documents, music, video, and other game assets
-- Grounded narrative retellings based closely on what happened
-- Creative episodic reimaginings of game sessions
-- Trailers, jokes, music videos, and other playful derivative media
-- Private group collaboration and deliberate publication of selected material
+- **Dashboard:** links to each section and recent characters, transcripts, chapters, videos and assets.
+- **Characters:** editable profiles, reference media, selected appearances, with revisions retained in the background.
+- **Sessions:** browser recording, continuous playback and transcript browsing in one section.
+  Previous Audio and Transcripts routes lead here. Transcript details open separately from the list.
+- **Novel:** generate a chapter from a prompt with optional transcript/context inputs, or write and
+  edit chapters manually. Source reviews preserve raw speech separately from summaries/adaptations.
+- **Videos:** searchable multi-tag and multi-character filters use removable selections. Episodes own ordered scenes. A scene can start with a title, use characters and optional
+  sources, and specify a scene type. Episode/scene forms open in dialogs; a focused editor keeps
+  ordered scenes beside the selected scene’s prompt, cast and output choices. Playback opens in its
+  own dialog. Map scenes select an actual map asset. An episode's playback
+  follows its selected rendered scene outputs in order; drafting or planning does not imply footage
+  has been generated.
+- **Assets:** browse and search game assets, filter by type, identify file formats, upload files and request image generation. Jobs show activity or an explicit worker/configuration problem.
+- **Workflows:** inspect reported server/laptop job stages, dependencies and output links. Progress
+  updates automatically; queued work is distinct from a running worker or completed output.
+- **Settings:** edit the game's name, description, system and visual defaults. Account settings have
+  their own page.
 
-The asset model is intentionally open-ended so that new kinds of source material and media can be
-added without redesigning the storage hierarchy.
+The frontend combines the existing application shell with React components, Radix controls,
+Tailwind 4, TanStack Query for cached server state and TanStack Table for the media browser.
+Generation requests are durable jobs. Available controls do not guarantee that a worker is running
+or authorize paid rendering; progress and output links must reflect actual stored results.
 
-## Canonical and Creative Material
+Recordings, raw recognition, corrections and adaptations remain distinct. Derived assets retain
+exact immutable inputs and generation metadata. Character appearances use explicit character links;
+creative adaptations do not become evidence for subsequent transcript correction.
 
-Panther distinguishes between four broad kinds of material:
+## Local development
 
-- **Canonical sources:** recordings, reviewed transcripts, corrections, maps, documents, and other
-  original game material
-- **Grounded adaptations:** polished retellings that stay close to the session record
-- **Creative reimaginings:** deliberately dramatized works, including TV-episode-style adaptations
-- **Playful derivatives:** trailers, jokes, music videos, and media only loosely related to the game
+Install Python and frontend dependencies, build the React components, then start the local server:
 
-Every derived asset should retain enough provenance to identify its source material and distinguish
-recorded fact from creative interpretation.
-
-## Current Status
-
-The initial AWS foundation is operational. It provides private and published asset storage,
-short-lived administrative access, and a near-zero-idle-cost baseline managed with AWS CDK. A
-password-protected, read-only media explorer is available for browsing and previewing private game
-assets at [panther.place](https://panther.place).
-
-The Panther CLI supports private uploads, listing, and metadata inspection using the same account
-as the website—no AWS credentials required. See [CLI setup and usage](docs/cli.md). Agents should
-read `panther instructions` for the bundled organization, categorization, and provenance rules.
-
-The CLI also provides an initial local audio workflow: lossless FLAC capture, Whisper transcription,
-local speaker detection, and confirmed player attribution with preserved versions. It is ready for
-controlled testing, not yet validated for reliable game-night transcripts. Richer collaboration,
-transcript correction, and media-production workflows remain in development. The Python package
-also retains the original mock transcription/narrative prototype; it does not define Panther's scope.
-
-## Scope
-
-Panther serves one trusted gaming group with multiple selectable games, including explicitly
-marked test games. Players, characters, and per-game memberships are distinct structured records.
-It is not a general-purpose multi-tenant service: the configured group accounts share game access.
-
-Application source and infrastructure code live in this repository. Game content and application
-data live in the dedicated AWS account and must never be committed to GitHub.
-
-## Design Principles
-
-- Private by default; publication is always deliberate
-- Accurate, reviewable transcripts before downstream generation
-- Clear separation between canonical records and creative works
-- Open-ended support for new asset and media types
-- Near-zero infrastructure cost while Panther is inactive
-- AWS infrastructure defined and deployed through CDK
-- Local development and verification without always-on CI infrastructure
-
-## Project Documentation
-
-- [Panther CLI and agent usage](docs/cli.md)
-- [Local recording and player-attributed transcript tests](docs/local-audio.md)
-- [Local video production: continuity, sound, editing and delivery](docs/video-production.md)
-- [AWS platform architecture](docs/aws-platform-architecture-draft.md)
-- [AWS foundation runbook](docs/aws-foundation-runbook.md)
-- [Audio capture strategy](docs/adr/0001-audio-capture-strategy.md)
-- [Transcription prototype architecture](architecture.md)
-
-## Transcription Prototype
-
-The current Python package contains mock providers and sample data for exercising the early pipeline.
-It is useful for development, but it is not yet a production recording or transcription system.
-
-```bash
+```sh
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-panther ingest-sample
-panther classify-sample
-panther generate-transcript
-panther extract-lore
-panther generate-novel
-panther generate-screenplay
+.venv/bin/python -m pip install -e ".[dev]"
+npm ci --prefix web/ui
+npm run build --prefix web/ui
+.venv/bin/python tools/dev_server.py
 ```
 
-Sample artifacts are written to `runs/sample-session/` by default and must not contain real game
-data intended for shared or durable storage.
+Open [127.0.0.1:8765](http://127.0.0.1:8765). The SQLite database defaults to
+`~/.local/state/panther/development.sqlite`; `--database` selects another private file outside Git.
+Application reads use persistent database state, not static preview fixtures. An empty database
+stays empty until you create data or explicitly use Development → Regenerate demo data (`--seed`
+at startup). Demo regeneration preserves user-created content and uploads.
+
+For real continuous playback of browser recordings, install FFmpeg (`ffmpeg` and `ffprobe`) and
+start the separate local worker in another terminal:
+
+```sh
+.venv/bin/python tools/dev_playback_worker.py \
+  --database ~/.local/state/panther/development.sqlite \
+  --work-dir ~/.local/state/panther/playback
+```
+
+The worker verifies explicitly completed WAV sets, preserves originals, creates a continuous MP3,
+and publishes its source-linked manifest into the same database. `--once` drains current queued
+work and exits. Queue failures retain the source audio and a reason; existing bytes are never
+replaced. Its heartbeat lets the app distinguish a waiting job from available processing.
+
+Local development does not configure OpenAI transcription, image generation, transcript-summary
+inference or editorial workers. Requests can be persisted or report that generation is unavailable;
+they never return invented transcripts, images or completed manuscripts. The local identity and
+SQLite data are separate from hosted authentication and game data. Production generation runs
+through authenticated, subscription-backed laptop workflows. Browser transcription requires an
+explicit server-side OpenAI secret; paid video/narration needs separate approval.
+
+## Verification and operations
+
+Run focused Python tests with `.venv/bin/pytest` and React component tests with
+`npm test --prefix web/ui`. Frontend changes also require isolated desktop/mobile Playwright checks
+on the repository's self-hosted Docker runner. See [runner setup](docs/self-hosted-runner.md) and
+[repository instructions](AGENTS.md) for the readiness gate.
+
+AWS infrastructure is defined in CDK, with near-zero idle compute cost as a standing goal.
+Administrative deployment uses short-lived credentials; game files, private inventories,
+work directories and database files must remain outside Git. Changes ship through reviewed branches
+and pull requests, with current-commit checks and the owner's merge policy.
+
+## Documentation
+
+- [Persistent local development](docs/local-development.md)
+- [CLI setup and usage](docs/cli.md) — agents should also run `panther instructions`
+- [Browser recording](docs/browser-recording.md)
+- [Continuous recording playback](docs/recording-playback-workflow.md)
+- [Local recording and player attribution](docs/local-audio.md)
+- [Editorial workflows](docs/editorial-workflows.md)
+- [Video production and delivery](docs/video-production.md)
+- [Asset browsing](docs/asset-browse-index.md), [storage](docs/asset-storage.md),
+  [versions](docs/asset-versions.md) and [generation metadata](docs/generation-metadata.md)
+- [AWS foundation runbook](docs/aws-foundation-runbook.md)
+
+Earlier mock-pipeline commands remain in the Python package for isolated development. They do not
+supply the app's database or define its current functionality.

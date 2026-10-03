@@ -541,3 +541,14 @@ def run_migrations(plan, apply, report, endpoint, extra=None):
     except FileExistsError:
         raise click.ClickException("Report already exists. Keep it and choose a new report path.")
     click.echo(f"Verified {len(records)} migration responses; report: {report}")
+
+
+@assets.command("worker")
+@click.option("--work-dir", type=click.Path(path_type=Path), required=True)
+@click.option("--once", is_flag=True)
+@click.option("--resume-job", help="Resume publication of an already generated, checkpointed image; never regenerate.")
+def image_worker(work_dir, once, resume_job):
+    """Generate queued map, blueprint and location images through the ChatGPT subscription."""
+    from panther_journal.asset_generation import run_worker
+
+    run_worker(work_dir, once, resume_job)

@@ -9,6 +9,7 @@ import re
 from boto3.dynamodb.conditions import Key
 import browse_index
 import storage_layout
+import asset_metadata
 
 MAX_ASSETS = 5000
 MAX_CHARACTERS = 500
@@ -151,6 +152,7 @@ def recent(catalog, game):
         "transcripts": [],
         "videos": [],
         "chapters": [],
+        "assets": [],
     }
     for asset in assets:
         key = asset.get("key")
@@ -162,7 +164,11 @@ def recent(catalog, game):
             raise RuntimeError("Dashboard catalog contains a foreign or invalid asset")
         kind, name = asset.get("kind", ""), asset.get("name", key.split("/")[-1])
         metadata = asset.get("metadata", {})
-        if metadata.get("extra", {}).get("relationshipRole") == "intermediate":
+        if metadata.get("extra", {}).get("relationshipRole") in {
+            "intermediate",
+            "processing",
+            "internal",
+        }:
             continue
         title = metadata.get("title") or name
         entry = {
@@ -173,6 +179,12 @@ def recent(catalog, game):
             "kind": kind,
             "lastModified": date_value(asset.get("lastModified")),
         }
+        if (
+            asset.get("contentType", "").startswith("image/")
+            and not asset_metadata.internal(kind)
+            and not asset.get("lineageWarning")
+        ):
+            groups["assets"].append(entry)
         if kind in {"transcript", "raw-transcript", "corrected-transcript", "edited-transcript"}:
             if not (key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind):
                 groups["transcripts"].append(entry)

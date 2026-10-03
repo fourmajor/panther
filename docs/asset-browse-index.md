@@ -20,9 +20,12 @@ latency and S3 request count grew with the whole game, including hidden workflow
 
 The new API uses retained, pay-per-request DynamoDB partitions for each game and section (`all`,
 `audio`, `transcripts`, `videos`, `novels`). It queries at most 100 entries/1 MiB, returning a scoped cursor.
-Audio/Transcripts/Videos render one page and load more only on request. Video plans are included
-in Videos. Standard lossless recording chunks and listening derivatives stay in the complete
-catalog and recording reader, not as separate Audio cards. Matching transcript Markdown exports
+Sessions/Videos render one page and load more only on request. Video plans are included
+in Videos. Sessions is a logical union of audio and transcript assets from the existing
+`all` partition: each request remains bounded, its cursor is scoped to Sessions, and a sparse
+filtered page can offer Load more. It requires no new partition or inventory rebuild.
+Standard lossless recording chunks and listening derivatives stay in the complete
+catalog and recording reader, not as separate Sessions cards. Matching transcript Markdown exports
 are suppressed using a bounded indexed lookup, including across page boundaries.
 
 Opening a media file still obtains a short-lived authenticated URL. Full relationship graphs and

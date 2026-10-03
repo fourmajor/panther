@@ -368,7 +368,7 @@ test("editorial workflow has separate review stages, parallel adaptations, and n
   template.hasResourceProperties("AWS::Lambda::Function", {
     Handler: "editorial_jobs.handler", Environment: { Variables: Match.objectLike({
       CATALOG_READERS: "example-operator,example-editor,example-member",
-      EDITORIAL_PLAN: Match.serializedJson(Match.objectLike({version:3})),
+      EDITORIAL_PLAN: Match.serializedJson(Match.objectLike({version:4})),
     }) },
   });
   const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))
@@ -426,16 +426,14 @@ test("novel organization is scoped metadata, not manuscript or workflow mutation
   assert.deepEqual(writes[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],["novel-library#*","novel-library-history#*","novel-library-ops#*"]);
 });
 
-test("TV organization uses scoped metadata and cannot alter sources, jobs or spend", () => {
+test("legacy TV organization remains read-only for exact archived editions", () => {
   const template=mediaExplorerTemplate();
-  for(const path of ["tv-series","tv-episodes"])for(const method of ["GET","POST"])
+  for(const path of ["tv-series","tv-episodes"])for(const method of ["GET"])
     template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:`${method} /${path}`,AuthorizationType:"JWT"});
   const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("TVLibrary"));
-  const serialized=JSON.stringify(policies);assert.match(serialized,/tv-library-history#\*/);
-  assert.doesNotMatch(serialized,/s3:|states:|InvokeFunction|UpdateItem/);
-  const statements=policies.flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
-  const deletes=statements.filter(s=>[s.Action].flat().includes("dynamodb:DeleteItem"));
-  assert.equal(deletes.length,1);assert.deepEqual(deletes[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],["tv-library-order#*"]);
+  const serialized=JSON.stringify(policies);
+  assert.doesNotMatch(serialized,/s3:|states:|InvokeFunction|UpdateItem|PutItem|DeleteItem|ConditionCheckItem/);
+  assert.ok(Object.values(template.findResources("AWS::ApiGatewayV2::Route")).every((r:any)=>!/^POST \/tv-/.test(r.Properties.RouteKey)));
   template.resourceCountIs("AWS::EC2::Instance",0);template.resourceCountIs("AWS::EC2::NatGateway",0);
 });
 
@@ -597,7 +595,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 105);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 122);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -680,6 +678,27 @@ test("remembered sign-in uses maximum rotating refresh sessions and an uncached 
 });
 
 
+test("episode-owned scenes have authenticated metadata routes and no media generation permissions", () => {
+  const template = mediaExplorerTemplate();
+  for (const RouteKey of ["GET /episodes", "POST /episodes", "GET /scenes", "POST /scenes", "GET /episode-composition", "POST /video-workspace/migrate"])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey, AuthorizationType:"JWT"});
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"video_scenes.handler",
+    Environment:{Variables:Match.objectLike({CATALOG_READERS:Match.anyValue(),MODEL_PUBLISHERS:Match.anyValue(),ASSET_MIGRATORS:Match.anyValue()})}});
+  const statements = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id])=>id.startsWith("VideoScenesApi"))
+    .flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
+  assert.ok(statements.length);
+  for (const statement of statements) {
+    assert.ok([statement.Action].flat().every((action:string)=>action.startsWith("dynamodb:") || action.startsWith("logs:")));
+    assert.ok(![statement.Action].flat().includes("dynamodb:DeleteItem"));
+  }
+  const writes = statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  assert.equal(writes.length,1);
+  assert.deepEqual(writes[0].Condition,{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":[
+    "episode-scenes-v1#*","episode-scenes-v1-history#*","episode-scenes-v1-ops#*","episode-scenes-migration-v1#*"
+  ]}});
+});
+
 test("browser audio gates API transcription on an optional server secret", () => {
   const secretArn="arn:aws:secretsmanager:us-west-2:123456789012:secret:browser-asr-ABCDEF";
   const template=mediaExplorerTemplate({browserTranscriptionSecretArn:secretArn});
@@ -729,4 +748,41 @@ test("dashboard recent reuses the catalog reader and metadata permissions", () =
     .filter(([id]) => id.startsWith("GameCatalog")));
   assert.match(policies, /dynamodb:BatchGetItem/);
   assert.match(policies, /dynamodb:Query/);
+});
+
+test("asset generation stores bounded subscription-worker jobs without hosted inference", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::DynamoDB::Table", {
+    BillingMode: "PAY_PER_REQUEST",
+    GlobalSecondaryIndexes: Match.arrayWith([
+      Match.objectLike({IndexName:"StatusIndex"}), Match.objectLike({IndexName:"GameIndex"})
+    ]),
+  });
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    Handler:"asset_generation.handler",
+    Environment:{Variables:Match.objectLike({MODEL_WORKERS:"example-operator",ASSET_GENERATION_TABLE:Match.anyValue(),ASSET_BUCKET_NAME:Match.anyValue()})},
+  });
+  for(const route of ["GET /asset-generation","POST /asset-generation","POST /asset-generation/claim","POST /asset-generation/resume"])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:route,AuthorizationType:"JWT"});
+  const brokers = Object.values(template.findResources("AWS::Lambda::Function")) as any[];
+  const worker = brokers.find(fn=>fn.Properties.Handler==="asset_generation.handler");
+  assert.ok(worker);
+  assert.equal(worker.Properties.Environment.Variables.OPENAI_API_KEY,undefined);
+  assert.equal(worker.Properties.Environment.Variables.FAL_KEY,undefined);
+  template.resourceCountIs("AWS::EC2::Instance",0);
+  template.resourceCountIs("AWS::EC2::NatGateway",0);
+});
+
+test("transcript summaries use authenticated source-pinned subscription worker routes", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("AWS::Lambda::Function", {Handler:"transcript_summaries.handler", Environment:{Variables:Match.objectLike({TRANSCRIPT_SUMMARY_TABLE:Match.anyValue(),MODEL_WORKERS:"example-operator"})}});
+  for (const action of ["GET /transcript-summaries", "POST /transcript-summaries", ...["claim","heartbeat","defer","complete"].map(action=>`POST /transcript-summaries/${action}`)])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:action,AuthorizationType:"JWT"});
+  const fn = (Object.values(template.findResources("AWS::Lambda::Function")) as any[]).find(fn=>fn.Properties.Handler==="transcript_summaries.handler");
+  assert.equal(fn.Properties.Environment.Variables.OPENAI_API_KEY,undefined);
+});
+
+test("actual raster style previews are packaged separately from private game assets", () => {
+  const template = mediaExplorerTemplate();
+  template.hasResourceProperties("Custom::CDKBucketDeployment", {DestinationBucketKeyPrefix:"style-previews",Prune:false,DistributionPaths:["/style-previews/*"],SystemMetadata:Match.objectLike({"cache-control":"public,max-age=3600"})});
 });

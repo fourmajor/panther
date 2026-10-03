@@ -59,8 +59,6 @@ for(const width of [1280,390]) {
     await expect(page.locator('#portrait-version-preview')).toHaveAttribute('src',new RegExp(`${id}.svg$`));
     await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',new RegExp(`${id}.svg$`));
     await expect(page.locator('#model-load')).toBeHidden();
-    await expect(page.locator('#appearance-events')).toContainText('Synthetic selection');
-    await expect(page.locator('#appearance-events')).not.toContainText('preview');
     const menu=page.locator('#model-version');await menu.scrollIntoViewIfNeeded();
     const bounds=await menu.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -79,6 +77,7 @@ for(const width of [1280,390]) {
   test(`appearance pairs, portrait-only states and guarded restore at ${width}px`,async({page},testInfo)=>{
     await page.setViewportSize({width,height:900});const control=await fixture(page,{lostResponse:true});
     await page.goto('https://panther.place/games/example-game/characters/hero');
+    await expect(page.locator('#character-appearance-panel')).toBeVisible();
     await expect(page.locator('#model-version option')).toHaveCount(2);
     await expect(page.locator('#appearance-restore')).toBeDisabled();
     await page.locator('#model-version').selectOption('earlier');
@@ -89,8 +88,7 @@ for(const width of [1280,390]) {
     await page.locator('#appearance-state').selectOption('stone');
     await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',/stone.svg$/);
     await expect(page).toHaveURL(/appearance=stone&selection=stone/);
-    await expect(page.locator('#appearance-story')).toContainText('Story timing unknown');
-    await expect(page.locator('#appearance-events')).toContainText('recorded');
+    await expect(page.locator('#appearance-story')).toHaveText('');
     await expect(page.locator('#appearance-restore')).toBeEnabled();
     expect(control.posted).toEqual([]);
     await expect(page.locator('#portrait-version-preview')).toHaveAttribute('src',/stone.svg$/);
@@ -126,6 +124,9 @@ test('missing exact deep link never falls back to the current selection',async({
   const control=await fixture(page);
   await page.goto('https://panther.place/games/example-game/characters/hero?appearance=ordinary&selection=missing');
   await expect(page.locator('#characters-status')).toContainText('Exact appearance selection not found');
-  await expect(page.locator('#character-profile')).toBeHidden();
+  await expect(page.locator('#character-profile')).toBeVisible();
+  await expect(page.locator('#character-portrait-only')).toBeHidden();
+  await expect(page.locator('#character-model-area')).toBeHidden();
+  await expect(page.locator('#appearance-history')).toBeHidden();
   expect(control.requests.filter(r=>r.path==='/character').map(r=>r.selection)).toEqual(['missing']);
 });

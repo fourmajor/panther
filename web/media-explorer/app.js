@@ -284,6 +284,7 @@ function storeTokens(tokens) {
 
 function clearSession() {
   roomCapture?.interrupt();
+  assetUploads.clear();assetGenerationJobs.clear();assetListing={gameId:null,assets:[],cursor:null,loading:false,error:'',pages:0};
   window.PantherUI.clear();
   resetLive();
   state.games = null;
@@ -381,15 +382,16 @@ async function apiRequest(path, parameters = {}, options = {}) {
   for (const [key, value] of Object.entries(parameters)) {
     if (value) url.searchParams.set(key, value);
   }
+  const requestSignal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000);
   let response = await fetch(url, {
-    signal: options.signal,
+    signal: requestSignal,
     method: options.body ? "POST" : "GET",
     body: options.body ? JSON.stringify(options.body) : undefined,
     headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) },
   });
   if (response.status === 401) {
     await ensureSession({ force: true });
-    response = await fetch(url, { signal: options.signal, method: options.body ? "POST" : "GET",
+    response = await fetch(url, { signal: requestSignal, method: options.body ? "POST" : "GET",
       body: options.body ? JSON.stringify(options.body) : undefined,
       headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) } });
   }
@@ -418,6 +420,7 @@ function mutationReadPaths(path) {
   if (path.startsWith("/game/") && path !== "/game/characters") return ["/games", "/game", "/dashboard-recent"];
   if (path === "/game/characters" || path.startsWith("/character-")) return ["/game", "/characters", "/character", "/character-details", "/character-details/history", "/character-versions", "/dashboard-recent"];
   if (path === "/novel-chapters") return ["/novel", "/novel-chapter", "/assets", "/objects", "/dashboard-recent"];
+  if (["/episodes", "/scenes"].includes(path)) return ["/episodes", "/scenes", "/episode-composition", "/assets", "/dashboard-recent"];
   if (path === "/video-collections") return ["/video-collections", "/dashboard-recent"];
   if (path === "/editorial-jobs") return ["/editorial-jobs"];
   if (path === "/transcript-selection") return ["/transcript-selection", "/assets", "/dashboard-recent"];
@@ -431,7 +434,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|jobs|workflows|object-url|image-links)/.test(path);
+  const sensitive = /(?:live|transcriptions|transcript-summaries|jobs|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -445,9 +448,10 @@ function foregroundBlocked() {
   return [...document.querySelectorAll("form[data-dirty=true]")].some(form => form.getClientRects().length > 0);
 }
 function foregroundPreservesView(section) {
-  const host = section === "media" ? elements.explorer : section === "novel" ? elements.novel : document.getElementById("session-library");
-  if (section === "media" && mediaListing.loadedPages > 1) return true;
-  if (["audio", "transcripts", "videos"].includes(section) && host.dataset.paged === "true") return true;
+  const host = ["media","assets"].includes(section) ? elements.explorer : section === "novel" ? elements.novel : document.getElementById("session-library");
+  if (["media","assets"].includes(section) && !elements.entries.hidden && mediaListing.loadedPages > 1) return true;
+  if(section==='assets'&&elements.entries.hidden&&(assetListing.pages>1||host.querySelector('.assets-filter[aria-pressed=true]:not(:first-child)')))return true;
+  if (["sessions", "videos"].includes(section) && host.dataset.paged === "true") return true;
   const visible = element => element.getClientRects().length > 0;
   if ([...host.querySelectorAll('input[type="search"]')].some(input => visible(input) && input.value.trim())) return true;
   if ([...host.querySelectorAll("select")].some(select => visible(select) && select.options.length && select.value !== select.options[0].value)) return true;
@@ -460,7 +464,8 @@ async function revalidateForeground() {
   const gameId = state.gameId, epoch = routeEpoch, scope = apiScope();
   const paths = ["/games", "/game"], filters = {};
   if (section === "dashboard") paths.push("/dashboard-recent");
-  if (section === "media") {paths.push("/objects");filters["/objects"] = {prefix:state.currentPrefix};}
+  if (["media","assets"].includes(section) && !elements.entries.hidden) {paths.push("/objects");filters["/objects"] = {prefix:state.currentPrefix};}
+  if (section === "assets" && elements.entries.hidden) {paths.push("/assets");filters["/assets"] = {section:"all"};}
   if (section === "characters") {
     if (!elements.characterProfile.hidden && state.currentCharacter) {
       paths.push("/character-details", "/character-details/history");
@@ -468,9 +473,9 @@ async function revalidateForeground() {
     } else paths.push("/characters");
   }
   if (section === "novel") paths.push("/novel", "/novel-stories", "/novel-books");
-  if (["audio", "transcripts", "videos"].includes(section)) {
+  if (["sessions", "videos"].includes(section)) {
     paths.push("/assets"); filters["/assets"] = {section};
-    if (section === "videos") paths.push("/video-collections", "/tv-series", "/tv-episodes");
+    if (section === "videos") paths.push("/video-collections", "/episodes", "/scenes", "/episode-composition");
   }
   foregroundRefresh = (async () => {
     const changed = await window.PantherUI.revalidate({scope, paths, gameId, filters});
@@ -488,13 +493,14 @@ async function revalidateForeground() {
       return;
     }
     document.dispatchEvent(new CustomEvent("panther-data-updated", {detail:{gameId,section,paths:changed.map(item=>item.path)}}));
-    if (section === "media") await loadPrefix(state.currentPrefix);
+    if (["media","assets"].includes(section)&&!elements.entries.hidden) await loadPrefix(state.currentPrefix);
+    else if(section === "assets") await loadAssetLibrary(epoch);
     else if (section === "dashboard") {renderDashboard();await loadDashboardRecent(epoch);}
     else if (section === "characters") {
       if (!elements.characterProfile.hidden && state.currentCharacter) await loadCharacterFacts(state.currentCharacter.gameId, state.currentCharacter.characterId, epoch);
       else await loadCharacters();
     } else if (section === "novel") await loadNovel(null, epoch);
-    else if (["audio", "transcripts", "videos"].includes(section)) await loadLibrary(section, epoch);
+    else if (["sessions", "videos"].includes(section)) await loadLibrary(section, epoch);
   })().catch(() => { /* Retain visible content through a temporary refresh failure. */ }).finally(() => {foregroundRefresh = null;});
   return foregroundRefresh;
 }
@@ -539,6 +545,7 @@ function setActiveNavigation(section) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
+  drawLive();
 }
 
 function folderName(prefix) {
@@ -554,11 +561,12 @@ function renderBreadcrumbs(prefix) {
     accumulated += `${segment}/`;
     if (accumulated === "games/") continue;
     const destination = accumulated;
-    const button = document.createElement("button");
+    const current = accumulated === segments.join("/") + "/";
+    const button = document.createElement(current ? "span" : "button");
     button.className = "crumb";
-    button.type = "button";
+    if(current)button.setAttribute("aria-current","page");else button.type = "button";
     button.textContent = accumulated === `games/${state.gameId}/` ? state.gameDetail?.game.name || segment : segment;
-    button.addEventListener("click", () => loadPrefix(destination));
+    if(!current)button.addEventListener("click", () => loadPrefix(destination));
     elements.breadcrumbs.append(button);
   }
 }
@@ -661,65 +669,41 @@ function navigationArrow() {
 }
 
 function renderDashboard() {
-  const {game, players, memberships, characters} = state.gameDetail;
+  const {game} = state.gameDetail;
   document.getElementById("dashboard-name").textContent = game.name;
-  document.getElementById("dashboard-purpose").textContent = game.purpose === "test" ? "Test game" : "Your campaign";
   document.getElementById("dashboard-description").textContent = state.gameDetail.gameSettings?.description || "";
-  const facts = document.getElementById("dashboard-facts"); facts.replaceChildren();
-  for (const text of [`${players.length} ${players.length === 1 ? "player" : "players"} in the roster`, `${characters.length} ${characters.length === 1 ? "character" : "characters"}`]) {
-    const fact = document.createElement("span"); fact.textContent = text; facts.append(fact);
+  for (const selector of ['#dashboard-purpose','#dashboard-facts','.dashboard-open','#dashboard .dashboard-section-heading','#dashboard .dashboard-bottom','#dashboard-recent']) {
+    document.querySelector(selector)?.setAttribute('hidden','');
   }
-  const sections = [
-    ["characters", "Characters", "Meet the characters and explore their portraits, appearances and stories."],
-    ["audio", "Audio", "Listen to session recordings and return to the moments that mattered."],
-    ["transcripts", "Transcripts", "Read the session record, with speakers and saved versions preserved."],
-    ["novel", "Novel", "Explore narrative retellings, chapters and books from your game."],
-    ["videos", "Videos", "Watch episodes, trailers and other creative reimaginings."],
-    ["media", "Media", "Browse the full archive of images, maps, models and other assets."],
-  ];
-  const cards = document.getElementById("dashboard-sections"); cards.replaceChildren();
-  for (const [index, [section, label, description]] of sections.entries()) {
-    const card = document.createElement("a"); card.className = "dashboard-card"; gameLink(card, section);
-    const top = document.createElement("span"); top.className = "dashboard-card-top";
-    const number = document.createElement("span"); number.className = "dashboard-card-number"; number.textContent = String(index + 1).padStart(2,"0"); number.setAttribute("aria-hidden","true");
-    const arrow = document.createElement("span"); arrow.className = "dashboard-card-arrow"; arrow.append(navigationArrow()); arrow.setAttribute("aria-hidden","true"); top.append(number, arrow);
-    const copy = document.createElement("div"), title = document.createElement("h3"); title.textContent = label; copy.append(title); card.append(top, copy); cards.append(card);
+  const cards = document.getElementById("dashboard-sections");for(const icon of cards.querySelectorAll("[data-dashboard-icon]"))window.PantherUI.unmountIcon?.(icon);cards.replaceChildren();
+  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Videos"],["assets","Assets"]]) {
+    const card=document.createElement('section');card.className='dashboard-card';card.dataset.section=section;
+    const icon=document.createElement('span'),arrow=document.createElement('span');icon.className='dashboard-section-icon';arrow.className='dashboard-card-arrow';icon.dataset.dashboardIcon=section;arrow.dataset.dashboardIcon='arrow';icon.setAttribute('aria-hidden','true');arrow.setAttribute('aria-hidden','true');card.append(icon,arrow);window.PantherUI.mountIcon(icon,section);window.PantherUI.mountIcon(arrow,'arrow');
+    const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
+    const list=document.createElement('ul');list.className='dashboard-recent-links';list.setAttribute('aria-label',`Recent ${label.toLowerCase()}`);card.append(title,list);cards.append(card);
   }
-  elements.playerRoster.replaceChildren();
-  for (const player of players) {
-    const member = memberships.find(m => m.playerId === player.id);
-    const row = document.createElement("li"), initial = document.createElement("span"), copy = document.createElement("span"), title = document.createElement("strong"), role = document.createElement("small");
-    initial.className = "crew-initial"; initial.textContent = player.name.split(/\s+/).map(v=>v[0]).join("").slice(0,2); initial.setAttribute("aria-hidden","true");
-    copy.className = "crew-copy"; title.textContent = player.name;
-    role.textContent = member?.role === "dungeon-master" ? "Dungeon Master" : member?.role === "player" ? "Player" : "";
-    copy.append(title, role); row.append(initial, copy); elements.playerRoster.append(row);
-  }
-  if (!players.length) { const row = document.createElement("li"); row.textContent = "No players yet."; elements.playerRoster.append(row); }
-  for (const link of document.querySelectorAll("[data-game-section]")) gameLink(link, link.dataset.gameSection);
 }
 
 async function loadDashboardRecent(epoch) {
-  const host = document.getElementById("dashboard-recent"), gameId = state.gameId;
-  host.replaceChildren(); showLoading(host, "Loading recent activity");
+  const gameId=state.gameId;
   try {
-    const result=await api("/dashboard-recent",{gameId});
-    if(epoch!==routeEpoch || gameId!==state.gameId)return;
-    if(result.complete!==true || !result.groups)throw new Error("Recent activity unavailable");
-    host.replaceChildren();
-    for(const [label,section,key] of [["Characters","characters","characters"],["Transcripts","transcripts","transcripts"],["Videos","videos","videos"],["Chapters","novel","chapters"]]) {
-      const panel=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ul");
-      heading.textContent=`Recent ${label.toLowerCase()}`;panel.append(heading,list);host.append(panel);
-      for(const item of result.groups[key]) {
-        const row=document.createElement("li");let link;
-        if(section==="characters"){link=document.createElement("a");link.href=characterPath({...item,gameId});link.textContent=item.name;link.addEventListener("click",event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname);});}
-        else if(section==="novel")link=novelLink(item.title,item.id);
-        else link=assetLink(item,item.title||item.name);
+    const result=await api('/dashboard-recent',{gameId});
+    if(epoch!==routeEpoch||gameId!==state.gameId)return;
+    if(result.complete!==true||!result.groups)throw new Error('Recent activity unavailable');
+    for(const [section,key] of [['characters','characters'],['sessions','transcripts'],['novel','chapters'],['videos','videos'],['assets','assets']]) {
+      const card=document.querySelector(`#dashboard-sections [data-section="${section}"]`),list=card.querySelector('ul');list.replaceChildren();
+      const items=Array.isArray(result.groups[key])?result.groups[key]:[];
+      for(const item of items.slice(0,5)) {
+        const row=document.createElement('li');let link;
+        if(section==='characters'){link=document.createElement('a');link.href=characterPath({...item,gameId});link.textContent=item.name;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname);};}
+        else if(section==='novel')link=novelLink(item.title,item.id);
+        else link=assetLink(item,item.metadata?.title||item.title||item.name);
         row.append(link);list.append(row);
       }
-      if(!list.children.length){const note=document.createElement("li");note.className="recent-empty";note.textContent=`No ${label.toLowerCase()} yet`;list.append(note);}
-      const all=document.createElement("a");gameLink(all,section);all.textContent=`View ${label.toLowerCase()}`;panel.append(all);
+      const count=result.counts?.[key];
+      if(Number.isInteger(count)&&count>items.slice(0,5).length){const row=document.createElement('li'),link=document.createElement('a');gameLink(link,section);link.textContent=`+ ${count-items.slice(0,5).length} more`;row.append(link);list.append(row);}
     }
-  }catch(error){if(epoch===routeEpoch && gameId===state.gameId){host.replaceChildren();const message=document.createElement("p");message.setAttribute("role","status");message.textContent=error.message;host.append(message);}}
+  }catch(error){if(epoch===routeEpoch&&gameId===state.gameId){const host=document.getElementById('dashboard-recent');host.hidden=false;host.textContent=error.message;}}
 }
 
 function applyGameDetail(detail) {
@@ -762,53 +746,30 @@ function renderGameSettings() {
 }
 
 function renderGameStyle() {
-  const panel = document.getElementById("game-style");
-  const form = document.getElementById("game-style-form");
-  form.dataset.dirty = "false";
-  const select = document.getElementById("visual-style");
-  const status = document.getElementById("style-status");
-  const detail = state.gameDetail;
-  panel.hidden = !detail?.visualStyles?.length;
-  if (panel.hidden) return;
-  const gameId = state.gameId;
-  const expectedStyle = detail.game.visualStyle ?? null;
-  select.replaceChildren();
-  for (const style of detail.visualStyles) {
-    const option = document.createElement("option");
-    option.value = style.id;
-    option.textContent = style.label;
-    select.append(option);
+  const panel=document.getElementById("game-style"),form=document.getElementById("game-style-form"),select=document.getElementById("visual-style"),status=document.getElementById("style-status"),detail=state.gameDetail;
+  panel.hidden=!detail?.visualStyles?.length;if(panel.hidden)return;
+  const gameId=state.gameId,expectedStyle=detail.game.visualStyle??null,canEdit=detail.canEditGame===true;
+  form.dataset.dirty="false";select.replaceChildren();select.hidden=true;
+  document.getElementById("visual-style-cards")?.remove();
+  const grid=document.createElement("div");grid.id="visual-style-cards";grid.className="visual-style-cards";grid.setAttribute("role","group");grid.setAttribute("aria-label","Visual style");
+  for(const style of detail.visualStyles){
+    select.add(new Option(style.label,style.id));
+    const card=document.createElement("article");card.className="visual-style-card";card.dataset.style=style.id;card.dataset.selected=String(style.id===expectedStyle);
+    const title=document.createElement("h3");title.textContent=style.label;
+    const controls=document.createElement("div");controls.className="visual-style-actions";
+    const chosen=style.id===expectedStyle,choose=document.createElement("button");choose.type="button";choose.className=chosen?"quiet-button":"primary-button";choose.textContent=chosen?"Selected":"Select";choose.setAttribute("aria-label",`${chosen?"Selected":"Select"} ${style.label}`);choose.disabled=!canEdit||chosen;
+    const preview=style.previewImage===`/style-previews/${style.id}.webp`?style.previewImage:null;
+    if(preview){const image=document.createElement("img");image.src=preview;image.alt=`${style.label} preview`;image.loading="lazy";card.append(image);const zoom=document.createElement("button");zoom.type="button";zoom.className="icon-button";zoom.title="Zoom";zoom.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>';zoom.setAttribute("aria-label",`Zoom ${style.label}`);zoom.onclick=()=>{const dialog=document.getElementById("style-preview-dialog");document.getElementById("style-preview-title").textContent=style.label;const large=document.getElementById("style-preview-image");large.src=preview;large.alt=image.alt;dialog.showModal();document.getElementById("style-preview-close").onclick=()=>{dialog.close();zoom.focus();};};controls.append(zoom);image.onerror=()=>{image.remove();zoom.remove();};}
+    controls.append(choose);card.append(title,controls);grid.append(card);
+    choose.onclick=async()=>{
+      const epoch=routeEpoch;for(const button of grid.querySelectorAll("button"))button.disabled=true;status.textContent="Saving style…";
+      try{const updated=await api("/game/style",{},{body:{gameId,visualStyle:style.id,expectedStyle}});if(state.gameId!==gameId||routeEpoch!==epoch)return;state.gameDetail=updated;renderGameStyle();status.textContent="Style saved.";}
+      catch(error){if(state.gameId!==gameId||routeEpoch!==epoch)return;status.textContent=`Could not save style. ${error.message}`;for(const button of grid.querySelectorAll("button"))button.disabled=false;for(const selected of grid.querySelectorAll('[data-selected="true"] button[aria-label^="Selected"]'))selected.disabled=true;}
+    };
   }
-  if (!expectedStyle) {
-    const unset = new Option("Choose a style", "", true, true);
-    unset.disabled = true;
-    select.prepend(unset);
-  } else select.value = expectedStyle;
-  const canEdit = detail.canEditGame === true;
-  select.disabled = !canEdit;
-  form.querySelector("button").disabled = !canEdit;
-  status.textContent = "";
-  form.onsubmit = async event => {
-    event.preventDefault();
-    if (!select.value || select.disabled) return;
-    const epoch = routeEpoch;
-    select.disabled = true;
-    form.querySelector("button").disabled = true;
-    status.textContent = "Saving this game’s visual style…";
-    try {
-      const updated = await api("/game/style", {}, { body: { gameId, visualStyle: select.value, expectedStyle } });
-      if (state.gameId !== gameId || routeEpoch !== epoch) return;
-      state.gameDetail = updated;
-      renderGameStyle();
-      status.textContent = "Style saved. Existing assets are unchanged.";
-    } catch (error) {
-      if (state.gameId !== gameId || routeEpoch !== epoch) return;
-      status.textContent = `Could not save style. ${error.message} Refresh before retrying.`;
-      select.disabled = false;
-      form.querySelector("button").disabled = false;
-    }
-  };
+  select.value=expectedStyle||"";select.disabled=!canEdit;form.prepend(grid);status.textContent="";form.onsubmit=event=>event.preventDefault();
 }
+
 
 function navigate(path, { replace = false } = {}) {
   if (replace) window.history.replaceState({}, "", path);
@@ -925,36 +886,6 @@ async function createCharacter() {
   host.querySelector("button[type=button]").onclick = () => {host.hidden = true;};
 }
 
-async function loadCharacterHistory(gameId, characterId, host, epoch) {
-  const list = host.querySelector("ol"), more = host.querySelector("button");
-  let cursor = null;
-  const load = async () => {
-    more.disabled = true;
-    try {
-      const result = await api("/character-details/history", {gameId,characterId,cursor});
-      if (epoch !== routeEpoch || !host.isConnected) return;
-      for (const entry of result.history || []) {
-        const li = document.createElement("li"), disclosure = document.createElement("details"), summary = document.createElement("summary");
-        summary.textContent = `${new Date(entry.recordedAt).toLocaleString()} · ${entry.reason}`;
-        const changes = document.createElement("dl"); changes.className = "character-fact-grid";
-        for (const [key,value] of Object.entries(entry.details || {})) {
-          if (key === "schemaVersion" || JSON.stringify(value) === JSON.stringify(entry.previousDetails?.[key])) continue;
-          const dt = document.createElement("dt"), dd = document.createElement("dd");
-          dt.textContent = key; dd.textContent = value == null ? "Cleared" : typeof value === "object" ? JSON.stringify(value) : String(value);
-          changes.append(dt,dd);
-        }
-        if (entry.name && entry.previousName !== entry.name) {const p = document.createElement("p"); p.textContent = `Name: ${entry.previousName} → ${entry.name}`; disclosure.append(p);}
-        disclosure.prepend(summary); disclosure.append(changes); li.append(disclosure); list.append(li);
-      }
-      cursor = result.cursor; more.hidden = !cursor;
-      if (!list.children.length) {const li = document.createElement("li"); li.textContent = "No changes yet."; list.append(li);}
-    } catch(error) {const p = document.createElement("p"); p.textContent = error.message; host.append(p); more.hidden = true;}
-    finally {more.disabled = false;}
-  };
-  more.onclick = load;
-  await load();
-}
-
 async function loadCharacterThumbnails(epoch) {
   const hosts = [...elements.characterList.querySelectorAll("[data-image-key]:not([data-requested])")];
   for (const host of hosts) host.dataset.requested = "true";
@@ -987,6 +918,17 @@ function setModelControls(enabled) {
   }
 }
 
+function loadProfilePortrait(record,epoch=routeEpoch) {
+  if(!record?.details?.thumbnailAssetKey||new URLSearchParams(location.search).has("appearance")||new URLSearchParams(location.search).has("selection"))return;
+  const key=record.details.thumbnailAssetKey,gameId=record.gameId,characterId=record.characterId;
+  void api("/image-links",{},{body:{gameId,keys:[key]}}).then(result=>{
+    if(epoch!==routeEpoch||state.gameId!==gameId||state.currentCharacter?.characterId!==characterId)return;
+    const url=result.images?.[key]?.url;
+    if(!url)return;
+    const portrait=document.getElementById("character-portrait-only");portrait.src=url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;
+  }).catch(()=>{});
+}
+
 function configureCharacter(profile) {
   resetModelAnimation();
   const { character, model, poster } = profile;
@@ -994,17 +936,17 @@ function configureCharacter(profile) {
   state.currentCharacter = { gameId: character.gameId, characterId: character.id };
   elements.characterName.textContent = character.name;
   const facts = state.currentCharacterFacts;
-  elements.characterTitle.textContent = facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.subtitle || "" : "";
+  elements.characterTitle.textContent = `Class / role · ${facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.role || "—" : "—"}`;
   elements.characterSummary.textContent = "";
   document.querySelector("#character-model-area").hidden = !model;
-  document.querySelector("#character-no-model").hidden = Boolean(model);
+  document.getElementById("character-artwork-empty").hidden=Boolean(model||poster);
+  document.querySelector("#character-no-model").hidden = true;
   const portraitOnly = document.querySelector("#character-portrait-only");
-  portraitOnly.hidden = Boolean(model) || !poster;
+  portraitOnly.hidden = !poster;
+  document.getElementById("character-portrait-empty").hidden = Boolean(poster);
   portraitOnly.removeAttribute("src");
-  document.querySelector("#character-no-model").textContent = poster
-    ? "Portrait ready. No 3D model has been published yet."
-    : "No portrait or 3D model has been added yet.";
-  if (!model && poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
+  if (poster) { portraitOnly.src = poster.url; portraitOnly.alt = `Portrait of ${character.name}`; }
+  if(facts?.gameId===character.gameId&&facts.characterId===character.id)loadProfilePortrait(facts);
   if (!model) {
     elements.characterModel.src = null;
     elements.characterModel.removeAttribute("src");
@@ -1044,7 +986,7 @@ function configureModelView(model, poster, name, keepActive = false) {
     model.sourceRetained && model.provenanceRetained
       ? "Original and provenance retained"
       : "Web representation";
-  elements.modelStatus.textContent = keepActive ? "Loading the selected model…" : "Portrait ready. Load the model when you want it.";
+  elements.modelStatus.textContent = keepActive ? "Loading model…" : "";
 }
 
 let appearanceRequest = 0;
@@ -1077,15 +1019,6 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
     states.value = selected?.appearanceId || result.appearances[0]?.id || "";
     states.disabled = result.appearances.length < 2 || Boolean(state.pendingAppearanceRestore);
     populateArtworkEditions(selected?.id);
-    const events = document.getElementById("appearance-events");
-    events.replaceChildren();
-    for (const entry of result.activations) {
-      const li=document.createElement("li");
-      const recorded = Number.isNaN(Date.parse(entry.updatedAt)) ? "Unknown record time" : new Date(entry.updatedAt).toLocaleString();
-      li.textContent = `${entry.activationKind==="artwork-selection"?"Artwork edition selected":"Physical appearance selected"} · recorded ${recorded} · ${entry.reason}`;
-      events.append(li);
-    }
-    if (!events.children.length) {const li=document.createElement("li");li.textContent="Earlier imported selections have unknown original selection times.";events.append(li);}
     const legacy = new URLSearchParams(location.search).get("model");
     if (legacy) {
       const matches=result.selections.filter(s=>s.modelKey===legacy);
@@ -1100,7 +1033,7 @@ async function loadAppearanceVersions(gameId, characterId, epoch) {
     } else {
       status.textContent=result.selections.find(s=>s.id===selected?.id)?.previewOnly
         ? "Previewing an unselected edition. The current official selection is unchanged."
-        : result.selections.length ? `${result.appearances.length} recorded physical states · ${result.selections.length} retained artwork pairs. Viewing never changes the current selection.` : "No official artwork has been selected.";
+        : "";
       renderAppearanceDownloads();
       updateAppearanceStory();
     }
@@ -1133,7 +1066,7 @@ function updateAppearanceStory() {
   const host=document.getElementById("appearance-story");
   host.textContent=story && Object.values(story).some(v=>v!==null)
     ? `Story timing supplied: ${[story.sessionId,story.eventId,story.date].filter(Boolean).join(" · ")}`
-    : "Story timing unknown. File and selection record times are not fictional dates.";
+    : "";
   document.getElementById("appearance-restore").disabled=!selected?.selection || selected.selection.id===data?.current || Boolean(state.pendingAppearanceRestore);
 }
 
@@ -1242,35 +1175,36 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
     if (!result.character?.details || !result.character.revision) throw new Error("Character profile is unavailable.");
     const record = result.character;
     state.currentCharacterFacts = record;
+    loadProfilePortrait(record,epoch);
     const render = () => {
-      elements.characterTitle.textContent = record.details.subtitle || "";
+      if(record.name)elements.characterName.textContent=record.name;
+      elements.characterTitle.textContent = `Class / role · ${record.details.role || "—"}`;
+      for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
       host.replaceChildren();
       const heading = document.createElement("div"); heading.className = "explorer-heading";
-      const title = document.createElement("h2"); title.textContent = "Character information";
+
       const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button"; edit.textContent = "Edit character information";
-      heading.append(title, edit); host.append(heading);
+      heading.className="profile-edit-action";document.querySelector(".character-bio-heading .profile-edit-action")?.remove();heading.append(edit);document.querySelector(".character-bio-heading").append(heading);
       const facts = document.createElement("dl"); facts.className = "character-fact-grid";
       const membership = state.gameDetail.memberships.filter(m => m.characterIds?.includes(characterId));
       const players = membership.map(m => state.gameDetail.players.find(p => p.id === m.playerId)?.name).filter(Boolean);
-      for (const [label, value] of [["Played by", players.join(", ")], ["Aliases", record.details.aliases.join(", ")],
-        ["Pronouns", record.details.pronouns], ["Role", record.details.role], ["Status", record.details.status]]) {
-        if (!value) continue;
+      for (const [label, value] of [["Played by", players.join(", ")], ["Status", record.details.status]]) {
         const row = document.createElement("div"), dt = document.createElement("dt"), dd = document.createElement("dd");
-        dt.textContent = label; dd.textContent = value; row.append(dt, dd); facts.append(row);
+        dt.textContent = label; dd.textContent = value || "—"; row.append(dt, dd); facts.append(row);
       }
       host.append(facts);
-      for (const [field, label] of [["overview","Overview"],["backstory","Backstory"],["notes","Notes"]]) if (record.details[field]) {
-        const h = document.createElement("h3"), p = document.createElement("p"); h.textContent = label; p.textContent = record.details[field]; p.className = "character-prose"; host.append(h,p);
+      for (const [field, label] of [["backstory","Backstory"]]) {
+        const h = document.createElement("h3"), p = document.createElement("p"); h.textContent = label; p.textContent = record.details[field] || "—"; p.className = "character-prose"; host.append(h,p);
       }
-      if (record.details.statistics.length) {
+      {
         const h = document.createElement("h3"); h.textContent = "Statistics"; host.append(h);
         const list = document.createElement("dl"); list.className = "character-fact-grid";
         for (const stat of record.details.statistics) { const row = document.createElement("div"), name = document.createElement("dt"), value = document.createElement("dd");
-          name.textContent = `${stat.group ? `${stat.group} · ` : ""}${stat.name}`; value.textContent = stat.value === null ? "Not recorded" : String(stat.value); row.append(name,value); list.append(row); }
-        host.append(list);
+          name.textContent = stat.name; value.textContent = stat.value === null ? "—" : String(stat.value); row.append(name,value); list.append(row); }
+        if(!list.children.length){const unknown=document.createElement("p");unknown.textContent="—";list.append(unknown);}host.append(list);
       }
       if (record.details.relationships.length) {
-        const h = document.createElement("h3"), list = document.createElement("ul"); h.textContent = "Connections";
+        const h = document.createElement("h3"), list = document.createElement("ul"),panel=document.createElement("section"),toggle=document.createElement("button"); h.textContent = "Connections";panel.hidden=true;toggle.type="button";toggle.className="quiet-button";toggle.textContent="Connections";toggle.setAttribute("aria-expanded","false");toggle.onclick=()=>{panel.hidden=!panel.hidden;toggle.setAttribute("aria-expanded",String(!panel.hidden));};
         for (const ref of record.details.relationships) {
           const li = document.createElement("li"); li.append(document.createTextNode(`${ref.relation} · `));
           const target = ref.entityType === "Character" ? state.gameDetail.characters.find(c => c.id === ref.id) : ref.entityType === "Player" ? state.gameDetail.players.find(p => p.id === ref.id) : null;
@@ -1279,51 +1213,54 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           else li.append(document.createTextNode(target?.name || "Unavailable connection"));
           list.append(li);
         }
-        host.append(h,list);
+        panel.append(h,list);host.append(toggle,panel);
       }
-      const history = document.createElement("section"); history.className = "character-change-history";
-      const historyHeading = document.createElement("h3"), changes = document.createElement("ol"), more = document.createElement("button");
-      historyHeading.textContent = "Change history"; more.textContent = "Load earlier changes"; more.type = "button"; more.className = "quiet-button"; more.hidden = true;
-      history.append(historyHeading,changes,more); host.append(history);
-      void loadCharacterHistory(gameId,characterId,history,epoch);
       edit.onclick = () => editor();
     };
     const editor = () => {
+      document.querySelector(".character-bio-heading .profile-edit-action")?.remove();
+      for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
       host.replaceChildren();
       const form = document.createElement("form"); form.className = "character-edit-form";
-      const h = document.createElement("h2"); h.textContent = "Edit character information"; form.append(h);
+
       const nameLabel = document.createElement("label"), nameInput = document.createElement("input");
       nameLabel.textContent = "Character name"; nameInput.value = record.name; nameInput.required = true; nameInput.maxLength = 120; nameLabel.append(nameInput); form.append(nameLabel);
       const inputs = {};
-      for (const [field,label,max,multi] of [["aliases","Aliases (one per line)",2500,true],["pronouns","Pronouns",80,false],["role","Role",120,false],["status","Status",120,false],["subtitle","Card subtitle",160,false],["overview","Overview",1000,true],["backstory","Backstory",8000,true],["notes","Notes",4000,true]]) {
-        const wrapper = document.createElement("label"), input = document.createElement(multi ? "textarea" : "input");
+      for (const [field,label,max,multi] of [["role","Class / role",120,false],["status","Status",120,false],["backstory","Backstory",8000,true]]) {
+        const wrapper = document.createElement("label"), input = document.createElement(multi ? "textarea" : "select");
         wrapper.textContent = label; input.maxLength = max; input.value = field === "aliases" ? record.details.aliases.join("\n") : record.details[field] || "";
-        input.id = `character-edit-${field}`; wrapper.append(input); form.append(wrapper); inputs[field] = input;
+        if (!multi) {
+          const options=field==="role"?["", "Adventurer", "Fighter", "Rogue", "Ranger", "Wizard", "Cleric", "Bard", "Druid", "Paladin", "NPC"]:["", "Active", "Missing", "Retired", "Deceased"];
+          if(input.value&&!options.includes(input.value))options.push(input.value);
+          const selected=record.details[field]||"";if(selected&&!options.includes(selected))options.push(selected);
+          for(const value of options)input.add(new Option(value||"Not set",value));input.value=selected;
+        }
+        input.id = `character-edit-${field}`; input.setAttribute("aria-label",label); wrapper.append(input); form.append(wrapper); inputs[field] = input;
       }
       const stats = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "Statistics"; stats.append(legend);
       const rows = [];
       const addStat = (stat = {group:null,name:"",value:null}) => {
         const row = document.createElement("div"); row.className = "character-stat-editor";
         const controls = {};
-        for (const label of ["Group","Name","Type","Value"]) { const wrap = document.createElement("label"); wrap.textContent = label; const input = document.createElement(label === "Type" ? "select" : "input");
+        for (const label of ["Name","Value"]) { const wrap = document.createElement("label"); wrap.textContent = label; const input = document.createElement(label === "Type" ? "select" : "input");
           input.setAttribute("aria-label",label);
           if (label === "Type") for (const kind of ["Unknown","Text","Number","Boolean"]) { const option = document.createElement("option"); option.textContent = kind; input.append(option); }
-          else input.maxLength = label === "Group" ? 80 : label === "Name" ? 120 : 500;
+          else input.maxLength = label === "Name" ? 120 : 500;
           wrap.append(input); row.append(wrap); controls[label] = input;
         }
-        controls.Group.value = stat.group || ""; controls.Name.value = stat.name; controls.Value.value = stat.value === null ? "" : String(stat.value);
-        controls.Type.value = stat.value === null ? "Unknown" : typeof stat.value === "number" ? "Number" : typeof stat.value === "boolean" ? "Boolean" : "Text";
+        controls.Name.value = stat.name; controls.Value.value = stat.value === null ? "" : String(stat.value);
+        controls.original=stat;
         const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button"; remove.textContent = "Remove statistic"; remove.onclick = () => {row.remove();};
         row.append(remove); stats.append(row); rows.push({row, ...controls});
       };
       record.details.statistics.forEach(addStat);
       const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button"; add.textContent = "Add statistic"; add.onclick = () => {if (rows.filter(r => r.row.isConnected).length < 100) addStat();}; form.append(stats,add);
-      const relationships = document.createElement("fieldset"), connectionsLegend = document.createElement("legend"); connectionsLegend.textContent = "Connections"; relationships.append(connectionsLegend);
+      const relationships = document.createElement("fieldset"), connectionsLegend = document.createElement("legend"); connectionsLegend.textContent = "Relationships"; relationships.append(connectionsLegend);
       const connectionRows = [], connectionHelp = document.createElement("p");
       let connectionAssets = [];
       const populateTargets = (row, chosen = row.target.value) => {
         row.target.replaceChildren();
-        const none = document.createElement("option"); none.value = ""; none.textContent = "Choose a reference"; row.target.append(none);
+        const none = document.createElement("option"); none.value = ""; none.textContent = "Choose player"; row.target.append(none);
         const targets = row.type.value === "Character" ? state.gameDetail.characters.map(c=>({id:c.id,name:c.name}))
           : row.type.value === "Player" ? state.gameDetail.players.map(p=>({id:p.id,name:p.name}))
           : connectionAssets.map(a=>({id:a.key,name:a.metadata?.title || a.name}));
@@ -1331,23 +1268,23 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         for (const target of targets) {const option = document.createElement("option"); option.value = target.id; option.textContent = target.name; row.target.append(option);}
         row.target.value = chosen;
       };
-      const addConnection = (ref = {entityType:"Character",id:"",relation:""}) => {
+      const addConnection = (ref = {entityType:"Player",id:"",relation:""}) => {
         const element = document.createElement("div"); element.className = "character-connection-editor";
-        const type = document.createElement("select"), target = document.createElement("select"), relation = document.createElement("input");
-        for(const kind of ["Character","Player","Asset"]) {const option = document.createElement("option");option.value=kind;option.textContent=kind;type.append(option);}
-        type.value=ref.entityType; relation.value=ref.relation; relation.maxLength=120; relation.placeholder="e.g. Ally, Portrait reference";
-        for(const [label,input] of [["Reference type",type],["Reference",target],["Relationship",relation]]) {const wrap=document.createElement("label");wrap.textContent=label;wrap.append(input);element.append(wrap);}
+        const type = document.createElement("select"), target = document.createElement("select"), relation = document.createElement("select");
+        for(const kind of (ref.id ? [ref.entityType] : ["Player"])) {const option = document.createElement("option");option.value=kind;option.textContent=kind;type.append(option);}
+        type.value=ref.entityType;type.hidden=true;for(const value of ["","Ally","Sibling of","Enemy of","Parent of","Child of",...(ref.relation?[ref.relation]:[])].filter((value,index,all)=>all.indexOf(value)===index))relation.add(new Option(value||"Choose relationship",value));relation.value=ref.relation;
+        for(const [label,input] of [["Reference type",type],["Player",target],["Relationship",relation]]) {const wrap=document.createElement("label");wrap.textContent=label;input.setAttribute("aria-label",label);wrap.append(input);if(input===type)wrap.hidden=true;element.append(wrap);}
         const row={element,type,target,relation}; populateTargets(row,ref.id); type.onchange=()=>populateTargets(row,"");
-        const remove=document.createElement("button");remove.type="button";remove.className="quiet-button";remove.textContent="Remove connection";remove.onclick=()=>element.remove();element.append(remove);
-        connectionRows.push(row);relationships.append(element);
+        const remove=document.createElement("button");remove.type="button";remove.className="quiet-button";remove.textContent="Remove relationship";remove.onclick=()=>element.remove();element.append(remove);
+        connectionRows.push(row);relationships.append(element);window.PantherUI.enhanceSelect(target,"Player");window.PantherUI.enhanceSelect(relation,"Relationship");
       };
-      record.details.relationships.forEach(addConnection);
-      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add connection";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
+      record.details.relationships.filter(ref=>ref.entityType==="Player").forEach(addConnection);
+      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add relationship";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
       form.append(relationships,addConnectionButton,connectionHelp);
-      const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Character-list thumbnail";
+      const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Profile portrait";
       const none = document.createElement("option"); none.value = ""; none.textContent = "No thumbnail"; cover.append(none);
       if (record.details.thumbnailAssetKey) {const selected = document.createElement("option"); selected.value = record.details.thumbnailAssetKey; selected.textContent = "Current selected thumbnail"; cover.append(selected);}
-      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); form.append(coverWrap);
+      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); const uploadPortrait=document.createElement("button");uploadPortrait.type="button";uploadPortrait.className="quiet-button";uploadPortrait.textContent="Upload portrait";uploadPortrait.onclick=()=>document.getElementById("character-portrait-file").click();form.append(coverWrap,uploadPortrait);
       void allAssets(gameId).then(assets=>{if (!current() || !cover.isConnected) return;
         connectionAssets = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" || a.metadata?.category === "reference");
         for(const row of connectionRows) if(row.type.value === "Asset")populateTargets(row);
@@ -1355,11 +1292,11 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           const option = document.createElement("option"); option.value = asset.key; option.textContent = asset.metadata.title || asset.name; cover.append(option);
         }
       }).catch(()=>{if (cover.isConnected) connectionHelp.textContent += " Thumbnail inventory could not be loaded; existing selection remains available.";});
-      const reasonWrap = document.createElement("label"), reason = document.createElement("input"); reasonWrap.textContent = "Reason for change"; reason.required = true; reason.maxLength = 500; reasonWrap.append(reason); form.append(reasonWrap);
+
       const buttons = document.createElement("div"), save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p");
       buttons.className = "model-control-row"; save.type = "submit"; save.className = "primary-button"; save.textContent = "Save character information";
       cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel edit"; status.setAttribute("role","status");
-      cancel.onclick = render; buttons.append(save,cancel); form.append(buttons,status); host.append(form);
+      cancel.onclick = render; buttons.append(save,cancel); form.append(buttons,status); host.append(form);for(const select of form.querySelectorAll("select:not([hidden])"))window.PantherUI.enhanceSelect(select,select.getAttribute("aria-label")||"Profile portrait");
       let pending = null;
       form.onsubmit = async event => {
         event.preventDefault(); save.disabled = true;
@@ -1367,20 +1304,23 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           if (!pending) {
             const details = structuredClone(record.details);
             for (const [field,input] of Object.entries(inputs)) details[field] = field === "aliases" ? input.value.split("\n").map(s=>s.trim()).filter(Boolean) : input.value.trim() || null;
-            details.relationships = connectionRows.filter(r=>r.element.isConnected).map(row=>{
-              if (!row.target.value || !row.relation.value.trim()) throw new Error("Choose a reference and describe its relationship.");
+            details.relationships = [...record.details.relationships.filter(ref=>ref.entityType!=="Player"), ...connectionRows.filter(r=>r.element.isConnected && (r.target.value || r.relation.value.trim())).map(row=>{
+              if (!row.target.value || !row.relation.value.trim()) throw new Error("Choose a player and relationship, or remove this row.");
               return {entityType:row.type.value,id:row.target.value,relation:row.relation.value.trim()};
-            });
+            })];
             details.thumbnailAssetKey = cover.value || null;
-            details.statistics = rows.filter(r=>r.row.isConnected).map(r => {
-              let value = r.Value.value.trim();
-              if (r.Type.value === "Unknown") value = null;
-              else if (r.Type.value === "Number") { if (!value || !Number.isFinite(Number(value))) throw new Error("Enter a valid numeric statistic."); value = Number(value); }
-              else if (r.Type.value === "Boolean") { if (!["true","false"].includes(value)) throw new Error("Boolean statistics must be true or false."); value = value === "true"; }
-              return {group:r.Group.value.trim() || null,name:r.Name.value.trim(),value};
+            details.statistics = rows.filter(r=>r.row.isConnected && (r.Name.value.trim() || r.Value.value.trim())).map(r => {
+              const text=r.Value.value.trim(),original=r.original;
+              if(!r.Name.value.trim())throw new Error("Name this statistic or remove it.");
+              let value=text||null;
+              if(text&&typeof original.value==="number"&&Number.isFinite(Number(text)))value=Number(text);
+              else if(text&&typeof original.value==="boolean"&&["true","false"].includes(text))value=text==="true";
+              else if(text&&original.value===null&&/^-?\d+(\.\d+)?$/.test(text))value=Number(text);
+              else if(original.value===null&&["true","false"].includes(text))value=text==="true";
+              return {group:original.group||null,name:r.Name.value.trim(),value};
             });
             pending = {gameId,characterId,name:nameInput.value.trim(),mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,
-              operationId:crypto.randomUUID().replaceAll("-",""),reason:reason.value.trim(),dryRun:false};
+              operationId:crypto.randomUUID().replaceAll("-",""),reason:`Updated ${Object.keys(details).filter(key=>JSON.stringify(details[key])!==JSON.stringify(record.details[key])).join(", ") || "profile"}${nameInput.value.trim()!==record.name?" and name":""}`,dryRun:false};
           }
           for (const control of form.querySelectorAll("input,textarea,select,fieldset,button")) control.disabled = true;
           showLoading(status,"Saving the guarded character revision…");
@@ -1399,7 +1339,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
             pending = null;
             for (const c of form.querySelectorAll("input,textarea,select,fieldset,button")) c.disabled = false;
             save.textContent = "Save character information";
-            status.textContent = `${error.message}. Correct the fields and try again.`;
+            status.textContent = error.message;
             return;
           }
           status.textContent = error.status === 409 ? "Another update changed this character. Cancel to review the latest version." : `${error.message}. Retry saves the same revision.`;
@@ -1417,12 +1357,76 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
   }
 }
 
+function generateCharacterPortrait(gameId,characterId,epoch) {
+  const record=state.currentCharacterFacts,status=document.getElementById("character-portrait-status");
+  if(!record){status.textContent="Wait for the profile to load.";return;}
+  let form=document.getElementById("character-portrait-generation");if(form){form.hidden=!form.hidden;return;}
+  form=document.createElement("form");form.id="character-portrait-generation";form.className="character-edit-form";
+  const label=document.createElement("label"),prompt=document.createElement("textarea");label.textContent="Portrait direction";prompt.required=true;prompt.maxLength=4000;prompt.placeholder="Appearance, clothing, pose…";label.append(prompt);
+  const submit=document.createElement("button");submit.className="primary-button";submit.textContent="Generate portrait";submit.type="submit";form.append(label,submit);document.querySelector(".character-heading").append(form);
+  let request=null,job=null,saveBody=null;
+  const current=()=>epoch===routeEpoch&&state.currentCharacter?.characterId===characterId;
+  const poll=async()=>{
+    if(!current())return;
+    try {
+      job=await api("/asset-generation",{gameId,jobId:job.jobId});
+      if(!current())return;
+      if(job.status==="PUBLISHED"){
+        const asset=await api("/object-url",{key:job.assetKey});
+        if(!sameGameKey(job.assetKey)||!asset.metadata?.characterIds?.includes(characterId))throw new Error("Generated portrait does not match this character.");
+        saveBody ||= {gameId,characterId,name:record.name,mode:"edit",details:{...record.details,thumbnailAssetKey:job.assetKey},expectedRevision:record.revision,expectedSourceHash:null,operationId:crypto.randomUUID().replaceAll("-",""),reason:"Selected generated profile portrait",dryRun:false};
+        await api("/character-details",{},{body:saveBody});
+        if(!current())return;assetIndex=null;await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);form.remove();status.textContent="";return;
+      }
+      if(job.status==="ATTENTION"){status.textContent=job.message||"Portrait generation needs attention.";return;}
+      status.textContent=job.status==="QUEUED"?"Portrait queued":"Generating portrait…";setTimeout(()=>void poll(),4000);
+    }catch(error){if(current()){status.textContent=error.message;submit.textContent="Continue portrait";submit.disabled=false;}}
+  };
+  form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{if(!job){request ||= {gameId,type:"portrait",characterId,name:`${record.name} portrait`,prompt:prompt.value.trim(),operationId:crypto.randomUUID().replaceAll("-","")};job=await api("/asset-generation",{},{body:request});prompt.disabled=true;}void poll();}catch(error){if(current()){status.textContent=error.message;submit.disabled=false;submit.textContent="Retry portrait request";}}};prompt.focus();
+}
+
+async function uploadCharacterPortrait(gameId,characterId,file,epoch,setThumbnail=true) {
+  if(!file)return;
+  const status=document.getElementById("character-portrait-status"),button=document.getElementById("character-portrait-upload"),record=state.currentCharacterFacts;
+  if(!record || record.characterId!==characterId){status.textContent="Wait for the profile to load.";return;}
+  button.disabled=true;
+  try {
+    if(!["image/png","image/jpeg","image/webp"].includes(file.type)||file.size>20*1024**2||!file.size)throw new Error("Choose a PNG, JPEG or WebP under 20 MiB.");
+    const bytes=await file.arrayBuffer(),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)))),operationId=crypto.randomUUID().replaceAll("-","");
+    status.textContent="Uploading portrait…";
+    const signed=await api("/uploads",{},{body:{gameId,assetId:`portrait-${operationId}`,kind:"portrait",filename:file.name,size:file.size,contentType:file.type,sha256,metadata:{title:`${record.name} portrait`,category:"reference",characterIds:[characterId],extra:{relationshipRole:"finished",generation:{schemaVersion:1,method:"unknown",cost:{status:"unknown"}}}}}});
+    const headers={...signed.headers};delete headers["Content-Length"];delete headers["content-length"];
+    const uploaded=await fetch(signed.url,{method:"PUT",headers,body:bytes,signal:AbortSignal.timeout(45000)});if(!uploaded.ok)throw new Error("Portrait upload failed.");
+    const verified=await api("/object-url",{key:signed.key});if(verified.sha256!==sha256||verified.size!==file.size)throw new Error("Portrait verification failed.");
+    const details={...record.details,thumbnailAssetKey:signed.key};
+    if(setThumbnail)await api("/character-details",{},{body:{gameId,characterId,name:record.name,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,operationId,reason:"Uploaded profile portrait",dryRun:false}});
+    if(epoch!==routeEpoch)return;
+    if(setThumbnail){const portrait=document.getElementById("character-portrait-only");portrait.src=verified.url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;}
+    assetIndex=null;await window.PantherUI.invalidate(apiScope(),["/assets","/characters","/character-details","/character-details/history","/dashboard-recent"],gameId);
+    await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);status.textContent="";
+  }catch(error){if(epoch===routeEpoch)status.textContent=error.message;}
+  finally{if(epoch===routeEpoch)button.disabled=false;}
+}
+
 async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   state.currentCharacterFacts = null;
+  for(const button of document.querySelectorAll("[data-character-panel]")){const panel=document.getElementById(button.dataset.characterPanel);panel.hidden=true;button.setAttribute("aria-expanded","false");button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute("aria-expanded",String(!panel.hidden));if(!panel.hidden&&panel.id==="character-assets")void loadCharacterAssets(gameId,characterId,epoch);if(!panel.hidden&&panel.id==="character-appearance-panel"&&!state.appearanceVersions)void loadAppearanceVersions(gameId,characterId,epoch);};}
+  document.getElementById("character-appearance-panel").hidden=false;document.getElementById("character-assets").hidden=false;
+  for(const button of document.querySelectorAll('[data-character-upload]'))button.onclick=()=>document.getElementById(button.dataset.characterUpload==="reference"?"character-reference-file":"character-portrait-file").click();
+  for(const button of document.querySelectorAll('[data-character-generate]'))button.onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
+  document.getElementById("character-reference-file").onchange=event=>void uploadCharacterPortrait(gameId,characterId,event.target.files?.[0],epoch,false);
+  const portraitStatus=document.getElementById("character-portrait-status");portraitStatus.textContent="";
+  document.getElementById("character-portrait-upload").onclick=()=>document.getElementById("character-portrait-file").click();
+  document.getElementById("character-portrait-file").value="";
+  document.getElementById("character-portrait-file").onchange=event=>void uploadCharacterPortrait(gameId,characterId,event.target.files?.[0],epoch);
+  document.getElementById("character-portrait-generation")?.remove();
+  document.getElementById("character-portrait-generate").onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
   document.getElementById("characters-more").hidden = true;
   document.getElementById("character-create").hidden = true;
   document.getElementById("character-create-form").hidden = true;
+  const registered=state.gameDetail?.characters?.find(character=>character.id===characterId);
+  configureCharacter({character:{...registered,gameId,id:characterId,name:registered?.name||characterId},poster:null,model:null});
   void loadCharacterFacts(gameId, characterId, epoch);
   document.getElementById("character-assets-list").replaceChildren();
   document.getElementById("appearance-history").hidden = true;
@@ -1430,11 +1434,12 @@ async function loadCharacter(gameId, characterId) {
   state.selectedAppearance = null;
   state.pendingAppearanceRestore = null;
   appearanceRequest++;
-  showLoading(document.getElementById("character-assets-status"), "Finding this character’s images, models and media…");
+  showLoading(document.getElementById("character-assets-status"), "Loading references…");
+  void loadCharacterAssets(gameId,characterId,epoch);
   elements.characterList.hidden = true;
-  elements.characterProfile.hidden = true;
+  elements.characterProfile.hidden = false;
   elements.charactersStatus.hidden = false;
-  showLoading(elements.charactersStatus, "Fetching character details and portrait…");
+  showLoading(elements.charactersStatus, "Fetching portrait…");
   try {
     const params=new URLSearchParams(location.search);
     const profile = await api("/character", { gameId, characterId,
@@ -1443,12 +1448,11 @@ async function loadCharacter(gameId, characterId) {
     configureCharacter(profile);
     elements.characterProfile.hidden = false;
     elements.charactersStatus.hidden = true;
-    void loadAppearanceVersions(gameId, characterId, epoch);
-    void loadCharacterAssets(gameId, characterId, epoch);
+    void loadAppearanceVersions(gameId,characterId,epoch);
   } catch (error) {
     if (epoch !== routeEpoch) return;
     if (error.message !== "Session expired") {
-      elements.charactersStatus.textContent = error.message;
+      elements.charactersStatus.textContent = `Appearance unavailable: ${error.message}`;
     }
   }
 }
@@ -1464,11 +1468,10 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
     matching.sort((a,b) => b.lastModified.localeCompare(a.lastModified));
     list.replaceChildren();
     let previousGroup = null;
-    matching.sort((a,b) => `${a.kind}:${a.metadata?.category || "Unclassified"}`.localeCompare(`${b.kind}:${b.metadata?.category || "Unclassified"}`) || b.lastModified.localeCompare(a.lastModified));
+    matching.sort((a,b) => a.kind.localeCompare(b.kind) || b.lastModified.localeCompare(a.lastModified));
     for (const asset of matching) {
       const li = document.createElement("li");
-      const purpose = asset.metadata?.category || "Unclassified";
-      const group = `${asset.kind} · ${purpose}`;
+      const group = asset.kind;
       if (group !== previousGroup) {const header = document.createElement("li"), h = document.createElement("h3"); h.textContent = group; header.append(h); list.append(header); previousGroup = group;}
       const link = assetLink(asset);
       if (asset.contentType?.startsWith("image/")) {
@@ -1476,7 +1479,7 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
         image.loading = "lazy"; image.dataset.characterReference = asset.key;
         link.prepend(image); li.className = "character-reference-card";
       }
-      li.append(link, document.createTextNode(` · ${asset.kind} · ${purpose}`));
+      li.append(link, document.createTextNode((asset.metadata?.tags || []).length ? ` · ${asset.metadata.tags.join(" · ")}` : ""));
       list.append(li);
     }
     const images = [...list.querySelectorAll("img[data-character-reference]")];
@@ -1487,7 +1490,7 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
         for (const img of batch) { const url = links.images?.[img.dataset.characterReference]?.url; if (url) img.src = url; else img.remove(); }
       }).catch(()=>batch.forEach(img=>img.remove()));
     }
-    status.textContent = matching.length ? "" : "No media yet.";
+    status.textContent = "";const empty=document.getElementById("character-reference-empty"),upload=document.querySelector('[data-character-upload="reference"]');empty.hidden=Boolean(matching.length);if(matching.length)document.querySelector("#character-assets .explorer-heading").append(upload);else empty.append(upload);
   } catch (error) {
     if (current()) status.textContent = error.message;
   }
@@ -1624,6 +1627,14 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  closeOptionalInfoDialogs();
+  const legacySessionRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/(?:audio|transcripts)\/?$/);
+  if(legacySessionRoute){navigate(`${legacySessionRoute[1]||''}/sessions${location.search}${location.hash}`,{replace:true});return;}
+  closeLiveReader();
+  document.getElementById("recording-badge").hidden = true;
+  document.getElementById("episode-create-action")?.remove();
+  document.getElementById("episode-workspace")?.stopEditing?.();
+  document.getElementById("episode-workspace")?.stopPreview?.();
   workshop.stop();
   document.getElementById("workshop").hidden = true;
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
@@ -1641,12 +1652,15 @@ async function renderRoute() {
   document.getElementById("game-settings").hidden = true;
   clearLibrary();
   closePreview();
+  window.PantherUI.unmountAssetsLibrary?.(document.getElementById('assets-library'));
+  document.getElementById('assets-library').hidden=true;document.getElementById('asset-view-actions').hidden=true;
+  elements.entries.hidden=false;elements.breadcrumbs.hidden=false;elements.status.hidden=false;
   elements.novel.hidden = true;
   clearNovel();
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|media|characters|novel|audio|transcripts|videos|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1680,7 +1694,17 @@ async function renderRoute() {
     setActiveNavigation("settings"); elements.characters.hidden = true; elements.explorer.hidden = true;
     document.getElementById("game-settings").hidden = false; renderGameSettings(); return;
   }
-  if (["audio", "transcripts", "videos"].includes(section)) {
+  if(section==='assets') {
+    setActiveNavigation('assets');elements.characters.hidden=true;elements.explorer.hidden=false;
+    const files=new URLSearchParams(location.search).has('folder');
+    document.getElementById('asset-view-actions').hidden=!files;document.getElementById('asset-browse-files').hidden=true;
+    const back=document.getElementById('asset-back-library');back.hidden=!files;back.href=gamePath('assets');back.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(back.href);};
+    document.getElementById('asset-browse-files').onclick=()=>navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${state.gameId}/`));
+    if(!files){elements.entries.hidden=true;elements.breadcrumbs.hidden=true;elements.status.hidden=true;elements.loadMore.hidden=true;await loadAssetLibrary(epoch);}
+    else {const folder=new URLSearchParams(location.search).get('folder');await loadPrefix(folder?.startsWith(`games/${state.gameId}/`)?folder:`games/${state.gameId}/`);}
+    const key=new URLSearchParams(location.search).get('asset');if(epoch===routeEpoch&&sameGameKey(key))await previewFile({key,name:key.split('/').at(-1)});return;
+  }
+  if (["sessions", "videos"].includes(section)) {
     setActiveNavigation(section);
     elements.characters.hidden = true;
     elements.explorer.hidden = true;
@@ -1708,7 +1732,7 @@ async function renderRoute() {
     navigate("/media", { replace: true });
     return;
   }
-  setActiveNavigation("media");
+  setActiveNavigation("assets");
   elements.characters.hidden = true;
   elements.explorer.hidden = false;
   const folder = new URLSearchParams(location.search).get("folder");
@@ -1752,13 +1776,55 @@ function appendFile(file) {
 
 
 let mediaListing = {prefix:null,folders:[],files:[],loading:false,error:"",hasMore:false,loadedPages:0};
+let assetListing={gameId:null,assets:[],cursor:null,loading:false,error:'',pages:0};
+const assetUploads=new Map(),assetGenerationJobs=new Map();
+function describeResolvedAsset(result){return {...result,name:result.metadata?.title||result.filename||result.key?.split('/').at(-1),kind:result.kind||'unknown',sourceKeys:result.metadata?.sourceKeys||[]};}
+async function uploadGameAsset(gameId,request){
+  let pending=assetUploads.get(request.operationId);
+  if(!pending){
+    const file=request.file;if(!file||!file.size||file.size>100*1024**2)throw Object.assign(new Error('Choose a file under 100 MiB.'),{status:400});
+    const raster=['map','blueprint','location'].includes(request.type);if(raster&&(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>20*1024**2))throw Object.assign(new Error('Choose a PNG, JPEG or WebP image under 20 MiB.'),{status:400});
+    const bytes=await file.arrayBuffer(),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))));
+    pending={bytes,body:{gameId,assetId:`${request.type||'asset'}-${request.operationId}`,kind:request.type||'unknown',filename:file.name,size:file.size,contentType:file.type||'application/octet-stream',sha256,metadata:{title:(request.name||file.name).trim(),category:'reference',extra:{relationshipRole:'finished',generation:{schemaVersion:1,method:'unknown',cost:{status:'unknown'}}}}}};
+    assetUploads.set(request.operationId,pending);
+  }
+  try{
+    const signed=await api('/uploads',{},{body:pending.body});
+    let existing=null;try{existing=await api('/object-url',{key:signed.key});}catch(error){if(error.status!==404)throw error;}
+    if(!existing){const headers={...signed.headers};delete headers['Content-Length'];delete headers['content-length'];const response=await fetch(signed.url,{method:'PUT',headers,body:pending.bytes,signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('Upload could not finish. Retry to continue.');existing=await api('/object-url',{key:signed.key});}
+    if(existing.sha256!==pending.body.sha256||existing.size!==pending.body.size)throw new Error('Uploaded file verification failed. The original was not replaced.');
+    const asset=describeResolvedAsset(existing);assetUploads.delete(request.operationId);await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;
+    if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets.filter(item=>item.key!==asset.key)];drawAssetLibrary(routeEpoch);}return asset;
+  }catch(error){if(error.status===400)assetUploads.delete(request.operationId);if(error instanceof TypeError)throw new Error('Upload interrupted. Your file is still selected; retry to continue.');throw error;}
+}
+function drawAssetLibrary(epoch){
+  const host=document.getElementById('assets-library'),gameId=state.gameId;host.hidden=false;
+  window.PantherUI.mountAssetsLibrary?.(host,{...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,browseFilesHref:gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`),onBrowseFiles:event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`));},hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
+    onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
+    onThumbnail:async asset=>(await api('/object-url',{key:asset.key})).url,
+    onUpload:request=>uploadGameAsset(gameId,request),
+    onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request}});assetGenerationJobs.set(job.jobId,job);return job;},
+    onGenerationStatus:async job=>{const result=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,result);if(result.status==='PUBLISHED'&&result.assetKey&&!assetListing.assets.some(asset=>asset.key===result.assetKey)){const asset=describeResolvedAsset(await api('/object-url',{key:result.assetKey}));await window.PantherUI.invalidate(apiScope(),['/assets','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets];drawAssetLibrary(epoch);}}return result;}});
+}
+async function loadAssetLibrary(epoch,cursor=null){
+  const gameId=state.gameId,current=()=>epoch===routeEpoch&&state.gameId===gameId;
+  if(assetListing.gameId!==gameId)assetListing={gameId,assets:[],cursor:null,loading:false,error:'',pages:0};
+  assetListing.loading=true;assetListing.error='';drawAssetLibrary(epoch);
+  const jobsRequest=!cursor?api('/asset-generation',{gameId}).catch(()=>null):Promise.resolve(null);
+  try{const [result,jobs]=await Promise.all([api('/assets',{gameId,section:'all',cursor}),jobsRequest]);if(!current())return;if(!Array.isArray(result.assets))throw new Error('Assets are temporarily unavailable.');
+    for(const job of jobs?.jobs||[])assetGenerationJobs.set(job.jobId,job);
+    const assets=cursor?[...assetListing.assets,...result.assets]:result.assets;assetListing={gameId,assets:[...new Map(assets.map(asset=>[asset.key,asset])).values()],cursor:result.cursor||null,loading:false,error:'',pages:cursor?assetListing.pages+1:1};drawAssetLibrary(epoch);
+    const missing=(jobs?.jobs||[]).filter(job=>job.status==='PUBLISHED'&&sameGameKey(job.assetKey)&&!assetListing.assets.some(asset=>asset.key===job.assetKey));
+    const resolved=await Promise.allSettled(missing.map(job=>api('/object-url',{key:job.assetKey})));if(!current())return;for(const result of resolved)if(result.status==='fulfilled'){const asset=describeResolvedAsset(result.value);if(!assetListing.assets.some(existing=>existing.key===asset.key))assetListing.assets.push(asset);}if(resolved.length)drawAssetLibrary(epoch);
+  }catch(error){if(current()){assetListing.loading=false;assetListing.error=error.message;drawAssetLibrary(epoch);}}
+}
 function drawMediaBrowser() {
   const mount=window.PantherUI?.mountMediaBrowser;
   if (!mount) return false;
   elements.breadcrumbs.hidden=true;elements.status.hidden=true;elements.loadMore.hidden=true;
   elements.entries.classList.add("react-media-host");
   mount(elements.entries,{...mediaListing,gameId:state.gameId,gameName:state.gameDetail?.game.name || state.gameId,
-    onFolder:prefix=>navigate(gamePath("media")+"?folder="+encodeURIComponent(prefix)), onFile:previewFile,
+    onFolder:prefix=>navigate(gamePath(new URLSearchParams(location.search).has('folder')&&location.pathname.endsWith('/assets')?'assets':'media')+"?folder="+encodeURIComponent(prefix)), onFile:previewFile,
     onMore:()=>loadPrefix(state.currentPrefix,state.nextCursor)});
   return true;
 }
@@ -1824,6 +1890,8 @@ function previewElement(contentType, url, title) {
 }
 
 async function previewFile(file) {
+  closeOptionalInfoDialogs();
+  dismissNarrativePreview();
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); }
   const epoch = ++previewEpoch;
   const download = document.getElementById("asset-download");
@@ -1841,6 +1909,7 @@ async function previewFile(file) {
   try {
     const result = await api("/object-url", { key: file.key });
     if (epoch !== previewEpoch) return;
+    elements.previewTitle.textContent=result.metadata?.title||file.name;
     renderGeneration(document.getElementById("asset-generation"), result.metadata);
     // Physical folders may change; connections/readers use the API's stable asset identity.
     const assetRef = result.key || file.key;
@@ -1853,7 +1922,7 @@ async function previewFile(file) {
     elements.openOriginal.href = result.url;
     if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
     if (result.contentType.startsWith("video/")) configureVideoPreview({...result,key:assetRef},elements.previewBody.firstChild,epoch);
-    void renderAssetLinks(assetRef, epoch);
+    void renderAssetLinks(assetRef, epoch, {...result,key:assetRef,name:result.filename||file.name,kind:result.kind||'unknown',sourceKeys:result.metadata?.sourceKeys||[]});
     void renderAssetVersions(assetRef, epoch);
     if (structured) {
       const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef});
@@ -1886,9 +1955,11 @@ async function downloadAsset(key, button, status, current = () => true) {
 }
 
 function closePreview() {
+  closeOptionalInfoDialogs();
   previewEpoch += 1;
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); media.removeAttribute("src"); media.load(); }
   elements.previewDialog.close();
+  dismissNarrativePreview();
   elements.previewBody.replaceChildren();
   elements.openOriginal.removeAttribute("href");
   document.getElementById("asset-links").replaceChildren();
@@ -1905,7 +1976,7 @@ function renderGeneration(host, metadata) {
     const dt = document.createElement("dt"), dd = document.createElement("dd");
     dt.textContent = label; dd.textContent = value; list.append(dt, dd);
   };
-  if (!g || g.schemaVersion !== 1) { host.append(heading, "Generation details unavailable."); return; }
+  if (!g || g.schemaVersion !== 1) return;
   const methods = {ai:"AI-generated", "ai-assisted":"AI-assisted", procedural:"Software-generated", capture:"Recorded", human:"Human-created", unknown:"Unknown"};
   const locations = {local:"Local computer", remote:"Provider-hosted", "not-applicable":"Not applicable", unknown:"Unknown"};
   row("Creation", methods[g.method] || "Unknown");
@@ -2069,8 +2140,6 @@ async function novelOrganization(gameId, current) {
   return {stories:results[0],books:results[1]};
 }
 
-const narrativeClassification = {"grounded-adaptation":"Grounded adaptation", "creative-reimagining":"Creative reimagining", "playful-derivative":"Playful derivative", "unclassified":"Creative classification not assigned"};
-
 function bookLink(title, book, chapterId) {
   const link = novelLink(title, chapterId || "", book.id);
   link.href = gamePath(chapterId ? `novel/${chapterId}` : "novel") + `?book=${encodeURIComponent(book.id)}&bookRevision=${encodeURIComponent(book.revision)}`;
@@ -2084,7 +2153,7 @@ function bookCard(book, story, byKey, current) {
   const meta = document.createElement("p"); meta.className = "eyebrow";
   meta.textContent = `${story?.title || "Story unavailable"} · ${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
   const synopsis = document.createElement("p"); synopsis.textContent = book.synopsis || "No synopsis provided.";
-  const details = document.createElement("p"); details.textContent = [narrativeClassification[book.classification] || "Unclassified",book.authorCredit,
+  const details = document.createElement("p"); details.textContent = [...(book.tags || []),book.authorCredit,
     `${book.volumes.length} volume${book.volumes.length === 1 ? "" : "s"}`,`Revision ${book.revision.slice(0,8)}`].filter(Boolean).join(" · ");
   content.append(meta,heading,synopsis,details); card.append(content);
   if(book.previousRevision){const previous=bookLink("Previous book revision",{...book,revision:book.previousRevision});content.append(previous);}
@@ -2487,16 +2556,17 @@ function chapterDetails(chapter, versions) {
   }).catch(() => {
     if (epoch === routeEpoch && state.gameId === gameId && state.tokens) sources.textContent = "Connections unavailable. Reload the page to try again.";
   });
-  const provenance = document.createElement("details");
-  const label = document.createElement("summary"); label.textContent = "Full provenance and revision history";
-  const data = document.createElement("pre"); data.textContent = JSON.stringify(chapter.details, null, 2);
-  provenance.append(label, data);
+  const provenance = detailBlock("Provenance and revisions", chapter.details);
   novel.details.replaceChildren(heading, summary, creation, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
 }
 
 function manualChapterEditor(previous = null) {
   const host = document.getElementById("manual-chapter-form");
   host.hidden = false; host.replaceChildren();
+  const composer = document.getElementById("editorial-novel-composer");
+  const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
+  if (composer) composer.hidden = true;
+  if (create) create.hidden = true;
   const gameId = state.gameId, epoch = routeEpoch;
   const titleLabel = document.createElement("label"), title = document.createElement("input");
   titleLabel.textContent = "Chapter title"; title.required = true; title.maxLength = 160; title.value = previous?.title || ""; titleLabel.append(title);
@@ -2505,8 +2575,8 @@ function manualChapterEditor(previous = null) {
   const selectedSources = new Set(previous?.details.sourceKeys || []);
   const references = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "References (optional)"; references.append(legend);
   const save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p"), buttons = document.createElement("div");
-  save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Add chapter";
-  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true;};
+  save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Save chapter";
+  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true; if (!previous) {if (composer) composer.hidden = false; if (create) create.hidden = false; composer?.querySelector(".editorial-creation-panel")?.setAttribute("hidden", "");}syncNovelEmptyState();};
   status.setAttribute("role","status"); buttons.className = "model-control-row"; buttons.append(save,cancel); host.append(titleLabel,proseLabel,references,buttons,status);
   void allAssets(gameId).then(assets=>{
     if(epoch !== routeEpoch || !host.isConnected) return;
@@ -2534,15 +2604,49 @@ function manualChapterEditor(previous = null) {
       else {save.disabled = false; save.textContent = "Retry save";cancel.disabled = false;}
     }
   };
+  syncNovelEmptyState();
   title.focus();
 }
 
+function syncNovelEmptyState() {
+  const empty=document.getElementById('novel-empty-state'),panel=document.querySelector('#editorial-novel-composer .editorial-creation-panel'),form=panel?.querySelector('form');
+  const editing=!document.getElementById('manual-chapter-form').hidden||Boolean(panel&&!panel.hidden&&form&&!form.hidden);
+  if(empty)empty.hidden=editing||Boolean(panel&&!panel.hidden&&panel.querySelector(".editorial-project-progress"));
+  const action=document.querySelector('#novel .explorer-heading [data-generation-action]');
+  if(action)action.hidden=editing||Boolean(currentChapter);
+}
+
+function renderNovelEmptyState() {
+  const empty=document.createElement('section');empty.id='novel-empty-state';empty.className='novel-empty-state';empty.setAttribute('aria-label','Create your first chapter');
+  const heading=document.createElement('h2');heading.textContent='Create your first chapter';
+  const purpose=document.createElement('p');purpose.textContent='Turn recorded sessions into story chapters you can read and collect into books—or start a new story from a prompt. Transcripts are optional.';
+  const generate=document.createElement('button');generate.type='button';generate.className='primary-button';generate.textContent='Generate chapter';
+  const examples=document.createElement('div');examples.className='novel-prompt-examples';
+  const label=document.createElement('p');label.textContent='Try a prompt';examples.append(label);
+  const start=async(prompt='')=>{
+    for(const button of empty.querySelectorAll('button'))button.disabled=true;
+    try {
+      await document.querySelector('#novel .explorer-heading [data-generation-action]').onclick();
+      syncNovelEmptyState();
+      const brief=document.querySelector('#editorial-novel-composer textarea');
+      if(brief){if(prompt){brief.value=prompt;brief.dispatchEvent(new Event('input',{bubbles:true}));}brief.focus();}
+    } finally {for(const button of empty.querySelectorAll('button'))button.disabled=false;}
+  };
+  generate.onclick=()=>void start();
+  for(const prompt of ['Turn the selected session into a chapter with vivid scenes and natural dialogue.','Retell the session from one character’s point of view.','Write an original opening chapter for an adventure in this game.']){
+    const example=document.createElement('button');example.type='button';example.className='quiet-button';example.textContent=prompt;example.onclick=()=>void start(prompt);examples.append(example);
+  }
+  empty.append(heading,purpose,generate,examples);novel.list.append(empty);syncNovelEmptyState();
+}
+
 async function loadNovel(chapterId, epoch) {
-  document.getElementById("manual-chapter-create").onclick = () => manualChapterEditor();
   document.getElementById("manual-chapter-form").hidden = true;
   document.getElementById("manual-chapter-edit")?.remove();
   renderEditorialComposer("novel",epoch);
-  document.getElementById("editorial-novel-composer").hidden=Boolean(chapterId);
+  const composer = document.getElementById("editorial-novel-composer");
+  composer.hidden=Boolean(chapterId);
+  const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
+  if (create) create.hidden = true;
   const gameId = state.gameId;
   const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
   const loading = showLoading(novel.status, "Fetching the chapter list…");
@@ -2591,6 +2695,7 @@ async function loadNovel(chapterId, epoch) {
         novel.resume.append(link); novel.resume.hidden = false;
       }
       if (selectedBook) {
+        if(create)create.hidden=Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
         novel.list.append(bookCard(selectedBook,organization.stories.find(s=>s.id===selectedBook.storyId),byKey,current));
         for(const volume of selectedBook.volumes) {
           const section=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ol"); heading.textContent=volume.title;
@@ -2605,9 +2710,11 @@ async function loadNovel(chapterId, epoch) {
         const section=document.createElement("section"), heading=document.createElement("h2"), synopsis=document.createElement("p");heading.textContent=story.title;synopsis.textContent=story.synopsis;section.append(heading,synopsis);
         for(const book of books)section.append(bookCard(book,story,byKey,current));if(!books.length){const empty=document.createElement("p");empty.textContent="No books organized yet.";section.append(empty);}novel.list.append(section);}
       if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
-      const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters · source editions";novel.list.append(sourceHeading);
-      novel.status.hidden = Boolean(ordered.length || organization.stories.length);
-      novel.status.textContent = "No chapters yet.";
+      if(ordered.length&&organization.stories.length){const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters";novel.list.append(sourceHeading);}
+      novel.status.hidden = true;
+      novel.status.textContent = "";
+      if(!ordered.length&&!organization.stories.length)renderNovelEmptyState();
+      if(create)create.hidden=Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
       for (const [index, chapter] of ordered.entries()) {
         const card = document.createElement("div"); card.className = "novel-card";
         const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
@@ -2631,9 +2738,8 @@ async function loadNovel(chapterId, epoch) {
       if (chapter.details.previousChapterId) novel.details.append(novelLink("Previous chapter version",chapter.details.previousChapterId));
     }
     novel.notice.textContent = [chapter.notice,
-      state.gameDetail.game.purpose === "test" ? "Test-game adaptation · not campaign canon." : "",
       chapter.publicationStatus === "accepted-with-notes" ? "Working draft · AI review left unresolved notes. See Details." : "",
-      selectedBook ? `${selectedBook.title} · ${selectedBook.status === "approved" ? "Approved private selection" : "Private draft"} · ${narrativeClassification[selectedBook.classification]}.` : "Source edition · not an approved book selection.",
+      selectedBook ? selectedBook.title : "",
       sessions.get(chapter.sessionId)?.[0].id !== chapter.id ? "You are reading an earlier version. See Details for the latest." : "",
     ].filter(Boolean).join(" ");
     novel.notice.hidden = !novel.notice.textContent;
@@ -2660,6 +2766,7 @@ async function loadNovel(chapterId, epoch) {
     novel.status.hidden = false;
     novel.list.replaceChildren();
     novel.status.textContent = `${error.message}. Use Reload the page to try again.`;
+    if(create)create.hidden=Boolean(chapterId)||Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
   }
 }
 
@@ -2670,7 +2777,9 @@ function sameGameKey(key) {
 }
 
 function clearLibrary() {
-  currentTVEpisode = null;
+  document.getElementById('episode-workspace')?.stopEditing?.();
+  for(const host of document.querySelectorAll("[data-multi-filter]"))window.PantherUI.unmountMultiSelect?.(host);
+  for(const native of document.querySelectorAll('#episode-workspace select[data-react-select]'))window.PantherUI.destroySelect(native);
   document.getElementById("movie-workspace").replaceChildren();
   document.getElementById("movie-workspace").hidden = true;
   document.getElementById("session-library").hidden = true;
@@ -2679,7 +2788,7 @@ function clearLibrary() {
   document.getElementById("library-status").hidden = false;
   if (!state.tokens) {
     assetIndex = null; videoPlaylist = null;
-    videoLibraryView = {gameId:null,search:"",category:"all",tag:"",character:"",collection:""};
+    videoLibraryView = {gameId:null,search:"",tags:[],characters:[],collection:""};
   }
 }
 
@@ -2720,188 +2829,134 @@ function assetLink(asset, label) {
   return link;
 }
 
-let videoLibraryView = {gameId:null, search:"", category:"all", tag:"", character:"", collection:""};
+let videoLibraryView = {gameId:null, search:"", tags:[], characters:[], collection:""};
 let videoPlaylist = null;
-let currentTVEpisode = null;
-
-function setupTVLibrary(list,status,current,videoHost) {
-  const gameId=state.gameId, nav=document.createElement("nav"), host=document.createElement("section");
-  nav.className="novel-tabs";nav.setAttribute("aria-label","Video library views");host.className="tv-library";host.setAttribute("aria-label","TV episode library");
-  const all=document.createElement("button"), tv=document.createElement("button");
-  all.type=tv.type="button";all.className=tv.className="quiet-button";all.textContent="Video library";tv.textContent="TV episodes";
-  nav.append(all,tv);list.append(nav,host,videoHost);
-  let loaded=false,series=[],episodes=[],sequence=0;
-  const alive=()=>current() && host.isConnected;
+function sceneMapPicker(gameId, selectedKey, current, onChange = () => {}) {
+  const host=document.createElement('section');host.className='scene-map-picker';
+  const label=document.createElement('label'),caption=document.createElement('span'),select=document.createElement('select');
+  caption.textContent='Map image';select.setAttribute('aria-label','Map image');select.add(new Option('Choose a map','none'));
+  if(selectedKey)select.add(new Option('Selected map',selectedKey));select.value=selectedKey||'none';label.append(caption,select);
+  const image=document.createElement('img'),status=document.createElement('p'),more=document.createElement('button');
+  image.alt='Selected map';image.hidden=true;status.setAttribute('role','status');more.type='button';more.className='quiet-button';more.textContent='More images';more.hidden=true;
+  host.append(label,image,status,more);window.PantherUI.enhanceSelect(select,'Map image');
+  let started=false,cursor=null,generation=0;const seen=new Set();
+  const active=()=>current()&&host.isConnected;
+  const value=()=>select.value==='none'?null:select.value;
+  async function preview(){const request=++generation;image.hidden=true;image.removeAttribute('src');if(!value())return;
+    try{const result=await api('/object-url',{key:value()});if(!active()||request!==generation)return;if(!result.url||!/^image\/(png|jpeg|webp)$/.test(result.contentType||''))throw new Error('Map image unavailable');const option=[...select.options].find(option=>option.value===value());if(option&&result.metadata?.title)option.textContent=result.metadata.title;image.src=result.url;image.hidden=false;}
+    catch(error){if(active()&&request===generation)status.textContent=error.message;}
+  }
+  select.onchange=()=>{status.textContent='';void preview();onChange(value());};
+  image.onerror=()=>{image.hidden=true;status.textContent='Map preview unavailable.';};
+  async function load(){if(!active())return;more.disabled=true;showLoading(status,'Loading images…');
+    try{const result=await api('/assets',{gameId,section:'all',cursor});if(!active())return;
+      for(const asset of result.assets||[]){if(!sameGameKey(asset.key)||!/^image\/(png|jpeg|webp)$/.test(asset.contentType||'')||asset.lineageWarning||['processing','intermediate','internal'].includes(asset.metadata?.extra?.relationshipRole)||['provenance','migration-report','audit-report','generation-metadata'].includes(asset.kind)||asset.kind?.startsWith('editorial-')||asset.kind?.includes('provenance'))continue;
+        const title=asset.metadata?.title||asset.name||asset.key.split('/').at(-1),existing=[...select.options].find(option=>option.value===asset.key);if(existing)existing.textContent=title;else select.add(new Option(title,asset.key));
+      }
+      cursor=result.cursor||null;if(cursor&&(seen.has(cursor)||seen.size>=200))throw new Error('Image catalog pagination is unavailable.');if(cursor)seen.add(cursor);
+      more.hidden=!cursor;more.disabled=false;status.textContent=select.options.length===1&&!cursor?'No images yet. Add a map in Assets.':'';
+    }catch(error){if(active()){status.textContent=error.message;more.hidden=false;more.disabled=false;more.textContent='Retry loading images';}}
+  }
+  more.onclick=()=>void load();
+  return {host,value,select,start(){if(started)return;started=true;void load();void preview();}};
+}
+function renderEpisodeWorkspace(epoch) {
+  const gameId=state.gameId, parent=document.getElementById('session-library');
+  let host=document.getElementById('episode-workspace');
+  if(!host){host=document.createElement('section');host.id='episode-workspace';host.setAttribute('aria-label','Episodes and scenes');parent.querySelector('.explorer-heading').after(host);}
+  host.hidden=false;
+  if(host.dataset.key===`${gameId}:${epoch}`)return;
+  for(const native of host.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);host.stopPreview?.();host.dataset.key=`${gameId}:${epoch}`;host.replaceChildren();
+  const current=()=>state.gameId===gameId&&epoch===routeEpoch&&host.isConnected;
+  const button=(text,action,primary=false)=>{const node=document.createElement('button');node.type='button';node.textContent=text;node.className=primary?'primary-button':'quiet-button';node.onclick=action;return node;};
+  const episodes=[],scenes=[];let selectedEpisode=null,selectedScene=null,sceneGeneration=0;
+  const toolbar=document.createElement('div'),heading=document.createElement('h2'),episodeCards=document.createElement('div'),episodeStatus=document.createElement('p'),editor=document.createElement('div'),detail=document.createElement('section');
+  toolbar.className='episode-toolbar';heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');episodeStatus.dataset.episodeEmpty='true';detail.className='episode-detail';detail.hidden=true;
+  const create=button('Create episode',()=>edit('episode'),true);create.id='episode-create-action';parent.querySelector('#episode-create-action')?.remove();parent.querySelector('.explorer-heading').append(create);toolbar.append(heading);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
   const params=()=>new URLSearchParams(location.search);
-  const url=(changes)=>{const next=new URL(location.href);for(const [key,value] of Object.entries(changes))if(value)next.searchParams.set(key,value);else next.searchParams.delete(key);history.replaceState(null,"",next);};
-  const active=()=>!host.hidden;
-  const ordered=(id)=>{const parent=series.find(s=>s.id===id),numbers=new Map(parent?.seasons.map(s=>[s.id,s.number]) || []);
-    return episodes.filter(e=>e.seriesId===id).sort((a,b)=>(numbers.get(a.seasonId) || 10001)-(numbers.get(b.seasonId) || 10001)||a.number-b.number||a.id.localeCompare(b.id));};
-  const setMode=(value)=>{host.hidden=!value;videoHost.hidden=value;status.hidden=value;all.setAttribute("aria-pressed",String(!value));tv.setAttribute("aria-pressed",String(value));};
-  const paged=async(path)=>{const records=[],seen=new Set();let cursor;
-    do{const page=await api(path,{gameId,cursor});if(!alive())return null;if(!Array.isArray(page.records))throw new Error("Episode catalog response is incomplete");records.push(...page.records);cursor=page.cursor;
-      if(records.length>5000 || seen.size>=200 || (cursor && seen.has(cursor)))throw new Error("Episode catalog exceeds its reader limit or returned a repeated cursor; no partial catalog is shown");if(cursor)seen.add(cursor);
-    }while(cursor);return records;};
-  const episodeHref=(record,revision=record.revision)=>gamePath("videos")+`?view=episodes&series=${encodeURIComponent(record.seriesId)}&episode=${encodeURIComponent(record.id)}&episodeRevision=${encodeURIComponent(revision)}`;
-  function references(parent,label,keys,byKey) {
-    if(!keys.length)return;const heading=document.createElement("h3"),links=document.createElement("ul");heading.textContent=label;
-    for(const key of keys){const item=document.createElement("li"),asset=byKey.get(key);if(asset)item.append(assetLink(asset));else item.textContent="Pinned reference unavailable";links.append(item);}parent.append(heading,links);
+  const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);for(const [name,value] of Object.entries({episode:episodeId,scene:sceneId,view:null,series:null,episodeRevision:null})){if(value)url.searchParams.set(name,value);else url.searchParams.delete(name);}history.replaceState(null,'',url);};
+  const clearEditor=()=>{for(const dialog of editor.querySelectorAll('dialog'))if(dialog.open)dialog.close();for(const native of editor.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);editor.replaceChildren();};
+  const back=button('Back to episodes',()=>{clearEditor();host.stopPreview();selectedEpisode=null;selectedScene=null;detail.hidden=true;host.dataset.view='library';back.hidden=true;updateURL(null,null);drawEpisodes();});back.classList.add('episode-back');detail.before(back);back.hidden=true;
+  host.stopEditing=clearEditor;
+  const automaticPlans=document.createElement('section');automaticPlans.id='session-video-plans';automaticPlans.hidden=true;host.append(automaticPlans);
+  void api('/editorial-jobs',{gameId}).then(result=>{
+    if(!current())return;
+    const jobs=(result.jobs||[]).filter(job=>!job.creation&&job.sessionId);
+    if(!jobs.length)return;
+    automaticPlans.hidden=false;const heading=document.createElement('h2');heading.textContent='Session plans';automaticPlans.append(heading);
+    for(const job of jobs){const progress=document.createElement('section');progress.className='editorial-project-progress';const title=`Session ${job.sessionId} · automatic`;const review=optionalInfoDialog(title,progress,()=>void showEditorialProgress(job.jobId,progress,gameId,'video'));automaticPlans.append(review.host);}
+  }).catch(()=>{/* Workflow navigation remains available if this optional list cannot be read. */});
+
+  function edit(kind,record=null){
+    const parentEpisode=selectedEpisode,returnFocus=document.activeElement;clearEditor();const dialog=document.createElement('dialog'),dialogHeading=document.createElement('h2');dialog.className='episode-edit-dialog';dialogHeading.textContent=record?`Edit ${kind}`:kind==='episode'?'Create episode':'Add scene';dialog.setAttribute('aria-label',dialogHeading.textContent);dialog.append(dialogHeading);const form=document.createElement('form');form.className='episode-editor';form.setAttribute('aria-label',kind==='episode'?'Episode editor':'Scene editor');
+    const label=(text,node)=>{const wrapper=document.createElement('label');wrapper.append(document.createTextNode(text),node);form.append(wrapper);return node;};
+    const name=label(kind==='episode'?'Episode title':'Scene title',document.createElement('input'));name.required=true;name.maxLength=160;name.value=record?.name||'';
+    const description=label('Description',document.createElement('textarea'));description.maxLength=4000;description.placeholder='Optional';description.value=record?.description||'';
+    let type,map;if(kind==='scene'){type=label('Scene type',document.createElement('select'));for(const [value,text] of [['general','General'],['opener','Opener'],['map','Map'],['travel','Travel'],['action','Action'],['dialogue','Dialogue']])type.add(new Option(text,value));type.value=record?.type||'general';window.PantherUI.enhanceSelect(type,'Scene type');map=sceneMapPicker(gameId,record?.mapAssetKey,current);form.append(map.host);map.host.hidden=type.value!=='map';type.addEventListener('change',()=>{map.host.hidden=type.value!=='map';if(!map.host.hidden)map.start();});}
+    const actions=document.createElement('div'),save=button(record?'Save changes':kind==='episode'?'Create episode':'Add scene',null,true),cancel=button('Cancel',()=>clearEditor()),status=document.createElement('p');save.type='submit';status.setAttribute('role','status');actions.append(save,cancel);actions.className='episode-form-actions';form.append(actions,status);dialog.append(form);editor.append(dialog);dialog.addEventListener('close',()=>{for(const native of dialog.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);dialog.remove();if(returnFocus?.isConnected)returnFocus.focus({preventScroll:true});});dialog.showModal();name.focus();let pending=null;
+    if(map&&!map.host.hidden)map.start();
+    form.onsubmit=async event=>{event.preventDefault();pending||={gameId,id:record?.id||`${kind}-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),expectedRevision:record?.revision||null,operationId:crypto.randomUUID().replaceAll('-',''),...(kind==='scene'?{episodeId:parentEpisode.id,type:type.value,mapAssetKey:type.value==='map'?map.value():null,selectedOutputKey:record?.selectedOutputKey||null}:{sceneIds:record?.sceneIds||[]})};save.disabled=true;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=true;
+      try{const response=await api(kind==='episode'?'/episodes':'/scenes',{},{body:pending});if(!current()||!form.isConnected||(kind==='scene'&&selectedEpisode?.id!==parentEpisode?.id))return;const saved=response.record;clearEditor();
+        if(kind==='episode'){const index=episodes.findIndex(item=>item.id===saved.id);if(index<0)episodes.unshift(saved);else episodes[index]=saved;drawEpisodes();await chooseEpisode(saved);}
+        else {if(response.episodeRecord){selectedEpisode=response.episodeRecord;const parentIndex=episodes.findIndex(item=>item.id===selectedEpisode.id);episodes[parentIndex]=selectedEpisode;drawEpisodes();}const index=scenes.findIndex(item=>item.id===saved.id);if(index<0)scenes.push(saved);else scenes[index]=saved;drawScenes();drawPlayback();chooseScene(saved);}
+      }catch(error){if(current()){status.textContent=error.message;save.disabled=error.status===409;if(error.status===400){pending=null;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=false;}save.textContent=error.status===409?'Reopen to edit':'Retry save';}}
+    };
   }
-  async function posters() {
-    const images=[...host.querySelectorAll('[data-tv-poster]')],keys=[...new Set(images.map(i=>i.dataset.tvPoster))];
-    for(let offset=0;offset<keys.length;offset+=60){if(!alive())return;const batch=keys.slice(offset,offset+60);
-      try{const result=await api("/image-links",{},{body:{gameId,keys:batch}});if(!alive())return;for(const image of images.filter(i=>batch.includes(i.dataset.tvPoster))){const item=result.images?.[image.dataset.tvPoster];if(item?.url)image.src=item.url;else image.remove();}}
-      catch{if(alive())for(const image of images.filter(i=>batch.includes(i.dataset.tvPoster)))image.remove();}}
+  function drawEpisodes(){host.dataset.hasEpisodes=String(episodes.length>0);episodeStatus.hidden=episodes.length>0||Number(host.dataset.videoAssetCount)>0;if(episodes.length&&episodeStatus.textContent==='Create your first episode.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){if(host.videoSearch&&!`${episode.name} ${episode.description||''}`.toLowerCase().includes(host.videoSearch.toLowerCase()))continue;const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-label',episode.name);const name=document.createElement('strong'),count=document.createElement('span');name.textContent=episode.name;count.textContent=`${episode.sceneIds?.length||0} ${episode.sceneIds?.length===1?'scene':'scenes'}`;card.replaceChildren(name,count);card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
+  host.filterEpisodes=value=>{host.videoSearch=value;drawEpisodes();};
+  let sceneCards,sceneStatus,sceneDetail,sceneMore,previewHost,scenesComplete=false,mutationPending=false,mutationUncertain=false,previewGeneration=0,playbackView=0;
+  const orderedScenes=()=>Array.isArray(selectedEpisode?.sceneIds)?selectedEpisode.sceneIds.map(id=>scenes.find(scene=>scene.id===id)):[];
+  const finishedVideo=asset=>sameGameKey(asset.key)&&asset.contentType?.startsWith('video/')&&asset.metadata?.extra?.relationshipRole==='finished';
+  host.stopPreview=()=>{previewGeneration++;const video=previewHost?.querySelector('video');if(video){video.pause();video.removeAttribute('src');video.load();}for(const dialog of previewHost?.querySelectorAll('dialog[open]')||[])dialog.close();};
+  async function saveOrder(ids){if(mutationPending)return;mutationPending=true;host.stopPreview();drawScenes();const episode=selectedEpisode;try{const result=await api('/episodes',{},{body:{gameId,id:episode.id,name:episode.name,description:episode.description||'',sceneIds:ids,expectedRevision:episode.revision,operationId:crypto.randomUUID().replaceAll('-','')}});if(!current()||selectedEpisode.id!==episode.id)return;selectedEpisode=result.record;episodes[episodes.findIndex(item=>item.id===episode.id)]=result.record;sceneStatus.textContent='Order saved.';}catch(error){if(current()&&selectedEpisode?.id===episode.id){mutationUncertain=true;const reconcile=async()=>{try{await window.PantherUI.invalidate(apiScope(),['/episodes','/episode-composition'],gameId);const result=await api('/episodes',{gameId,id:episode.id});if(!result.record||result.record.id!==episode.id||!Array.isArray(result.record.sceneIds))throw new Error('Episode unavailable');if(!current()||selectedEpisode.id!==episode.id)return;selectedEpisode=result.record;episodes[episodes.findIndex(item=>item.id===episode.id)]=result.record;mutationUncertain=false;sceneStatus.textContent=JSON.stringify(result.record.sceneIds)===JSON.stringify(ids)?'Order saved.':'Order changed; review it before moving scenes again.';drawScenes();drawPlayback();}catch(readError){if(current()){sceneStatus.textContent=`Order could not be confirmed: ${readError.message}`;sceneStatus.append(button('Check saved order',()=>void reconcile()));}}};await reconcile();}}finally{mutationPending=false;if(current()){drawEpisodes();drawScenes();drawPlayback();}}}
+  async function selectOutput(asset){if(mutationPending)return;mutationPending=true;host.stopPreview();const scene=selectedScene;drawOutputs();try{const result=await api('/scenes',{},{body:{gameId,id:scene.id,episodeId:scene.episodeId,name:scene.name,description:scene.description||'',type:scene.type||'general',selectedOutputKey:asset.key,expectedRevision:scene.revision,operationId:crypto.randomUUID().replaceAll('-','')}});if(!current()||selectedEpisode?.id!==scene.episodeId)return;scenes[scenes.findIndex(item=>item.id===scene.id)]=result.record;if(selectedScene?.id===scene.id)selectedScene=result.record;sceneStatus.textContent='Selected for this episode.';}catch(error){if(current()&&selectedEpisode?.id===scene.episodeId){mutationUncertain=true;const reconcile=async()=>{try{await window.PantherUI.invalidate(apiScope(),['/scenes','/episode-composition'],gameId);const result=await api('/scenes',{gameId,episodeId:scene.episodeId,id:scene.id});if(!result.record||result.record.id!==scene.id||result.record.episodeId!==scene.episodeId)throw new Error('Scene unavailable');if(!current()||selectedEpisode?.id!==scene.episodeId)return;scenes[scenes.findIndex(item=>item.id===scene.id)]=result.record;if(selectedScene?.id===scene.id)selectedScene=result.record;mutationUncertain=false;sceneStatus.textContent=result.record.selectedOutputKey===asset.key?'Selected for this episode.':'Selection changed; review it before choosing again.';drawOutputs();drawScenes();drawPlayback();}catch(readError){if(current()){sceneStatus.textContent=`Selection could not be confirmed: ${readError.message}`;sceneStatus.append(button('Check saved selection',()=>void reconcile()));}}};await reconcile();}}finally{mutationPending=false;if(current()){drawOutputs();drawScenes();drawPlayback();}}}
+  function drawPlayback(){if(!previewHost||!selectedEpisode)return;host.stopPreview();previewHost.replaceChildren();const view=++playbackView;let ordered=orderedScenes();const missing=ordered.filter(scene=>!scene?.selectedOutputKey).length;const label=document.createElement('p');label.className='episode-preview-status';label.setAttribute('role','status');const start=button('Preview episode',()=>void begin(),true);start.disabled=mutationPending||mutationUncertain||!scenesComplete||!ordered.length||!!missing||ordered.length!==scenes.length;start.title=!scenesComplete?'Loading scenes':missing?`${missing} ${missing===1?'scene needs':'scenes need'} a video`:!ordered.length?'Add a scene first':ordered.length!==scenes.length?'Scene order is incomplete':'Play selected videos in scene order';label.hidden=true;previewHost.append(start,label);if(scenesComplete&&ordered.length&&!missing&&ordered.length===scenes.length){const episode=selectedEpisode;void api('/episode-composition',{gameId,episodeId:episode.id,revision:episode.revision}).then(composition=>{if(!current()||view!==playbackView)return;if(!composition.ready){start.disabled=true;label.textContent='One or more selected videos are unavailable.';return;}for(const asset of host.sceneAssets||[]){const extra=asset.metadata?.extra;if(finishedVideo(asset)&&extra?.episodeRef?.episodeId===episode.id&&extra.compositionHash===composition.compositionHash)previewHost.append(assetLink(asset,'Play episode'));}}).catch(error=>{if(current()&&view===playbackView){start.disabled=true;label.textContent=`Episode unavailable: ${error.message}`;}});}
+    async function begin(){const generation=++previewGeneration;start.disabled=true;try{const composition=await api('/episode-composition',{gameId,episodeId:selectedEpisode.id,revision:selectedEpisode.revision});if(!current()||generation!==previewGeneration)return;if(!composition.ready||composition.scenes.length!==ordered.length)throw new Error('Selected videos are incomplete');ordered=composition.scenes.map(item=>({...item.scene,selectedOutputKey:item.assetKey}));}catch(error){if(current()&&generation===previewGeneration){label.textContent=`Preview unavailable: ${error.message}`;label.hidden=false;start.disabled=false;}return;}for(const previous of previewHost.querySelectorAll('video')){previous.pause();previous.remove();}const playbackDialog=document.createElement('dialog'),playbackHeader=document.createElement('header'),playbackTitle=document.createElement('h2'),closePlayback=button('Close',()=>playbackDialog.close());playbackDialog.className='episode-playback-dialog';playbackDialog.setAttribute('aria-label','Episode preview');playbackTitle.textContent=selectedEpisode.name;playbackHeader.append(playbackTitle,closePlayback);playbackDialog.append(playbackHeader,label);label.hidden=false;previewHost.append(playbackDialog);playbackDialog.showModal();playbackDialog.onclose=()=>{video.pause();video.removeAttribute('src');video.load();if(playbackDialog.isConnected){previewGeneration++;label.hidden=true;playbackDialog.parentElement.append(label);playbackDialog.remove();start.disabled=false;if(start.isConnected&&!start.closest('[hidden]'))start.focus({preventScroll:true});}};const video=document.createElement('video');video.controls=true;video.playsInline=true;video.preload='metadata';video.setAttribute('aria-label','Episode preview');playbackDialog.append(video);let index=0;const active=()=>current()&&generation===previewGeneration&&video.isConnected;const fail=message=>{if(!active())return;video.pause();label.textContent=message;label.hidden=false;start.disabled=false;video.onended=null;};const next=async()=>{const scene=ordered[index];label.textContent=`Preview · ${index+1} of ${ordered.length} · ${scene.name}`;try{const result=await api('/object-url',{key:scene.selectedOutputKey});if(!active())return;if(!result.url||!result.contentType?.startsWith('video/'))throw new Error('Selected video unavailable');video.src=result.url;await video.play();}catch(error){fail(`Preview stopped at ${scene.name}: ${error.message}`);}};video.onerror=()=>fail(`Preview stopped at ${ordered[index].name}: video could not be played.`);video.onended=()=>{if(!active())return;if(++index<ordered.length)void next();else{label.textContent='Preview complete.';start.disabled=false;}};await next();}
   }
-  function browse() {
-    if(!alive())return;currentTVEpisode=null;host.replaceChildren();
-    const heading=document.createElement("h2"),notice=document.createElement("p");heading.textContent="TV episodes";notice.textContent="Creative episodic reimaginings · private drafts and approved selections, not canonical session records.";host.append(heading,notice);
-    if(!series.length){const empty=document.createElement("p");empty.textContent="No series organized yet. Panther CLI can create a series and explicitly select finished episode cuts.";host.append(empty);return;}
-    const label=document.createElement("label"),select=document.createElement("select");label.textContent="Series";select.id="tv-series-select";label.htmlFor=select.id;
-    for(const record of series)select.add(new Option(record.title,record.id));
-    const selected=params().get("series") || series[0].id;
-    if(!series.some(s=>s.id===selected))throw new Error("Selected series unavailable");select.value=selected;
-    select.onchange=()=>{url({series:select.value,episode:null,episodeRevision:null});browse();};host.append(label,select);
-    const parent=series.find(s=>s.id===selected),synopsis=document.createElement("p");synopsis.textContent=parent.synopsis || "No series synopsis supplied.";host.append(synopsis);
-    const entries=ordered(selected);
-    if(entries.some(e=>!parent.seasons.some(s=>s.id===e.seasonId)))throw new Error("An episode's season is unavailable; no incomplete series is shown");
-    for(const season of parent.seasons){const section=document.createElement("section"),title=document.createElement("h3"),description=document.createElement("p"),cards=document.createElement("div");title.textContent=`Season ${season.number} · ${season.title}`;description.textContent=season.synopsis;cards.className="tv-episode-cards";section.append(title,description,cards);
-      for(const episode of entries.filter(e=>e.seasonId===season.id)){const card=document.createElement("article");card.className="novel-card tv-episode-card";
-        if(episode.posterAssetKey){const image=document.createElement("img");image.alt=`Episode poster for ${episode.title}`;image.dataset.tvPoster=episode.posterAssetKey;image.className="tv-poster";image.addEventListener("error",()=>image.remove());card.append(image);}
-        const meta=document.createElement("p"),h=document.createElement("h4"),link=document.createElement("a"),summary=document.createElement("p"),runtime=document.createElement("p");meta.className="eyebrow";meta.textContent=`Episode ${episode.number} · ${episode.status === "approved" ? "Approved private selection" : "Private draft"}`;
-        link.textContent=episode.title;link.href=episodeHref(episode);link.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();void choose(episode.id,episode.revision);};h.append(link);summary.textContent=episode.synopsis || "No episode synopsis supplied.";
-        const cut=episode.cuts.find(c=>c.id===episode.selectedCutId);runtime.textContent=cut?.durationSeconds ? `Reported runtime: ${cut.durationSeconds}s · ${episode.cuts.length} cut${episode.cuts.length===1?"":"s"}` : `Runtime not recorded · ${episode.cuts.length} cut${episode.cuts.length===1?"":"s"}`;card.append(meta,h,summary,runtime);cards.append(card);}
-      if(!cards.childNodes.length){const empty=document.createElement("p");empty.textContent="No episodes organized in this season yet.";cards.append(empty);}host.append(section);}
-    void posters();
+  const drawOutputs=()=>{const output=sceneDetail?.querySelector('.scene-output-list');if(!output||!selectedScene)return;output.replaceChildren();
+    const assets=(host.sceneAssets||[]).filter(asset=>{const ref=asset.metadata?.extra?.sceneRef;return finishedVideo(asset)&&ref?.episodeId===selectedEpisode.id&&ref?.sceneId===selectedScene.id;});
+    if(!assets.length)return;const heading=document.createElement('h4');heading.textContent='Videos';output.append(heading);
+    for(const asset of assets){const row=document.createElement('p');row.className='scene-output-row';row.append(assetLink(asset));const use=button(asset.key===selectedScene.selectedOutputKey?'Selected':'Use in episode',()=>void selectOutput(asset));use.disabled=mutationPending||mutationUncertain||asset.key===selectedScene.selectedOutputKey;use.setAttribute('aria-label',`${use.textContent}: ${asset.metadata?.title||asset.name}`);row.append(use);if(asset.metadata.extra.sceneRef.revision!==selectedScene.revision){const note=document.createElement('small');note.textContent=' · Earlier scene version';row.append(note);}output.append(row);}
+  };
+  host.updateOutputs=assets=>{host.sceneAssets=assets;drawOutputs();if(!previewHost?.querySelector('video'))drawPlayback();};
+  function drawScenes(){sceneCards.replaceChildren();for(const [index,scene] of orderedScenes().entries()){const row=document.createElement('div');row.className='scene-order-row';if(!scene){row.textContent='Scene unavailable';sceneCards.append(row);continue;}const card=button(scene.name,()=>chooseScene(scene));card.className='scene-card';card.setAttribute('aria-label',scene.name);card.dataset.order=String(index+1)+'.';card.setAttribute('aria-pressed',String(selectedScene?.id===scene.id));const state=document.createElement('small');state.textContent=scene.selectedOutputKey?'Ready':scene.type&&scene.type!=='general'?scene.type[0].toUpperCase()+scene.type.slice(1):'Not rendered';const move=(direction)=>{const node=button(direction<0?'Move up':'Move down',()=>{const ids=[...selectedEpisode.sceneIds],next=index+direction;[ids[index],ids[next]]=[ids[next],ids[index]];void saveOrder(ids);});node.setAttribute('aria-label',`Move ${scene.name} ${direction<0?'up':'down'}`);node.textContent=direction<0?'↑':'↓';node.title=direction<0?'Move up':'Move down';node.classList.add('scene-move');node.disabled=mutationPending||mutationUncertain||!scenesComplete||index+direction<0||index+direction>=selectedEpisode.sceneIds.length;return node;};row.append(card,state,move(-1),move(1));sceneCards.append(row);}if(!scenes.length){const empty=document.createElement('p');empty.textContent='No scenes yet.';sceneCards.append(empty);}}
+  function chooseScene(scene){clearEditor();selectedScene=scene;updateURL(selectedEpisode.id,scene.id);drawScenes();for(const native of sceneDetail.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);sceneDetail.replaceChildren();const heading=document.createElement('h3');heading.textContent=scene.name;const description=document.createElement('p');description.textContent=scene.description;description.hidden=!scene.description;
+    const headingRow=document.createElement('header');headingRow.className='scene-editor-heading';headingRow.append(heading,button('Edit scene',()=>edit('scene',selectedScene)));
+    const composer=document.createElement('section');composer.id='scene-video-composer';const work=document.createElement('section'),outputs=document.createElement('div');work.id='scene-work-progress';outputs.className='scene-output-list';sceneDetail.append(headingRow,description,composer,work,outputs);drawOutputs();
+    openSceneVideoComposer({...scene,host:composer},epoch,saved=>{const index=scenes.findIndex(item=>item.id===saved.id);if(index>=0)scenes[index]=saved;if(selectedScene?.id===saved.id)selectedScene=saved;drawScenes();drawOutputs();drawPlayback();});
+    void restoreSceneVideoProgress(scene,work,gameId,epoch);
   }
-  async function choose(id,revision=null,play=false) {
-    const generation=++sequence;host.replaceChildren();const loading=document.createElement("p");host.append(loading);const progress=showLoading(loading,"Reading the exact episode and pinned representations…");
-    try{const result=await api("/tv-episodes",{gameId,id,revision});if(!alive() || generation!==sequence || !active())return;
-      const episode=result.record,byKey=new Map(result.assets.map(a=>[a.key,a])),parent=series.find(s=>s.id===episode.seriesId);
-      if(episode.gameId!==gameId || !parent || !parent.seasons.some(s=>s.id===episode.seasonId))throw new Error("Episode parent organization unavailable");
-      url({view:"episodes",series:episode.seriesId,episode:episode.id,episodeRevision:episode.revision});host.replaceChildren();
-      const back=document.createElement("button");back.type="button";back.className="back-button";back.textContent="← All episodes";back.onclick=()=>{sequence++;url({episode:null,episodeRevision:null});browse();};
-      const title=document.createElement("h2"),notice=document.createElement("p"),synopsis=document.createElement("p");title.textContent=episode.title;notice.className="novel-notice";notice.textContent=`${parent.title} · Episode ${episode.number} · ${episode.status==="approved"?"Approved private selection":"Private draft"}. Creative reimagining, not a canonical session record.`;synopsis.textContent=episode.synopsis;host.append(back,title,notice,synopsis);
-      if(result.warnings.length){const warning=document.createElement("p");warning.textContent=`${result.warnings.length} pinned assets are unavailable. No newer version was substituted.`;host.append(warning);}
-      const label=document.createElement("label"),cuts=document.createElement("select"),button=document.createElement("button"),cutStatus=document.createElement("p");label.textContent="Episode cut";cuts.id="tv-cut-select";label.htmlFor=cuts.id;for(const cut of episode.cuts)cuts.add(new Option(cut.title+(cut.id===episode.selectedCutId?" · selected edition":""),cut.id));cuts.value=episode.selectedCutId;
-      button.type="button";button.className="quiet-button";button.textContent="Play selected cut";cutStatus.setAttribute("role","status");
-      const selected=()=>episode.cuts.find(c=>c.id===cuts.value);
-      const update=()=>{const cut=selected();button.disabled=!byKey.has(cut.assetKey);cutStatus.textContent=button.disabled?"This pinned video is unavailable; no alternative was selected.":cut.durationSeconds?`Reported runtime ${cut.durationSeconds}s. Evidence: ${cut.durationEvidence}`:"Runtime is unknown until measured or played.";};
-      const context={gameId,record:episode,assets:byKey,series:parent,episodes:ordered(parent.id),activate:choose};
-      button.onclick=()=>{if(alive()){currentTVEpisode=context;videoPlaylist=null;const asset=byKey.get(selected().assetKey);if(asset)void previewFile({...asset,name:episode.title+" · "+selected().title});}};cuts.onchange=update;update();host.append(label,cuts,button,cutStatus);
-      const history=document.createElement("p");history.textContent=`Organization revision ${episode.revision.slice(0,8)}. `;if(episode.previousRevision){const previous=document.createElement("a");previous.textContent="Previous episode revision";previous.href=episodeHref(episode,episode.previousRevision);previous.onclick=event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();void choose(episode.id,episode.previousRevision);};history.append(previous);}host.append(history);
-      references(host,"Source references",episode.sourceAssetKeys,byKey);const sessions=[...new Set(episode.sourceAssetKeys.map(k=>byKey.get(k)?.metadata?.sessionId).filter(Boolean))];if(sessions.length){const session=document.createElement("p");session.textContent=`Source sessions recorded in asset metadata: ${sessions.join(", ")}`;host.append(session);}
-      references(host,"Related finished media",episode.relatedAssetKeys,byKey);
-      if(episode.preparationAssetKeys.length){const preparation=document.createElement("details"),summary=document.createElement("summary");summary.textContent="Production preparation · not finished Inputs/Outputs";preparation.append(summary);references(preparation,"Scripts, storyboards and planning references",episode.preparationAssetKeys,byKey);host.append(preparation);}
-      const credits=document.createElement("section"),creditTitle=document.createElement("h3"),creditList=document.createElement("ul");creditTitle.textContent="Credits";for(const credit of episode.credits){const item=document.createElement("li");item.textContent=`${credit.role}: ${credit.name}`;creditList.append(item);}if(!episode.credits.length){const empty=document.createElement("li");empty.textContent="Credits not supplied.";creditList.append(empty);}credits.append(creditTitle,creditList);host.append(credits);
-      currentTVEpisode=context;
-      if(play && !button.disabled)button.click();
-    }catch(error){if(alive() && generation===sequence){currentTVEpisode=null;loading.textContent=`${error.message}. Return to the video library or retry.`;const retry=document.createElement("button");retry.type="button";retry.textContent="Retry episode";retry.className="quiet-button";retry.onclick=()=>void choose(id,revision,play);host.append(retry);}}
+  async function chooseEpisode(episode,restoreScene=null){clearEditor();if(selectedEpisode?.id!==episode.id)mutationUncertain=false;selectedEpisode=episode;selectedScene=null;host.dataset.view='editor';back.hidden=false;host.stopPreview();const generation=++sceneGeneration;scenes.length=0;scenesComplete=false;updateURL(episode.id,restoreScene);drawEpisodes();detail.hidden=false;detail.replaceChildren();
+    const toolbar=document.createElement('div'),title=document.createElement('h2'),description=document.createElement('p');toolbar.className='episode-toolbar';title.textContent=episode.name;toolbar.append(title,button('Add scene',()=>edit('scene'),true),button('Edit episode',()=>edit('episode',selectedEpisode)));description.textContent=episode.description;description.hidden=!episode.description;
+    sceneCards=document.createElement('div');sceneCards.className='scene-cards';sceneStatus=document.createElement('p');sceneStatus.setAttribute('role','status');sceneDetail=document.createElement('section');sceneDetail.className='selected-scene';sceneMore=document.createElement('div');previewHost=document.createElement('section');previewHost.className='episode-preview';previewHost.setAttribute('aria-label','Episode playback');const layout=document.createElement('div'),scenesPanel=document.createElement('section'),scenesHeading=document.createElement('h3');layout.className='episode-editor-layout';scenesPanel.className='episode-scenes-panel';sceneDetail.classList.add('episode-scene-panel');scenesHeading.textContent='Scenes';scenesPanel.append(scenesHeading,sceneStatus,sceneCards,sceneMore);layout.append(scenesPanel,sceneDetail);toolbar.append(previewHost);detail.append(toolbar,description,layout);drawPlayback();
+    const page=async cursor=>{showLoading(sceneStatus,'Loading scenes…');try{const result=await api('/scenes',{gameId,episodeId:episode.id,cursor});if(!current()||generation!==sceneGeneration)return;if(!Array.isArray(result.records))throw new Error('Scenes unavailable');scenes.push(...result.records);scenesComplete=!result.cursor;sceneStatus.textContent='';drawScenes();drawPlayback();sceneMore.replaceChildren();if(result.cursor)sceneMore.append(button('More scenes',()=>void page(result.cursor)));if(restoreScene){const scene=scenes.find(item=>item.id===restoreScene);if(scene){chooseScene(scene);restoreScene=null;}else if(!result.cursor){sceneStatus.textContent='This scene is unavailable.';updateURL(episode.id,null);}}else if(!selectedScene&&scenes.length)chooseScene(orderedScenes().find(Boolean)||scenes[0]);}catch(error){if(current()&&generation===sceneGeneration)sceneStatus.textContent=error.status===403?'You cannot access scenes in this game.':`Scenes unavailable: ${error.message}`;}};
+    await page();
   }
-  async function load() {
-    const loading=document.createElement("p");host.replaceChildren(loading);const progress=showLoading(loading,"Reading series and episode organization…");
-    try{if(!loaded){series=await paged("/tv-series");episodes=await paged("/tv-episodes");if(!alive() || !series || !episodes)return;series.sort((a,b)=>a.title.localeCompare(b.title));loaded=true;}
-      if(!active())return;if(params().get("episode"))await choose(params().get("episode"),params().get("episodeRevision"));else browse();
-    }catch(error){if(alive()){loaded=false;host.replaceChildren(loading);loading.textContent=`${error.message}. The ordinary video library remains usable.`;const retry=document.createElement("button");retry.type="button";retry.className="quiet-button";retry.textContent="Retry TV library";retry.onclick=()=>void load();host.append(retry);}}
-  }
-  all.onclick=()=>{sequence++;currentTVEpisode=null;setMode(false);url({view:null,series:null,episode:null,episodeRevision:null});};
-  tv.onclick=()=>{setMode(true);url({view:"episodes"});void load();};
-  const requested=params().get("view")==="episodes" || params().has("series") || params().has("episode");setMode(requested);if(requested)void load();
+  const load=async cursor=>{showLoading(episodeStatus,'Loading episodes…');try{const result=await api('/episodes',{gameId,cursor});if(!current())return;if(!Array.isArray(result.records))throw new Error('Episodes unavailable');episodes.push(...result.records);episodeStatus.textContent=episodes.length?'':'Create your first episode.';drawEpisodes();host.querySelector('.episodes-more')?.remove();if(result.cursor){const more=button('More episodes',()=>{more.remove();void load(result.cursor);});more.classList.add('episodes-more');episodeCards.after(more);}
+      const requested=params().get('episode');if(requested&&!selectedEpisode){const selected=episodes.find(item=>item.id===requested);if(selected)await chooseEpisode(selected,params().get('scene'));else if(!result.cursor){episodeStatus.textContent='This episode is unavailable.';updateURL(null,null);}}
+    }catch(error){if(current()){episodeStatus.textContent=error.status===403?'You cannot access episodes in this game.':`Episodes unavailable: ${error.message}`;if(error.status===403)create.disabled=true;}}};void load();
 }
 
 function renderVideoLibrary(assets, list, status, current, loadMore) {
   const gameId = state.gameId;
-  const videoHost=document.createElement("div");setupTVLibrary(list,status,current,videoHost);
-  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",category:"all",tag:"",character:"",collection:new URLSearchParams(location.search).get("collection") || ""};
+  const videoHost=document.createElement("div");videoHost.hidden=!assets.length&&!loadMore;list.append(videoHost);
+  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",tags:[],characters:[],collection:new URLSearchParams(location.search).get("collection") || ""};
   const view = videoLibraryView;
   view.collection=new URLSearchParams(location.search).get("collection") || "";
-  const controls = document.createElement("section"), cards = document.createElement("div"), collectionsStatus = document.createElement("p"), summary = document.createElement("p");
-  controls.className = "video-library-controls"; controls.setAttribute("aria-label", "Filter videos");
-  cards.className = "video-library-cards"; summary.setAttribute("role", "status"); collectionsStatus.setAttribute("role", "status");
-  const field = (text, element, id) => { const label = document.createElement("label"); label.textContent = text; element.id = id; label.htmlFor = id; const wrap = document.createElement("div"); wrap.append(label,element); controls.append(wrap); return element; };
-  const search = field("Search loaded videos",document.createElement("input"),"video-search"); search.type = "search"; search.maxLength = 300; search.value = view.search;
-  const category = field("Relationship to the game",document.createElement("select"),"video-category");
-  for (const [value,label] of [["all","All categories"],["playful-derivative","Playful derivatives"],["creative-reimagining","Creative reimaginings"],["grounded-adaptation","Grounded adaptations"],["canonical-source","Canonical sources"],["reference","References"],["unclassified","Unclassified / unknown"]]) category.add(new Option(label,value));
-  category.value = view.category;
-  const tag = field("Tag",document.createElement("select"),"video-tag"); tag.add(new Option("All tags",""));
-  for (const name of [...new Set(assets.flatMap(a=>a.metadata?.tags || []))].sort()) tag.add(new Option(name,name));
-  tag.value = view.tag;
-  const character = field("Featuring character",document.createElement("select"),"video-character"); character.add(new Option("All characters",""));
-  for (const c of state.gameDetail?.characters || []) character.add(new Option(c.name,c.id));
-  character.value = view.character;
-  const collection = field("Scene",document.createElement("select"),"video-collection"); collection.add(new Option("Video library","")); collection.disabled = true;
-  const retry = document.createElement("button"); retry.type = "button"; retry.className = "quiet-button"; retry.textContent = "Retry preview images"; retry.hidden = true;
-  controls.append(collectionsStatus,retry,summary); videoHost.append(controls,cards);
-  let displayed = assets, chosen = null, sequence = 0;
-  const sceneActions = document.createElement("div"); sceneActions.className = "model-control-row";
-  const createScene = document.createElement("button"), editScene = document.createElement("button"), sceneForm = document.createElement("form");
-  createScene.type = editScene.type = "button"; createScene.className = editScene.className = "quiet-button";
-  createScene.textContent = "Create scene"; editScene.textContent = "Edit scene"; editScene.disabled = true;
-  sceneForm.className = "scene-edit-form character-edit-form"; sceneForm.hidden = true;
-  sceneActions.append(createScene,editScene); controls.append(sceneActions); videoHost.insertBefore(sceneForm,cards);
-  let sceneGeneration = 0;
-  async function editSceneClips(existing = null) {
-    const generation = ++sceneGeneration; sceneForm.hidden = false; sceneForm.replaceChildren();
-    const loading = document.createElement("p"), closeLoading = document.createElement("button");
-    closeLoading.type="button";closeLoading.className="quiet-button";closeLoading.textContent="Cancel";closeLoading.onclick=()=>{sceneGeneration++;sceneForm.hidden=true;};
-    sceneForm.append(loading,closeLoading); showLoading(loading,"Loading available clips");
-    try {
-      const catalog = await allAssets(gameId,()=>{},"videos");
-      if (!current() || generation !== sceneGeneration || !sceneForm.isConnected) return;
-      const clips = catalog.filter(a=>a.contentType?.startsWith("video/") && a.metadata?.extra?.relationshipRole === "finished" && !a.lineageWarning);
-      const byKey = new Map(clips.map(a=>[a.key,a])); let ordered = [...(existing?.assetKeys || [])];
-      const name = document.createElement("input"), description = document.createElement("input"), picker = document.createElement("fieldset"), order = document.createElement("ol");
-      name.required = true; name.maxLength = 120; name.value = existing?.name || ""; description.maxLength = 1000; description.value = existing?.description || "";
-      const nameLabel = document.createElement("label"), descriptionLabel = document.createElement("label"), legend = document.createElement("legend"), orderHeading = document.createElement("h3");
-      nameLabel.textContent = "Scene title"; descriptionLabel.textContent = "Scene description"; nameLabel.append(name); descriptionLabel.append(description); legend.textContent = "Clips"; picker.append(legend); orderHeading.textContent = "Clip order";
-      const checks = new Map(); const title = key => byKey.get(key)?.metadata?.title || byKey.get(key)?.name || "Unavailable clip";
-      const save = document.createElement("button"), cancel = document.createElement("button"), message = document.createElement("p"), actions = document.createElement("div");
-      save.type = "submit"; save.className = "primary-button"; save.textContent = "Save scene"; cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; message.setAttribute("role","status"); actions.className = "model-control-row";actions.append(save,cancel);
-      const drawOrder = () => {
-        order.replaceChildren();
-        for(const [index,key] of ordered.entries()) {
-          const li = document.createElement("li"), text = document.createElement("span"); text.textContent = title(key); li.append(text);
-          for(const [label,delta] of [["Move up",-1],["Move down",1],["Remove",0]]) {
-            const button = document.createElement("button");button.type="button";button.className="quiet-button";button.textContent=label;button.setAttribute("aria-label",`${label} ${title(key)}`);
-            button.disabled=delta<0 && index===0 || delta>0 && index===ordered.length-1;
-            button.onclick=()=>{if(delta){[ordered[index],ordered[index+delta]]=[ordered[index+delta],ordered[index]];}else{ordered.splice(index,1);if(checks.has(key))checks.get(key).checked=false;}drawOrder();};li.append(button);
-          }
-          order.append(li);
-        }
-        save.disabled=!ordered.length || ordered.some(key=>!byKey.has(key));
-        message.textContent=ordered.some(key=>!byKey.has(key)) ? "Remove unavailable clips before saving." : "";
-      };
-      for(const clip of clips) {
-        const label=document.createElement("label"), check=document.createElement("input");check.type="checkbox";check.checked=ordered.includes(clip.key);checks.set(clip.key,check);
-        check.onchange=()=>{if(check.checked){if(ordered.length>=50){check.checked=false;message.textContent="Choose up to 50 clips.";return;}ordered.push(clip.key);}else ordered=ordered.filter(key=>key!==clip.key);drawOrder();};label.append(check,document.createTextNode(title(clip.key)));picker.append(label);
-      }
-      sceneForm.replaceChildren(nameLabel,descriptionLabel,picker,orderHeading,order,actions,message);
-      if(!clips.length){const empty=document.createElement("p");empty.textContent="No finished clips yet.";picker.append(empty);}
-      cancel.onclick=()=>{sceneGeneration++;sceneForm.hidden=true;};
-      let pending = null;
-      sceneForm.onsubmit=async event=>{
-        event.preventDefault();
-        pending ||= {gameId,id:existing?.id || `scene-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),assetKeys:[...ordered],expectedRevision:existing?.revision || null,operationId:crypto.randomUUID().replaceAll("-","")};
-        for(const control of sceneForm.querySelectorAll("input,button"))control.disabled=true;
-        try {
-          const response=await api("/video-collections",{},{body:pending});
-          if(!current() || generation!==sceneGeneration)return;
-          const saved=response.collection;
-          if(![...collection.options].some(option=>option.value===saved.id))collection.add(new Option(`${saved.name} (${saved.assetKeys.length})`,saved.id));
-          else [...collection.options].find(option=>option.value===saved.id).textContent=`${saved.name} (${saved.assetKeys.length})`;
-          collection.disabled=false;collection.value=saved.id;sceneForm.hidden=true;await choose();
-        } catch(error) {
-          if(!current() || generation!==sceneGeneration)return;
-          message.textContent=error.status===409 ? "This scene changed. Cancel to review its latest version." : error.message;
-          if(error.status===400){pending=null;for(const control of sceneForm.querySelectorAll("input,button"))control.disabled=false;drawOrder();message.textContent=error.message;}
-          else {save.disabled=error.status===409;save.textContent="Retry save";cancel.disabled=false;}
-        }
-      };
-      drawOrder();name.focus();
-    } catch(error) {if(current() && generation===sceneGeneration)loading.textContent=error.message;}
-  }
-  createScene.onclick=()=>void editSceneClips();editScene.onclick=()=>{if(chosen)void editSceneClips(chosen);};
-
+  const cards=document.createElement('div');cards.className='video-library-cards';videoHost.append(cards);
+  const search=document.createElement('input');search.type='search';search.id='video-search';search.placeholder='Search videos and episodes';search.maxLength=300;search.value=view.search;
+  const label=document.createElement('label');label.htmlFor=search.id;label.textContent='Search videos';const searchField=document.createElement('div');searchField.append(label,search);
+  const tagHost=document.createElement('div'),characterHost=document.createElement('div');tagHost.dataset.multiFilter='tags';characterHost.dataset.multiFilter='characters';
+  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filterFields=document.createElement('div');filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filterFields.className='video-top-filter-fields';filterFields.append(tagHost,characterHost);filterBar.append(searchField,filterFields);
+  workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(filterBar);workspace?.filterEpisodes?.(view.search);
+  let displayed=view.collection?[]:assets,chosen=null;
+  const retry=document.createElement('button');retry.type='button';retry.className='quiet-button';retry.textContent='Retry preview images';retry.hidden=true;videoHost.append(retry);
+  const tags=()=>[...new Set(assets.flatMap(asset=>asset.metadata?.tags||[]))].sort().map(name=>({id:name,name}));
+  const characters=()=> (state.gameDetail?.characters||[]).map(character=>({id:character.id||character.characterId,name:character.name}));
+  const filters=()=>{
+    window.PantherUI.mountMultiSelect(tagHost,{label:'Tags',options:tags(),value:view.tags,onChange:value=>{view.tags=value;filters();draw();},placeholder:'Add tag…'});
+    window.PantherUI.mountMultiSelect(characterHost,{label:'Characters',options:characters(),value:view.characters,onChange:value=>{view.characters=value;filters();draw();},placeholder:'Add character…'});
+  };
   const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; videoHost.append(more);
   more.onclick = () => { more.disabled = true; more.textContent = "Loading more…"; loadMore(); };
   const posters = new Map(), posterLinks = new Map(), posterRequests = new Map(); let imageGeneration=0;
@@ -2936,13 +2991,13 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
   function draw() {
     if (!current()) return;
     cards.replaceChildren(); posters.clear();
-    editScene.disabled = !chosen;
     const needle = view.search.trim().toLocaleLowerCase();
     const selected = displayed.filter(a => (!needle || [a.metadata?.title,a.metadata?.description,...(a.metadata?.tags || [])].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle))
-      && (view.category === "all" || (a.metadata?.category || "unclassified") === view.category)
-      && (!view.tag || a.metadata?.tags?.includes(view.tag)) && (!view.character || a.metadata?.characterIds?.includes(view.character)));
-    summary.textContent = `${selected.length} clip${selected.length===1 ? "" : "s"}`;
-    status.textContent = chosen ? chosen.description || "" : displayed.length ? "" : "No videos yet.";
+      && view.tags.every(tag=>a.metadata?.tags?.includes(tag)) && view.characters.every(id=>a.metadata?.characterIds?.includes(id)));
+    status.textContent=displayed.length&&!selected.length?'No matching videos.':'';status.hidden=!status.textContent;
+    const episodesEmpty=document.querySelector('#episode-workspace [data-episode-empty]');
+    if(workspace)workspace.dataset.videoAssetCount=String(displayed.length);
+    if(episodesEmpty){episodesEmpty.hidden=displayed.length>0||workspace?.dataset.hasEpisodes==='true';if(!displayed.length)episodesEmpty.textContent='Create your first episode.';}
     more.hidden = Boolean(chosen) || !loadMore;
     videoPlaylist = chosen ? {gameId,collection:chosen,assets:displayed} : null;
     for (const asset of selected) {
@@ -2956,12 +3011,9 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
       }
       const title = document.createElement("h2"); title.append(assetLink(asset));
       const description = document.createElement("p"); description.textContent = asset.metadata?.description || "";
-      const categoryText = document.createElement("p"); categoryText.className = "video-category-label";
-      categoryText.textContent = (asset.metadata?.category || "").replaceAll("-"," ");
-      if (asset.metadata?.category === "playful-derivative") card.classList.add("playful-video");
-      const info = document.createElement("p"); info.textContent = `${asset.kind} · ${new Date(asset.lastModified).toLocaleString()} · ${(asset.metadata?.tags || []).join(", ") || "No tags"}`;
+      const info = document.createElement("p"); info.textContent = [new Date(asset.lastModified).toLocaleString(),...(asset.metadata?.tags || [])].join(" · ");
       const creator = asset.metadata?.extra?.creator; const credit = document.createElement("p"); credit.textContent = typeof creator === "string" ? `Creator: ${creator}` : "";
-      card.append(poster,categoryText,title,description,info,credit);
+      card.append(poster,title,description,info,credit);
       const related = document.createElement("p");
       for (const id of asset.metadata?.characterIds || []) { const c = state.gameDetail?.characters.find(c=>c.id===id); if (!c) continue; const link=document.createElement("a"); link.href=gamePath("characters")+`/${encodeURIComponent(id)}`; link.textContent=c.name; related.append(link,document.createTextNode(" · ")); }
       if (asset.metadata?.sessionId) related.append(document.createTextNode(`Session: ${asset.metadata.sessionId}`));
@@ -2970,57 +3022,21 @@ function renderVideoLibrary(assets, list, status, current, loadMore) {
     }
     void images();
   }
-  search.oninput = () => { view.search=search.value; draw(); };
-  category.onchange = () => { view.category=category.value; draw(); };
-  tag.onchange = () => { view.tag=tag.value; draw(); };
-  character.onchange = () => { view.character=character.value; draw(); };
-  async function choose() {
-    const generation=++sequence; view.collection=collection.value;
-    const url=new URL(location.href);if(view.collection)url.searchParams.set("collection",view.collection);else url.searchParams.delete("collection");history.replaceState(null,"",url);
-    if (!view.collection) { chosen=null; displayed=assets; collectionsStatus.textContent=""; draw(); return; }
-    showLoading(collectionsStatus,"Loading exact collection members…");
-    try {
-      const result=await api("/video-collections",{gameId,id:view.collection});
-      if (!current() || generation !== sequence) return;
-      chosen=result.collection; displayed=result.assets;
-      collectionsStatus.textContent=result.warnings?.length ? `${result.warnings.length} unavailable members are not substituted. Collection: ${chosen.assetKeys.length} saved members; ${displayed.length} playable catalog entries.` : `${displayed.length} saved members in explicit order.`;
-      draw();
-    } catch(error) { if(current() && generation===sequence) { chosen=null; displayed=[]; videoPlaylist=null; cards.replaceChildren(); summary.textContent="Collection not loaded; no partial playlist is presented."; collectionsStatus.textContent=`${error.message}. Select the library or refresh to retry.`; } }
-  }
-  collection.onchange=choose;
-  void (async()=>{
-    try {
-      let cursor=null, seen=new Set(), count=0;
-      const nextPage=async()=>{
-        showLoading(collectionsStatus,"Fetching saved collections…");
-        const result=await api("/video-collections",{gameId,cursor}); if(!current())return;
-        for(const item of result.collections) { if([...collection.options].some(o=>o.value===item.id)) continue; collection.add(new Option(`${item.name} (${item.assetKeys.length})`,item.id)); count++; }
-        cursor=result.cursor;
-        if(cursor && seen.has(cursor)) throw new Error("Repeated collection cursor"); if(cursor)seen.add(cursor);
-        collection.disabled=false;
-        collectionsStatus.textContent=count ? `${count} scenes` : "";
-        collectionMore.hidden=!cursor; collectionMore.disabled=false;
-      };
-      const collectionMore=document.createElement("button"); collectionMore.type="button"; collectionMore.className="quiet-button"; collectionMore.textContent="Load more collections"; collectionMore.hidden=true; controls.append(collectionMore);
-      collectionMore.onclick=async()=>{ collectionMore.disabled=true; try{await nextPage();}catch(error){if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. Reload the page to try again.`;} };
-      await nextPage();
-      if(view.collection) { if(![...collection.options].some(o=>o.value===view.collection)) collection.add(new Option("Selected collection",view.collection)); collection.value=view.collection; await choose(); }
-    } catch(error) { if(current())collectionsStatus.textContent=`Collections unavailable: ${error.message}. The loaded video library remains usable.`; }
+  search.oninput = () => { view.search=search.value;workspace?.filterEpisodes?.(view.search);draw(); };
+  filters();draw();
+  // Existing typed references retain their exact saved membership and order.
+  // Collections are no longer offered as a creation or filtering control.
+  if(view.collection)void(async()=>{
+    try{const result=await api('/video-collections',{gameId,id:view.collection});if(!current())return;chosen=result.collection;displayed=result.assets||[];videoHost.hidden=false;draw();}
+    catch(error){if(current()){status.textContent=`Videos unavailable: ${error.message}`;status.hidden=false;}}
   })();
-  draw();
 }
 
 function configureVideoPreview(asset, video, epoch) {
   const gameId=state.gameId, current=()=>epoch===previewEpoch && gameId===state.gameId && state.tokens;
   const host=document.createElement("section"); host.className="video-player-details"; video.after(host);
-  const notice=document.createElement("p"); notice.textContent=`${(asset.metadata?.category || "unclassified").replaceAll("-"," ")} · Classification and provenance remain as recorded. A dramatization or playful derivative is not a canonical session transcript.`; host.append(notice);
   const preview=asset.metadata?.extra?.preview;
   if(preview?.schemaVersion===1 && sameGameKey(preview.imageKey)) void api("/image-links",{},{body:{gameId,keys:[preview.imageKey]}}).then(result=>{if(current() && result.images?.[preview.imageKey]?.url)video.poster=result.images[preview.imageKey].url;}).catch(()=>{});
-  const episode=currentTVEpisode?.gameId===gameId && currentTVEpisode.record.cuts.some(c=>c.assetKey===asset.key)?currentTVEpisode:null;
-  if(episode){const heading=document.createElement("h3"),label=document.createElement("p"),navigation=document.createElement("nav");heading.textContent=episode.record.title;label.textContent=`${episode.series.title} · Episode ${episode.record.number} · ${episode.record.status==="approved"?"Approved private selection":"Private draft"}. No automatic playback.`;navigation.setAttribute("aria-label","Episode playback");
-    const index=episode.episodes.findIndex(e=>e.id===episode.record.id);for(const [name,position] of [["Previous episode",index-1],["Next episode",index+1]]){const button=document.createElement("button");button.type="button";button.className="quiet-button";button.textContent=name;button.disabled=position<0 || position>=episode.episodes.length;button.onclick=()=>{if(current()){closePreview();void episode.activate(episode.episodes[position].id,episode.episodes[position].revision,true);}};navigation.append(button);}host.append(heading,label,navigation);
-    if(episode.record.posterAssetKey)void api("/image-links",{},{body:{gameId,keys:[episode.record.posterAssetKey]}}).then(result=>{if(current() && result.images?.[episode.record.posterAssetKey]?.url)video.poster=result.images[episode.record.posterAssetKey].url;}).catch(()=>{});
-  }
   const playlist=videoPlaylist?.gameId===gameId ? videoPlaylist : null;
   const index=playlist?.assets.findIndex(a=>a.key===asset.key) ?? -1;
   if(index>=0) {
@@ -3029,19 +3045,18 @@ function configureVideoPreview(asset, video, epoch) {
     const button=(name,position)=>{const node=document.createElement("button");node.type="button";node.className="quiet-button";node.textContent=name;node.disabled=position<0 || position>=playlist.assets.length;node.onclick=()=>{if(current()){const entry=playlist.assets[position];void previewFile({...entry,name:entry.metadata?.title || entry.name});}};return node;};
     navigation.append(label,button("Previous collection video",index-1),button("Next collection video",index+1));host.append(navigation);
   }
-  const captions=document.createElement("details"), heading=document.createElement("summary"), captionStatus=document.createElement("p");
-  heading.textContent="Caption tracks"; captionStatus.setAttribute("role","status");captionStatus.textContent="Finding explicitly associated WebVTT exports…";
+  const captions=document.createElement("section"), heading=document.createElement("h3"), captionStatus=document.createElement("p");
+  captions.className="video-captions";heading.textContent="Caption tracks"; captionStatus.setAttribute("role","status");captionStatus.textContent="Finding explicitly associated WebVTT exports…";
   captions.append(heading,captionStatus);host.append(captions);
   let blobUrl=null;
   video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
   void(async()=>{
     try {
-      const assets=episode ? [...episode.assets.values()] : await allAssets(gameId);if(!current())return;
+      const assets=await allAssets(gameId);if(!current())return;
       const directory=asset.key.slice(0,asset.key.lastIndexOf("/")+1);
       const tracks=assets.filter(a=>a.kind==="video-captions" && a.key.endsWith(".vtt") && sameGameKey(a.key)
-        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)
-          || (episode?.record.cuts.find(c=>c.id===episode.record.selectedCutId)?.assetKey===asset.key && episode.record.captionAssetKeys.includes(a.key))));
-      if(!tracks.length){captionStatus.textContent=episode?"No caption export is registered for this episode cut. Other exports may be available on its asset page; burned-in subtitles remain in the original.":"No separate caption track is associated. Any burned-in subtitles remain part of the original video.";return;}
+        && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)));
+      if(!tracks.length){captions.remove();return;}
       const label=document.createElement("label"), select=document.createElement("select"), load=document.createElement("button");
       label.textContent="Caption export";select.id="video-caption-export";label.htmlFor=select.id;
       select.add(new Option("Choose a recorded caption track",""));for(const track of tracks)select.add(new Option(track.metadata?.title || track.name,track.key));
@@ -3073,9 +3088,25 @@ function configureVideoPreview(asset, video, epoch) {
       };
       captions.append(label,select,load);
       for(const track of tracks)captions.append(assetLink(track,`Open caption export · ${track.metadata?.title || track.name}`));
-      captionStatus.textContent=`${tracks.length} explicitly associated caption exports. No language, author or review status is guessed.`;
+      captionStatus.textContent=`${tracks.length} caption tracks`;
     }catch(error){if(current())captionStatus.textContent=`Caption lookup unavailable: ${error.message}. Video playback remains usable.`;}
   })();
+}
+
+let liveReaderOpen=false,liveReaderRecording=null;
+function ensureSessionGroup(list,sessionId){
+  let group=[...list.querySelectorAll('.session-group')].find(node=>node.dataset.sessionId===sessionId);
+  if(!group){group=document.createElement('section');group.className='session-group transcript-session';group.dataset.sessionId=sessionId;const title=document.createElement('h2');title.textContent=sessionId?`Session · ${sessionId}`:'Unassigned session';group.append(title);list.append(group);}return group;
+}
+function closeLiveReader(){liveReaderOpen=false;liveReaderRecording=null;document.getElementById('live-transcript').hidden=true;const list=document.getElementById('library-list');if(list)list.hidden=false;}
+function openLiveReader(recordingId){const record=liveRecords.find(item=>item.recordingId===recordingId);if(record&&!liveHistory.get(historyKey(record))?.loaded)void loadLiveHistory(record);liveReaderOpen=true;liveReaderRecording=recordingId;liveRenderKey='';document.getElementById('library-list').hidden=true;document.getElementById('library-status').hidden=true;drawLive();document.getElementById('live-reader-back').focus();}
+document.getElementById('live-reader-back').onclick=()=>{closeLiveReader();document.querySelector('.session-live-entry button')?.focus();};
+function renderLiveSessionEntries(){
+  if(elements.primaryNav.querySelector('[aria-current]')?.dataset.section!=='sessions')return;
+  const list=document.getElementById('library-list');for(const node of list.querySelectorAll('.session-live-entry'))node.remove();
+  for(const group of list.querySelectorAll('.session-group[data-live-only]'))if(group.children.length===1)group.remove();
+  for(const record of liveRecords){const group=ensureSessionGroup(list,record.sessionId||'');if(group.children.length===1)group.dataset.liveOnly='true';const row=document.createElement('article');row.className='session-live-entry';const open=document.createElement('button');open.type='button';open.className='quiet-button';open.textContent='Open transcript';open.setAttribute('aria-label',`Open transcript for ${record.sessionId}`);open.onclick=()=>openLiveReader(record.recordingId);row.append(open);if(liveState(record)==='recording'){const state=document.createElement('span');state.className='session-recording-indicator';state.textContent='Recording';row.append(state);}group.insertBefore(row,group.children[1]||null);}
+  if(liveRecords.length)document.getElementById('library-status').hidden=true;
 }
 
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
@@ -3083,15 +3114,17 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
   document.getElementById("session-library").hidden = false;
-  if(section === "videos") renderEditorialComposer("video",epoch);
+  if(section === "videos") renderEpisodeWorkspace(epoch);else {const workspace=document.getElementById("episode-workspace");if(workspace){workspace.stopPreview?.();workspace.hidden=true;}}
+  const episodeCreate=document.getElementById("episode-create-action");
+  if(episodeCreate)episodeCreate.hidden=section!=="videos";
   const videoComposer=document.getElementById("editorial-video-composer");
   if(videoComposer)videoComposer.hidden=section!=="videos";
-  document.getElementById("live-transcript").hidden = !["transcripts", "audio"].includes(section) || (!liveRecords.length && !liveFailure);
-  if (["transcripts", "audio"].includes(section)) {
+  document.getElementById("live-transcript").hidden = section!=="sessions" || !liveReaderOpen;
+  if (["sessions"].includes(section)) {
     drawLive();
-    for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
+    if(liveReaderOpen)for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
-  document.getElementById("library-title").textContent = {audio:"Audio", transcripts:"Transcripts", videos:"Videos"}[section];
+  document.getElementById("library-title").textContent = {sessions:"Sessions", videos:"Videos"}[section];
   status.hidden = false;
   status.dataset.empty = "false";
   const loading = showLoading(status, `Fetching ${section} from the catalog…`);
@@ -3103,57 +3136,35 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     if (!current()) return;
     list.replaceChildren();
     loading.update("Organizing recordings, transcripts and videos…");
-    if (section === "videos") await loadMovies(assets, epoch);
+    if (section === "videos" && new URLSearchParams(location.search).has("project")) await loadMovies(assets, epoch);
     if (!current()) return;
     status.hidden = section === "videos" && new URLSearchParams(location.search).has("project");
     list.hidden = status.hidden;
     if (status.hidden) return;
     const manifests = new Set(assets.filter(a => a.recording?.partCount > 0).map(a => a.key.split("/")[3]));
     const keys = new Set(assets.map(a => a.key));
-    const selected = assets.filter(a => section === "audio"
-      ? a.recording?.partCount > 0 || ((a.contentType.startsWith("audio/") || /\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name)) && !manifests.has(a.key.split("/")[3]))
-      : section === "videos" ? a.contentType.startsWith("video/") || /\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name)
-      : ["transcript", "raw-transcript", "corrected-transcript", "edited-transcript"].includes(a.kind)
-        && !(a.key.endsWith(".md") && keys.has(a.key.slice(0,-3) + ".json")));
+    const isRecording=a=>a.recording?.partCount>0||((a.contentType?.startsWith("audio/")||/\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name))&&!manifests.has(a.key.split("/")[3]));
+    const isTranscript=a=>["transcript","raw-transcript","corrected-transcript","edited-transcript"].includes(a.kind)&&!(a.key.endsWith(".md")&&keys.has(a.key.slice(0,-3)+".json"));
+    const selected=assets.filter(a=>section==="videos"?a.contentType?.startsWith("video/")||/\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name):isRecording(a)||isTranscript(a));
     status.dataset.empty=String(!selected.length);
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     if (section === "videos") {
+      document.getElementById('episode-workspace')?.updateOutputs?.(selected);
       renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
       return;
     }
-    status.textContent = selected.length
-      ? section === "videos" ? "Episodes, experiments and other videos. Open a video to play it and explore its inputs and outputs."
-        : section === "audio" ? "Continuous session playback. Lossless original parts are retained separately." : "All saved versions. Raw recognition is preserved; corrected transcripts are separate and may still contain uncertainty."
-      : `No ${section === "audio" ? "recordings" : section} yet for this game.`;
-    if (!selected.length && roomCapture?.draft && !roomCapture.el.result.hidden) status.hidden=true;
-    const sessionGroups = new Map();
-    for (const asset of selected) {
-      const card = document.createElement("article"); card.className = "novel-card session-card";
-      const heading = document.createElement("h2");
-      const label = section === "audio" && asset.kind === "recording-manifest" ? `Recording · ${asset.metadata?.sessionId || asset.name}` : asset.metadata?.title || asset.name;
-      heading.append(assetLink(asset, label));
-      const kind = document.createElement("p");
-      kind.textContent = `${asset.metadata?.sessionId || "Session not recorded"} · ${asset.kind === "raw-transcript" ? "Raw transcript" : ["corrected-transcript", "edited-transcript"].includes(asset.kind) ? "Corrected / edited transcript" : asset.kind} · ${section === "videos" ? "Video" : asset.name.endsWith(".json") ? "Structured reader" : asset.name.endsWith(".md") ? "Markdown export" : "Original audio"}`;
-      const date = document.createElement("p"); date.textContent = new Date(asset.lastModified).toLocaleString();
-      card.append(heading, kind, date);
-      if (section === "transcripts") {
-        const sessionId = asset.metadata?.sessionId || "";
-        if (!sessionGroups.has(sessionId)) {
-          const group = document.createElement("section"), title = document.createElement("h2"), note = document.createElement("p");
-          group.className = "transcript-session";
-          title.textContent = sessionId ? `Session · ${sessionId}` : "Session not identified";
-          note.textContent = "Loaded transcript versions. Canonical selection is separate from review or human verification; dates below are asset timestamps, not inferred session dates.";
-          group.append(title, note); list.append(group); sessionGroups.set(sessionId, group);
-        }
-        const summary = document.createElement("p"), version = asset.metadata?.extra?.version;
-        const observed = asset.transcript;
-        summary.textContent = observed?.state === "available"
-          ? `Observed speakers: ${observed.participants.map(p => p.name || p.id).join(", ") || "None assigned"} · ${observed.unassignedSegments} unassigned segments · Review: ${observed.reviewStatus}`
-          : "Speaker summary unavailable; open the preserved transcript to inspect its evidence.";
-        const revision = document.createElement("p"); revision.textContent = version ? `Asset version ${version.number} · ${version.seriesId}` : "Version metadata unavailable — inventory verification required.";
-        card.append(summary, revision); sessionGroups.get(sessionId).append(card);
-      } else list.append(card);
+    status.textContent=selected.length?'':'No saved sessions yet.';status.hidden=!!selected.length||liveReaderOpen;
+    for(const asset of selected){
+      const sessionId=asset.metadata?.sessionId||'',group=ensureSessionGroup(list,sessionId),card=document.createElement('article');card.className='novel-card session-card';
+      const heading=document.createElement('h3'),kind=document.createElement('p'),version=asset.metadata?.extra?.version;
+      heading.append(assetLink(asset,asset.kind==='recording-manifest'?'Recording':asset.metadata?.title||asset.name));
+      kind.className='session-asset-meta';const type=isTranscript(asset)?asset.kind==='raw-transcript'?'Raw transcript':['corrected-transcript','edited-transcript'].includes(asset.kind)?'Corrected transcript':'Transcript':'Recording';
+      kind.textContent=type+(version?` · v${version.number}`:'');card.append(heading,kind);
+      const observed=asset.transcript;
+      if(observed?.state==='available'){const summary=document.createElement('p');summary.className='session-asset-meta';const speakers=(observed.participants||[]).map(person=>person.name||person.id);summary.textContent=[speakers.join(', '),observed.unassignedSegments?`${observed.unassignedSegments} unassigned segments`:'',observed.reviewStatus].filter(Boolean).join(' · ');if(summary.textContent)card.append(summary);}
+      group.append(card);
     }
+    renderLiveSessionEntries();list.hidden=liveReaderOpen;
     if (page.cursor) {
       const more = document.createElement("button");
       more.type = "button"; more.className = "load-more"; more.textContent = `Load more ${section}`;
@@ -3165,7 +3176,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       if (!selected.length) status.textContent = `No ${section} to display in these entries. More entries are available.`;
     }
   } catch (error) {
-    if (current()) status.textContent = `${error.message}. Reload the page to try again.`;
+    if (current()) status.textContent = section === "videos" ? (error.status===403?"You cannot access finished videos in this game.":`Finished videos unavailable: ${error.message}`) : `${error.message}. Reload the page to try again.`;
   }
 }
 
@@ -3256,6 +3267,7 @@ function finishedAssetConnections(assets, key, gameId) {
 
 function appendFinishedConnections(host, connections) {
   for (const [title, records] of [["Inputs", connections.inputs], ["Outputs", connections.outputs]]) {
+    if (!records.length) continue;
     const heading = document.createElement("h3"); heading.textContent = title;
     const list = document.createElement("ul"); list.dataset.connections = title.toLowerCase();
     for (const record of records) {
@@ -3264,34 +3276,32 @@ function appendFinishedConnections(host, connections) {
         ? novelLink(record.connectionLabel, jobId) : assetLink(record, record.connectionLabel));
       list.append(li);
     }
-    if (!records.length) { const li = document.createElement("li"); li.textContent = `No finished ${title.toLowerCase()} recorded.`; list.append(li); }
     host.append(heading, list);
   }
 }
 
-async function renderAssetLinks(key, epoch) {
+async function renderAssetLinks(key, epoch, resolved = null) {
   const host = document.getElementById("asset-links"), gameId = state.gameId;
   const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
   if (!sameGameKey(key)) { host.textContent = "Connections are available for game assets."; return; }
   try {
-    const assets = await allAssets(gameId);
+    const assets = [...await allAssets(gameId)];
     if (!current()) return;
-    const item = assets.find(a => a.key === key);
-    if (!item) { host.textContent = "This asset is not in the current catalog. Reload the page to try again."; return; }
+    // A resolved file is already an asset. Catalog pages project metadata and may omit
+    // raw recording parts; their absence must not invalidate an existing file.
+    if (!assets.some(a => a.key === key) && resolved?.key === key) assets.push(resolved);
     host.replaceChildren();
     const connections = finishedAssetConnections(assets, key, gameId);
     appendFinishedConnections(host, connections);
     const companions = assets.filter(a => a.key !== key && a.key.split("/")[3] === key.split("/")[3]);
     if (companions.length) {
-      const details = document.createElement("details"), summary = document.createElement("summary"), list = document.createElement("ul");
-      summary.textContent = "Technical files and original exports";
+      const list = document.createElement("ul");
       for (const asset of companions) { const li = document.createElement("li"); li.append(assetLink(asset)); list.append(li); }
-      details.append(summary, list); host.append(details);
+      host.append(optionalInfoDialog("Technical files and original exports", list).host);
     }
     const warnings = assets.filter(a => a.lineageWarning).length;
     if (warnings || connections.incomplete) { const warning = document.createElement("p"); warning.textContent = "Some provenance is missing or unreadable; finished-asset connections may be incomplete."; host.append(warning); }
-    const note = document.createElement("p"); note.className = "status";
-    note.textContent = "Finished assets only. Processing steps are omitted; full provenance is retained. Connections do not establish factual accuracy."; host.append(note);
+
   } catch (error) { if (current()) host.textContent = `Connections unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
@@ -3304,7 +3314,7 @@ async function renderAssetVersions(key, epoch) {
     if (!current()) return;
     const item = assets.find(asset => asset.key === key);
     const version = item?.metadata?.extra?.version;
-    if (!version || version.schemaVersion !== 1) { host.textContent = "Version record unavailable; the asset migration is not complete."; return; }
+    if (!version || version.schemaVersion !== 1) { host.replaceChildren(); return; }
     const series = assets.filter(asset => asset.metadata?.extra?.version?.seriesId === version.seriesId)
       .sort((a, b) => a.metadata.extra.version.number - b.metadata.extra.version.number);
     const heading = document.createElement("h3"), list = document.createElement("ol");
@@ -3319,9 +3329,28 @@ async function renderAssetVersions(key, epoch) {
   } catch (error) { if (current()) host.textContent = `Versions unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
+function closeOptionalInfoDialogs() {
+  for (const dialog of [...document.querySelectorAll(".optional-info-dialog[open]")].reverse()) dialog.close();
+}
+
+// Native modal dialogs supply focus containment and Escape dismissal; closing
+// restores focus to the opener while it remains in the active view.
+function optionalInfoDialog(title, content, onOpen = () => {}) {
+  const host = document.createElement("div"), button = document.createElement("button"), dialog = document.createElement("dialog");
+  const header = document.createElement("header"), heading = document.createElement("h2"), close = document.createElement("button");
+  host.className = "optional-info"; dialog.className = "optional-info-dialog";
+  button.type = close.type = "button"; button.className = close.className = "quiet-button";
+  button.textContent = heading.textContent = title; close.textContent = "Close";
+  dialog.setAttribute("aria-label", title); close.onclick = () => dialog.close();
+  header.append(heading, close); dialog.append(header, content); host.append(button, dialog);
+  button.onclick = () => { dialog.showModal(); onOpen(); };
+  dialog.addEventListener("close", () => { if (button.isConnected && !button.closest("[hidden]")) button.focus({preventScroll:true}); });
+  return {host, dialog, button};
+}
+
 function detailBlock(title, value) {
-  const details = document.createElement("details"), summary = document.createElement("summary"), pre = document.createElement("pre");
-  summary.textContent = title; pre.textContent = JSON.stringify(value, null, 2); details.append(summary, pre); return details;
+  const pre = document.createElement("pre"); pre.textContent = JSON.stringify(value, null, 2);
+  return optionalInfoDialog(title, pre).host;
 }
 
 // Movie review is intentionally separate from the paid local generation CLI.
@@ -3343,28 +3372,7 @@ async function loadMovies(assets, epoch) {
   host.hidden = false; host.replaceChildren();
   const plans = assets.filter(a => a.kind === "movie-review-plan" && sameGameKey(a.key));
   const key = new URLSearchParams(location.search).get("project");
-  if (!key) {
-    // Do not push existing playable videos below the fold with an empty planning feature.
-    if (!plans.length) { host.hidden = true; return; }
-    const intro = movieNode("div", undefined, "movie-intro");
-    const text = movieNode("div"); text.append(movieNode("p", "THE CUTTING ROOM", "eyebrow"),
-      movieNode("h2", "A good film starts before the first frame."),
-      movieNode("p", "Review the story, cast and shot-by-shot budget. Nothing generates until you approve.", "movie-muted"));
-    intro.append(text, movieNode("span", "Planning costs ≠ generation spend", "movie-tag")); host.append(intro);
-    const grid = movieNode("div", undefined, "movie-projects");
-    for (const asset of plans.sort((a,b) => b.lastModified.localeCompare(a.lastModified))) {
-      const card = movieNode("article", undefined, "movie-project-card");
-      card.append(movieNode("p", "MOVIE PLAN · REVIEW BEFORE GENERATION", "eyebrow"),
-        movieNode("h3", asset.metadata?.title || asset.name),
-        movieNode("p", asset.metadata?.description || "Open the screenplay, planned shots and budget.", "movie-muted"));
-      const link = movieNode("a", "Open review workspace →", "movie-open");
-      link.href = `${gamePath("videos")}?project=${encodeURIComponent(asset.key)}`;
-      link.onclick = event => { if (!event.metaKey && !event.ctrlKey) { event.preventDefault(); navigate(link.href); } };
-      card.append(link); grid.append(card);
-    }
-    if (!plans.length) grid.append(movieNode("p", "No movie plans yet. A prepared plan will appear here before any paid generation.", "movie-empty"));
-    host.append(grid, movieNode("h2", "Video library", "movie-library-heading")); return;
-  }
+  if (!key) {host.hidden=true;return;}
   showLoading(host, "Reading the screenplay, shots and budget review…");
   try {
     if (!sameGameKey(key)) throw new Error("This movie plan does not belong to the selected game");
@@ -3477,8 +3485,8 @@ function drawMovieWorkspace(host, data, key, assets, current) {
     aside.append(movieNode("p", plan.budget.notes || "Includes retries. Quotes must be refreshed before approval. Unknown costs are not zero.", "movie-small"));
     const count = movieNode("p", `${reviewed.size} of ${plan.shots.length} shots reviewed`, "movie-reviewed-count"); aside.append(count);
     if (data.readiness.blockers.length) {
-      const details = movieNode("details", undefined, "movie-blockers"); details.open = true;
-      details.append(movieNode("summary", `${data.readiness.blockers.length} items need attention`));
+      const details = movieNode("section", undefined, "movie-blockers");
+      details.append(movieNode("h4", `${data.readiness.blockers.length} items need attention`));
       const list = movieNode("ul"); for (const blocker of data.readiness.blockers) list.append(movieNode("li", blocker)); details.append(list); aside.append(details);
     }
     if (data.review) {
@@ -3623,10 +3631,9 @@ function renderStructuredAsset(asset, epoch) {
   if (transcript && Array.isArray(transcript.segments)) {
     const notice = document.createElement("p"); notice.className = "novel-notice";
     const edited = [asset.kind, doc.stage, doc.artifactType].some(kind => ["corrected-transcript", "edited-transcript"].includes(kind));
-    notice.textContent = `${edited ? "Corrected / edited transcript" : "Raw transcript"} · ${doc.reviewStatus || "unreviewed"}. Speakers identify players, not characters.`;
+    notice.textContent = `${edited ? "Corrected transcript" : "Raw transcript"}${doc.reviewStatus ? ` · ${doc.reviewStatus}` : ""}`;
     if (doc.publicationStatus === "accepted-with-notes") notice.textContent += " Working draft with unresolved review notes.";
-    if (!transcript.captureIntegrity) notice.textContent += " Capture integrity was not recorded in this version.";
-    if (doc.entityType === "BrowserTranscript") notice.textContent = "Full browser transcription · unreviewed. Speakers are unassigned. Timestamps mark transcription windows, not individual utterances.";
+    if (doc.entityType === "BrowserTranscript") {notice.textContent = `Browser transcript${doc.reviewStatus ? ` · ${doc.reviewStatus}` : ""}`;notice.title="Speakers are unassigned; timestamps mark transcription windows.";}
     host.append(notice);
     if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
@@ -3654,11 +3661,11 @@ function renderStructuredAsset(asset, epoch) {
     if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
     navigation.finish();
   } else if (["Recording", "BrowserRecording"].includes(doc.entityType) && Array.isArray(doc.parts)) {
-    const notice = document.createElement("p"); notice.textContent = `Recording status: ${doc.status || "unknown"} · ${doc.parts.length} lossless original parts retained. One continuous listening copy; assembly does not repair capture gaps.`;
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
     const status = document.createElement("p"); status.setAttribute("role", "status"); showLoading(status, "Finding the continuous audio playback file…");
-    const parts = document.createElement("div"); parts.className = "recording-parts";
-    host.append(notice, audio, status, parts);
+    host.append(audio, status);
+    if (doc.captureIntegrity) host.append(detailBlock("Capture integrity and warnings",doc.captureIntegrity));
+    if (doc.captureWarnings?.length) host.append(detailBlock("Capture warnings",doc.captureWarnings));
     const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
     void (async () => {
       try {
@@ -3669,7 +3676,7 @@ function renderStructuredAsset(asset, epoch) {
         copies.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
         if (!copies.length) {
           audio.hidden = true;
-          status.textContent = "Continuous playback has not been prepared yet. It is produced after the uploaded chunk set is marked complete and the laptop workflow runs. Lossless originals remain under Technical files and original exports.";
+          status.textContent = "Playback is not ready yet.";
           return;
         }
         const copy = copies[0].playback;
@@ -3677,16 +3684,7 @@ function renderStructuredAsset(asset, epoch) {
         if (!current()) return;
         audio.src = result.url;
         attachMediaRecovery(audio, copy.audioKey, current);
-        status.textContent = `Continuous playback · ${timestamp(copy.durationSeconds)} · MP3 listening copy. No file switches at part boundaries.`;
-        doc.parts.forEach((part,index) => {
-          if (!Number.isFinite(part.start) || part.start < 0 || part.start >= copy.durationSeconds) return;
-          const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button";
-          button.textContent = `Jump to part ${index+1} · ${timestamp(part.start)}`;
-          button.disabled = audio.readyState < 1;
-          audio.addEventListener("loadedmetadata", () => { if (current()) button.disabled = false; });
-          button.addEventListener("click", () => { if (current()) audio.currentTime = part.start; });
-          parts.append(button);
-        });
+        status.replaceChildren(); status.hidden=true;
       } catch (error) { if (current()) status.textContent = `${error.message}. Close and reopen to retry. Original parts are retained.`; }
     })();
   } else {
@@ -3699,20 +3697,21 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
   const sessionId = asset.metadata?.sessionId || transcript.sessionId;
   const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");
+  const navigationPicker = optionalInfoDialog("Transcript tools", tools); host.append(navigationPicker.host);
   const label = document.createElement("label"), search = document.createElement("input"), results = document.createElement("p"), previous = document.createElement("button"), next = document.createElement("button");
   label.textContent = "Search speech or player names"; search.type = "search"; search.maxLength = 500; search.id = "transcript-search"; label.htmlFor = search.id;
   search.placeholder = "Find a name, place or phrase…"; results.setAttribute("role", "status");
   previous.type = next.type = "button"; previous.className = next.className = "quiet-button";
   previous.textContent = "Previous match"; next.textContent = "Next match";
-  tools.append(label, search, previous, next, results); host.append(tools);
+  tools.append(label, search, previous, next, results);
   const versionLabel = document.createElement("label"), versions = document.createElement("select");
   versions.id = "transcript-version"; versions.disabled = true; versionLabel.htmlFor = versions.id; versionLabel.textContent = "Session transcript version";
   versions.add(new Option("Finding saved versions…", asset.key)); tools.append(versionLabel, versions);
   const selection = document.createElement("div"), selectionStatus = document.createElement("p");
   selectionStatus.setAttribute("role", "status"); selectionStatus.textContent = sessionId ? "Checking the explicit canonical selection…" : "Canonical selection unavailable: this transcript has no session identity.";
   selection.append(selectionStatus); tools.append(selection);
-  const source = document.createElement("details"), sourceHeading = document.createElement("summary"), sourceStatus = document.createElement("p"), audio = document.createElement("audio");
-  sourceHeading.textContent = "Source recording · listen at a transcript timestamp";
+  const source = document.createElement("section"), sourceHeading = document.createElement("h3"), sourceStatus = document.createElement("p"), audio = document.createElement("audio");
+  sourceHeading.textContent = "Recording";
   sourceStatus.setAttribute("role", "status"); sourceStatus.textContent = "Finding the exact source recording and its continuous listening copy…";
   audio.controls = true; audio.preload = "metadata"; audio.hidden = true;
   source.append(sourceHeading, sourceStatus, audio); tools.append(source);
@@ -3725,7 +3724,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
       if (query && entry.search.includes(query)) { matches.push(index); entry.line.classList.add("transcript-match"); }
     });
     previous.disabled = next.disabled = matches.length === 0;
-    results.textContent = query ? `${matches.length} matching ${matches.length === 1 ? "line" : "lines"}. All source lines remain visible.` : `${lines.length} transcript lines. Search does not hide or edit evidence.`;
+    results.textContent = query ? `${matches.length} matching ${matches.length === 1 ? "line" : "lines"}.` : "";
   };
   const move = direction => {
     if (!matches.length) return;
@@ -3734,7 +3733,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
     const line = lines[matches[position]].line;
     line.classList.add("transcript-current-match"); line.tabIndex = -1;
     line.scrollIntoView({block:"center", behavior:"instant"}); line.focus({preventScroll:true});
-    results.textContent = `Match ${position+1} of ${matches.length}. All source lines remain visible.`;
+    results.textContent = `Match ${position+1} of ${matches.length}.`;
   };
   search.addEventListener("input", update);
   search.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); move(event.shiftKey ? -1 : 1); } });
@@ -3744,7 +3743,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   let duration = null;
   const seek = async seconds => {
     if (!current() || duration === null || !Number.isFinite(seconds) || seconds < 0 || seconds >= duration) return;
-    source.open = true;
+    if (!navigationPicker.dialog.open) navigationPicker.dialog.showModal();
     try { audio.currentTime = seconds; await audio.play(); }
     catch { if (current()) sourceStatus.textContent = "Playback could not start. Use the source audio controls or refresh its link; transcript evidence is unchanged."; }
   };
@@ -3781,7 +3780,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
       const ready = () => { if (current()) { duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null; seeks.forEach(({button,start}) => { button.disabled = duration === null || !Number.isFinite(start) || start < 0 || start >= duration; }); } };
       audio.addEventListener("loadedmetadata", ready);
       if (audio.readyState >= 1) ready();
-      sourceStatus.textContent = "Continuous listening copy of the linked source. Timestamps follow the transcript; capture warnings and attribution uncertainty still apply.";
+      sourceStatus.textContent = ""; sourceStatus.hidden = true;
     } catch (error) { if (current()) { versions.replaceChildren(new Option("Version navigation unavailable",asset.key)); sourceStatus.textContent = `Source navigation unavailable: ${error.message}. Use Inputs or reopen to retry.`; } }
   };
   void configure();
@@ -3791,15 +3790,15 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
       if (!current()) return;
       const report = () => {
         selectionStatus.textContent = chosen.warning || (chosen.selection
-          ? `${chosen.selection.key === asset.key ? "Viewing the canonical reading version" : "Viewing a non-canonical version"}. Canonical selection is not human verification; review/uncertainty remain as reported above.`
-          : "No canonical reading version has been designated for this session. This is an archived transcript, not an approved record.");
+          ? `${chosen.selection.key === asset.key ? "Viewing the canonical reading version" : "Viewing a non-canonical version"}.`
+          : "No canonical reading version has been designated.");
         selection.querySelector('[data-canonical-link]')?.remove();
         if (chosen.selection?.key && chosen.selection.key !== asset.key && sameGameKey(chosen.selection.key)) {
           const link = assetLink({key:chosen.selection.key}, "Open canonical reading version"); link.dataset.canonicalLink = "true"; selection.append(link);
         }
       };
       report();
-      const details = document.createElement("details"), heading = document.createElement("summary"), explanation = document.createElement("p"), reasonLabel = document.createElement("label"), reason = document.createElement("input"), confirmLabel = document.createElement("label"), confirm = document.createElement("input"), button = document.createElement("button"), status = document.createElement("p");
+      const details = document.createElement("section"), heading = document.createElement("h3"), explanation = document.createElement("p"), reasonLabel = document.createElement("label"), reason = document.createElement("input"), confirmLabel = document.createElement("label"), confirm = document.createElement("input"), button = document.createElement("button"), status = document.createElement("p");
       heading.textContent = "Choose this canonical reading version";
       explanation.textContent = "This changes a session pointer only. It does not correct raw text, verify speakers, approve game facts or regenerate adaptations. Previous selections are retained.";
       reason.id = "canonical-reason"; reason.maxLength = 500; reasonLabel.htmlFor = reason.id; reasonLabel.textContent = "Selection reason";
@@ -3820,7 +3819,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
           report(); status.textContent = "Selection saved. Immutable transcripts and review state are unchanged.";
         } catch (error) { if (current()) { status.textContent = `Selection not confirmed: ${error.message}. An exact retry uses the same operation identity; reload if another selection changed.`; button.disabled = false; } }
       };
-      details.append(heading, explanation, reasonLabel, reason, confirmLabel, button, status); selection.append(details);
+      details.append(explanation, reasonLabel, reason, confirmLabel, button, status); selection.append(optionalInfoDialog(heading.textContent, details).host);
     } catch (error) { if (current()) selectionStatus.textContent = `Canonical selection unavailable: ${error.message}. No version is assumed canonical.`; }
   })();
   return {
@@ -3859,13 +3858,18 @@ elements.previewDialog.addEventListener("click", (event) => {
 // Room capture v1. IndexedDB retains closed PCM parts before any network request.
 class RoomRecorder {
   constructor() {
-    this.host=document.getElementById('room-recorder'); this.recording=false; this.draft=null; this.liveEnabled=false;
+    this.host=document.getElementById('room-recorder');this.controls=this.host.querySelector('.room-controls'); this.recording=false; this.draft=null; this.liveEnabled=false;
     this.writeChain=Promise.resolve(); this.uploadChain=Promise.resolve(); this.nodes=new Map();
     this.el=Object.fromEntries(['start','stop','status','state','timer','level','live-toggle','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
     this.el.audio=document.createElement('audio');this.el.audio.id='room-audio';this.el.audio.controls=true;this.el.audio.preload='metadata';this.el.audio.hidden=true;
+    this.liveDialog=document.createElement('dialog');this.liveDialog.className='preview room-live-dialog';this.liveDialog.setAttribute('aria-label','Live transcript');this.liveDialog.title='Provisional recognition; speakers are unassigned';
+    const closeLive=document.createElement('button');closeLive.type='button';closeLive.className='icon-button';closeLive.textContent='×';closeLive.setAttribute('aria-label','Close live transcript');closeLive.onclick=()=>this.liveDialog.close();this.liveDialog.append(closeLive,this.el.live);document.body.append(this.liveDialog);
+    this.viewLive=document.createElement('button');this.viewLive.type='button';this.viewLive.className='quiet-button';this.viewLive.textContent='View transcript';this.viewLive.hidden=true;this.viewLive.onclick=()=>this.liveDialog.showModal();this.host.querySelector('.room-controls').append(this.viewLive);
     this.el.start.onclick=()=>this.start(); this.el.stop.onclick=()=>this.stop();
     this.el['live-toggle'].onclick=()=>{this.liveEnabled=!this.liveEnabled; this.buttons(); this.say(this.liveEnabled?'Live transcription enabled for new audio.':'New live requests paused. A full pass will still run after Stop.');};
-    this.el.resume.onclick=async()=>{this.uploadError=false; this.el.resume.disabled=true; try {await this.upload(); if(!this.recording) await this.archive();} catch(error) {this.say(error.message,true);} finally {this.el.resume.disabled=false;}};
+    this.el.resume.onclick=()=>this.retrySave();
+    this.el.result.append(this.el.recovery);
+    this.retained=document.createElement('section');this.retained.id='room-retained';this.retained.setAttribute('aria-label','Unsaved recordings');this.retained.hidden=true;this.host.append(this.retained);
     this.el.download.onclick=()=>this.download();
     window.addEventListener('beforeunload',event=>{if(this.recording){event.preventDefault();event.returnValue='';}});
   }
@@ -3885,36 +3889,65 @@ class RoomRecorder {
     });
   }
   persist() {const draft=this.draft; this.writeChain=this.writeChain.then(()=>this.store('drafts','put',structuredClone(draft))); return this.writeChain;}
-  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;}
+  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;if(error)(this.el.result.hidden?this.host:this.el.result).append(this.el.status);}
+  async retrySave() {
+    if(this.recording || this.stopping || this.archiving) return;
+    this.uploadError=false;this.storageError=null;this.writeChain=Promise.resolve();this.el.resume.disabled=true;this.say('');this.showResult('Saving audio…');
+    try {await this.archive();} catch(error) {this.saveFailed(error);}
+    finally {this.el.resume.disabled=false;this.buttons();await this.listRetained();}
+  }
+  saveFailed(error) {
+    this.showResult('Not saved','error');this.el.recovery.hidden=false;this.el.resume.hidden=false;
+    const network=['TypeError','TimeoutError','AbortError'].includes(error?.name);
+    this.say(network?'Could not upload audio. It is safe in this browser. Retry saving or download it.':error.message,true);
+    this.buttons();
+  }
+  async listRetained() {
+    const drafts=await this.store('drafts','getAll');this.retained.replaceChildren();
+    const pending=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived' && d.parts.length && d.id!==this.draft?.id);
+    this.retained.hidden=!pending.length;
+    for(const draft of pending) {
+      const row=document.createElement('div'),name=document.createElement('span'),save=document.createElement('button'),download=document.createElement('button');name.textContent=draft.sessionName;
+      for(const [button,text] of [[save,'Save recording'],[download,'Download']]) {button.type='button';button.className='quiet-button';button.textContent=text;button.disabled=this.recording || !!this.archiving || !!this.stopping;}
+      const activate=()=>{clearTimeout(this.pollTimer);this.draft=draft;this.writeChain=Promise.resolve();this.uploadChain=Promise.resolve();this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el.live.hidden=true;this.el['live-text'].replaceChildren();this.el.audio.pause();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.showResult('Not saved','error');this.el.recovery.hidden=false;this.el.resume.hidden=false;};
+      save.onclick=async()=>{if(this.recording || this.archiving || this.stopping)return;activate();await this.retrySave();};
+      download.onclick=async()=>{if(this.recording || this.archiving || this.stopping)return;activate();await this.download();await this.listRetained();};
+      row.append(name,save,download);this.retained.append(row);
+    }
+  }
   buttons() {
     this.host.dataset.recording=String(this.recording); this.el.start.hidden=this.recording; this.el.stop.hidden=!this.recording;
-    this.el.start.disabled=!!this.archiving || !!this.stopping || (!!this.draft && this.draft.status!=='archived');
+    this.el.start.disabled=!!this.archiving || !!this.stopping;
+    this.el.resume.disabled=this.recording || !!this.archiving || !!this.stopping;
     this.el['live-toggle'].disabled=!this.capabilities?.transcriptionAvailable;this.el['live-toggle'].hidden=!this.recording || !this.capabilities?.transcriptionAvailable;
     this.el['live-toggle'].setAttribute('aria-pressed',String(this.liveEnabled)); this.el['live-toggle'].textContent=this.liveEnabled?'Live text on':'Live text off';
     this.el.state.textContent=this.stopping?'Finishing…':'Recording';this.el.state.hidden=!this.recording && !this.stopping;this.el.timer.hidden=!this.recording && !this.stopping;this.el.level.hidden=!this.recording;
     elements.gameSelector.disabled=this.recording || !!this.stopping || !!this.archiving;
   }
   async render(section,epoch) {
-    const visible=section==='audio' || this.recording || this.stopping;
-    this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
-    if(['audio','transcripts'].includes(section)) document.getElementById('session-library').insertBefore(this.host,document.getElementById('live-transcript'));
-    else document.getElementById('game-context').after(this.host);
+    if(section!=='sessions')this.liveDialog.close();
+    const visible=section==='sessions' || this.recording || this.stopping;
+    this.controls.hidden=!visible;this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
+    if(section==='sessions'){const heading=document.querySelector('#session-library > .explorer-heading');heading.append(this.controls);heading.after(this.host);}
+    else {this.host.prepend(this.controls);document.getElementById('game-context').after(this.host);}
     try {
       this.capabilities ||= await api('/browser-recording/capabilities');
       if(epoch!==routeEpoch) return;
-      if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;return;}
-      if(!this.capabilities.canRecord) {this.host.hidden=true; return;}
+      if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;this.controls.hidden=true;return;}
+      if(!this.capabilities.canRecord) {this.host.hidden=true;this.controls.hidden=true; return;}
       if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
-        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
+        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
         const held=await navigator.locks?.query();
         if(held?.held.some(lock=>lock.name==='panther-room-capture')) {this.say('Another tab is using the room recorder.',true);this.el.start.disabled=true;return;}
         const drafts=await this.store('drafts','getAll');
-        this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner() && d.status!=='archived').sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
-        if(this.draft) {this.draft.status='interrupted';if(!this.draft.manifestDoc) this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');await this.persist();this.showResult('Audio retained','error');this.el.recovery.hidden=false;this.say('Closed audio parts were recovered from this browser. Save them without recording again.');}
+        this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner()).sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
+        if(this.draft) {if(this.draft.status==='archived'){this.processingStarted=this.draft.processingStarted || Date.now();this.showResult('Audio saved','ready');this.el.resume.hidden=true;this.el.recovery.hidden=false;this.el.download.hidden=false;this.transcriptionAvailability();this.schedulePoll();}else {if(this.draft.status==='recording'){this.draft.status='interrupted';this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');}await this.persist();this.showResult('Not saved','error');this.el.recovery.hidden=false;this.say('Audio is saved in this browser. Retry saving or download it.',true);}}
+        await this.listRetained();
         this.liveEnabled=!!this.capabilities.transcriptionAvailable;
       }
       this.buttons();
-    } catch(error) {this.host.hidden=true;}
+      if (this.draft?.status === 'archived' && this.capabilities.playbackAvailable === false) this.processingUnavailable();
+    } catch(error) {this.say(error.message,true);this.el.start.disabled=true;}
   }
   async start() {
     if(this.recording || this.stopping || !this.capabilities?.canRecord || this.el.start.disabled) return;
@@ -3930,22 +3963,22 @@ class RoomRecorder {
         await this.context.audioWorklet.addModule(document.querySelector('meta[name="panther-pcm-worklet"]').content);
         const track=this.stream.getAudioTracks()[0];
         this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+new Date().toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
-        this.writeChain=Promise.resolve(); await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
+        this.writeChain=Promise.resolve(); this.storageError=null; await this.persist(); this.uploadError=false; this.nodes.clear(); this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
         this.node=new AudioWorkletNode(this.context,'panther-pcm-capture-v1'); this.source=this.context.createMediaStreamSource(this.stream);
         this.node.port.onmessage=event=>{
-          if(event.data.type==='level') this.el.level.value=event.data.peak;
-          if(event.data.type==='part') this.writeChain=this.writeChain.then(()=>this.savePart(event.data.samples)).catch(error=>{this.say(error.message,true);void this.stop('Browser storage failed; the active part may be incomplete.');});
+          if(event.data.type==='level') {const db=20*Math.log10(Math.max(event.data.peak,0.000001));this.el.level.value=Math.max(0,Math.min(1,(db+60)/60));this.el.level.title=`${Math.round(db)} dBFS`;this.el.level.setAttribute('aria-valuetext',`${Math.round(db)} decibels below full scale`);}
+          if(event.data.type==='part') this.writeChain=this.writeChain.then(()=>this.savePart(event.data.samples)).catch(error=>{this.storageError=error;this.say(error.message,true);void this.stop('Browser storage failed; the active part may be incomplete.');});
           if(event.data.type==='stopped') {if(this.stopping) this.stopped?.();else if(this.recording) void this.stop('The supported recording length was reached; captured parts are retained.',true);}
         };
         this.node.onprocessorerror=()=>void this.stop('The audio processor failed; the unfinished part may be missing.');
         track.onended=()=>{if(this.recording) void this.stop('The microphone disconnected.');};
         this.source.connect(this.node);this.node.connect(this.context.destination);await this.context.resume();
         this.context.onstatechange=()=>{if(this.recording && this.context.state==='suspended') {this.draft.captureWarnings.push('The browser suspended capture; audio may be missing.');this.say('Audio capture is suspended by the browser. Return to this tab and Stop to retain captured parts.',true);}};
-        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();this.say('Recording. Closed parts are saved in this browser before backup.');
+        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();await this.listRetained();this.say('');
         this.timer=setInterval(()=>{this.el.timer.textContent=timestamp((performance.now()-this.started)/1000);},1000);
         await new Promise(resolve=>{this.unlock=resolve;});
       } catch(error) {
-        this.stream?.getTracks().forEach(track=>track.stop());await this.context?.close();this.recording=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
+        this.stream?.getTracks().forEach(track=>track.stop());try{await this.context?.close();}catch{/* A prior capture context may already be closed. */}this.recording=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
         this.say(error.name==='NotAllowedError'?'Microphone access was denied. Allow microphone access to start recording.':error.message,true);this.buttons();
       }
     });
@@ -3973,7 +4006,7 @@ class RoomRecorder {
     try {const old=await api('/object-url',{key});if(old.size===blob.size && old.metadata?.extra?.sha256===sha) return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};throw new Error('An existing archive object differs. Retained audio will not be overwritten.');} catch(error) {if(error.status!==404) throw error;}
     const signed=await api('/uploads',{}, {body:{gameId:this.draft.gameId,assetId:this.draft.id,kind,filename,size:blob.size,sha256:sha,contentType:blob.type,metadata:{title:kind==='recording-manifest'?this.draft.sessionName:filename,sessionId:this.draft.sessionId,category:kind==='recording'?'canonical-source':'unclassified',characterIds:[],sourceKeys:sources,extra:{...extra,sha256:sha,chunkSetId:this.draft.id,generation:{schemaVersion:1,method:kind==='recording'?'capture':'procedural',inference:'not-applicable',execution:'local',tool:kind==='recording'?'Browser Web Audio PCM capture':'Panther browser recording manifest',cost:{status:'not-applicable'}}}}}});
     const headers={...signed.headers};delete headers['Content-Length'];
-    const response=await fetch(signed.url,{method:'PUT',headers,body:blob});
+    const response=await fetch(signed.url,{method:'PUT',headers,body:blob,signal:AbortSignal.timeout(45000)});
     if(!response.ok) throw new Error('Audio backup did not finish. Retained browser audio can be saved again.');
     return {key,hex:Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('')};
   }
@@ -3994,20 +4027,29 @@ class RoomRecorder {
           catch {this.say('Live transcription is unavailable for this part. Source audio is retained for the full pass.',true);}
         }
       }
-    }).catch(error=>{this.uploadError=true;this.el.recovery.hidden=false;this.say(error.message,true);});
+    }).catch(error=>{this.uploadError=true;this.saveFailed(error);});
     return this.uploadChain;
   }
   async stop(warning=null,alreadyStopped=false) {
     if(!this.recording || this.stopping) return;
-    this.stopping=true;this.el.stop.disabled=true;this.showResult('Saving audio…');let flushFailed=false;if(warning) this.draft.captureWarnings.push(warning);
-    if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
-    this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream.getTracks().forEach(track=>track.stop());this.source.disconnect();this.node.disconnect();await this.context.close();
-    await this.writeChain;this.unlock?.();if(!this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=true;this.el.result.hidden=true;this.say('No audio was captured. You can start a new recording.');return;}
-    this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
-    this.stopping=false;this.el.stop.disabled=false;this.buttons();this.el.recovery.hidden=false;this.el.download.hidden=false;
-    try {await this.archive();} catch(error) {this.say(error.message,true);}
+    this.stopping=true;this.el.stop.disabled=true;this.buttons();this.showResult('Saving audio…');let flushFailed=false,failed=false;if(warning)this.draft.captureWarnings.push(warning);
+    try {
+      if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
+      this.recording=false;await this.writeChain;
+      if(this.storageError)throw this.storageError;
+      if(!this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;this.el.recovery.hidden=true;this.el.result.hidden=true;this.say('No audio was captured.',true);return;}
+      this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
+    } catch(error) {failed=true;this.saveFailed(error);}
+    finally {
+      this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream?.getTracks().forEach(track=>track.stop());
+      this.source?.disconnect();this.node?.disconnect();try{await this.context?.close();}catch{/* Capture is stopped; retain persisted originals. */}
+      this.unlock?.();this.unlock=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();
+    }
+    if(failed)return;
+    this.el.recovery.hidden=false;this.el.download.hidden=false;
+    try {await this.archive();} catch(error) {this.saveFailed(error);} finally {await this.listRetained();}
   }
-  interrupt() {if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
+  interrupt() {this.liveDialog.close();this.viewLive.hidden=true;if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
   async archive() {
     if(this.archiving) return this.archiving;
     this.archiving=this.saveArchive().finally(()=>{this.archiving=null;this.buttons();});this.buttons();return this.archiving;
@@ -4020,15 +4062,24 @@ class RoomRecorder {
     this.draft.manifestDoc=doc;await this.persist();
     const manifest=await this.put(new Blob([JSON.stringify(doc)],{type:'application/json'}),'recording.json','recording-manifest',{recordingId:this.draft.id});
     const completed=await api('/browser-recording/complete',{}, {body:{gameId:this.draft.gameId,recordingKey:manifest.key,manifestSha256:manifest.hex,status:'COMPLETE'}});
-    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;await this.persist();this.buttons();this.say('Audio saved.');this.showResult('Preparing audio…');
-    this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;this.schedulePoll();
+    this.draft.status='archived';this.draft.playbackJobId=completed.jobId;this.draft.processingStarted=Date.now();this.processingStarted=this.draft.processingStarted;await this.persist();this.buttons();this.say('Audio saved.');this.showResult(this.capabilities?.playbackAvailable===false?'Audio saved':'Preparing audio…',this.capabilities?.playbackAvailable===false?'ready':'processing');this.transcriptionAvailability();
+    this.el.recovery.hidden=true;this.el.resume.hidden=true;this.el.download.hidden=false;
+    if (this.capabilities?.playbackAvailable === false) this.processingUnavailable();
+    this.schedulePoll();
     if(this.capabilities?.transcriptionAvailable) {
       this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='processing';this.el['final-status'].textContent='Transcribing…';
       try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'final',playbackJobId:completed.jobId}});this.draft.finalRequested=true;await this.persist();this.schedulePoll();}
-      catch {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say('Audio saved. Retry to finish transcription.',true);this.buttons();}
+      catch(error) {this.draft.status='complete';await this.persist();this.el.recovery.hidden=false;this.el.resume.hidden=false;this.el['final-status'].dataset.state='error';this.el['final-status'].textContent='Transcription unavailable';this.say(`Audio saved. ${error.message || 'Transcription request failed.'} Retry to finish transcription.`,true);this.buttons();}
     }
   }
-  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=!(this.draft.manifestDoc?.status==='interrupted' || this.draft.status==='interrupted');this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
+  processingUnavailable() {
+    this.processingUnavailableShown=true;
+    this.showResult('Audio saved', 'ready');
+    this.say(this.capabilities?.playbackUnavailableReason || 'Audio processing is unavailable. Your recording is saved and can be downloaded.', true);
+    this.el.recovery.hidden = false; this.el.resume.hidden = true; this.el.download.hidden = false;
+  }
+  transcriptionAvailability() {if(!this.capabilities?.transcriptionAvailable){this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='unavailable';this.el['final-status'].textContent=config.development?'Transcription unavailable locally':'Transcription not configured';this.el['final-status'].title=this.capabilities?.transcriptionUnavailableReason || 'Server transcription is not configured.';}}
+  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=true;this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
   schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
   async poll() {
     if(!this.draft || !state.tokens) return;
@@ -4038,25 +4089,35 @@ class RoomRecorder {
       for(const mode of ['live',...(this.draft.finalRequested?['final']:[])]) {
         const result=await api('/browser-transcriptions',{gameId:draft.gameId,recordingId:draft.id,mode,...(draft.playbackJobId?{playbackJobId:draft.playbackJobId}:{})});
         if(this.draft!==draft || state.gameId!==draft.gameId || !state.tokens) return;
+        if(this.pollError){this.pollError=false;this.say('');}
+        if (mode === 'live' && draft.playbackJobId && !result.playback) {
+          this.processingUnavailableShown=true;
+          this.showResult('Audio saved · Status unavailable', 'waiting');
+          this.say('The processing job could not be found. Your original audio is saved and can be downloaded.', true);
+          this.el.recovery.hidden=false; this.el.resume.hidden=true; this.el.download.hidden=false;
+        }
         if(result.playback) {
-          const playback=result.playback;pending ||= !['DONE','FAILED'].includes(playback.status);
-          this.showResult(playback.status==='DONE'?'Audio ready':playback.status==='FAILED'?'Audio processing failed':'Preparing audio…',playback.status==='DONE'?'ready':playback.status==='FAILED'?'error':'processing');
+          if(result.playback.status==='DONE' && this.processingUnavailableShown){this.processingUnavailableShown=false;this.say('');}
+          const playback=result.playback, blocked=['FAILED','BLOCKED','DEFERRED'].includes(playback.status), queued=['SUBMITTED','QUEUED'].includes(playback.status), delayed=Date.now()-(this.processingStarted || Date.now())>600000;pending ||= !['DONE','FAILED','BLOCKED','DEFERRED'].includes(playback.status);
+          this.showResult(playback.status==='DONE'?'Audio ready':blocked?'Audio saved':queued?'Audio saved · Waiting for processing':delayed?'Audio saved · Processing delayed':'Preparing audio…',playback.status==='DONE'||blocked?'ready':queued||delayed?'waiting':'processing');
+          if(blocked){this.say(playback.message || 'Audio processing failed. Original audio is saved and can be downloaded.',true);this.el.recovery.hidden=false;this.el.resume.hidden=true;this.el.download.hidden=false;}
           if(playback.audioKey && this.audioKey!==playback.audioKey) {const link=await api('/object-url',{key:playback.audioKey});if(this.draft!==draft || state.gameId!==draft.gameId) return;this.audioKey=playback.audioKey;this.el.audio.src=link.url;this.el.audio.hidden=false;this.el.result.insertBefore(this.el.audio,this.el['final-link']);}
         }
         pending ||= result.jobs.some(job=>['SUBMITTED','RUNNING'].includes(job.status));
         if(mode==='live') {
           for(const job of result.jobs) if(job.status==='DONE' && !this.nodes.has(job.id)) {
-            this.el.live.hidden=false;const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
+            this.el.live.hidden=false;this.viewLive.hidden=false;const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
           }
           if(result.jobs.some(job=>job.status==='UNKNOWN')) this.say('Some live transcription outcomes are unknown. Audio is retained; paid requests will not be repeated automatically.',true);
         } else {
-          pending ||= !result.transcriptKey && !result.jobs.some(job=>job.status==='UNKNOWN');
-          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':result.jobs.some(job=>job.status==='UNKNOWN')?'error':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':result.jobs.some(job=>job.status==='UNKNOWN')?'Transcription unavailable':'Transcribing…';
+          const blocked=['FAILED','BLOCKED','DEFERRED'].includes(result.playback?.status) || result.jobs.some(job=>['UNKNOWN','FAILED'].includes(job.status));
+          pending ||= !result.transcriptKey && !blocked;
+          this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':blocked?'error':Date.now()-(this.processingStarted || Date.now())>120000?'waiting':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':blocked?'Transcription unavailable':Date.now()-(this.processingStarted || Date.now())>120000?'Audio saved · Transcription delayed':'Transcribing…';
           if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}
         }
       }
       if(this.recording || pending) this.pollTimer=setTimeout(()=>void this.poll(),5000);
-    } catch {if(this.draft===draft && state.tokens) this.pollTimer=setTimeout(()=>void this.poll(),15000);}
+    } catch(error) {if(this.draft===draft && state.tokens){if(draft.playbackJobId){this.pollError=true;this.showResult('Audio saved · Status unavailable','waiting');this.say(`Unable to check processing. ${error.message || 'Service unavailable.'} Checking again automatically.`,true);}else if(this.recording)this.say('Live transcription is temporarily unavailable. Recording continues.',true);this.pollTimer=setTimeout(()=>void this.poll(),15000);}}
   }
   async download() {
     if(!this.draft) return;
@@ -4070,7 +4131,7 @@ roomCapture = new RoomRecorder();
 
 elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
 elements.gameSelector.addEventListener("change", () => {
-  const section = elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
+  const section = location.pathname.endsWith("/media") ? "media" : elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
   navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${section}`);
 });
 elements.modelLoad.addEventListener("click", loadCharacterModel);
@@ -4175,6 +4236,7 @@ function resetLive() {
   for (const controller of liveHistoryControllers) controller.abort();
   liveHistoryControllers.clear(); liveHistory.clear();
   document.getElementById("recording-badge").hidden = true;
+  document.getElementById("episode-create-action")?.remove();
   document.getElementById("live-recordings").replaceChildren();
   showLoading(document.getElementById("live-status"), "Checking for active recording sessions…");
 }
@@ -4187,16 +4249,14 @@ function drawLive() {
   if (!state.tokens || !liveGame || liveGame !== state.gameId) return;
   const badge = document.getElementById("recording-badge"), status = document.getElementById("live-status");
   const section=elements.primaryNav.querySelector("[aria-current]")?.dataset.section;
-  document.getElementById("live-transcript").hidden = !["audio","transcripts"].includes(section) || (!liveRecords.length && !liveFailure);
+  document.getElementById("live-transcript").hidden = section!=="sessions" || !liveReaderOpen;
   const active = liveRecords.find(r => liveState(r) === "recording");
   const current = active || liveRecords[0];
   const mode = current ? liveState(current) : liveFailure ? "lost" : "none";
   const labels = {recording:"Recording in progress", stalled:"Recording progress stalled", stopped:"Recording stopped", lost:"Recording signal lost"};
-  badge.hidden = mode === "none"; badge.dataset.state = mode; badge.href = gamePath("transcripts");
+  badge.hidden = !current || section!=="sessions" || ["none","stopped"].includes(mode); badge.dataset.state = mode; badge.href = gamePath("sessions");
   document.getElementById("recording-label").textContent = labels[mode] || "";
-  status.textContent = liveFailure ? "Live feed unavailable. Recording may still be running locally. Retrying automatically."
-    : liveRecords.length ? "Updates automatically as completed audio chunks are transcribed."
-    : "No live recording reported for this game. Start the live worker from the recording laptop.";
+  status.textContent=liveFailure?'Live feed unavailable. Recording may still be running locally. Retrying automatically.':'';status.hidden=!liveFailure;renderLiveSessionEntries();
   const projected = liveRecords.map(r => ({recordingId:r.recordingId, previewId:r.previewId, sessionId:r.sessionId, mode:liveState(r), previewState:r.previewState, segments:r.segments, omittedChunks:r.omittedChunks, history:liveHistory.get(historyKey(r))}));
   const key = JSON.stringify(projected);
   if (key === liveRenderKey) return;
@@ -4205,10 +4265,9 @@ function drawLive() {
   const focusAction = host.contains(document.activeElement) ? document.activeElement.dataset.historyAction : null;
   for (const el of host.querySelectorAll(".live-lines")) positions.set(el.dataset.recording, {top:el.scrollTop, bottom:el.scrollHeight-el.scrollTop-el.clientHeight<30});
   host.replaceChildren();
-  for (const record of projected) {
+  for (const record of projected.filter(record=>!liveReaderRecording||record.recordingId===liveReaderRecording)) {
     const article = document.createElement("article"), heading = document.createElement("h3"), note = document.createElement("p"), lines = document.createElement("div");
-    heading.textContent = record.sessionId;
-    note.textContent = `${labels[record.mode] || "Recording status unknown"} · ${record.previewState.replaceAll("-", " ")}.${record.omittedChunks ? " Joined after recording began." : ""}`;
+    heading.textContent=record.sessionId;heading.hidden=true;note.hidden=true;
     const view = record.history, controls = document.createElement("div"), historyNote = document.createElement("p");
     controls.className = "live-history-controls"; controls.setAttribute("role","group"); controls.setAttribute("aria-label","Transcript history navigation");
     const chunks = view?.chunks || [], first = chunks[0]?.partIndex, last = chunks.at(-1)?.partIndex;
@@ -4216,7 +4275,7 @@ function drawLive() {
       ["Beginning","beginning",undefined,false], ["Earlier","before",first,first===undefined || first===0],
       ["Later","after",last,last===undefined], ["Live","live",undefined,false],
     ]) {
-      const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+      const button = document.createElement("button"); button.type = "button"; button.title=label;button.setAttribute('aria-label',label);button.className='icon-button';button.innerHTML=({Beginning:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M18 5l-9 7 9 7z"/></svg>',Earlier:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5-8 7 8 7"/></svg>',Later:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5 8 7-8 7"/></svg>',Live:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></svg>'})[label];if(label==='Live')button.setAttribute('aria-pressed',String(view?.mode!=='history'));
       button.dataset.historyAction = `${record.recordingId}:${label}`; button.disabled = disabled;
       button.addEventListener("click",()=>loadLiveHistory(record,position,cursor)); controls.append(button);
     }
@@ -4224,8 +4283,8 @@ function drawLive() {
     historyNote.textContent = view?.error || (view?.loading ? "Loading transcript history…"
       : view?.loaded && !chunks.length ? "History is being uploaded from the recording laptop."
       : view?.position === "beginning" && first>0 ? "The beginning is still being transcribed. Retry Beginning shortly."
-      : view?.mode === "history" ? "Browsing earlier speech. Choose Live to follow new speech."
-      : "Following new speech. Use Beginning or Earlier to browse the full session.");
+      : "");
+    historyNote.hidden=!historyNote.textContent;
     if (view?.loading && !view?.error) showLoading(historyNote, "Fetching transcript history…");
     lines.className = "live-lines"; lines.dataset.recording = record.recordingId; lines.tabIndex = 0;
     lines.setAttribute("role", "region"); lines.setAttribute("aria-label", `Provisional transcript for ${record.sessionId}`);
@@ -4292,10 +4351,9 @@ async function refreshLive() {
     }
   }
 }
-document.getElementById("live-refresh").addEventListener("click", refreshLive);
 document.getElementById("recording-badge").addEventListener("click", event => {
   if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  event.preventDefault(); navigate(gamePath("transcripts"));
+  event.preventDefault();const record=liveRecords.find(item=>liveState(item)==="recording")||liveRecords[0];if(record)openLiveReader(record.recordingId);
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(liveTimer); liveController?.abort(); }
@@ -4325,68 +4383,150 @@ async function start() {
 // Creation requests select immutable sources; subscription workers own every editorial stage.
 const editorialComposers = new Map();
 const editorialPolls = new WeakMap();
-function renderEditorialComposer(target, epoch) {
-  const gameId=state.gameId, key=`${gameId}:${target}`;
+async function restoreSceneVideoProgress(scene,host,gameId,epoch) {
+  const current=()=>state.gameId===gameId&&routeEpoch===epoch&&host.isConnected;
+  try{const result=await api('/editorial-jobs',{gameId});if(!current())return;
+    const matches=(result.jobs||[]).filter(job=>job.creation?.target==='video'&&job.creation.sceneRef?.episodeId===scene.episodeId&&job.creation.sceneRef?.sceneId===scene.id);
+    matches.sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
+    const exact=matches.find(job=>job.creation.sceneRef.revision===scene.revision),job=exact||matches[0];if(!job)return;
+    if(!exact){const note=document.createElement('p');note.textContent='Earlier scene version';host.append(note);}
+    const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label','Video progress');host.append(progress);await showEditorialProgress(job.jobId,progress,gameId,'video');
+  }catch{/* A bounded page that cannot be read is not evidence that no generation exists. */}
+}
+
+function openSceneVideoComposer(scene, epoch, onSceneSaved) {
+  renderEditorialComposer('video', epoch, scene, onSceneSaved);
+}
+function transcriptSourceChoice(asset,destination,selected,updateSubmit,gameId,current) {
+  const row=document.createElement('div');row.className='editorial-source-choice';
+  const label=document.createElement('label'),input=document.createElement('input'),copy=document.createElement('span'),title=document.createElement('strong'),meta=document.createElement('span'),summary=document.createElement('span');
+  let name='Session';input.type='checkbox';input.value=asset.key;input.setAttribute('aria-label',name);title.textContent=name;copy.className='editorial-source-copy';meta.className='editorial-source-meta';copy.append(title,meta,summary);label.append(input,copy);row.append(label);
+  input.onchange=()=>{input.checked?selected.add(asset.key):selected.delete(asset.key);updateSubmit();};
+  let record=null,reviewSummary=null,reviewCaption=null,review=null,observedSessionName=null,summaryError='';
+  const humanTitle=value=>typeof value==='string'&&value.trim()&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
+  const render=()=>{
+    const recordedAt=record?.recordedAt||asset.metadata?.recordedAt,date=recordedAt||asset.lastModified,timestamp=date?new Date(date):null;
+    const formatted=timestamp&&!Number.isNaN(timestamp.valueOf())?timestamp.toLocaleString():null;
+    name=humanTitle(record?.summary?.title)||humanTitle(observedSessionName)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
+    title.textContent=name;input.setAttribute('aria-label',name);review?.setAttribute('aria-label',`Review ${name}`);if(reviewCaption?.isConnected)reviewCaption.textContent=name;
+    const participants=record?.participants||asset.transcript?.participants||[],characters=record?.characters||[];
+    meta.textContent=[formatted?`${recordedAt?'Recorded':'Uploaded'} ${formatted}`:null,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    summary.textContent=record?.summary?.summary||summaryError||(['QUEUED','GENERATING'].includes(record?.status)?'Preparing summary…':record?.status==='ATTENTION'?'Summary needs attention':'');if(reviewSummary?.isConnected)reviewSummary.textContent=summary.textContent;
+  };render();
+  review=document.createElement('button');review.type='button';review.className='quiet-button editorial-source-review';review.textContent='Review';review.setAttribute('aria-label',`Review ${name}`);row.append(review);destination.append(row);
+  const load=async()=>{if(!current()||!row.isConnected||row.closest('form')?.hidden)return;try{const result=await api('/transcript-summaries',{gameId,key:asset.key});if(!current()||!row.isConnected)return;record=result;summaryError='';render();if(result.status==='MISSING'){record=await api('/transcript-summaries',{},{body:{gameId,key:asset.key}});if(current())render();}if(['QUEUED','GENERATING'].includes(record?.status))window.setTimeout(load,4000);}catch{summaryError='Summary unavailable';render();}};void load();
+  review.onclick=async()=>{
+    const dialog=document.createElement('dialog');dialog.className='transcript-source-review';const heading=document.createElement('header'),caption=document.createElement('h2'),close=document.createElement('button'),description=document.createElement('p'),regenerate=document.createElement('button'),speech=document.createElement('div'),status=document.createElement('p');caption.textContent=name;reviewCaption=caption;close.type='button';close.className='quiet-button';close.textContent='Close';close.onclick=()=>dialog.close();heading.append(caption,close);description.textContent=record?.summary?.summary||'';reviewSummary=description;regenerate.type='button';regenerate.className='quiet-button';regenerate.textContent='Regenerate summary';speech.className='source-utterances';status.setAttribute('role','status');dialog.append(heading,description,regenerate,status,speech);document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.showModal();
+    let pendingRegeneration=null;
+    regenerate.onclick=async()=>{regenerate.disabled=true;pendingRegeneration||={gameId,key:asset.key,operationId:crypto.randomUUID().replaceAll('-','')};try{record=await api('/transcript-summaries',{},{body:pendingRegeneration});pendingRegeneration=null;regenerate.textContent='Regenerate summary';if(!current()||!dialog.isConnected)return;render();description.textContent=record.summary?.summary||'';status.textContent=record.status==='READY'?'':'Summary queued';if(['QUEUED','GENERATING'].includes(record.status))window.setTimeout(load,4000);}catch(error){if(error.status===400)pendingRegeneration=null;status.textContent=error.message;regenerate.textContent='Retry summary';}finally{regenerate.disabled=false;}};
+    try{const detail=await api('/asset-document',{gameId,key:asset.key});if(!current()||!dialog.isConnected){dialog.close();return;}const doc=detail.document,transcript=doc?.payload?.transcript||doc;observedSessionName=transcript?.sessionName||doc?.sessionName;render();const players=new Map((transcript?.players||[]).map(person=>[person.id,person.name]));for(const segment of transcript?.segments||[]){const p=document.createElement('p'),speaker=document.createElement('strong');speaker.textContent=players.get(segment.playerId)||segment.playerId||'';if(speaker.textContent)p.append(speaker,document.createTextNode(': '));p.append(document.createTextNode(segment.text||''));speech.append(p);}if(!speech.children.length)status.textContent='Transcript text unavailable';}catch(error){status.textContent=error.message;}
+  };
+}
+
+function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () => {}) {
+  if(target==='video'&&!scene){const old=document.getElementById('editorial-video-composer');if(old)old.hidden=true;return;}
+  const gameId=state.gameId, key=`${gameId}:${target}:${scene?.sceneId||scene?.id||''}`;
   let host=document.getElementById(`editorial-${target}-composer`);
   if(!host) {host=document.createElement('section');host.id=`editorial-${target}-composer`;host.className='editorial-composer';}
-  const parent=document.getElementById(target==='novel'?'novel':'session-library');
-  parent.querySelector('.explorer-heading').after(host);
+  const parent=target==='novel'?document.getElementById('novel'):(scene.host||document.getElementById('scene-video-composer'));
+  if(!parent)return;
+  if(target==='novel')parent.querySelector('.explorer-heading').after(host);else parent.append(host);
   host.hidden=target==='novel'&&Boolean(currentChapter);
   if(host.dataset.key===key) {
     const existing=editorialComposers.get(key);
     if(existing)void showEditorialProgress(existing.jobId,existing.progress,gameId,target);
     return;
   }
+  if(target==='novel')parent.querySelector('.explorer-heading > button[data-generation-action]')?.remove();
   host.dataset.key=key;host.replaceChildren();
   const current=()=>state.gameId===gameId&&host.dataset.key===key&&host.isConnected;
-  const open=document.createElement('button');open.type='button';open.className='primary-button';open.textContent=target==='novel'?'Generate chapter':'Create video project';host.append(open);
+  const open=document.createElement('button');open.type='button';open.className='primary-button';open.dataset.generationAction='true';open.textContent=target==='novel'?'Generate chapter':'Generate video';host.append(open);if(target==='novel')parent.querySelector('.explorer-heading').append(open);
   const panel=document.createElement('div');panel.className='editorial-creation-panel';panel.hidden=true;host.append(panel);
   const projects=document.createElement('div');projects.className='editorial-existing-projects';host.append(projects);
   const loadProjects=async(cursor)=>{
     try {const result=await api('/editorial-jobs',{gameId,cursor});if(!current())return;
       for(const job of result.jobs||[])if(!job.creation||job.creation.target===target){
         const button=document.createElement('button');button.type='button';button.className='quiet-button';button.textContent=job.creation?.title||`Session ${job.sessionId||'adaptation'} · automatic`;
-        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
+        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});if(target==='novel')syncNovelEmptyState();void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
       }
       if(result.cursor){const more=document.createElement('button');more.type='button';more.className='text-link-button';more.textContent='More projects';more.onclick=()=>{more.remove();void loadProjects(result.cursor);};projects.append(more);}
     }catch{/* Creation remains available if the optional project list is unavailable. */}
   };
-  void loadProjects();
+  if(target==='novel')void loadProjects();
   open.onclick=async()=>{
     if(panel.dataset.project==='true'){panel.replaceChildren();panel.dataset.project='false';panel.hidden=true;}
     panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
+    if(target==='novel'){open.hidden=!panel.hidden;syncNovelEmptyState();}
     if(panel.hidden||panel.childNodes.length)return;
     const form=document.createElement('form'), fields=document.createElement('div'), status=document.createElement('p');status.setAttribute('role','status');
     const field=(label,multiline=false)=>{const wrapper=document.createElement('label'), caption=document.createElement('span'), input=document.createElement(multiline?'textarea':'input');caption.textContent=label;wrapper.append(caption,input);fields.append(wrapper);return input;};
-    const title=field('Title');title.required=true;title.maxLength=160;
-    const brief=field('Direction',true);brief.maxLength=4000;brief.placeholder=target==='novel'?'Tone, point of view, and what to focus on':'Story, tone, and visual direction';
+    const isVideo=target==='video';
+        const brief=field('Prompt',true);brief.maxLength=4000;brief.required=true;
+    const isMap=isVideo&&scene.type==='map';
+    brief.placeholder=isMap?'The travelers move from the city to the badlands…':isVideo?'Describe the scene you want to create…':'Describe the chapter you want to create…';
+    if(isVideo)brief.value=[scene.name||scene.title,scene.description].filter(Boolean).join('\n\n');
+    const selected=new Set(), selectedContext=new Set(), selectedCharacters=new Set();
+    const cast=document.createElement('fieldset'),castLegend=document.createElement('legend'),castOptions=document.createElement('div'),castPreview=document.createElement('p');
+    castLegend.textContent='Characters';castOptions.className='editorial-cast-options';castPreview.className='editorial-cast-preview';castPreview.setAttribute('aria-live','polite');cast.append(castLegend,castOptions,castPreview);
     const sources=document.createElement('fieldset'), legend=document.createElement('legend');legend.textContent='Transcripts';sources.append(legend);
-    const references=document.createElement('details'), summary=document.createElement('summary'), contexts=document.createElement('div');summary.textContent='Add context';references.append(summary,contexts);
-    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=target==='novel'?'Generate chapter':'Create project';submit.disabled=true;
-    form.append(fields,sources,references,submit,status);panel.append(form);
-    const selected=new Set(), selectedContext=new Set();
-    const choices=(assets,destination,set)=>{for(const asset of assets){const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);submit.disabled=!selected.size;};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
+    const referenceContents=document.createElement('div'), contexts=document.createElement('div'), referenceStatus=document.createElement('p'); referenceStatus.setAttribute('role','status'); referenceContents.append(referenceStatus,isVideo?sources:contexts);
+    const referencePicker=optionalInfoDialog(isVideo?'Choose sources':'Add context', referenceContents);
+    const references=referencePicker.host;
+    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=isVideo?'Generate':'Generate chapter';submit.disabled=true;
+    const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
+    const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
+    if(isMap)referenceContents.insertBefore(cast,sources);
+    if(isVideo){const actions=document.createElement('div');actions.className='scene-generation-actions';actions.append(references,submit);form.append(fields,...(map?[map.host]:[]),...(isMap?[]:[cast]),actions,note,status);}else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');syncNovelEmptyState();};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
+    if (!isVideo) {
+      const write = document.createElement('button'); write.type = 'button'; write.className = 'text-link-button'; write.textContent = 'Write manually';
+      write.onclick = () => manualChapterEditor(); form.append(write);
+    }
+    panel.append(form);if(target==='novel')syncNovelEmptyState();
+    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
+    const choices=(assets,destination,set)=>{for(const asset of assets){if(!isVideo&&destination===sources){transcriptSourceChoice(asset,destination,set,updateSubmit,gameId,current);continue;}const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
-      showLoading(status,'Loading sources…');
+      showLoading(status,'Loading sources…');if(referencePicker.dialog.open)showLoading(referenceStatus,'Loading sources…');
       try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
-        choices(result.assets.filter(predicate),destination,set);status.textContent='';
+        choices(result.assets.filter(predicate),destination,set);status.textContent='';referenceStatus.textContent='';
         if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='Load more';more.onclick=()=>{more.remove();void page(section,destination,set,predicate,result.cursor);};destination.append(more);}
-        if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed raw transcripts yet.':'No context sources yet.';destination.append(empty);}
-      }catch(error){if(current())status.textContent=error.message;}
+        if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No context sources yet.';destination.append(empty);}
+      }catch(error){if(current()){status.textContent=error.message;referenceStatus.textContent=error.message;}}
     };
-    await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
-    references.addEventListener('toggle',()=>{if(references.open&&!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout'].includes(a.kind)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='evidence'||['canonical-source','reference'].includes(a.metadata?.category)||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));},{once:true});
+    const loadCast=async(cursor)=>{
+      try{const result=await api('/characters',{gameId,cursor});if(!current())return;
+        for(const character of result.characters||[]){const id=character.characterId||character.id;if(!id)continue;
+          const label=document.createElement('label'),input=document.createElement('input'),name=document.createElement('span');label.className='editorial-source-choice editorial-character-choice';input.type='checkbox';input.value=id;name.textContent=character.name;
+          input.onchange=()=>{input.checked?selectedCharacters.add(id):selectedCharacters.delete(id);label.dataset.selected=String(input.checked);castPreview.textContent=[...castOptions.querySelectorAll('input:checked')].map(input=>input.nextElementSibling.textContent).join(' · ');};if(scene.characterIds?.includes(id)){input.checked=true;selectedCharacters.add(id);label.dataset.selected='true';}
+          label.append(input,name);castOptions.append(label);castPreview.textContent=[...castOptions.querySelectorAll('input:checked')].map(input=>input.nextElementSibling.textContent).join(' · ');
+        }
+        if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='More characters';more.onclick=()=>{more.remove();void loadCast(result.cursor);};castOptions.append(more);}
+        if(!castOptions.childNodes.length)cast.hidden=true;
+      }catch(error){if(current()){status.textContent=error.message;referenceStatus.textContent=error.message;}}
+    };
+    if(isVideo){updateSubmit();if(!isMap)void loadCast();let castStarted=false;referencePicker.button.addEventListener('click',()=>{if(isMap&&!castStarted){castStarted=true;void loadCast();}if(!sources.querySelector('label,p'))void page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));});}
+    else {
+      await page('transcripts',sources,selected,a=>a.kind==='raw-transcript'&&a.key.endsWith('.json'));
+      referencePicker.button.addEventListener('click',()=>{if(!contexts.childNodes.length)void page('all',contexts,selectedContext,a=>['.json','.md','.txt'].some(ext=>a.key.endsWith(ext))&&!['raw-transcript','reading-script','test-script','holdout','provenance','migration-report','audit-report','generation-metadata'].includes(a.kind)&&!/(?:^|[\/_-])(audit|migration|provenance|manifest|processing)(?:[\/_.-]|$)/i.test(a.key)&&!['grounded-adaptation','creative-reimagining','playful-derivative'].includes(a.metadata?.category)&&(a.metadata?.extra?.contextUse==='creative-evidence'||['game-context','lore','character-profile','corrected-transcript'].includes(a.kind)));});
+    }
+    let pendingMap=null;
     form.onsubmit=async event=>{
-      event.preventDefault();if(!selected.size)return;
-      if(selected.size>8||selectedContext.size>12){status.textContent='Choose up to 8 transcripts and 12 context sources.';return;}
-      submit.disabled=true;status.textContent=target==='novel'?'Starting chapter…':'Starting project…';
-      try {const job=await api('/editorial-jobs',{}, {body:{gameId,creation:{schemaVersion:1,target,title:title.value.trim(),brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]}}});
-        if(!current())return;form.hidden=true;open.hidden=true;
-        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',target==='novel'?'Chapter progress':'Video project progress');panel.append(progress);
+      event.preventDefault();if(isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim())return;
+      if(selected.size>8||selectedContext.size>12||selectedCharacters.size>12){status.textContent='Choose up to 8 transcripts and 12 characters.';return;}
+      const controls=[...form.querySelectorAll('input,textarea,select,button')];for(const control of controls)control.disabled=true;status.textContent=isVideo?'Preparing video…':'Starting chapter…';
+      try {
+        if(map&&(pendingMap||map.value()!==scene.mapAssetKey)){
+          pendingMap||={gameId,id:scene.id,episodeId:scene.episodeId,name:scene.name,description:scene.description||'',type:'map',mapAssetKey:map.value(),selectedOutputKey:scene.selectedOutputKey||null,expectedRevision:scene.revision,operationId:crypto.randomUUID().replaceAll('-','')};
+          const saved=await api('/scenes',{},{body:pendingMap});if(!current())return;scene=saved.record;pendingMap=null;onSceneSaved(scene);
+        }
+        const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:3,target,brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
+        const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
+        if(!current())return;form.hidden=true;status.textContent='';panel.dataset.project='true';open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
+        const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);if(target==='novel')syncNovelEmptyState();
         editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
-      }catch(error){if(current()){status.textContent=error.message;submit.disabled=false;}}
+      }catch(error){if(current()){status.textContent=error.status===409?'This scene changed. Reopen it before generating.':error.message;if(error.status===400)pendingMap=null;for(const control of controls)control.disabled=false;if(map&&pendingMap)map.select.disabled=true;updateSubmit();if(error.status===409)submit.disabled=true;}}
     };
   };
+  if(target==='video'){open.hidden=true;void open.onclick();}
 }
 
 async function showEditorialProgress(jobId, host, gameId, target) {
@@ -4394,13 +4534,32 @@ async function showEditorialProgress(jobId, host, gameId, target) {
   if(state.gameId!==gameId||host.closest('[hidden]')||!host.isConnected)return;
   try {
     const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
+    if(!result.job)throw new Error('The generation job could not be found.');
+    if(target==='novel'){const create=document.querySelector('#novel .explorer-heading [data-generation-action]');if(create)create.hidden=false;}
     const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
-    heading.textContent=result.job.creation?.title||`Session ${result.job.sessionId||'adaptation'} · automatic`;
-    const terminal=['FAILED','NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
-    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Storyboard ready · awaiting your approval before video generation':result.job.status==='FAILED'?'Processing failed':'Processing';
-    const activity=document.createElement('details'), summary=document.createElement('summary');summary.textContent='Processing details';activity.append(summary,stages);
-    host.replaceChildren(heading,copy,activity);
-    for(const task of result.tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
+    heading.textContent=result.job.creation?.title||(result.job.sessionId?`Session ${result.job.sessionId} · automatic`:(target==='video'?'Video':'Chapter'));
+    const tasks=result.tasks || [], failed=['FAILED','BLOCKED','ATTENTION','DEFERRED'].includes(result.job.status);
+    const terminal=failed||['NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
+    const running=tasks.some(task=>task.status==='RUNNING')||result.job.status==='RUNNING';
+    const finished=tasks.filter(task=>task.status==='DONE').length;
+    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':failed?(result.job.status==='FAILED'?'Generation failed':'Generation unavailable'):running?'Generating…':'Waiting for worker';
+    host.replaceChildren(heading,copy);if(target==='novel')syncNovelEmptyState();
+    if (failed) {
+      const error=document.createElement('p');error.className='error-text';error.setAttribute('role','alert');
+      error.textContent=result.job.message || result.job.error || tasks.find(task=>task.status==='FAILED')?.error || 'Generation stopped before completion.';host.append(error);
+      if(target==='novel' && config.development){const write=document.createElement('button');write.type='button';write.className='quiet-button';write.textContent='Write manually';write.onclick=()=>manualChapterEditor();host.append(write);}
+    } else if(!terminal && (tasks.length || running)) {
+      const progress=document.createElement('progress');progress.className='editorial-stage-progress';progress.setAttribute('aria-label','Generation stages');progress.max=1;
+      if(!running)progress.value=0;
+      host.append(progress);
+      const count=document.createElement('small');count.textContent=finished?`${finished} steps complete`:running?'Working on the current step':'Waiting for the next step';host.append(count);
+    } else if(!terminal) {
+      const waiting=document.createElement('p');waiting.className='muted';waiting.textContent='Generation starts when the processing worker is available.';host.append(waiting);
+    }
+    if(tasks.length){const activity=document.createElement('section'), heading=document.createElement('h3');heading.textContent='Stages';activity.dataset.section='stages';activity.append(heading,stages);host.append(activity);}
+    if(result.job.creation?.brief){const inputs=document.createElement('section'),label=document.createElement('h3'),prompt=document.createElement('p');label.textContent='Prompt';inputs.dataset.section='prompt';prompt.textContent=result.job.creation.brief;inputs.append(label,prompt);host.append(inputs);}
+    if(target==='video'&&result.job.status==='READY_FOR_VIDEO_DISCUSSION'){const note=document.createElement('p');note.className='editorial-generation-note';note.textContent='Prompts prepared. Rendering requires approval.';host.append(note);}
+    for(const task of tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
       if(task.status==='DONE'&&task.output?.key){const link=document.createElement('a');link.textContent='View';link.href=`/games/${gameId}/media?asset=${encodeURIComponent(task.output.key)}`;item.append(' ',link);}stages.append(item);}
     if(target==='video'&&result.tasks.some(t=>t.stage==='video-storyboards'&&t.status==='DONE')) {
       const task=result.tasks.find(t=>t.stage==='video-storyboards');
@@ -4685,14 +4844,14 @@ const workshop = (() => {
     list.replaceChildren();const visible=[...rows].sort((a,b)=>b.createdAt-a.createdAt).filter(matches);
     for(const [kind,label] of Object.entries(labels)) {
       const runs=visible.filter(job=>job.kind===kind), all=rows.filter(job=>job.kind===kind);
-      const group=node("details",undefined,"workshop-group");group.dataset.kind=kind;group.open=groupOpen.get(kind) ?? Boolean(runs.length);
-      const heading=node("summary"), copy=node("div"), active=all.filter(job=>observation(job,lead(job)).live).length;
+      const group=node("section",undefined,"workshop-group");group.dataset.kind=kind;
+      const heading=node("header"), copy=node("div"), active=all.filter(job=>observation(job,lead(job)).live).length;
       copy.append(node("h2",label),node("p",`${all.length} loaded run${all.length===1?"":"s"}${active?` · ${active} working now`:""}${cursor?" · history continues":""}`));
-      heading.append(worker(kind,active>0),copy,node("span","⌄","workshop-group-chevron"));
+      heading.append(worker(kind,active>0),copy);
       const contents=node("div",undefined,"workshop-group-runs");
       if(runs.length)contents.append(...runs.map(row));
       else contents.append(node("p",all.length?"No loaded runs match this filter.":cursor?"No runs loaded for this type yet. Load more history below.":"No reported runs for this type yet.","workshop-group-empty"));
-      group.append(heading,contents);group.addEventListener("toggle",()=>{if(group.isConnected)groupOpen.set(kind,group.open);});list.append(group);
+      group.append(heading,contents);list.append(group);
     }
     const summary=document.getElementById("workshop-summary");summary.replaceChildren();
     for(const [title,states] of [["Working",["running"]],["Waiting",["queued","pending","paused"]],["Finished",["done"]],["Needs attention",["failed","unknown"]]]) {

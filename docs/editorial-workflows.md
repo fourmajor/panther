@@ -172,8 +172,9 @@ publication metadata) remain tracked in [issue #17](https://github.com/fourmajor
 
 The worker reads the structured game catalog and asks AI to select relevant same-game source assets
 from their metadata. Eligible text sources include previous corrected transcripts, character/lore
-records, `game-context`, sources marked `reference`/`canonical-source`, and future kinds explicitly
-marked `extra.contextUse: evidence`. Use `extra.contextUse: exclude` for a held-out script; never upload
+records, `lore`, `game-context`, `character-profile`, `corrected-transcript`, and sources explicitly
+marked `extra.contextUse: creative-evidence`. Generic reference categories alone are insufficient;
+structured provenance, migration, audit and verification artifacts are excluded. Use `extra.contextUse: exclude` for a held-out script; never upload
 the script for a blind test at all. Known script/holdout kinds and adaptation categories are excluded.
 All source content is untrusted data, never executable instructions. No credentials enter prompts.
 
@@ -275,9 +276,9 @@ stop with `launchctl bootout gui/$(id -u)/place.panther.editorial-worker`. Upgra
 replace a loaded service or existing release. Preserve prior releases/logs when explicitly upgrading.
 
 Browser room transcription produces an unreviewed `BrowserTranscript`, with unassigned speakers
-and window-boundary timestamps. It does not automatically enter the player-attributed editorial
-pipeline. Preserve its raw evidence and capture warnings; establish player identities in a
-separate annotated version before adapting it. See [browser recording](browser-recording.md).
+and window-boundary timestamps. It can be selected explicitly for editorial creation. Preserve its raw evidence, capture
+warnings and unassigned speaker identities; never invent player attribution. Later player
+identification belongs in a separate annotated version. See [browser recording](browser-recording.md).
 
 ## Browser creation requests (workflow 3)
 
@@ -310,3 +311,155 @@ creates a new execution protocol, not a new asset kind or a rewrite of historica
 game-scoped cursor; the browser keeps earlier creation projects accessible after reload. Catalog
 readers can follow jobs and read completed chapters. Creating a job still requires the configured
 publisher capability, and claiming stages still requires the configured worker capability.
+
+## Scene-owned prompt creation (workflow 4)
+
+Episodes own scenes, and video outputs belong to a pinned scene. A browser video request uses
+creation schema 2, with `target: video`, a required `sceneRef` containing `episodeId`, `sceneId`
+and the scene's exact `revision`, and arrays `characterIds`, `sourceKeys` and `contextKeys`.
+The broker checks the scene's same-game episode ownership and pins its immutable revision.
+Title and prompt (`brief`) are optional overrides; the pinned scene name supplies their default.
+A description remains separately recorded, without inventing narrative facts. There is no
+user-facing standalone video project entity. Internal editorial jobs retain their run identity.
+
+A video request can select zero raw transcripts. Such a job has `sourceMode: prompt`, `raw: null`
+and an empty `rawSources` array. It runs context selection and the screen-planning stages without
+creating a fake transcript or a correction artifact. With actual transcript inputs, correction
+runs first. The version-4 `video-source-brief` stage extracts source-attributed narrative facts,
+relevant action and gaps before screenplay or generation-prompt composition. Subsequent creative
+stages receive that clean brief, prompt and cast rather than transcription correction audits or
+entire table conversations. Raw utterances, source-local timing and unknown speakers remain
+unchanged in their preserved inputs. Legacy raw-key submissions and source-driven chapter
+creation retain their transcript workflows; older executions keep their original versions.
+
+Selected characters are registered structured identities, not searches for their names in asset
+filenames. The broker pins the exact details revision and snapshot and the current immutable
+physical appearance/artwork pair. Associated portrait/model inputs must explicitly list that
+character and retain checksums, sizes and same-game immutable asset references. An unavailable
+or unfinished appearance migration fails rather than substituting unrelated or legacy imagery.
+The selected game facts and registered visual-style guidance are pinned alongside the scene.
+Character/game/scene snapshots are bounded to 256 KiB in the durable job; their combined text
+and transcript/context input size remains bounded to 512 KiB for stage processing.
+
+Creative text context uses positive structured kinds: `lore`, `game-context`, `character-profile`
+and `corrected-transcript`, or an explicit `extra.contextUse: creative-evidence` designation.
+Generic `category: reference` or `contextUse: evidence` alone does not admit a document into
+creative input. Provenance, migration, audit and generation-verification types, intermediate
+records, excluded scripts and adaptation categories are rejected both for explicit selections
+and automatic context discovery. Eligibility uses structured kinds/artifact types/roles, never
+private names or title guesses. This projection applies immediately across all existing indexed
+records without deleting or rewriting technical evidence; old jobs retain their pinned context.
+The source indexes themselves keep their existing version and complete-inventory requirement.
+
+Scene types guide planning with the standing per-shot model policy: action recommends Kling
+3 Pro, dialogue recommends MiniMax H3 Max, and city/opener shots recommend Veo 3.1 Fast.
+Travel/map scenes require actual map/location evidence and preserve unknown geography.
+These recommendations never authorize spending. Planning metadata preserves the exact
+`sceneRef` and episode/scene IDs, while its envelope preserves full scene/cast snapshots.
+Finished footage must carry its own explicit association from the renderer; matching titles
+or planning outputs do not establish one.
+
+Workflow 4 still executes only subscription-backed planning. It cannot submit paid footage,
+performances or voice generation. Render permissions, source sharing, model choice and spending
+remain governed by the separate production workflow and approved budget guard.
+
+### Episode workspace migration (version 1)
+
+Before enabling the scene-owned workspace for an existing deployment, an authorized
+`ASSET_MIGRATORS` account runs `panther videos migrate-workspace`. This authenticated
+`POST /video-workspace/migrate` dry run enumerates **every registered game** through
+catalog metadata, then every current `tv-library` TVEpisode and its immutable DDB
+history. It does not scan source storage. The complete inventory is bounded to 1,000
+catalog/episode/history rows, 16 MiB and 100 pages per partition; exceeding any bound
+blocks the plan rather than presenting partial completeness. Large individual histories
+above 320,000 encoded audit bytes also block migration and need an explicit bounded migration extension.
+Keep dry-run output outside Git: it contains private application inventory.
+
+Review the returned statuses and `inventoryHash`, then run
+`panther videos migrate-workspace --apply --inventory-hash HASH`. A changed inventory or
+any destination conflict blocks the apply before writes. Each episode imports atomically
+with a conditional guard on the exact legacy payload and revision, a new Episode pointer,
+immutable Episode history, and an immutable versioned audit containing the exact source
+current/history snapshots, source SHA-256, actor, timestamp and inventory hash. The original
+TVEpisode records and histories remain recoverable; imports preserve episode IDs, titles
+as names and synopses as descriptions. Missing historical creation dates stay unknown.
+An interrupted run can be resumed by repeating the dry run and apply: already imported
+records are verified against their source hash and never overwritten, including subsequent
+human edits to the new Episode. Concurrent source/destination changes return a conflict;
+rerun the dry run to review and resume any completed per-episode transactions.
+
+Cuts are alternative immutable video representations, **not scenes**. The migration creates
+zero scenes, leaves existing clip collections intact, and invents no episode ownership for
+previous footage. Existing explicit scenes and episodes are never merged by matching names.
+The new workspace has no legacy read fallback. Verify every dry-run episode is
+`already-migrated` after apply and review destination records/history before cutover.
+Source TV GET endpoints remain maintenance access to recoverable history, not a supported
+workspace read path. Legacy TV POST routes and their write permissions are retired at
+deployment; CLI legacy save-series/save-episode commands are removed. Production rollout is incomplete until this all-game verification
+has run with deployment credentials; code/test completion does not imply data backfill.
+
+Legacy `/tv-series` and `/tv-episodes` API routes remain GET-only for recovery; their
+Lambda has no write permissions and the CLI no longer exposes their save commands.
+New episode creation and edits use the Episode/Scene endpoints exclusively.
+
+### Map scenes
+
+An episode-owned Scene may use `type: map` and optional `mapAssetKey`. Title-only scene
+creation remains valid; generating a map scene requires an explicitly selected same-game
+PNG, JPEG or WebP image from the bounded materialized catalog. Ordinary map references need
+no invented generation history. Internal, processing, unresolved-lineage and non-raster assets
+are excluded. Existing scene revisions remain unchanged; no geographic or map association is
+inferred for earlier scenes.
+
+Submission freezes the scene revision plus `selectedMap` version 1: immutable asset key,
+SHA-256, byte count and content type. The worker verifies the downloaded image and attaches
+it to each subscription-backed video planning stage. Generation packets contain a structured
+`mapGenerationPacket` version 1 with `mode: image-to-video`, exact `firstFrame`, frozen
+`sceneRef`, prompt and `sourceKeys`. This binding travels with the packet; it does not require
+another map selection. The prompt treats the image as a map, preserves its geography and
+labels, and animates a red starting dot and red footprints toward the requested destination.
+Unreadable or unidentified locations remain explicit planning uncertainties.
+
+All derived planning assets include the map in immutable `sourceKeys`; private references
+and image bytes remain outside Git. Provider/model/rights/budget authorization is still
+required before actual paid image-to-video submission. Map selection or completed planning
+alone never triggers a paid request.
+
+### Prompt-only novel chapters and transcript reading summaries
+
+Novel creation version 3 accepts one `brief` with optional `sourceKeys` (up to eight)
+plus `contextKeys` (up to twelve). The initial job label is visibly derived from that
+prompt; the fresh novel-brief stage chooses the manuscript's title. Chapters without
+transcript evidence are creative reimaginings, never grounded adaptations. Existing
+version 1/2 submissions and their immutable job identities remain unchanged.
+
+TranscriptSummary version 1 is a separate source-pinned reading projection. It never
+modifies raw speech, canonical transcript selection or manuscript text. The summary
+contains a title, concise prose, actual supporting segment indexes and uncertainties.
+Player identities/names and capture timestamps come directly from structured source
+fields; character identities and missing dates are never inferred. A fresh subscription
+Codex candidate followed by an independent fresh review preserves both actual revisions.
+The result is explicitly AI-reviewed/unverified. Generation metadata records subscription
+inference honestly; unknown model versions remain unknown.
+
+Authenticated GET `/transcript-summaries?gameId=…&key=…` returns the projection and status.
+POST `{gameId,key}` idempotently ensures a summary for that exact key/checksum; adding a
+fresh 32-hex `operationId` explicitly regenerates it. Earlier READY projections remain
+usable during regeneration, with immutable assets retained through semantic revisions.
+Publication verifies the source checksum again and validates citation indexes. Late jobs
+cannot replace a newer selected revision. No paid API fallback or implicit retry occurs.
+
+Run `panther transcripts summary-worker --work-dir /private/work/summaries` on the
+subscription-authenticated laptop. While running, it discovers missing completed structured
+speech through bounded all-game materialized catalog pages at startup and every five minutes,
+with a persistent checkpoint. QUEUED jobs are leased; expired or failed jobs require attention.
+The local development SQLite service persists requests and honest source details, but reports
+that summary generation is not configured rather than inventing outputs or waiting forever.
+
+For rollout, run `panther transcripts summaries-rebuild --report /private/summary-inventory.json`
+then repeat with `--apply` and a new report path. After workers finish, run `--verify` with
+another private report. Verification requires every discovered source's READY projection and
+exact source checksum; blockers fail verification and remain in the report. This versioned,
+repeatable all-game backfill preserves every source and previous summary. Private reports
+stay outside Git. Deployment/backfill is incomplete until authenticated production verification
+succeeds; local synthetic checks do not assert production migration completion.

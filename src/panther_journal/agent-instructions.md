@@ -660,23 +660,15 @@ this does not change its official portrait/model selection or create session rec
 in Videos regardless of kind. Novel readers link exact unambiguous character names and asset titles
 without changing the stored prose; aliases require explicit typed references in the chapter artifact.
 
-## TV episode organization
+## Historical TV episode organization
 
-Use `panther videos series/episodes --game GAME` to list structured records; add `--id ID`
-and optionally `--revision REVISION` for exact history. Save private JSON outside Git with
-`panther videos save-series FILE` or `panther videos save-episode FILE`. These plural commands
-organize existing media, unlike singular `panther video` paid production.
-Both envelopes require gameId, id, title, synopsis, reason, operationId and expectedRevision
-(null for creation; exact current revision for edits). Retain identical requests for retries.
-Series require seasons with distinct id/number and title/synopsis; do not remove existing seasons.
-Episodes require seriesId, seasonId, number, status (draft/approved), cuts, selectedCutId,
-posterAssetKey (nullable), captionAssetKeys, credits, sourceAssetKeys, relatedAssetKeys and
-preparationAssetKeys. Each cut has id/title/assetKey/durationSeconds/durationEvidence; unknown
-duration and evidence are both null, never guessed. Credits contain role/name. Empty arrays
-are valid. Cuts and finished references are exact same-game assets; captions are genuine
-WebVTT and posters supported browser images. Preparation references stay separate from
-finished Inputs/Outputs. Private approval does not publish, assert canon or authorize spending.
-Missing editions must remain explicit, never silently substituted. See docs/tv-library.md.
+Use `panther videos series/legacy-episodes --game GAME` to read archived structured records;
+add `--id ID` and optionally `--revision REVISION` for exact history. The legacy
+write commands and API routes are retired. New work uses Episodes containing Scenes
+in the Videos workspace; `panther videos episodes --game GAME` reads current Episodes. Run the authenticated workspace migration described below
+before treating an existing deployment's episode inventory as fully migrated.
+Original cuts, credits, source references and revision histories remain recoverable.
+Missing editions remain explicit, never silently substituted. See docs/tv-library.md.
 
 ## Reliability and reporting
 
@@ -706,7 +698,7 @@ paid requests. See `docs/game-visual-style.md` for the setting and migration con
 
 # Browser room capture
 
-The web Audio and Transcripts pages can capture schema-1 `BrowserRecording` WAV originals,
+The web Sessions page can capture schema-1 `BrowserRecording` WAV originals,
 with explicit capture warnings and immutable parts in the shared location catalog. The native
 CLI `Recording` FLAC contract remains distinct. Keep the originals; playback is produced only
 by the separate completed-set laptop worker, which now advertises protocol 2. Upgrade that
@@ -734,7 +726,99 @@ the worker's bundle records each segment's exact source asset and index. Each ad
 all raw inputs. Update the subscription worker before processing version 3 jobs; preserve
 older executions and outputs under their original version. Video creation plans scripts,
 shots and schematic storyboards only; it never authorizes or submits paid generation.
-# Completed session automation
+
+Workflow version 4 supports scene-owned video creation schema 2. Pin the same-game episode,
+scene revision and selected character details/artwork references. Transcripts are optional:
+no transcript means no correction artifact or fabricated raw speech. When present, correction
+precedes source-brief extraction; compose screen prompts from the clean source brief and cast,
+not audit or provenance documents. Creative context admits positive narrative kinds or explicit
+`extra.contextUse: creative-evidence`; a generic reference category is insufficient. Technical,
+intermediate, hold-out and adaptation inputs stay excluded without deleting their source assets.
+Video creation remains planning only and does not authorize paid rendering.
+
+Episode workspace migration uses Panther authentication:
+`panther videos migrate-workspace` inventories all registered games and exact legacy
+TVEpisode revisions/history without writes. Keep its private output outside Git.
+Review the inventory, then apply with `panther videos migrate-workspace --apply
+--inventory-hash HASH` as an authorized migration account. Imports preserve IDs,
+title/synopsis and exact snapshots/hashes in immutable history/audit, never overwrite
+existing destinations, and resume safely after interruption. Verify a new complete dry
+run reports every legacy episode already migrated before workspace cutover. No scenes
+or footage ownership can be inferred from alternate cuts; clip collections remain
+collections. Bounds or unresolved history/conflicts block migration, never exempt data.
+
+## Episode assembly from rendered scenes
+
+Episodes have an explicit ordered `sceneIds` list. Creating a scene appends it to its
+own episode atomically; reordering creates a guarded Episode revision. Each scene
+selects one finished same-game output using `selectedOutputKey`, with the original
+render's exact scene revision recorded separately. Never infer a take from filenames,
+titles, latest timestamps or an unrelated episode. Unrendered scenes block complete
+episode assembly rather than being silently skipped.
+
+Use `panther videos render-episode --game GAME_ID --episode EPISODE_ID --work-dir
+/private/path/episode-renders` to assemble already rendered scenes in that order.
+The local versioned FFmpeg profile preserves their existing audio and produces one
+continuous browser MP4; it does not generate footage, perform inference, default to
+mute, create separate stems or invent captions. Keep original inputs, frozen
+composition, output and technical receipts outside Git. Checks cover full technical
+decode, duration and exact checksums, not a new creative/perceptual review.
+
+Publication uses Panther authentication and immutable uploads: add `--publish` to
+rendering, or use `panther videos publish-episode RUN_DIRECTORY` afterward. The hidden
+`episode-composition` JSON preserves all ordered Scene/Episode revisions and exact
+input keys/checksums/sizes, plus actual FFmpeg version. The finished output links
+through that artifact so Inputs/Outputs expose all finished scene inputs. Record
+procedural local generation accurately without relabeling upstream provider charges.
+Retain uncertain upload identities and inspect metadata before retrying; do not
+create new identities to conceal an unknown submission. See docs/video-production.md
+for bounds, recovery, source-audio handling and the explicit profile.
+
+## Map scenes
+
+A Scene can have `type: map` and an explicit optional `mapAssetKey`. Choose a same-game
+finished/reference PNG, JPEG or WebP through the bounded materialized catalog. Never scan
+source storage, infer a map association from filenames, or use workflow/audit artifacts as a
+map. A map scene can be saved with only its title, but generation requires the image.
+Submission pins its scene revision and the actual image checksum/size/content type as
+`selectedMap` version 1. The local worker verifies and attaches those bytes to video planning.
+The resulting `mapGenerationPacket` version 1 binds the exact image as `firstFrame` and
+records it in `sourceKeys`; carry that binding into approved image-to-video preparation rather
+than asking for a replacement image. Preserve map labels/geography, show a red starting dot
+and red footprints along the user-requested journey, and retain uncertainty about unidentifiable
+locations. Planning and source selection do not authorize paid generation.
+
+## Assets image generation
+
+The Assets workspace creates maps, blueprints and location illustrations through
+`POST /asset-generation` version 1 requests. The subscription-backed laptop worker
+runs with `panther assets worker --work-dir /private/path/asset-generation`.
+Use only Codex's built-in image-generation tool under ChatGPT authentication;
+never use a paid API fallback or silently retry a stopped/ambiguous request.
+Preserve before-generation checkpoints and returned image bytes. Resume publication
+of a saved image with `--resume-job JOB_ID`; do not regenerate to recover an upload.
+Finished images pin their full immutable generation-provenance document with
+`sourceKeys`, carry explicit `extra.assetType` and current semantic version metadata,
+and record actual tool/provider/subscription provenance. Unreported model identity
+stays unknown. Maps remain top-down maps, blueprints remain floor plans, and locations
+remain environment illustrations rather than deceptively relabeled diagrams.
+
+Character profile portrait generation uses the same subscription asset worker with type
+`portrait` and a required same-game `characterId`. Its immutable request pins structured
+character facts; its finished image must explicitly list that character. A generated profile
+thumbnail is separate from official portrait/model appearance selection. Unknown physical
+features remain creative interpretation, not new character facts.
+
+Transcript reading summaries use the separate version 1 source-pinned projection. Use
+`panther transcripts summary-worker --work-dir /private/work/summaries` for fresh
+subscription-backed candidate/review stages. Source speech, player identities and uncertainty
+remain immutable; summaries are AI-reviewed/unverified, not corrected raw transcripts.
+Regeneration creates a new revision with exact `sourceKeys` and preserves the old result.
+For existing/new records across all games use `panther transcripts summaries-rebuild`
+with a private `--report`, inventory first, `--apply`, then `--verify` after workers finish.
+Never invent capture timestamps, speakers or character associations to satisfy a projection.
+
+## Completed session automation
 
 After verified recording-set completion, the configured owned-compute session worker preserves
 raw ASR, creates separate conservative enrolled-player annotations, and commits the editorial

@@ -63,7 +63,7 @@ test("foundation records bucket names and creates an account budget", () => {
       CorsRules: [
         {
           AllowedHeaders: ["*"],
-          AllowedMethods: ["GET", "HEAD"],
+          AllowedMethods: ["GET", "HEAD", "PUT"],
           AllowedOrigins: ["https://panther.place"],
           ExposedHeaders: ["ETag"],
           MaxAge: 3600,
@@ -183,4 +183,20 @@ test("access assigns administrator and asset-uploader permission sets", () => {
     !action.startsWith("s3:") && !action.startsWith("ssm:"))) {
     assert.match(action, /^(ce|account|billing|consolidatedbilling):(Get|Describe|List)/);
   }
+});
+
+
+test("browser upload preflight allows signed PUT headers only from the application origin", () => {
+  const stack = new PantherFoundationStack(new App(), "BrowserUploadFoundation", {
+    applicationOrigin: "https://panther.place", monthlyBudgetUsd: 10,
+  });
+  const buckets = Object.values(Template.fromStack(stack).findResources("AWS::S3::Bucket"));
+  const rules = buckets.flatMap(bucket => bucket.Properties.CorsConfiguration?.CorsRules ?? []);
+  assert.equal(rules.length, 1, "only the private application bucket enables browser CORS");
+  const rule = rules[0];
+  assert.deepEqual(rule.AllowedOrigins, ["https://panther.place"]);
+  assert.ok(rule.AllowedMethods.includes("PUT"), "recording uploads use presigned PUT");
+  assert.deepEqual(rule.AllowedHeaders, ["*"], "If-None-Match, checksum and signed metadata headers must pass preflight");
+  assert.ok(!rule.AllowedMethods.includes("DELETE"));
+  assert.ok(!rule.AllowedMethods.includes("POST"));
 });

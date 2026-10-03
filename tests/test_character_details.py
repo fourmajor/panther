@@ -333,3 +333,31 @@ def test_character_history_pages_without_scanning_storage(catalog):
     second = json.loads(catalog.handler(event, None)["body"])
     assert [entry["details"]["status"] for entry in second["history"]] == ["1", "0"]
     assert second["cursor"] is None
+
+
+def test_creation_records_current_appearance_contract_and_edit_cannot_rewrite_it(catalog):
+    request(catalog, "POST /games", setup())
+    before = catalog.read("GAME#test-game", "CHARACTER#hero")
+    assert json.loads(before["appearanceContractJson"]) == {
+        "schemaVersion": 1,
+        "origin": "created-current",
+    }
+    body = envelope(before)
+    body["appearanceContractJson"] = json.dumps({"schemaVersion": 1, "origin": "legacy"})
+    assert request(catalog, "POST /character-details", body)["statusCode"] == 400
+    assert (
+        catalog.read("GAME#test-game", "CHARACTER#hero")["appearanceContractJson"]
+        == before["appearanceContractJson"]
+    )
+    created = request(
+        catalog,
+        "POST /game/characters",
+        {"gameId": "test-game", "id": "new-guide", "name": "New Guide"},
+    )
+    assert created["statusCode"] == 201
+    assert (
+        json.loads(catalog.read("GAME#test-game", "CHARACTER#new-guide")["appearanceContractJson"])[
+            "origin"
+        ]
+        == "created-current"
+    )
