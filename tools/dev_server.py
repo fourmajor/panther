@@ -397,9 +397,31 @@ class Store:
         return assets
 
     def episode_thumbnails(self, game, episodes):
-        """Read-time posters come from the first ordered selected scene, in one join."""
+        """Poster discovery does not select a take or change playback readiness."""
         with self.connect() as db:
-            rows = db.execute("SELECT json_extract(scene.payload,'$.episodeId'), thumbnail.payload FROM records scene LEFT JOIN records thumbnail ON thumbnail.kind='video-thumbnail' AND thumbnail.id=json_extract(scene.payload,'$.selectedOutputKey') AND thumbnail.game=scene.game WHERE scene.kind='scene' AND scene.game=? AND json_extract(scene.payload,'$.selectedOutputKey') IS NOT NULL ORDER BY json_extract(scene.payload,'$.position')", (game,)).fetchall()
+            rows = db.execute("""WITH candidates AS (
+                SELECT scene.game, json_extract(scene.payload,'$.episodeId') episode,
+                    json_extract(scene.payload,'$.position') position,
+                    COALESCE(NULLIF(json_extract(scene.payload,'$.selectedOutputKey'),''), (
+                        SELECT json_extract(render.payload,'$.outputKey') FROM records render
+                        JOIN objects output ON output.key=json_extract(render.payload,'$.outputKey')
+                            AND output.game=render.game
+                        WHERE render.kind='scene-render' AND render.game=scene.game
+                            AND json_extract(render.payload,'$.status')='DONE'
+                            AND json_extract(render.payload,'$.sceneRef.episodeId')=json_extract(scene.payload,'$.episodeId')
+                            AND json_extract(render.payload,'$.sceneRef.sceneId')=json_extract(scene.payload,'$.id')
+                            AND json_extract(output.metadata,'$.contentType') LIKE 'video/%'
+                            AND NOT EXISTS (SELECT 1 FROM records archive WHERE archive.kind='asset-deletion' AND archive.id=output.key)
+                        ORDER BY json_extract(render.payload,'$.completedAt') DESC, render.rowid DESC LIMIT 1
+                    )) video_key
+                FROM records scene WHERE scene.kind='scene' AND scene.game=?
+            ) SELECT candidates.episode, thumbnail.payload FROM candidates
+                JOIN objects video ON video.key=candidates.video_key AND video.game=candidates.game
+                LEFT JOIN records thumbnail ON thumbnail.kind='video-thumbnail'
+                    AND thumbnail.id=candidates.video_key AND thumbnail.game=candidates.game
+                WHERE json_extract(video.metadata,'$.contentType') LIKE 'video/%'
+                    AND NOT EXISTS (SELECT 1 FROM records archive WHERE archive.kind='asset-deletion' AND archive.id=video.key)
+                ORDER BY candidates.position""", (game,)).fetchall()
         first = {}
         for episode, payload in rows:
             first.setdefault(episode, json.loads(payload) if payload else {})

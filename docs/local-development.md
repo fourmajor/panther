@@ -32,7 +32,9 @@ The thumbnail processor uses local FFmpeg to backfill existing and newly uploade
 videos without paid inference. It samples the opening ten seconds in order, skips black/blank
 frames, and retains a JPEG derivative with the exact immutable video as its source. All-black
 footage retains its actual first frame. Video library/object projections expose `thumbnailKey`
-and `thumbnailStatus`; episode posters come from the first ordered scene with a selected video.
+and `thumbnailStatus`; episode posters come from the first ordered scene with an actual video.
+An explicitly selected take wins; otherwise the latest completed render supplies the poster.
+This projection never chooses a playback take or changes episode assembly readiness.
 Extraction errors are retained once in the private `video-thumbnail` records and worker log,
 without repeating a failing decode indefinitely. This local processor does not migrate hosted
 storage; hosted thumbnail backfills must use authenticated immutable upload/catalog operations.

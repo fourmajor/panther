@@ -75,7 +75,25 @@ def test_invalid_video_failure_is_persisted_and_not_retried(tmp_path, monkeypatc
 
 def test_episode_poster_does_not_substitute_later_scene_while_first_is_pending(tmp_path):
     store = worker.Store(tmp_path / 'db.sqlite')
-    store.put('scene', 'first', {'episodeId': 'journey', 'position': 0, 'selectedOutputKey': 'first'}, 'fictional')
-    store.put('scene', 'later', {'episodeId': 'journey', 'position': 1, 'selectedOutputKey': 'later'}, 'fictional')
-    store.put('video-thumbnail', 'later', {'status': 'READY', 'thumbnailKey': 'later.jpg'}, 'fictional')
+    first = put_video(store, b'first', 'first')
+    later = put_video(store, b'later', 'later')
+    store.put('scene', 'first', {'episodeId': 'journey', 'position': 0, 'selectedOutputKey': first}, 'fictional')
+    store.put('scene', 'later', {'episodeId': 'journey', 'position': 1, 'selectedOutputKey': later}, 'fictional')
+    store.put('video-thumbnail', later, {'status': 'READY', 'thumbnailKey': 'later.jpg'}, 'fictional')
+    assert 'thumbnailKey' not in store.episode_thumbnails('fictional', [{'id': 'journey'}])[0]
+
+
+def test_unselected_completed_scene_supplies_poster_without_selecting_take(tmp_path):
+    store = worker.Store(tmp_path / 'db.sqlite')
+    key = put_video(store, b'actual-output')
+    scene = {'id': 'arrival', 'episodeId': 'journey', 'position': 0, 'selectedOutputKey': None}
+    store.put('scene', 'fictional:journey:arrival', scene, 'fictional')
+    store.put('scene-render', 'done', {'sceneRef': {'episodeId': 'journey', 'sceneId': 'arrival'},
+                                      'status': 'DONE', 'outputKey': key, 'completedAt': 10}, 'fictional')
+    store.put('video-thumbnail', key, {'status': 'READY', 'thumbnailKey': 'actual.jpg'}, 'fictional')
+    assert store.episode_thumbnails('fictional', [{'id': 'journey'}])[0]['thumbnailKey'] == 'actual.jpg'
+    assert store.get('scene', 'fictional:journey:arrival') == scene
+    assert 'thumbnailKey' not in store.episode_thumbnails('another', [{'id': 'journey'}])[0]
+    # Archived output and unrelated jobs never masquerade as an episode's poster.
+    store.put('asset-deletion', key, {}, 'fictional')
     assert 'thumbnailKey' not in store.episode_thumbnails('fictional', [{'id': 'journey'}])[0]
