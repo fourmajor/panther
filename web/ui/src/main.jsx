@@ -143,6 +143,8 @@ export function enhanceSelect(native, label) {
 }
 document.addEventListener("DOMContentLoaded", () => {
   syncGameSelector();
+  const account=document.getElementById("account-settings-button");
+  if(account)account.classList.add(...buttonVariants({variant:"ghost",size:"icon"}).split(/\s+/));
   enhanceActionButtons();
   const native = document.getElementById("game-selector");
   if (native) new MutationObserver(syncGameSelector).observe(native, { childList: true, subtree: true, characterData: true, attributes: true });

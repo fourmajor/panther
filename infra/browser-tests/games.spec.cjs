@@ -495,3 +495,14 @@ for(const width of [1280,390])test(`Create game searches rules editions and pers
  await dialog.getByRole('button',{name:'Create game',exact:true}).click();await expect(page).toHaveURL(/\/games\/edition-voyage-[a-f0-9]+\/dashboard$/);expect(created.ruleset).toBe('Pathfinder — 2e Remaster');
  await page.getByRole('link',{name:'Settings',exact:true}).click();await expect(page.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');
 });
+
+for(const width of [1280,390])test(`Account header uses an accessible borderless icon at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page);await page.goto('https://panther.place/games/campaign-a/dashboard');
+ const account=page.getByRole('button',{name:'Account',exact:true});await expect(account).toBeVisible();await expect(account).toBeInViewport();
+ expect(await account.innerText()).toBe('');await expect(account.locator('svg')).toBeVisible();
+ const appearance=await account.evaluate(el=>{const style=getComputedStyle(el),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return{border:style.borderTopWidth,shadow:style.boxShadow,hit:el===hit||el.contains(hit),width:r.width,height:r.height};});
+ expect(appearance.border).toBe('0px');expect(appearance.shadow).toBe('none');expect(appearance.hit).toBe(true);expect(appearance.width).toBeGreaterThanOrEqual(36);expect(appearance.height).toBeGreaterThanOrEqual(36);
+ await account.hover();expect(await account.evaluate(el=>getComputedStyle(el).borderTopWidth)).toBe('0px');
+ await account.focus();await expect(account).toBeFocused();expect(await account.evaluate(el=>getComputedStyle(el).boxShadow)).not.toBe('none');
+ await account.press('Enter');await expect(page).toHaveURL('https://panther.place/account');
+});
