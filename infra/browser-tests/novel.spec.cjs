@@ -166,7 +166,10 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
     markdown:'A finished chapter.', details:{review:{},artifact:{key:chapter},sourceKeys:[proof],rawReference:{key:raw}}}}));
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await page.getByRole('button',{name:'Details',exact:true}).click();
-  await expect(page.locator('#novel-details .generation-details')).toContainText('Subscription-covered');
+  const generation=page.locator('#novel-details .generation-details');
+  await generation.getByRole('button',{name:'Generation details',exact:true}).click();
+  await expect(generation).toContainText('Subscription-covered');
+  await generation.evaluate(async element=>await Promise.all(element.getAnimations({subtree:true}).filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{}))));
   await expect(page.locator('#novel-prose')).not.toContainText('Subscription-covered');
   const links=page.locator('#novel-details [data-connections]');
   await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
@@ -530,10 +533,10 @@ for(const width of [1280,390]) test(`manually add a chapter and preserve its ear
     return record?route.fulfill({headers,json:record}):route.fallback();
   });
   await page.goto(`${origin}/games/campaign-a/novel`);
-  await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
+  await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
   await page.getByRole('button',{name:'Write manually',exact:true}).click();
   const form=page.locator('#manual-chapter-form');
-  await expect(page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true})).toBeHidden();
+  await expect(page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true})).toBeHidden();
   await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
   await form.getByLabel('Chapter title').fill('The River');
   await form.getByLabel('Chapter text').fill('An explicitly authored story.');

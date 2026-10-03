@@ -73,6 +73,15 @@ The React UI uses standard shadcn/ui registry components (Radix, Command and sha
 buttons/inputs) with Tailwind CSS 4 and TanStack Query. Keep application-specific forms
 and data handling in compositions of those components; widget focus, keyboard behavior
 and popup positioning belong to the underlying libraries.
+Radix DismissableLayer 1.1.19 receives a minimal, reproducible event-time Escape guard
+from [upstream fix #4147](https://github.com/radix-ui/primitives/pull/4147) for
+[nested-dialog regression #4143](https://github.com/radix-ui/primitives/issues/4143).
+`npm ci --prefix web/ui` applies the version-specific patch only after verifying
+both upstream file checksums, and fails if the version or sources have changed.
+The build repeats this verification for existing installations. Remove the patch
+after upgrading to a stable upstream fix, and rerun the
+nested-dialog registration, keyboard/focus and body-portal Select regressions on
+desktop and mobile.
 
 ## Verification and operations
 

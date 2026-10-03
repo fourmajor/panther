@@ -77,7 +77,7 @@ for(const width of [1280,390])test(`episode-owned scenes can be created without 
  const workspace=page.locator('#episode-workspace');await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
  expect(writes).toHaveLength(2);expect(writes[1].episodeId).toBe(writes[0].id);expect(writes[1].type).toBe('action');expect(writes[1]).not.toHaveProperty('assetKeys');
  await expect(sceneDialog).toHaveCount(0);await expect(workspace.getByRole('button',{name:'Generate video',exact:true})).toHaveCount(0);
- await expect(workspace.locator('#editorial-video-composer')).toBeVisible();
+ await expect(workspace.locator('#scene-video-composer')).toBeVisible();
  await expect(workspace.locator('.episode-cards')).toBeHidden();await expect(workspace.locator('.episode-scenes-panel').getByRole('button',{name:'Lanterns on the river',exact:true})).toBeVisible();
  const toolbarActions=[workspace.getByRole('button',{name:'Add scene',exact:true}),workspace.getByRole('button',{name:'Edit episode',exact:true}),workspace.getByRole('button',{name:'Edit scene',exact:true})];
  const actionBoxes=[];for(const action of toolbarActions){await expect(action).toBeVisible();await expect(action).toBeInViewport();const bounds=await action.boundingBox();expect(bounds.height).toBeLessThanOrEqual(48);actionBoxes.push(bounds);expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
@@ -85,7 +85,7 @@ for(const width of [1280,390])test(`episode-owned scenes can be created without 
  const list=await workspace.locator('.episode-scenes-panel').boundingBox(),focused=await workspace.locator('.episode-scene-panel').boundingBox();
  if(width>800){expect(list.x+list.width).toBeLessThanOrEqual(focused.x);expect(Math.max(list.y,focused.y)).toBeLessThan(Math.min(list.y+list.height,focused.y+focused.height));}else expect(list.y+list.height).toBeLessThanOrEqual(focused.y);
  const back=workspace.getByRole('button',{name:'← Video Episodes',exact:true});await expect(back).toBeVisible();
- await expect(workspace.getByLabel('Prompt',{exact:true})).toHaveValue('Lanterns on the river');
+ await expect(workspace.locator('textarea')).toHaveCount(0);await expect(workspace.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:test.info().outputPath(`episodes-scenes-${width}.png`),fullPage:true});
  await page.reload();await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
@@ -184,6 +184,7 @@ for (const width of [1280,390]) test(`transcript search, versions, canonical cho
   const navigationButton=body.getByRole('button',{name:'Transcript tools',exact:true});
   await navigationButton.click();await expect(page.getByRole('dialog',{name:'Transcript tools',exact:true}).getByLabel('Search speech or player names')).toBeVisible();
   await expect(tools.getByRole('button',{name:'Close',exact:true})).toBeFocused();
+  await tools.evaluate(async node=>{await Promise.all(node.getAnimations({subtree:true}).filter(animation=>Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{})));});
   await page.keyboard.press('Escape');await expect(navigationButton).toBeFocused();
   await expect(page.getByRole('dialog',{name:'Transcript tools',exact:true}).getByLabel('Search speech or player names')).not.toBeVisible();
   await expect(body.locator('.transcript-segment').first()).toBeInViewport();
@@ -241,52 +242,13 @@ test('canonical selection failure never claims success and retries the exact ope
   await expect(page.getByRole('dialog',{name:'Choose this canonical reading version',exact:true})).not.toContainText('Selection saved');
 });
 
-for (const width of [1280,390]) test(`loading feedback reports real catalog progress at ${width}`, async ({page}) => {
-  await page.setViewportSize({width,height:900});
-  await fixture(page);
-  let releaseFirst, releaseSecond;
-  const first = new Promise(resolve => { releaseFirst=resolve; });
-  const second = new Promise(resolve => { releaseSecond=resolve; });
-  let catalogRequests=0;
-  await page.route(`${api}/assets?**`, async route => {
-    catalogRequests++;
-    const u=new URL(route.request().url());
-    expect(u.searchParams.get('section')).toBe('videos');
-    await (u.searchParams.get('cursor') ? second : first);
-    await route.fulfill({headers,json:{assets:[assets.find(a=>a.key===video)],cursor:u.searchParams.get('cursor')?null:'next'}});
-  });
-  await page.clock.install();
-  await page.goto(`${origin}/games/test-game/videos`);
-  const status=page.locator('#library-status');
-  await expect(status).toContainText('Fetching videos from the catalog');
-  await expect(status.locator('.loading-skeleton')).toBeVisible();
-  expect(await status.locator('.loading-skeleton').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-pulse');
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.clock.fastForward(16000);
-  await expect(status.locator('.loading-skeleton')).toBeVisible();
-  await expect(status).not.toContainText('%');
-  await page.screenshot({path:test.info().outputPath(`loading-${width}.png`),fullPage:true});
-  releaseFirst();
-  await expect(page.locator('.session-card')).toHaveCount(1);
-  const more=page.getByRole('button',{name:'Load more videos'});
-  await expect(more).toBeVisible();
-  await expect(status.locator('.loading-state')).toHaveCount(0);
-  expect(catalogRequests).toBe(1);
-  await page.screenshot({path:test.info().outputPath(`catalog-first-page-${width}.png`),fullPage:true});
-  const cardTop=await page.locator('.session-card').evaluate(node=>node.getBoundingClientRect().y+scrollY);
-  await more.click();
-  await expect(page.locator('.session-card')).toHaveCount(1);
-  expect(await page.locator('.session-card').evaluate(node=>node.getBoundingClientRect().y+scrollY)).toBeCloseTo(cardTop,1);
-  await page.emulateMedia({reducedMotion:'reduce'});
-  expect(await status.locator('.loading-skeleton').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
-  releaseSecond();
-  await expect(status).toBeEmpty();
-  await expect(status.locator('.loading-state')).toHaveCount(0);
-  await expect(page.getByRole('button',{name:'Load more videos'})).toHaveCount(0);
-  await expect(page.locator('.session-card')).toHaveCount(1);
+for(const width of [1280,390])test(`Episode catalog loading and pagination preserve visible records at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page);let firstRelease,secondRelease,reads=0;const first=new Promise(resolve=>firstRelease=resolve),second=new Promise(resolve=>secondRelease=resolve);
+ await page.route(`${api}/episodes?**`,async route=>{reads++;const cursor=new URL(route.request().url()).searchParams.get('cursor');await(cursor?second:first);return route.fulfill({headers,json:{records:[{id:cursor?'later':'first',name:cursor?'Later episode':'First episode',sceneIds:[],revision:'a'.repeat(32)}],cursor:cursor?null:'next'}});});
+ await page.goto(`${origin}/games/test-game/videos`);const status=page.locator('#episode-workspace [data-episode-empty]');await expect(status.locator('.loading-skeleton')).toBeVisible();expect(await status.locator('.loading-skeleton').evaluate(node=>getComputedStyle(node).animationName)).toBe('panther-pulse');await page.emulateMedia({reducedMotion:'reduce'});expect(await status.locator('.loading-skeleton').evaluate(node=>getComputedStyle(node).animationName)).toBe('none');firstRelease();await expect(page.locator('.episode-card')).toHaveCount(1);const more=page.getByRole('button',{name:'More episodes',exact:true});await more.click();await expect(page.locator('.episode-card')).toHaveCount(1);await expect(page.locator('.episode-card')).toHaveAccessibleName('First episode');secondRelease();await expect(page.locator('.episode-card')).toHaveCount(2);expect(reads).toBe(2);await expect(more).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
-test('an asset preview links its immutable earlier and later versions', async ({page}) => {
+test('Asset preview omits version navigation while retaining immutable original download', async ({page}) => {
   await fixture(page);
   const earlier = prefix + 'video-earlier/original/take.mp4';
   const series = 'synthetic-film-series';
@@ -295,13 +257,16 @@ test('an asset preview links its immutable earlier and later versions', async ({
     {key:earlier, name:'take.mp4', kind:'video-comparison', contentType:'video/mp4', size:100,
       lastModified:'2025-12-31T12:00:00Z', sourceKeys:[], metadata:{title:'Earlier cut', extra:{version:{schemaVersion:1,seriesId:series,number:1}}}},
   ];
+  const mutations=[];
+  page.on('request',request=>{if(request.url().startsWith(api)&&!['GET','OPTIONS'].includes(request.method()))mutations.push(request.url());});
   await page.route(`${api}/assets?**`, route => route.fulfill({headers,json:{assets:pair,cursor:null}}));
+  const catalogResponse=page.waitForResponse(response=>response.url().startsWith(`${api}/assets?`));
   await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(video)}`);
-  const history = page.locator('#asset-versions');
-  await expect(history.getByRole('link',{name:'Version 1 · Earlier cut'})).toBeVisible();
-  await expect(history.getByRole('link',{name:'Version 2 · Newer cut'})).toBeVisible();
-  await history.getByRole('link',{name:'Version 1 · Earlier cut'}).click();
-  await expect(page.locator('#preview-title')).toHaveText('Version 1 · Earlier cut');
+  await expect(page.getByRole('heading',{name:'Versions',exact:true})).toHaveCount(0);await expect(page.locator('#asset-versions')).toHaveCount(0);await expect(page.getByRole('link',{name:'Download',exact:true})).toHaveAttribute('href','https://audio.example/take.mp4');
+  const served=(await(await catalogResponse).json()).assets;
+  expect(served.find(asset=>asset.key===video).metadata.extra.version.previousKey).toBe(earlier);
+  expect(served.find(asset=>asset.key===earlier).metadata.extra.version.number).toBe(1);
+  expect(mutations).toEqual([]);
 });
 
 test('failed catalog removes activity and offers recovery', async ({page}) => {
@@ -380,7 +345,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   const errors=[]; page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`${origin}/games/test-game/audio`);
   await expect(page.locator('.session-card')).toHaveCount(3);
-  for (const name of ['Sessions','Videos']) {
+  for (const name of ['Sessions','Video Episodes']) {
     const link=page.locator('#primary-nav').getByRole('link',{name,exact:true});
     const box=await link.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width);
   }
@@ -426,8 +391,8 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
 for(const width of [1280,390]) test(`videos are playable, linked and game scoped at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000}); await fixture(page);
   await page.goto(`${origin}/games/test-game/videos`);
-  await expect(page.locator('#library-title')).toHaveText('Videos');
-  await expect(page.locator('.session-card')).toHaveCount(1);
+  await expect(page.locator('#library-title')).toHaveText('Video Episodes');
+  await expect(page.locator('.session-card')).toHaveCount(0);
   // Generate synthetic footage inside the isolated test browser; no real game media in Git.
   const bytes=await page.evaluate(async()=>{
     const canvas=document.createElement('canvas'); canvas.width=160; canvas.height=90;
@@ -439,14 +404,7 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
     return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));
   });
   await page.route('https://audio.example/take.mp4',route=>route.fulfill({contentType:'video/webm',body:Buffer.from(bytes)}));
-  const link=page.locator('#library-list').getByRole('link',{name:'video-comparison',exact:true});
-  await expect(link).toBeVisible();
-  // New library filters/posters extend the page. Test normal document scrolling,
-  // then retain the hit-test so clipping/overlays cannot be hidden by click automation.
-  await link.scrollIntoViewIfNeeded();await expect(link).toBeInViewport();
-  const box=await link.boundingBox(); expect(box.x+box.width).toBeLessThanOrEqual(width);
-  expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
-  await link.click();
+  await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(video)}`);await page.getByRole('button',{name:'Generation details',exact:true}).click();
   await expect(page.locator('#asset-generation')).toContainText('Kling 3 Pro');
   await expect(page.locator('#asset-generation')).toContainText('Provider-hosted');
   await expect(page.locator('#asset-generation')).toContainText('USD 1.344 · Billed');
@@ -459,9 +417,11 @@ for(const width of [1280,390]) test(`videos are playable, linked and game scoped
   await player.evaluate(v=>{window.previousVideo=v;});
   await page.keyboard.press('Escape'); expect(await page.evaluate(()=>window.previousVideo.paused)).toBe(true);
   await expect(page.locator('#asset-generation')).toBeEmpty();
-  await page.reload(); await expect(page.locator('.session-card')).toHaveCount(1);
+  await page.reload(); await expect(page.locator('.session-card')).toHaveCount(0);
+  await expect(page.locator('#preview-body video')).toBeVisible();
+  await page.getByRole('button',{name:'Close preview',exact:true}).click();
   await selectGame(page,'other-game');
-  await expect(page).toHaveURL(`${origin}/games/other-game/videos`);
+  await expect(page).toHaveURL(`${origin}/games/other-game/media`);await page.getByRole('link',{name:'Video Episodes',exact:true}).click();
   await expect(page.getByText('Create your first episode.',{exact:true})).toBeVisible();
 });
 
@@ -495,7 +455,8 @@ test('organized physical storage resolves to the unchanged transcript identity a
   });
   await page.goto(`${origin}/games/test-game/media?asset=${encodeURIComponent(physical)}`);
   await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
-  await expect(page.locator('#open-original')).toHaveAttribute('href',`https://audio.example/${physical}`);
+  await expect(page.locator('#open-original')).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Download',exact:true})).toHaveAttribute('href',`https://audio.example/${physical}`);
   await expect(page.locator('#asset-links [data-connections="outputs"]')).toContainText('Corrected transcript');
   expect(requested).toContain(raw); expect(requested).not.toContain(physical);
   await page.reload();
@@ -545,7 +506,7 @@ test('unprepared or incomplete copies do not silently fall back to gapped part s
   await page.getByRole('link',{name:'Recording',exact:true}).click();
   await expect(page.locator('#preview-body')).toContainText('Playback is not ready yet');
   await expect(page.locator('#preview-body audio')).not.toBeVisible();
-  await expect(page.locator('#asset-links')).toContainText('recording');
+  await expect(page.locator('#asset-links')).toContainText('Original transcript');
 });
 
 test('continuous playback refreshes expired links without changing to a source chunk',async({page})=>{

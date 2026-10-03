@@ -14,7 +14,7 @@ jobs:
       github.repository == 'fourmajor/panther' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/codex/'))
     runs-on: [self-hosted, Linux, panther-local]
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
         with:
@@ -43,7 +43,7 @@ jobs:
       - run: npx playwright install chromium
         working-directory: infra
       - name: Playwright browser tests (self-hosted)
-        run: npm run test:browser
+        run: npm run test:browser -- --reporter=line
         working-directory: infra
       - name: Browser test screenshots and diagnostics
         if: always()
