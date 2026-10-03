@@ -711,7 +711,20 @@ function renderWorkspaceHome() {
     card.append(movieNode('span',String(index+1).padStart(2,'0'),'workspace-number'),movieNode('h3',title));copyLinks(section,card);
     const link=movieNode('a',`Open ${title.toLowerCase()} →`);gameLink(link,section);card.append(link);return card;
   };
-  if(['chronicle','field'].includes(design)){
+  if(design==='field'){
+    host.append(movieNode('h2','Explore your world'));
+    const search=movieNode('input');search.type='search';search.placeholder='Search recent entries and collections';search.setAttribute('aria-label','Find a collection');
+    const explorer=movieNode('div',undefined,'workspace-explorer'),directory=movieNode('section',undefined,'workspace-directory'),inspector=movieNode('aside',undefined,'workspace-inspector');inspector.setAttribute('aria-label','Entry inspector');
+    const table=movieNode('table'),head=movieNode('thead'),heading=movieNode('tr');for(const title of ['Collection','Recent entry'])heading.append(movieNode('th',title));head.append(heading);const body=movieNode('tbody');table.append(head,body);directory.append(search,table);
+    for(const [number,[section,title]]of collections.entries()){
+      const originals=[...source.querySelectorAll(`[data-section="${section}"] ul a`)];
+      for(const original of originals.length?originals:[null]){
+        const row=movieNode('tr'),name=original?.textContent||'Browse collection',button=movieButton(name,()=>{for(const item of body.querySelectorAll('button'))item.setAttribute('aria-pressed',String(item===button));inspector.replaceChildren(movieNode('p','SELECTED ENTRY','eyebrow'),movieNode('h3',name),movieNode('p',title));const open=movieNode('a','Open selected entry →','primary-button');if(original){open.href=original.href;open.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();original.click();};}else gameLink(open,section);inspector.append(open);});
+        button.dataset.collection=section;const cell=movieNode('td');cell.append(button);row.append(movieNode('td',title),cell);row.dataset.search=`${title} ${name}`.toLowerCase();body.append(row);
+      }
+    }
+    search.oninput=()=>{for(const row of body.children)row.hidden=!row.dataset.search.includes(search.value.toLowerCase());};explorer.append(directory,inspector);host.append(explorer);body.querySelector('button')?.click();
+  }else if(design==='chronicle'){
     const book=movieNode('div',undefined,'workspace-split'),index=movieNode('nav',undefined,'workspace-index'),page=movieNode('article',undefined,'workspace-page');index.setAttribute('aria-label',design==='chronicle'?'Book contents':'Collection directory');
     const search=movieNode('input');search.type='search';search.placeholder='Find a collection';search.setAttribute('aria-label','Find a collection');if(design==='field')index.append(search);
     function select(section,title,number){for(const button of index.querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.collection===section));page.replaceChildren(movieNode('p',design==='chronicle'?`CHAPTER ${number+1}`:'COLLECTION','eyebrow'),collection(section,title,number));}

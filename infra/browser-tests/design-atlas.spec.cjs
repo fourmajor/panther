@@ -66,11 +66,17 @@ for(const width of [1440,390]) for(const design of designs) {
     else {
       await expect(page.locator('#dashboard-sections')).toBeHidden();
       await expect(page.locator('#workspace-home')).toHaveAttribute('data-layout',design);
-      const signature={chronicle:'.workspace-split',field:'.workspace-index input',cinema:'.workspace-feature',mission:'.workspace-kanban',poster:'.workspace-pinboard'}[design];
+      const signature={chronicle:'.workspace-split',field:'.workspace-directory table',cinema:'.workspace-feature',mission:'.workspace-kanban',poster:'.workspace-pinboard'}[design];
       await expect(page.locator(signature)).toBeVisible();
-      if(['chronicle','field'].includes(design)){
+      if(design==='chronicle'){
         await page.locator('.workspace-index button').filter({hasText:'The archive'}).click();
         await expect(page.locator('.workspace-page')).toContainText('The archive');
+      }
+      if(design==='field'){
+        await page.getByLabel('Find a collection').fill('archive');
+        await expect(page.locator('.workspace-directory tr:visible')).toHaveCount(2);
+        await page.locator('.workspace-directory button:visible').click();
+        await expect(page.locator('.workspace-inspector')).toContainText('The archive');
       }
     }
     if(width===1440) {
