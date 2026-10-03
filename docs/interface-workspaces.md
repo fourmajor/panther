@@ -20,7 +20,8 @@ Switching designs must preserve unsaved inputs and must not fetch game data.
 
 ## Storyboard approval
 
-Every selected game exposes **Review & approve storyboards**. The dashboard and
+Each game's Dashboard, Sessions, Videos and Workflows expose **Review & approve
+storyboards**. Focused readers and editors retain their uncluttered layout. The dashboard and
 Videos list prepared `movie-review-plan` assets with session identity, a direct
 review link, and the server's current approval/readiness state. A prepared plan
 is not automatically an unapproved or ready plan. Unknown status is explicit.

@@ -1711,6 +1711,7 @@ body { padding-bottom:0; }
 
 /* Task navigation stays unmistakable across all six workspaces. */
 .game-context:not([hidden]) { display:flex;margin:1rem 0; }
+.game-context:has(#storyboard-entry[hidden]):not(:has(.recording-badge:not([hidden]))) { display:none; }
 .game-context :is(.game-purpose,.game-ruleset) { display:none; }
 .storyboard-entry { margin-left:auto;display:inline-flex;align-items:center;min-height:44px;padding:.65rem 1rem;border:1px solid var(--accent);border-radius:.65rem;color:var(--accent);font-weight:600;text-decoration:none; }
 .approval-inbox { padding:1.5rem;margin:1.5rem 0 2rem;border:2px solid var(--accent);border-radius:1rem;background:var(--panel); }

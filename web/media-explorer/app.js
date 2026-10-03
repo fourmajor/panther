@@ -538,6 +538,7 @@ function showApplicationChrome() {
 }
 
 function setActiveNavigation(section) {
+  document.getElementById('storyboard-entry').hidden=!['dashboard','videos','workflows','sessions'].includes(section);
   for (const link of elements.primaryNav.querySelectorAll("a")) {
     const part = link.dataset.section || link.getAttribute("href").split("/").at(-1);
     link.dataset.section = part;
