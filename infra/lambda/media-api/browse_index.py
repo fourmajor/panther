@@ -1,4 +1,4 @@
-"""Version-3 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
+"""Version-4 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
 
 import base64
 import json
@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 from asset_views import session_asset
 
 SECTIONS = ("all", "audio", "transcripts", "videos", "novels")
-VERSION = 3
+VERSION = 4
 
 
 class IndexNotReady(RuntimeError):
@@ -190,6 +190,10 @@ def page(game, section, cursor=None):
             return not counterpart or json.loads(counterpart["payload"])["kind"] != asset["kind"]
 
         assets = [asset for asset in assets if unpaired(asset)]
+    import user_metadata
+    from tag_management import project
+    events = user_metadata.tag_events(game)
+    assets = [project(asset, events) for asset in assets] if events else assets
     return {
         "assets": assets,
         "cursor": base64.urlsafe_b64encode(json.dumps(next_key).encode()).decode()

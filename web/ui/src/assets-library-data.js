@@ -4,6 +4,8 @@ export const assetTypeLabels={map:'Map',blueprint:'Blueprint',location:'Location
 export const assetUploadTypes=['map','blueprint','location','portrait','artwork','video','audio','document','model-3d','other'];
 export function assetTypeLabel(type){return assetTypeLabels[type]||String(type).replace(/[-_]+/g,' ').replace(/^./,value=>value.toUpperCase());}
 export function assetLibraryType(asset) {
+  const mime=asset.contentType?.split(';')[0]?.toLowerCase();
+  if(mime?.startsWith('audio/')||((!mime||mime==='application/octet-stream')&&['WAV','MP3','OGG','FLAC','M4A','AAC','OPUS'].includes(assetFileFormat(asset))))return 'audio';
   if(types.has(asset.kind))return asset.kind;
   const tag=(Array.isArray(asset.tags)?asset.tags:asset.metadata?.tags||[]).find(value=>types.has(value));
   if(tag)return tag;
@@ -43,4 +45,14 @@ export function assetIsImage(asset) {
   if(contentType?.startsWith('image/'))return true;
   if(contentType&&contentType!=='application/octet-stream')return false;
   return ['PNG','JPG','JPEG','WEBP','GIF','AVIF','SVG','BMP'].includes(assetFileFormat(asset));
+}
+
+export function assetDisplayTypeLabel(asset){const type=assetLibraryType(asset);return type==='audio'?'Audio File':assetTypeLabel(type);}
+
+// Runtime facts only; planned scene timing never describes an uploaded take.
+export function assetVideoDuration(asset){
+ const probe=asset.metadata?.extra?.mediaProbe;
+ const raw=probe?.format?.duration??probe?.duration??asset.durationSeconds;
+ if(raw===null||raw===undefined||raw==='')return null;
+ const value=Number(raw);return Number.isFinite(value)&&value>=0?value:null;
 }

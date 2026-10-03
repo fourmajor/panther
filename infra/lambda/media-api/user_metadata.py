@@ -52,8 +52,72 @@ def tags(game):
         if len(items) > 1000:
             raise RuntimeError('Tag vocabulary exceeds the supported page size; pagination is required')
         if not cursor:
-            return {'tags': sorted((item['name'] for item in items), key=str.casefold)}
+            return {'tags': sorted((item['name'] for item in items if not item.get('deleted')), key=str.casefold)}
     raise RuntimeError('Tag vocabulary read is incomplete; retry')
+
+
+def tag_events(game):
+    row = browse_index.table().get_item(Key={'pk': 'tags-v1#policy#' + game, 'sk': 'current'}, ConsistentRead=True).get('Item')
+    return json.loads(row['payload']) if row else []
+
+
+def manage_tag(body, actor):
+    from tag_management import validate
+    body = validate(body)
+    ready()
+    game, name = body['gameId'], body['name']
+    table = browse_index.table()
+    op = {'pk': 'tags-v1#ops#' + game, 'sk': body['operationId']}
+    fingerprint = hashlib.sha256(json.dumps({'body': body, 'actor': actor}, sort_keys=True).encode()).hexdigest()
+    replay = table.get_item(Key=op, ConsistentRead=True).get('Item')
+    if replay:
+        if replay['fingerprint'] != fingerprint:
+            raise FileExistsError('Operation reused with different content')
+        return json.loads(replay['response'])
+    vocabulary = tags(game)['tags']
+    if not any(value.casefold() == name.casefold() for value in vocabulary):
+        raise LookupError('Tag not found')
+    if body['action'] == 'rename' and any(value.casefold() == body['newName'].casefold() and value.casefold() != name.casefold() for value in vocabulary):
+        raise FileExistsError('A tag with that name already exists')
+    key = {'pk': 'tags-v1#policy#' + game, 'sk': 'current'}
+    previous = table.get_item(Key=key, ConsistentRead=True).get('Item')
+    events = json.loads(previous['payload']) if previous else []
+    if len(events) >= 1000:
+        raise RuntimeError('Tag history needs compaction before another change')
+    event = {**body, 'schemaVersion': 1, 'at': time.time()}
+    events.append(event)
+    policy_payload = json.dumps(events)
+    if len(policy_payload.encode('utf-8')) > 350 * 1024:
+        raise RuntimeError('Tag history needs compaction before another change')
+    names = [value for value in vocabulary if value.casefold() != name.casefold()]
+    if body['action'] == 'rename':
+        names.append(body['newName'])
+    response = {'tags': sorted(names, key=str.casefold)}
+    serializer = TypeSerializer()
+    def encode(value):
+        return {key: serializer.serialize(item) for key, item in value.items()}
+    change = {'TableName': table.name, 'Item': encode({**key, 'schemaVersion': 1, 'revision': uuid.uuid4().hex, 'payload': policy_payload}), 'ConditionExpression': 'revision = :previous' if previous else 'attribute_not_exists(pk)'}
+    if previous:
+        change['ExpressionAttributeValues'] = encode({':previous': previous['revision']})
+    old_tag = tag_key(game, name)
+    writes = [{'Put': change}, {'Put': {'TableName': table.name, 'Item': encode({**old_tag, 'name': name, 'schemaVersion': 1, 'deleted': True})}},
+        {'Put': {'TableName': table.name, 'Item': encode({**op, 'fingerprint': fingerprint, 'response': json.dumps(response), 'event': json.dumps(event)}), 'ConditionExpression': 'attribute_not_exists(pk)'}}]
+    if body['action'] == 'rename':
+        target = tag_key(game, body['newName'])
+        if target == old_tag:
+            writes[1]['Put']['Item'] = encode({**target, 'name': body['newName'], 'schemaVersion': 1})
+        else:
+            writes.append({'Put': {'TableName': table.name, 'Item': encode({**target, 'name': body['newName'], 'schemaVersion': 1}), 'ConditionExpression': 'attribute_not_exists(pk) OR deleted = :yes', 'ExpressionAttributeValues': encode({':yes': True})}})
+    try:
+        boto3.client('dynamodb').transact_write_items(TransactItems=writes)
+    except ClientError as exc:
+        if exc.response['Error']['Code'] != 'TransactionCanceledException':
+            raise
+        replay = table.get_item(Key=op, ConsistentRead=True).get('Item')
+        if replay and replay['fingerprint'] == fingerprint:
+            return json.loads(replay['response'])
+        raise FileExistsError('Tags changed. Reopen the list and try again') from exc
+    return response
 
 
 def chapter_reference(game, identity):
@@ -164,6 +228,8 @@ def handle(event, media):
             raise LookupError('Game not found')
         if route == 'GET /tags':
             return media._response(200, tags(game))
+        if route == 'POST /tags/manage':
+            return media._response(200, manage_tag(body, claims['sub']))
         if route == 'POST /tags':
             if set(body) != {'gameId', 'name'} or not isinstance(body['name'], str) or not 1 <= len(body['name'].strip()) <= 64 or any(ord(c) < 32 for c in body['name']):
                 raise ValueError('Enter a tag of up to 64 characters')
@@ -171,7 +237,7 @@ def handle(event, media):
             name = body['name'].strip()
             key = tag_key(game, name)
             try:
-                browse_index.table().put_item(Item={**key, 'name': name, 'schemaVersion': 1, 'createdAt': int(time.time())}, ConditionExpression='attribute_not_exists(pk)')
+                browse_index.table().put_item(Item={**key, 'name': name, 'schemaVersion': 1, 'createdAt': int(time.time())}, ConditionExpression='attribute_not_exists(pk) OR deleted = :yes', ExpressionAttributeValues={':yes': True})
             except ClientError as exc:
                 if exc.response['Error']['Code'] != 'ConditionalCheckFailedException':
                     raise

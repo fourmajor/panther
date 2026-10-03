@@ -30,7 +30,12 @@ def request(folder, name, instructions, data, schema, client=None):
     if document.get('status') != 'completed' or not response.output_text:
         raise RuntimeError('OpenAI returned an incomplete prompt; response retained, no automatic paid retry.')
     value = json.loads(response.output_text)
-    return value, {'responseId': response.id, 'model': document.get('model', payload['model']), 'usage': document.get('usage'), 'cost': {'status': 'unknown'}}
+    evidence = {'responseId': response.id, 'model': document.get('model', payload['model']), 'usage': document.get('usage'), 'cost': {'status': 'unknown'}}
+    from panther_journal.cost_estimates import openai
+    estimate = openai(evidence['model'], evidence['usage'])
+    if estimate:
+        evidence['costEstimate'] = estimate
+    return value, evidence
 
 
 def video_prompt(store, job, folder, verifier, client=None):

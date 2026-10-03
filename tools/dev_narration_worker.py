@@ -68,21 +68,28 @@ def probe(file):
     return data
 
 
-def checkpoint(store, identity, job, **changes):
+def checkpoint(store, identity, job, *, record_kind="narration", **changes):
     with store.connect() as db:
         db.execute('BEGIN IMMEDIATE')
-        row = db.execute("SELECT payload FROM records WHERE kind='narration' AND id=?", (identity,)).fetchone()
+        row = db.execute("SELECT payload FROM records WHERE kind=? AND id=?", (record_kind, identity)).fetchone()
         if not row or json.loads(row[0]) != job:
             raise ValueError('Narration request changed while processing; output remains retained')
         job.update(changes)
-        db.execute("UPDATE records SET payload=? WHERE kind='narration' AND id=?", (json.dumps(job), identity))
+        db.execute("UPDATE records SET payload=? WHERE kind=? AND id=?", (json.dumps(job), record_kind, identity))
 
 
-def process(store, identity, root, client, *, media_probe=probe, direction_client=None):
-    job = store.get('narration', identity)
+def process(store, identity, root, client, *, media_probe=probe, direction_client=None, record_kind="narration"):
+    standalone = record_kind == "asset-generation"
+    job = store.get(record_kind, identity)
     if not job or job.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING'}:
         return False
     try:
+        if standalone:
+            if job.get('mediaType') != 'audio' or job.get('model') != 'eleven_v3' or job.get('sceneRef'):
+                raise ValueError('Choose a standalone Eleven v3 narration request')
+            # Spoken wording remains exact. Only a separate performance direction may add bounded cues.
+            if job.get('text') != job.get('prompt'):
+                raise ValueError('Standalone narration must preserve its exact requested spoken wording')
         if not re.fullmatch(r'[a-f0-9]{64}', identity) or not isinstance(job.get('voiceId'), str) or not re.fullmatch(r'[a-zA-Z0-9]{10,64}', job['voiceId']):
             raise ValueError('Choose a valid narration request and stock voice')
         if not isinstance(job.get('text'), str) or not 1 <= len(job['text']) <= 5000:
@@ -96,6 +103,9 @@ def process(store, identity, root, client, *, media_probe=probe, direction_clien
         if folder.is_symlink():
             raise ValueError('Symlinked narration checkpoint rejected')
         folder.mkdir(mode=0o700, exist_ok=True)
+        if standalone:
+            from dev_asset_title import ensure_title
+            ensure_title(store, record_kind, identity, job, folder, direction_client)
         if recovered:
             request = json.loads((folder / 'request.json').read_text())
             audio = (folder / 'narration.mp3').read_bytes()
@@ -103,7 +113,7 @@ def process(store, identity, root, client, *, media_probe=probe, direction_clien
             if request.get('originalText') != job['text'] or request.get('voiceId') != job['voiceId'] or request.get('direction', '') != job.get('direction', '') or request.get('sourceKeys', []) != job.get('sourceKeys', []) or hashlib.sha256(audio).hexdigest() != job.get('providerAudioSha256'):
                 raise ValueError('Retained narration differs from its immutable request; refusing recovery')
         else:
-            checkpoint(store, identity, job, status='RUNNING', dispatchStarted=now(), message=None)
+            checkpoint(store, identity, job, record_kind=record_kind, status='RUNNING', dispatchStarted=now(), message=None)
             prepared = job['text']
             performance = None
             if job.get('direction', '').strip():
@@ -117,24 +127,26 @@ def process(store, identity, root, client, *, media_probe=probe, direction_clien
                 raise RuntimeError(message) from exc
             retain(folder / 'narration.mp3', audio)
             retain(folder / 'response.json', json.dumps(evidence).encode())
-            checkpoint(store, identity, job, providerCompleted=now(), providerAudioSha256=hashlib.sha256(audio).hexdigest())
+            checkpoint(store, identity, job, record_kind=record_kind, providerCompleted=now(), providerAudioSha256=hashlib.sha256(audio).hexdigest())
         quality = media_probe(folder / 'narration.mp3')
         key = f"games/{job['gameId']}/assets/narration-{identity[:32]}/original/narration.mp3"
         response_key = key.rsplit('/', 1)[0] + '/provider-response.json'
         inputs = list(dict.fromkeys(job.get('sourceKeys', []) + [ref['key'] for ref in job.get('inputRefs', [])]))
         generation = {'schemaVersion': 1, 'method': 'ai', 'provider': 'ElevenLabs', 'model': 'Eleven v3', 'inference': 'remote', 'execution': 'local',
             'tool': 'ElevenLabs text-to-speech API', 'cost': {'status': 'unknown'}, 'evidence': evidence}
-        metadata = asset_metadata.defaults('narration', {'kind': 'narration', 'title': job.get('title') or 'Narration', 'sourceKeys': inputs + [response_key], 'contentType': 'audio/mpeg',
-            'extra': {'generation': generation, 'voiceId': job['voiceId'], 'relationshipRole': 'finished', 'sha256': base64.b64encode(hashlib.sha256(audio).digest()).decode(), 'mediaProbe': quality}}, 'narration.mp3', 'audio/mpeg', key)
+        metadata = asset_metadata.defaults('narration', {'kind': 'narration', 'title': job['name'] if standalone else job.get('title') or 'Narration', 'sourceKeys': inputs + [response_key], 'characterIds': job.get('characterIds', []), 'contentType': 'audio/mpeg',
+            'extra': {'generation': generation, 'titleGeneration': job.get('titleGeneration'), 'voiceId': job['voiceId'], 'relationshipRole': 'finished', 'sha256': base64.b64encode(hashlib.sha256(audio).digest()).decode(), 'mediaProbe': quality}}, 'narration.mp3', 'audio/mpeg', key)
         response_document = {**request, 'response': evidence, 'generation': generation}
         response_bytes = json.dumps(response_document, ensure_ascii=False).encode()
         response_meta = asset_metadata.defaults('generation-response', {'kind': 'generation-response', 'contentType': 'application/json', 'sourceKeys': inputs,
             'extra': {'generation': generation, 'relationshipRole': 'intermediate'}}, 'provider-response.json', 'application/json', response_key)
+        from panther_journal import cost_estimates
+        metadata = cost_estimates.annotate(metadata, request, evidence)
         storage_layout.location(key, 'narration', metadata)
         storage_layout.location(response_key, 'generation-response', response_meta)
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            current = db.execute("SELECT payload FROM records WHERE kind='narration' AND id=?", (identity,)).fetchone()
+            current = db.execute("SELECT payload FROM records WHERE kind=? AND id=?", (record_kind, identity)).fetchone()
             if not current or json.loads(current[0]) != job:
                 raise ValueError('Narration request changed before publication; retained output was not published')
             for ref in job.get('inputRefs', []):
@@ -145,15 +157,15 @@ def process(store, identity, root, client, *, media_probe=probe, direction_clien
                 if db.execute('SELECT 1 FROM objects WHERE key=?', (out_key,)).fetchone():
                     raise ValueError('Narration output collision; refusing overwrite')
                 db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (out_key, job['gameId'], json.dumps(meta), data, now()))
-            job.update(status='DONE', outputKey=key, responseKey=response_key, completedAt=time.time(), message=None)
-            db.execute("UPDATE records SET payload=? WHERE kind='narration' AND id=?", (json.dumps(job), identity))
+            job.update(status='PUBLISHED' if standalone else 'DONE', outputKey=key, assetKey=key, responseKey=response_key, completedAt=time.time(), message=None)
+            db.execute("UPDATE records SET payload=? WHERE kind=? AND id=?", (json.dumps(job), record_kind, identity))
         return True
     except Exception as exc:
-        current = store.get('narration', identity)
+        current = store.get(record_kind, identity)
         if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING'} or any(current.get(field) != job.get(field) for field in ('text', 'voiceId', 'direction', 'sourceKeys', 'inputRefs'))):
             return False  # Preserve a concurrent cancellation or replacement request.
-        job.update(status='UNKNOWN' if isinstance(exc, RuntimeError) else 'FAILED', message=str(exc)[:800], updatedAt=time.time())
-        store.put('narration', identity, job, job['gameId'])
+        job.update(status='UNKNOWN' if isinstance(exc, RuntimeError) or job.get('outcomeUnknown') else 'FAILED', message=str(exc)[:800], updatedAt=time.time())
+        store.put(record_kind, identity, job, job['gameId'])
         return False
 
 
@@ -178,6 +190,9 @@ def run(database, work_dir, *, env_file=None, once=False, client=None):
             while True:
                 for job in reversed(store.list('narration')):
                     process(store, job['id'], root, client)
+                for job in reversed(store.list('asset-generation')):
+                    if job.get('mediaType') == 'audio':
+                        process(store, job['jobId'], root, client, record_kind='asset-generation')
                 if once:
                     break
                 stop.wait(3)

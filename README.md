@@ -13,11 +13,15 @@ Choose the current game in the header. Its sections are:
 
 - **Dashboard:** links to each section and recent characters, transcripts, chapters, videos and assets.
 - **Characters:** editable profiles, reference media, selected appearances, with revisions retained in the background.
-- **Sessions:** browser recording, continuous playback and transcript browsing in one section.
+- **Sessions:** browser recording and one card per recorded session, with the actual date, continuous playback and download, one transcript link and a short expandable summary. Standalone generated narration remains in Assets.
+  Record opens a dialog with live transcription, a timer and Pause/Resume/Stop. Closing it keeps
+  capture running; its header indicator reopens the controls. Live transcription is required for new recordings.
   Previous Audio and Transcripts routes lead here. Transcript details open separately from the list.
-- **Novel:** generate a chapter from a prompt with optional transcript/context inputs, or write and
-  edit chapters manually. Compact transcript selections expand one concise summary at a time; raw speech
-  remains separate from adaptations.
+- **Novel:** generate a chapter from a prompt with optional transcripts and reference assets, or write
+  and edit Markdown with the Tiptap editor. References use a searchable lookup. Compact transcript
+  selections expand one concise summary at a time; raw speech remains separate from adaptations.
+  Reading keeps Edit and Download together; chapter details open in a dialog, while Approve and Reject
+  remain together below the manuscript.
 - **Episodes:** `/games/:gameId/episodes` searches episodes only. Episodes own ordered scenes. A scene can
   start with a title, use characters and optional
   sources, and specify a scene type. Episode/scene forms open in dialogs; a focused editor keeps
@@ -27,8 +31,10 @@ Choose the current game in the header. Its sections are:
   has been generated.
 - **Assets:** browse individual videos, portraits and other game assets; search and filter by type, tags and
   characters with selections contained inside the controls. Identify file formats, upload files and request
-  image generation. Jobs show activity or an explicit worker/configuration problem.
-- **Workflows:** inspect reported server/laptop job stages, dependencies and output links. Progress
+  image, video, speech and text generation with supported model/style/input choices.
+  Generated titles are automatic and editable; jobs show activity or an explicit worker/configuration problem.
+- **Workflows:** browse workflow types with exact run totals, open paged histories, and inspect
+  individual server/laptop stages and output links. Progress
   updates automatically; queued work is distinct from a running worker or completed output.
 - **Settings:** edit the game's name, description, system and visual defaults. Account settings have
   their own page.
@@ -62,7 +68,8 @@ heartbeats before exposing the app. Logs/checkpoints and SQLite data live outsid
 See [local setup](docs/local-development.md) for individual workers, model settings and recovery.
 
 Local creation uses direct provider APIs: OpenAI for chapters, summaries, transcription,
-images and prompt composition; fal for scene videos; ElevenLabs v3 for narration.
+images, generated asset titles and prompt composition; fal for images, scene and standalone videos;
+ElevenLabs v3 for narration.
 Episodes assemble the selected scene videos locally with FFmpeg. Generation records
 actual outputs, immutable inputs, provider responses and honest failures. Unknown paid
 outcomes are never automatically submitted again. There is no AI CLI harness or dummy

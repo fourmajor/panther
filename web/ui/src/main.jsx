@@ -1,3 +1,11 @@
+export {LiveTranscription} from './live-transcription.js';
+export {renderProseMarkdown} from './prose-markdown.js';
+import {ChapterEditor} from './chapter-editor.jsx';
+import {TagManager} from './tag-manager.jsx';
+import {SessionSummary,SessionDownload} from './session-summary.jsx';
+import {AssetCreateForm} from './asset-create-form.jsx';
+import {AssetGenerationStatus} from './asset-generation-status.jsx';
+import {WorkflowBrowser} from './workflow-browser.jsx';
 import {TranscriptSources} from './transcript-sources.jsx';
 import {GameSystemPicker} from './game-system-picker.jsx';
 import React from "react";
@@ -14,7 +22,7 @@ import { SortableScenes } from "./sortable-scenes.jsx";
 import { MultiSelect } from "./components/ui/multi-select.jsx";
 import { buttonVariants } from "./components/ui/button.jsx";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion.jsx";
-import { Users, Mic, BookOpen, Clapperboard, Folder, ArrowUpRight, Upload, Sparkles } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Pencil, Download, Users, Mic, BookOpen, Clapperboard, Folder, ChevronRight, Upload, Sparkles, Search, CirclePlus } from "lucide-react";
 import "./styles.css";
 
 export function enhanceDialog(node,{onDismiss}={}){
@@ -49,24 +57,27 @@ const iconRoots=new WeakMap();
 const generationRoots=new WeakMap();
 export function clearGenerationDetails(host){generationRoots.get(host)?.unmount();generationRoots.delete(host);host.replaceChildren();}
 export function mountGenerationDetails(host,rows){clearGenerationDetails(host);const root=createRoot(host);generationRoots.set(host,root);root.render(<Accordion type="single" collapsible><AccordionItem value="generation"><AccordionTrigger>Generation details</AccordionTrigger><AccordionContent><dl>{rows.map(([label,value])=><React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}</dl></AccordionContent></AccordionItem></Accordion>);}
-export function mountIcon(host,name){const Icon={characters:Users,sessions:Mic,novel:BookOpen,videos:Clapperboard,assets:Folder,arrow:ArrowUpRight}[name];if(!Icon)return;let root=iconRoots.get(host);if(!root){root=createRoot(host);iconRoots.set(host,root);}root.render(<Icon size={22} strokeWidth={1.7} aria-hidden="true"/>);}
+export function mountIcon(host,name){const Icon={characters:Users,sessions:Mic,novel:BookOpen,videos:Clapperboard,assets:Folder,arrow:ChevronRight,search:Search,approve:ThumbsUp,reject:ThumbsDown,edit:Pencil,download:Download}[name];if(!Icon)return;let root=iconRoots.get(host);if(!root){root=createRoot(host);iconRoots.set(host,root);}root.render(<Icon size={22} strokeWidth={1.7} aria-hidden="true"/>);}
 // Imperative controllers compose the same registry Button variants and Lucide
 // icons as React forms. Observe label replacement so pending/retry updates keep
 // their existing icon without rebuilding the application's event handlers.
 const actionIcons=new WeakMap();
+export function styleButton(button,variant="ghost"){
+  button.classList.add(...buttonVariants({variant}).split(/\s+/),"ui-action-button");
+}
 export function enhanceActionButton(button){
   const label=button.textContent.trim();
   const previous=actionIcons.get(button);
-  const role=/^Upload(?:\s|$)/i.test(label)?'upload':/^Generate(?:\s|$)/i.test(label)?'generate':previous?.role;
+  const role=/^Upload(?:\s|$)/i.test(label)?'upload':/^Generate(?:\s|$)/i.test(label)?'generate':/^Create(?:\s|$)/i.test(label)?'create':previous?.role;
   if(!role||(!previous&&button.querySelector('svg')))return;
   if(!previous){
-    button.classList.add(...buttonVariants({variant:role==='upload'?'outline':'default'}).split(/\s+/),'ui-action-button');
+    button.classList.add(...buttonVariants({variant:button.dataset.buttonVariant||(role==='upload'?'outline':'default')}).split(/\s+/),'ui-action-button');
     button.dataset.actionRole=role;
   }
   if(previous?.host.parentNode===button)return;
   previous?.iconRoot.unmount();
   const host=document.createElement('span');host.className='action-icon';host.setAttribute('aria-hidden','true');button.prepend(host);
-  const iconRoot=createRoot(host),Icon=role==='upload'?Upload:Sparkles;
+  const iconRoot=createRoot(host),Icon=role==='upload'?Upload:role==='create'?CirclePlus:Sparkles;
   actionIcons.set(button,{role,host,iconRoot});iconRoot.render(<Icon size={16} aria-hidden="true"/>);
 }
 function enhanceActionButtons(){
@@ -149,3 +160,29 @@ document.addEventListener("DOMContentLoaded", () => {
   const native = document.getElementById("game-selector");
   if (native) new MutationObserver(syncGameSelector).observe(native, { childList: true, subtree: true, characterData: true, attributes: true });
 });
+
+const workflowRoots=new WeakMap();
+export function mountWorkflowBrowser(host,props){
+ if(!workflowRoots.has(host))workflowRoots.set(host,createRoot(host));
+ workflowRoots.get(host).render(<QueryClientProvider client={client}><WorkflowBrowser {...props}/></QueryClientProvider>);
+}
+export function unmountWorkflowBrowser(host){workflowRoots.get(host)?.unmount();workflowRoots.delete(host);}
+
+const characterComposerRoots = new WeakMap(), characterJobRoots = new WeakMap();
+export function unmountAssetCreateForm(host){const root=characterComposerRoots.get(host);if(root){root.unmount();characterComposerRoots.delete(host);}}
+export function mountAssetCreateForm(host,props){unmountAssetCreateForm(host);const root=createRoot(host);characterComposerRoots.set(host,root);root.render(<QueryClientProvider client={client}><AssetCreateForm {...props}/></QueryClientProvider>);}
+export function mountCharacterGenerationJobs(host,props){let root=characterJobRoots.get(host);if(!root){root=createRoot(host);characterJobRoots.set(host,root);}root.render(<QueryClientProvider client={client}>{props.jobs.map(job=><AssetGenerationStatus key={job.jobId} gameId={props.gameId} job={job} onGenerationStatus={props.onGenerationStatus} onPublished={props.onPublished} onOpen={props.onOpen}/>)}</QueryClientProvider>);}
+
+const sessionSummaryRoots=new WeakMap();
+export function mountSessionSummary(host,props){if(!sessionSummaryRoots.has(host))sessionSummaryRoots.set(host,createRoot(host));sessionSummaryRoots.get(host).render(<QueryClientProvider client={client}><SessionSummary {...props}/></QueryClientProvider>);}
+export function unmountSessionSummary(host){sessionSummaryRoots.get(host)?.unmount();sessionSummaryRoots.delete(host);}
+
+const tagManagerRoots=new WeakMap();
+export function mountTagManager(host,props){if(!tagManagerRoots.has(host))tagManagerRoots.set(host,createRoot(host));tagManagerRoots.get(host).render(<QueryClientProvider client={client}><TagManager {...props}/></QueryClientProvider>);}
+export function unmountTagManager(host){tagManagerRoots.get(host)?.unmount();tagManagerRoots.delete(host);}
+
+const sessionDownloadRoots=new WeakMap();
+export function mountSessionDownload(host,props){if(!sessionDownloadRoots.has(host))sessionDownloadRoots.set(host,createRoot(host));sessionDownloadRoots.get(host).render(<SessionDownload {...props}/>);}
+export function unmountSessionDownload(host){sessionDownloadRoots.get(host)?.unmount();sessionDownloadRoots.delete(host);}
+
+export function openChapterEditor(props){const host=document.createElement('div');document.body.append(host);const root=createRoot(host);let closed=false;const close=()=>{if(closed)return;closed=true;queueMicrotask(()=>{root.unmount();host.remove();props.onClose?.();});};root.render(<QueryClientProvider client={client}><ChapterEditor {...props} onClose={close} onComplete={result=>{close();props.onComplete(result);}}/></QueryClientProvider>);return close;}

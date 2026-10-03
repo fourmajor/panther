@@ -155,7 +155,7 @@ export class EditorialProcessing extends Construct {
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"], resources:[props.browseTable.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#*", "novel-library-history#*", "novel-library-ops#*"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "novel-library#chapter#*", "v3#*#all"]}}}));
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "novel-library#chapter#*", "v4#*#all"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[table.tableArn],
       conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["TASKS"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"], resources:[props.catalogTable.tableArn],
@@ -184,7 +184,7 @@ export class EditorialProcessing extends Construct {
     metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["tags-v1#*","novel-review#*","novel-review-history#*","novel-review-ops#*"]}}}));
     const metadataIntegration = new integrations.HttpLambdaIntegration("UserMetadataIntegration", metadata);
-    for(const path of ["/tags","/novel-review"]) props.api.addRoutes({path,
+    for(const path of ["/tags","/tags/manage","/novel-review"]) props.api.addRoutes({path,
       methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration:metadataIntegration,authorizer:props.authorizer});
     // Review decisions cannot dispatch jobs or spend. Retain immutable revision-specific audit rows.
     const reviews = new dynamodb.Table(this, "MovieReviews", {

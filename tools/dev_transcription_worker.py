@@ -29,7 +29,7 @@ from dev_playback_worker import private_root, retain
 from dev_editorial_worker import load_key
 from panther_journal.browser_recording import BrowserRecording
 
-MODEL = 'gpt-4o-transcribe'
+MODEL = 'gpt-transcribe'
 MAX_PCM = 24 * 1024**2  # Below OpenAI's 25 MB file limit, including WAV headers.
 
 
@@ -144,10 +144,10 @@ def process(store, identity, root, client, model=MODEL):
         for index, chunk in enumerate(chunks):
             file = folder / f'window-{index:04d}.wav'
             retain(file, wav(chunk))
-            retain(folder / f'request-{index:04d}.json', json.dumps({'model': model, 'inputSha256': digest(file.read_bytes()), 'sourceKeys': [ref['key'] for ref in job['inputs']], 'startedAt': time.time()}).encode())
+            retain(folder / f'request-{index:04d}.json', json.dumps({'model': model, 'languages': ['en'] if model == 'gpt-transcribe' else None, 'inputSha256': digest(file.read_bytes()), 'sourceKeys': [ref['key'] for ref in job['inputs']], 'startedAt': time.time()}).encode())
             try:
                 with file.open('rb') as stream:
-                    response = client.audio.transcriptions.create(model=model, file=stream, response_format='json')
+                    response = client.audio.transcriptions.create(model=model, file=stream, response_format='json', **({'extra_body': {'languages': ['en']}} if model == 'gpt-transcribe' else {}))
             except Exception as exc:
                 code = getattr(exc, 'status_code', None)
                 request_id = getattr(exc, 'request_id', None)

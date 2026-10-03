@@ -51,10 +51,10 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await page.goto(`https://panther.place/games/test-game/${target==='novel'?'novel':'videos'}`);
  const composer=page.locator(`#editorial-${target}-composer`);
  const before=reads.filter(p=>p==='/assets').length;
- await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
- await expect(page.getByRole('dialog',{name:'Generate chapter',exact:true})).toBeVisible();
- await expect.poll(async()=>{const r=await page.getByRole('dialog',{name:'Generate chapter',exact:true}).boundingBox();return Math.abs(r.x+r.width/2-width/2);}).toBeLessThan(2);
- const dialogGeometry=await page.getByRole('dialog',{name:'Generate chapter',exact:true}).boundingBox();
+ await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
+ await expect(page.getByRole('dialog',{name:'Generate Chapter',exact:true})).toBeVisible();
+ await expect.poll(async()=>{const r=await page.getByRole('dialog',{name:'Generate Chapter',exact:true}).boundingBox();return Math.abs(r.x+r.width/2-width/2);}).toBeLessThan(2);
+ const dialogGeometry=await page.getByRole('dialog',{name:'Generate Chapter',exact:true}).boundingBox();
  expect(dialogGeometry.x).toBeGreaterThanOrEqual(0);expect(dialogGeometry.y).toBeGreaterThanOrEqual(0);
  expect(dialogGeometry.x+dialogGeometry.width).toBeLessThanOrEqual(width);
  expect(dialogGeometry.y+dialogGeometry.height).toBeLessThanOrEqual(900);
@@ -62,7 +62,7 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await expect(page.getByLabel('Title',{exact:true})).toHaveCount(0);
  await expect(page.getByLabel('Direction',{exact:true})).toHaveCount(0);
  await page.getByLabel('Prompt',{exact:true}).fill('Follow the companions across the river.');
- const sourceDialog=page.getByRole('dialog',{name:'Generate chapter',exact:true});
+ const sourceDialog=page.getByRole('dialog',{name:'Generate Chapter',exact:true});
  const first=sourceDialog.getByRole('button',{name:'First session',exact:true}),second=sourceDialog.getByRole('button',{name:'Second session',exact:true});
  await expect(first).toHaveAttribute('aria-expanded','false');await expect(second).toHaveAttribute('aria-expanded','false');
  await expect(sourceDialog.getByText('The companions discuss crossing the river.').first()).not.toBeVisible();
@@ -71,11 +71,11 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await second.click();await expect(second).toHaveAttribute('aria-expanded','true');await expect(first).toHaveAttribute('aria-expanded','false');await expect(sourceDialog.getByRole('checkbox',{name:'First session',exact:true})).toBeChecked();
  await sourceDialog.getByRole('checkbox',{name:'Second session',exact:true}).check();
  await expect(sourceDialog.getByRole('button',{name:/Review|Regenerate/})).toHaveCount(0);expect(reads).not.toContain('/asset-document');
- await page.getByRole('button',{name:'Add context',exact:true}).click();
- await page.getByRole('dialog',{name:'Add context',exact:true}).getByLabel('Campaign lore',{exact:true}).check();
+ await page.getByRole('button',{name:'Assets',exact:true}).click();
+ await page.getByRole('dialog',{name:'Assets',exact:true}).getByLabel('Campaign lore',{exact:true}).check();
  await expect(composer.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
- await page.getByRole('dialog',{name:'Add context',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
- const submit=page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:target==='novel'?'Generate chapter':'Create project',exact:true});
+ await page.getByRole('dialog',{name:'Assets',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
+ const submit=page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:target==='novel'?'Generate Chapter':'Create project',exact:true});
  await expect(submit).toBeInViewport();
  const buttonBounds=await submit.boundingBox(),composerBounds=await sourceDialog.boundingBox();
  expect(buttonBounds.x+buttonBounds.width).toBeLessThanOrEqual(composerBounds.x+composerBounds.width-8);
@@ -160,23 +160,23 @@ test('A failed map save retains the image and prompt and retries the same operat
 for(const width of [1280,390])test(`Novel has one prompt action and supports a chapter without transcripts at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});const {submissions}=await fixture(context);
  await page.goto('https://panther.place/games/test-game/novel');
- const action=page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true});
+ const action=page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true});
  await expect(action).toBeVisible();await expect(action).toBeInViewport();
  expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Write manually',exact:true})).toHaveCount(0);
  await action.click();const composer=page.locator('#editorial-novel-composer');
- await expect(page.getByRole('dialog',{name:'Generate chapter',exact:true}).locator('textarea')).toHaveCount(1);await expect(page.getByLabel('Title',{exact:true})).toHaveCount(0);
+ await expect(page.getByRole('dialog',{name:'Generate Chapter',exact:true}).locator('textarea')).toHaveCount(1);await expect(page.getByLabel('Title',{exact:true})).toHaveCount(0);
  await page.getByLabel('Prompt',{exact:true}).fill('Describe a fictional sunrise over the harbor.');
- const generate=page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate chapter',exact:true});await expect(generate).toBeEnabled();await generate.click();
+ const generate=page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate Chapter',exact:true});await expect(generate).toBeEnabled();await generate.click();
  await expect(composer).toContainText('Chapter ready');
  expect(submissions[0].creation).toEqual({schemaVersion:3,target:'novel',brief:'Describe a fictional sunrise over the harbor.',sourceKeys:[],contextKeys:[]});
 });
 
 for(const width of [1280,390])test(`Transcript picker replaces technical names with reviewed summary titles at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});await fixture(context,{technicalSources:true});
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
- const composer=page.getByRole('dialog',{name:'Generate chapter',exact:true});await expect(composer.getByRole('checkbox',{name:'The river crossing'})).toHaveCount(2);
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
+ const composer=page.getByRole('dialog',{name:'Generate Chapter',exact:true});await expect(composer.getByRole('checkbox',{name:'The river crossing'})).toHaveCount(2);
  await expect(composer).not.toContainText('089c592c');await expect(composer.locator('.editorial-source-meta').first()).toContainText('2026');await expect(composer).toContainText('Morgan');
  const title=composer.getByRole('button',{name:'The river crossing',exact:true}).first();await expect(title).toHaveAttribute('aria-expanded','false');await title.click();await expect(title).toHaveAttribute('aria-expanded','true');await expect(composer.getByText('The companions discuss crossing the river.').filter({visible:true})).toHaveCount(1);await expect(page.getByRole('dialog',{name:'Transcript review',exact:true})).toHaveCount(0);
 });
@@ -184,8 +184,8 @@ for(const width of [1280,390])test(`Transcript picker replaces technical names w
 test('Compact transcript summaries use cached reads and never open raw artifacts or regenerate',async({page,context})=>{
  const {reads}=await fixture(context);const writes=[];
  page.on('request',request=>{if(request.url().includes('/transcript-summaries')&&request.method()==='POST')writes.push(request.url());});
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
- const composer=page.getByRole('dialog',{name:'Generate chapter',exact:true}),first=composer.getByRole('button',{name:'First session',exact:true});
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
+ const composer=page.getByRole('dialog',{name:'Generate Chapter',exact:true}),first=composer.getByRole('button',{name:'First session',exact:true});
  await expect(first).toBeVisible();await expect(composer).toContainText('Morgan');await expect(composer.locator('.editorial-source-meta').first()).toContainText('2026');
  const initial=reads.filter(path=>path==='/transcript-summaries').length;
  await first.focus();await first.press('Enter');await expect(first).toHaveAttribute('aria-expanded','true');await first.press('Enter');await expect(first).toHaveAttribute('aria-expanded','false');await first.press('Enter');await expect(first).toHaveAttribute('aria-expanded','true');
@@ -198,35 +198,35 @@ for(const width of [1280,390]) test(`Chapter progress shows real activity and ac
   if(!new URL(route.request().url()).searchParams.has('jobId'))return route.fallback();
   return route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{job:{jobId:'a'.repeat(64),status,creation:{title:'A river crossing',brief:'Follow the party across the river.'},...(status==='FAILED'?{message:'The worker stopped before finishing. Start the worker to continue.'}:{})},tasks:status==='FAILED'?[]:[{stage:'novel-draft',status:'RUNNING'}]}});
  });
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
- const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
+ const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate Chapter',exact:true}).click();
  await expect(page.locator('#novel .explorer-heading [data-generation-action]')).toBeVisible();
  await expect(page.getByRole('region',{name:'Create your first chapter',exact:true})).toBeHidden();
  await expect(composer.getByRole('progressbar',{name:'Generation stages'})).toBeVisible();await expect(composer.getByRole('progressbar')).toHaveAttribute('aria-valuenow','0');await expect(composer.getByRole('progressbar')).toHaveAttribute('aria-valuemax','1');
  expect(await composer.getByRole('progressbar').locator('[data-state=active]').evaluate(el=>getComputedStyle(el).animationName)).toBe('panther-pulse');
  await page.screenshot({path:test.info().outputPath(`chapter-active-progress-${width}.png`),fullPage:true});
  await expect(composer.locator('[data-section=prompt]')).toBeVisible();await expect(composer).toContainText('Follow the party across the river.');
- status='FAILED';await expect(composer).toContainText('Generation failed',{timeout:10000});await expect(composer.getByRole('alert')).toContainText('Start the worker');
+ status='FAILED';await expect(composer).toContainText('Generation failed',{timeout:10000});await expect(composer.getByRole('alert')).toContainText('Chapter generation could not finish. Your prompt and sources are saved.');await expect(composer.getByRole('alert')).not.toContainText('Start the worker');
  await expect(composer.locator('summary').filter({hasText:/^Stages$/})).toHaveCount(0);await expect(composer.locator('summary').filter({hasText:'Processing details'})).toHaveCount(0);
  await expect(composer.locator('[data-section=prompt]')).toContainText('Follow the party across the river.');
- await expect(page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true})).toBeVisible();
- await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true})).toBeVisible();
+ await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
  await expect(page.getByLabel('Prompt',{exact:true})).toBeVisible();
  await expect(page.getByLabel('Prompt',{exact:true})).toHaveValue('');
- await expect(page.getByRole('dialog',{name:'Generate chapter',exact:true}).getByRole('alert')).toHaveCount(0);
+ await expect(page.getByRole('dialog',{name:'Generate Chapter',exact:true}).getByRole('alert')).toHaveCount(0);
 });
 
 for(const width of [1280,390])test(`Empty Novel explains its purpose and offers usable prompts at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});const {submissions}=await fixture(context);await page.goto('https://panther.place/games/test-game/novel');
  const empty=page.getByRole('region',{name:'Create your first chapter',exact:true});await expect(empty).toBeVisible();await expect(empty).toContainText('Transcripts are optional');
- const action=empty.getByRole('button',{name:'Generate chapter',exact:true});await expect(action).toHaveCount(1);await expect(action).toBeInViewport();
- const centered=await action.boundingBox();expect(Math.abs(centered.x+centered.width/2-width/2)).toBeLessThan(5);
+ const action=empty.getByRole('button',{name:'Generate Chapter',exact:true});await expect(action).toHaveCount(1);await expect(action).toBeInViewport();
+ const create=empty.getByRole('button',{name:'Create Chapter',exact:true});await expect(create).toBeVisible();const [created,generated]=await Promise.all([create.boundingBox(),action.boundingBox()]);const left=Math.min(created.x,generated.x),right=Math.max(created.x+created.width,generated.x+generated.width);expect(Math.abs((left+right)/2-width/2)).toBeLessThan(5);
  expect(await action.evaluate(el=>{const box=el.getBoundingClientRect();return el.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));})).toBe(true);
  await page.screenshot({path:test.info().outputPath(`novel-empty-${width}.png`),fullPage:true});
  const prompt='Retell the session from one character’s point of view.';await empty.getByRole('button',{name:prompt,exact:true}).click();
  const composer=page.locator('#editorial-novel-composer');await expect(page.getByLabel('Prompt',{exact:true})).toHaveValue(prompt);await expect(page.getByLabel('Prompt',{exact:true})).toBeFocused();
- await expect(empty).toBeHidden();expect(submissions).toHaveLength(0);await expect(page.getByRole('dialog',{name:'Generate chapter',exact:true}).getByRole('button',{name:'Generate chapter',exact:true})).toBeEnabled();
- await page.getByRole('dialog',{name:'Generate chapter',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();await expect(empty).toBeVisible();await action.click();await expect(page.getByLabel('Prompt',{exact:true})).toBeVisible();await expect(empty).toBeHidden();
+ await expect(empty).toBeHidden();expect(submissions).toHaveLength(0);await expect(page.getByRole('dialog',{name:'Generate Chapter',exact:true}).getByRole('button',{name:'Generate Chapter',exact:true})).toBeEnabled();
+ await page.getByRole('dialog',{name:'Generate Chapter',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();await expect(empty).toBeVisible();await action.click();await expect(page.getByLabel('Prompt',{exact:true})).toBeVisible();await expect(empty).toBeHidden();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
@@ -253,10 +253,11 @@ for(const width of [1280,390])test(`Completed chapter replaces its job without a
   complete=++jobReads>1;return route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{job:{jobId:'a'.repeat(64),status:complete?'NOVEL_READY':'RUNNING',chapterId:complete?'chapter-river':undefined,creation:{target:'novel',title:'The crossing',brief:'Retell the crossing.'}},tasks:[{stage:'novel-draft',status:complete?'DONE':'RUNNING'}]}});
  });
  await page.route('**/novel?*',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{chapters:complete?[{id:'chapter-river',sessionId:'session-river',title:'The crossing',createdAt:1000,assetKey:'games/test-game/assets/chapter-river/original/chapter.md'}]:[],cursor:null}}));
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
- const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Retell the crossing.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate chapter',exact:true}).click();
- await expect(page.getByRole('dialog',{name:'Generate chapter',exact:true})).not.toBeVisible();
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
+ const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Retell the crossing.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate Chapter',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Generate Chapter',exact:true})).not.toBeVisible();
  await expect(page.locator('.novel-card').getByRole('link',{name:'The crossing',exact:true})).toBeVisible({timeout:10000});await expect(page.locator('.novel-job-card')).toHaveCount(0);await expect(page.locator('#novel-empty-state')).toHaveCount(0);
+ const heading=page.locator('#novel > .explorer-heading');const actions=heading.locator('.novel-heading-actions');const create=actions.getByRole('button',{name:'Create Chapter',exact:true});const generate=actions.getByRole('button',{name:'Generate Chapter',exact:true});await expect(create).toBeVisible();await expect(generate).toBeVisible();expect(await create.getAttribute('data-button-variant')).toBe('outline');const [headBox,actionBox,createBox,generateBox]=await Promise.all([heading.boundingBox(),actions.boundingBox(),create.boundingBox(),generate.boundingBox()]);expect(Math.abs(headBox.x+headBox.width-actionBox.x-actionBox.width)).toBeLessThan(3);expect(createBox.height).toBe(generateBox.height);expect(await create.evaluate(el=>getComputedStyle(el).backgroundColor)).not.toBe(await generate.evaluate(el=>getComputedStyle(el).backgroundColor));
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
@@ -266,7 +267,7 @@ for(const width of [1280,390])test(`Stage outputs open a readable nested preview
  await page.route('**/editorial-jobs?*',route=>{if(!new URL(route.request().url()).searchParams.has('jobId'))return route.fallback();reads++;return route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{job:{jobId:'a'.repeat(64),status:'RUNNING',creation:{target:'novel',title:'The river approach',brief:'Follow the party across the river.'},progress:{completedStages:1,totalStages:11},currentStage:'novel-draft'},tasks:[{stage:'novel-outline',status:'DONE',output:{key:output}},{stage:'novel-draft',status:'RUNNING'}]}});});
  await page.route('**/object-url?*',route=>new URL(route.request().url()).searchParams.get('key')===output?route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{key:output,filename:'report.json',contentType:'application/json',size:800,url:'https://files.example/report.json',metadata:{title:'The river approach'}}}):route.fallback());
  await page.route('**/asset-document?*',route=>new URL(route.request().url()).searchParams.get('key')===output?route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{key:output,kind:'novel-outline',document:{schemaVersion:1,entityType:'EditorialArtifact',stage:'novel-outline',payload:{title:'The river approach',markdown:'## The crossing\n\nThe companions approach the river at dusk.',uncertainties:['The destination is not yet established.'],decisions:[{decision:'Use the guide’s perspective.',reason:'The guide leads this scene.'}]}}}}):route.fallback());
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate Chapter',exact:true}).click();
  const progress=page.getByRole('region',{name:'Chapter progress',exact:true});await expect(progress.getByRole('progressbar')).toHaveAttribute('aria-valuenow','1');await expect(progress.getByRole('progressbar')).toHaveAttribute('aria-valuemax','11');await expect(progress.locator('[data-section=prompt] em')).toHaveText('Follow the party across the river.');await expect(progress.locator('ol')).toHaveCount(0);
  await progress.getByRole('button',{name:'View Outline',exact:true}).click();const preview=page.locator('#preview-dialog');await expect(preview).toBeVisible();await expect.poll(()=>preview.evaluate(node=>getComputedStyle(node.closest('[role=dialog]')).opacity)).toBe('1');await expect(page.locator('#preview-body')).toContainText('The companions approach the river at dusk.');await expect(page.locator('#preview-body')).toContainText('The destination is not yet established.');await expect(page.locator('#preview-body')).not.toContainText('"schemaVersion"');await expect(page).toHaveURL('https://panther.place/games/test-game/novel');
  await page.screenshot({path:testInfo.outputPath(`editorial-output-${width}.png`)});await expect.poll(()=>reads,{timeout:10000}).toBeGreaterThan(1);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(preview).not.toBeVisible();await expect(progress).toBeVisible();await expect(progress.getByRole('button',{name:'View Outline',exact:true})).toBeFocused();await expect(progress.getByRole('progressbar')).toHaveAttribute('aria-valuemax','11');await page.screenshot({path:testInfo.outputPath(`editorial-progress-${width}.png`)});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -276,13 +277,13 @@ for(const width of [1280,390])test(`Stage outputs open a readable nested preview
 for(const width of [1280,390])test(`Novel generation continues after navigation and restores on reload at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});await fixture(context);let submitted=false,reads=0;
  await page.route('**/editorial-jobs**',route=>{const request=route.request(),url=new URL(request.url());if(request.method()==='POST'){submitted=true;return route.fulfill({json:{jobId:'a'.repeat(64),status:'SUBMITTED'},headers:{'access-control-allow-origin':'https://panther.place'}});}const job={jobId:'a'.repeat(64),status:'RUNNING',creation:{target:'novel',brief:'Follow the party across the river.'},progress:{completedStages:1,totalStages:11}};if(url.searchParams.has('jobId')){reads++;return route.fulfill({json:{job,tasks:[{stage:'novel-draft',status:'RUNNING'}]},headers:{'access-control-allow-origin':'https://panther.place'}});}return route.fulfill({json:{jobs:submitted?[job]:[],cursor:null},headers:{'access-control-allow-origin':'https://panther.place'}});});
- await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate chapter',exact:true}).click();const progress=page.getByRole('region',{name:'Chapter progress',exact:true});await expect(progress).toBeVisible();await expect(page.getByRole('dialog')).toHaveCount(0);
+ await page.goto('https://panther.place/games/test-game/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();const composer=page.locator('#editorial-novel-composer');await page.getByLabel('Prompt',{exact:true}).fill('Follow the party across the river.');await page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:'Generate Chapter',exact:true}).click();const progress=page.getByRole('region',{name:'Chapter progress',exact:true});await expect(progress).toBeVisible();await expect(page.getByRole('dialog')).toHaveCount(0);
  const initialReads=reads;await page.getByRole('link',{name:'Dashboard',exact:true}).click();await expect(page).toHaveURL(/dashboard$/);await expect.poll(()=>reads,{timeout:10000}).toBeGreaterThan(initialReads);await page.getByRole('navigation',{name:'Panther sections'}).getByRole('link',{name:'Novel',exact:true}).click();await expect(progress).toBeVisible();await page.reload();await expect(progress).toContainText('Follow the party across the river.');await expect(progress.getByRole('progressbar')).toHaveAttribute('aria-valuenow','1');await expect(page.locator('.novel-job-card')).toHaveCount(1);await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 for(const width of [1280,390])test(`Add scene types stay visible above the dialog and support keyboard selection at ${width}px`,async({page,context},testInfo)=>{
- await page.setViewportSize({width,height:900});await fixture(context);await page.goto('https://panther.place/games/test-game/videos');await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'Add scene',exact:true}).click();
- const dialog=page.getByRole('dialog',{name:'Add scene',exact:true}),select=dialog.getByRole('combobox',{name:'Scene type',exact:true});const transcriptCopy=dialog.locator('.editorial-source-copy').first();await expect(transcriptCopy).toBeVisible();expect((await transcriptCopy.boundingBox()).width).toBeGreaterThanOrEqual(160);expect((await transcriptCopy.locator('.transcript-source-name').boundingBox()).height).toBeLessThan(60);await select.click();const menu=page.getByRole('listbox');await expect(menu).toBeVisible();await expect.poll(()=>menu.evaluate(node=>getComputedStyle(node).opacity)).toBe('1');
+ await page.setViewportSize({width,height:900});await fixture(context);await page.goto('https://panther.place/games/test-game/videos');await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'Create Scene',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Create Scene',exact:true}),select=dialog.getByRole('combobox',{name:'Scene type',exact:true});const transcriptCopy=dialog.locator('.editorial-source-copy').first();await expect(transcriptCopy).toBeVisible();expect((await transcriptCopy.boundingBox()).width).toBeGreaterThanOrEqual(160);expect((await transcriptCopy.locator('.transcript-source-name').boundingBox()).height).toBeLessThan(60);await select.click();const menu=page.getByRole('listbox');await expect(menu).toBeVisible();await expect.poll(()=>menu.evaluate(node=>getComputedStyle(node).opacity)).toBe('1');
  expect(await menu.evaluate(node=>node.closest('[role=dialog]'))).toBeNull();const bounds=await menu.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.y).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);expect(bounds.y+bounds.height).toBeLessThanOrEqual(900);
  for(const name of ['General','Opener','Map','Travel','Action','Dialogue']){const option=page.getByRole('option',{name,exact:true});await expect(option).toBeInViewport();expect(await option.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
  await page.screenshot({path:testInfo.outputPath(`scene-type-menu-${width}.png`)});await page.getByRole('option',{name:'Dialogue',exact:true}).click();await expect(dialog).toBeVisible();await expect(select).toHaveText('Dialogue');await select.focus();await page.keyboard.press('Space');await expect(page.getByRole('option',{name:'Dialogue',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(page.getByRole('option',{name:'General',exact:true})).toBeFocused();await page.keyboard.press('Enter');await expect(select).toHaveText('General');await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).not.toBeVisible();
@@ -291,24 +292,48 @@ for(const width of [1280,390])test(`Add scene types stay visible above the dialo
 for(const width of [1280,390])test(`Escape during nested dialog registration preserves its composer at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});const{submissions}=await fixture(context);
  await page.goto('https://panther.place/games/test-game/novel');
- const composer=page.getByRole('dialog',{name:'Generate chapter',exact:true,includeHidden:true});
- await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
+ const composer=page.getByRole('dialog',{name:'Generate Chapter',exact:true,includeHidden:true});
+ await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
  await composer.getByLabel('Prompt',{exact:true}).fill('Keep this unsent draft.');
  // Exercise Radix #4143 at its actual registration boundary, rather than
  // sleeping until the stale parent listener has happened to update.
  await page.evaluate(()=>{
   const escapeDuringRegistration=()=>{
-   const child=document.querySelector('[role="dialog"][aria-label="Add context"]');
+   const child=document.querySelector('[role="dialog"][aria-label="Assets"]');
    if(!child)return;
    document.removeEventListener('dismissableLayer.update',escapeDuringRegistration);
    child.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
   };
   document.addEventListener('dismissableLayer.update',escapeDuringRegistration);
  });
- await page.getByRole('button',{name:'Add context',exact:true}).click();
+ await page.getByRole('button',{name:'Assets',exact:true}).click();
  await expect(composer).toBeVisible();await expect(composer.getByLabel('Prompt',{exact:true})).toHaveValue('Keep this unsent draft.');
  expect(submissions).toEqual([]);
- const review=page.getByRole('dialog',{name:'Add context',exact:true});
+ const review=page.getByRole('dialog',{name:'Assets',exact:true});
  if(await review.isVisible())await review.getByRole('button',{name:'Close',exact:true}).click();
- await expect(page.getByRole('button',{name:'Add context',exact:true})).toBeFocused();
+ await expect(page.getByRole('button',{name:'Assets',exact:true})).toBeFocused();
+});
+
+for (const width of [1280,390]) test(`Manual and generated chapters have separate usable dialogs at ${width}px`, async({page,context})=>{
+ await page.setViewportSize({width,height:900});await fixture(context);
+ await page.goto('https://panther.place/games/test-game/novel');
+ const toolbar=page.locator('#novel > .explorer-heading');
+ await expect(toolbar.getByRole('button',{name:'Create Chapter',exact:true})).toBeHidden();await expect(toolbar.getByRole('button',{name:'Generate Chapter',exact:true})).toBeHidden();
+ const empty=page.locator('#novel-empty-state');
+ const create=empty.getByRole('button',{name:'Create Chapter',exact:true});
+ const generate=empty.getByRole('button',{name:'Generate Chapter',exact:true});
+ await expect(create).toBeVisible();await expect(generate).toBeVisible();
+ expect((await create.boundingBox()).height).toBe((await generate.boundingBox()).height);
+ await create.click();const manual=page.getByRole('dialog',{name:'Create Chapter',exact:true});
+ await expect(manual).toBeVisible();await manual.getByLabel('Chapter title',{exact:true}).fill('A quiet return');
+ await manual.getByLabel('Chapter text',{exact:true}).fill('The companions returned before dawn.');
+ const cancel=manual.getByRole('button',{name:'Cancel',exact:true});await expect(cancel).toBeInViewport();
+ expect(await cancel.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+ await cancel.click();await expect(manual).toHaveCount(0);await expect(generate).toBeVisible();
+ await generate.click();const generated=page.getByRole('dialog',{name:'Generate Chapter',exact:true});
+ await expect(generated).toBeVisible();await expect(generated.getByRole('button',{name:'Write manually',exact:true})).toHaveCount(0);
+ await generated.getByRole('button',{name:'Assets',exact:true}).click();
+ const assets=page.getByRole('dialog',{name:'Assets',exact:true});await expect(assets.getByLabel('Campaign lore',{exact:true})).toBeVisible();
+ await expect(assets.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
+ await assets.getByRole('button',{name:'Close',exact:true}).click();
 });

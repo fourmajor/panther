@@ -274,6 +274,8 @@ class Transport:
                       "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(),
                       "generation": {"schemaVersion": 1, "method": "ai", "provider": "OpenAI", "model": (self.last_response or {}).get("model", self.model),
                                      "inference": "remote", "execution": "local", "tool": "OpenAI Responses API", "cost": {"status": "unknown"}, "evidence": self.last_response}}}, file.name, mime, key)
+        from panther_journal import cost_estimates
+        metadata = cost_estimates.annotate(metadata, response=self.last_response)
         storage_layout.location(key, kind, metadata)
         with self.store.connect() as db:
             existing = db.execute("SELECT data FROM objects WHERE key=?", (key,)).fetchone()
@@ -420,6 +422,10 @@ def run(database, work_dir, *, key_file=None, env_file=None, model="gpt-5-mini",
                 for job in reversed(store.list("editorial")):
                     if job.get("status") in {"QUEUED", "RUNNING", "PROCESSING"}:
                         process(store, job["jobId"], root, client, model)
+                from dev_text_asset import process as process_text_asset
+                for asset_job in reversed(store.list("asset-generation")):
+                    if asset_job.get("mediaType") == "text":
+                        process_text_asset(store, asset_job["jobId"], root, client, model)
                 if once:
                     break
                 stop.wait(3)

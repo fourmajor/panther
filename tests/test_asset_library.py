@@ -220,3 +220,13 @@ def test_exact_unknown_audio_detail_does_not_depend_on_browse_membership(library
     assert detail["kind"] == "unclassified" and detail["contentType"] == "audio/wav"
     assert detail["metadata"] == {} and detail["document"] is None and detail["sourceKeys"] == []
     assert s3.objects[key]["Body"] == data
+
+
+def test_recording_summary_uses_actual_parts_and_keeps_unknown_duration():
+    from asset_views import recording_summary
+    doc = {'entityType': 'BrowserRecording', 'sessionName': 'River crossing', 'startedAt': '2026-10-03T12:00:00Z', 'status': 'complete', 'parts': [{'duration': 4.5}, {'duration': 3}]}
+    result = recording_summary(doc)
+    assert result['durationSeconds'] == 7.5 and result['sessionName'] == 'River crossing'
+    assert result['startedAt'] == doc['startedAt']
+    assert 'durationSeconds' not in recording_summary({**doc, 'parts': [{'file': 'part.flac'}]})
+    assert recording_summary({'entityType': 'Unrelated', 'parts': []}) is None

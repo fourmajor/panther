@@ -36,7 +36,7 @@ export class AssetBrowseIndex extends Construct {
     }));
     props.reader.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:ConditionCheckItem"], resources: [table.tableArn],
-      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v3#*#transcripts", "v3#*#all"] } },
+      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v4#*#transcripts", "v4#*#all"] } },
     }));
     props.api.addRoutes({ path: "/transcript-selection", methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("TranscriptSelection", props.reader),

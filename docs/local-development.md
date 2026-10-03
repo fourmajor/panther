@@ -55,11 +55,11 @@ alongside manually started processors using the same database.
 | Processor | Purpose | Provider/tool |
 | --- | --- | --- |
 | `dev_editorial_worker.py` | Full chapter writing/revision/independent review and screen planning | OpenAI Responses API |
-| `dev_image_worker.py` | Character portraits and generated assets | OpenAI image API |
-| `dev_transcription_worker.py` | Live parts and a separate complete recording pass | OpenAI `gpt-4o-transcribe` |
+| `dev_image_worker.py` | Portraits, images, maps, blueprints and locations | OpenAI Images API; configured fal text-to-image catalog and queue |
+| `dev_transcription_worker.py` | Separate complete recording pass from immutable originals | OpenAI `gpt-transcribe` |
 | `dev_summary_worker.py` | Source-cited transcript summaries and regeneration | OpenAI Responses API |
 | `dev_playback_worker.py` | Continuous listening copies of completed WAV sets | Local FFmpeg |
-| `dev_video_worker.py` | Explicit scene video generation | fal: Veo 3.1 Fast, MiniMax H3 Max or Kling 3 Pro |
+| `dev_video_worker.py` | Explicit scene and standalone asset video generation | fal: Veo 3.1 Fast, MiniMax H3 Max or Kling 3 Pro |
 | `dev_narration_worker.py` | Stock-voice narration with performance direction | ElevenLabs `eleven_v3` |
 | `dev_episode_worker.py` | Ordered episode assembly from selected real scene outputs | Local FFmpeg |
 
@@ -144,3 +144,31 @@ repeated automatically. Narration, transcription and summary publication checks 
 job and immutable source bytes again inside the database transaction; a concurrent cancellation
 or changed request cannot be overwritten by a late provider response. A summary queue failure
 does not change a successfully published transcript into a failed transcription.
+
+### Standalone asset generation
+
+Assets → Generate accepts a prompt and media type; it does not require an asset name.
+The options endpoint (`GET /asset-generation?gameId=…&view=options`) advertises only
+implemented processors and their actual model-specific inputs. Availability follows
+fresh worker heartbeats; speech additionally requires an available stock voice list.
+Hosted availability may differ from the local stack.
+
+Images support the configured default and explicit `gpt-image-1`, `gpt-image-1.5`
+and `gpt-image-1-mini` choices, without model fallback. With `FAL_API_KEY`, the image
+worker also caches the complete active executable fal text-to-image catalog, pins
+selected OpenAPI contracts and polls durable provider queue identities. The shared
+Generate Asset form searches these models and displays provider price estimates;
+unsupported required-input contracts are omitted honestly. Standalone video uses the
+same verified eight-second, 16:9 fal profiles as scenes; image-conditioned profiles
+require a pinned 16:9 PNG, JPEG or WebP. Speech uses ElevenLabs v3, preserves the
+entered words and accepts a stock voice plus optional performance direction. Text
+uses the configured editorial model and publishes a Markdown document; it does not
+create a chapter, episode or scene implicitly.
+
+The image/video/speech workers first obtain a concise title through a retained
+Responses API request (`PANTHER_TITLE_MODEL`, default `gpt-5-mini`). The text worker
+obtains its title and prose in one request. An uncertain title request blocks the
+media request; neither request is automatically repeated after an ambiguous outcome.
+Receipts, exact model usage and unknown costs remain recorded. Rename changes only
+asset title metadata, guarded by the content checksum and operation ID, retaining
+previous metadata in history and leaving original bytes and generation evidence intact.

@@ -86,6 +86,8 @@ def process(store, identity, root, client, model='gpt-5-mini'):
         key = f"games/{job['gameId']}/assets/summary-{identity[:32]}/original/summary.json"
         metadata = asset_metadata.defaults('transcript-summary', {'kind': 'transcript-summary', 'title': summary['title'], 'sourceKeys': [job['key']],
             'contentType': 'application/json', 'extra': {'generation': generation, 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode()}}, 'summary.json', 'application/json', key)
+        from panther_journal import cost_estimates
+        metadata = cost_estimates.annotate(metadata, response=result)
         storage_layout.location(key, 'transcript-summary', metadata)
         pointer_id = job['gameId'] + ':' + hashlib.sha256(job['key'].encode()).hexdigest()
         processing_job = dict(job)

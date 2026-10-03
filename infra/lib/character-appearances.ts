@@ -20,7 +20,7 @@ export class CharacterAppearances extends Construct {
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[browse.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-history#*","character-looks-ops#*","character-looks-migration#*"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[browse.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-migration#*","v3#*#all"]}}}));
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-migration#*","v4#*#all"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem","dynamodb:ConditionCheckItem"],resources:[catalog.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["GAME#*"]}}}));
   }
@@ -45,7 +45,7 @@ export class CharacterAppearances extends Construct {
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-history#*","character-looks-ops#*","character-looks-migration#*"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-migration#*","v3#*#all"]}}}));
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["character-looks#*","character-looks-migration#*","v4#*#all"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem","dynamodb:ConditionCheckItem"],resources:[props.catalogTable.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["GAME#*"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"],resources:[props.catalogTable.tableArn],

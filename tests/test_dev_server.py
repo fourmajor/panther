@@ -569,3 +569,114 @@ def test_scene_creative_inputs_survive_output_edits_and_protect_sources(tmp_path
     for change in ({"characterIds": ["missing"]}, {"contextKeys": ["games/other/assets/source.png"]}, {"contextKeys": [key, key]}):
         with pytest.raises(ValueError):
             store.save_story_entity("scene", {**body, "generationInputs": {**inputs, **change}, "expectedRevision": updated["revision"], "operationId": "e" * 32})
+
+
+def test_workflow_types_exact_totals_and_bounded_type_history(tmp_path):
+    store = dev.Store(tmp_path / 'hierarchy.sqlite')
+    store.seed()
+    for n in range(45):
+        store.put('asset-generation', str(n), {'jobId': str(n), 'gameId': 'preview-sandbox', 'status': 'PUBLISHED' if n % 2 else 'FAILED', 'createdAt': n + 1, 'name': 'Fictional image'}, 'preview-sandbox')
+    summary = store.workflows('preview-sandbox', view='types')['types'][0]
+    assert summary['id'] == 'asset-generation' and summary['total'] == 45
+    assert summary['successful'] == 22 and summary['failed'] == 23 and summary['latestRunAt'] == 45
+    page = store.workflows('preview-sandbox', view='runs', workflow_type='asset-generation')
+    assert len(page['workflows']) == 40 and page['cursor']
+    assert len(store.workflows('preview-sandbox', view='runs', workflow_type='asset-generation', cursor=page['cursor'])['workflows']) == 5
+    assert store.workflows('preview-campaign', view='types')['types'] == []
+
+
+def test_tag_management_changes_display_without_mutating_assets(tmp_path):
+    import json
+    import uuid
+    store = dev.Store(tmp_path / 'development.sqlite')
+    store.seed()
+    game = 'preview-sandbox'
+    original = json.dumps({'tags': ['Test'], 'contentType': 'image/png'})
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', ('games/preview-sandbox/assets/a/original/a.png', game, original, b'original', '2020-01-01T00:00:00Z'))
+    body = {'gameId': game, 'action': 'rename', 'name': 'Test', 'newName': 'Adventure', 'operationId': uuid.uuid4().hex}
+    assert store.manage_tag(body)['tags'] == ['Adventure']
+    assert store.manage_tag(body)['tags'] == ['Adventure']
+    assert store.objects(game)[0]['metadata']['tags'] == ['Adventure']
+    with pytest.raises(FileExistsError):
+        store.manage_tag({**body, 'newName': 'Other'})
+    store.manage_tag({'gameId': game, 'action': 'delete', 'name': 'Adventure', 'operationId': uuid.uuid4().hex})
+    assert store.tags(game)['tags'] == []
+    assert store.objects(game)[0]['metadata']['tags'] == []
+    with store.connect() as db:
+        metadata, raw = db.execute('SELECT metadata,data FROM objects').fetchone()
+    assert metadata == original and raw == b'original'
+
+
+def test_recording_library_projects_immutable_duration_without_including_narration(tmp_path):
+    import json
+    store = dev.Store(tmp_path / 'recording-summary.sqlite')
+    game = 'synthetic-game'
+    key = f'games/{game}/content/session/audio/recording/original/recording.json'
+    doc = {'entityType': 'BrowserRecording', 'sessionName': 'The river crossing',
+           'startedAt': '2026-10-03T12:00:00Z', 'status': 'complete',
+           'parts': [{'duration': 3.5}, {'duration': 2}]}
+    raw = json.dumps(doc).encode()
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)',
+                   (key, game, json.dumps({'kind': 'recording-manifest', 'contentType': 'application/json'}), raw, doc['startedAt']))
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)',
+                   (f'games/{game}/content/shared/audio/narration/original/voice.mp3', game,
+                    json.dumps({'kind': 'narration', 'contentType': 'audio/mpeg'}), b'synthetic-audio', doc['startedAt']))
+    sessions = dev.local_assets(store.objects(game), 'sessions')
+    assert len(sessions) == 1
+    assert sessions[0]['recording']['durationSeconds'] == 5.5
+    assert sessions[0]['recording']['sessionName'] == doc['sessionName']
+    assert store.object(key)[1] == raw
+
+
+def test_editorial_failure_projection_preserves_diagnostics_outside_browser(tmp_path):
+    store = dev.Store(tmp_path / 'development.sqlite')
+    for target, name in [('novel', 'Chapter'), ('video', 'Video')]:
+        job = {'jobId': target, 'gameId': 'example-game', 'status': 'FAILED',
+               'creation': {'target': target, 'brief': 'A journey.'},
+               'message': 'Provider HTTP 503 at internal queue endpoint',
+               'error': 'Technical provider traceback'}
+        store.put('editorial', target, job, job['gameId'])
+        view = store.editorial_view(store.get('editorial', target))
+        assert view['message'] == name + ' generation could not finish. Your prompt and sources are saved.'
+        assert 'error' not in view
+        assert view['creation'] == job['creation']
+        assert store.get('editorial', target) == job
+
+
+def test_authored_chapter_versions_use_original_series_and_preserve_lineage(tmp_path):
+    import hashlib
+    from types import SimpleNamespace
+    store = dev.Store(tmp_path / 'chapters.sqlite')
+    store.seed()
+    handler = dev.Handler.__new__(dev.Handler)
+    handler.server = SimpleNamespace(store=store)
+    handler.send = lambda response, **kwargs: response
+    previous, originals, series = None, {}, None
+    for number in range(1, 4):
+        body = {'gameId': 'preview-campaign', 'title': 'A chapter', 'markdown': f'Revision {number}.',
+                'sourceKeys': [], 'operationId': f'{number:032x}', 'previousChapterId': previous}
+        result = handler.post('/novel-chapters', body)
+        record = store.get('chapter', result['chapterId'])
+        metadata, raw = store.object(result['assetKey'])
+        series = series or result['chapterId']
+        assert record['seriesId'] == series and record['version'] == number
+        assert record['sessionId'] == 'chapter-' + series[:24]
+        if previous:
+            assert store.get('chapter', previous)['assetKey'] in metadata['sourceKeys']
+        originals[result['assetKey']] = raw
+        assert handler.post('/novel-chapters', body) == result
+        previous = result['chapterId']
+    legacy = {**record, 'sessionId': 'old-incorrect-group'}
+    legacy.pop('seriesId')
+    legacy.pop('version')
+    store.put('chapter', previous, legacy, record['gameId'])
+    migrated = dev.Store(store.path)
+    assert migrated.get('chapter', previous) == record
+    audit = migrated.get('development-migration', 'authored-series-v1:' + previous)
+    assert audit['previousRecord'] == legacy
+    assert audit['sourceSha256'] == hashlib.sha256(raw).hexdigest()
+    assert dev.Store(store.path).get('chapter', previous) == record
+    for key, source in originals.items():
+        assert migrated.object(key)[1] == source

@@ -7,8 +7,10 @@
   separate page. Do not add repeated system labels, slogans, environment badges or technical
   migration/provenance setup copy to ordinary user workflows.
 - Sessions consolidates recording, playback and transcripts. Keep prior Audio/Transcripts routes
-  as navigation redirects, not duplicate libraries. Recording state belongs to its recording
-  controls; do not show it on unrelated pages. Open transcript details in a dialog or nested view,
+  as navigation redirects, not duplicate libraries. Record opens a shared dialog with mandatory live
+  transcription, timer and Pause/Resume/Stop. Closing it keeps capture running; a compact header
+  indicator reopens its controls. Do not duplicate capture status across unrelated page content.
+  Open transcript details in a dialog or nested view,
   preserving the list position and selection.
 - Episodes lives at `/games/:gameId/episodes` and lists/searches only episodes. Individual videos belong in
   Assets with type, tag and character filters. Selected filter chips stay inside their controls. Episodes
@@ -52,6 +54,9 @@
   Preserve exact requests, responses, actual model/token usage and unknown billing outcomes.
   Do not automatically repeat requests after ambiguous paid failures. The full local stack includes
   editorial, images, transcription, summaries, playback, scene video, narration and episode assembly.
+  Assets generation uses a server capability list for image/video/speech/text types, selected models,
+  styles and required inputs. Names are generated through the API, not derived by browser heuristics;
+  renaming preserves original bytes and metadata history. Standalone assets do not create episodes/scenes.
   Optional transcript/context inputs are preprocessed into evidence-backed scene prompts. Narration
   direction becomes bounded ElevenLabs v3 performance cues without rewriting approved spoken words.
   Persist real requests and show unavailable/waiting/failure states honestly. Never synthesize successful jobs,
@@ -328,8 +333,10 @@
   the separate read-only-use admin billing key remain in the OS credential store, never prompts,
   Git, AWS, browser code or the CI runner. This local guard cannot govern dashboard/other-device spend.
 
-- User-authorized browser room transcription is a narrow exception: use `gpt-transcribe` only
-  through an explicitly configured server-side OpenAI secret. Preserve audio and provider
+- User-authorized browser room transcription is a narrow exception: use `gpt-live-transcribe`
+  for incremental Realtime captions and `gpt-transcribe` for the independent final pass, through
+  an explicitly configured server-side OpenAI secret. Keep the long-lived key server-side;
+  short-lived browser credentials must never be persisted or logged. Preserve audio and provider
   responses, keep uncertain billed outcomes unknown, and never automatically repeat paid requests.
   This does not authorize API inference as a fallback for any other workflow. See
   `docs/browser-recording.md`.

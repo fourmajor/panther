@@ -126,7 +126,7 @@ export class PantherMediaExplorerStack extends Stack {
               // GLB embedded images become blob URLs: ImageBitmapLoader fetches
               // them, while its HTMLImageElement fallback uses img-src. Permit
               // local blobs in these two directives, never executable scripts.
-              "connect-src 'self' blob: https://*.amazonaws.com https://*.amazoncognito.com",
+              "connect-src 'self' blob: https://*.amazonaws.com https://*.amazoncognito.com wss://api.openai.com",
               "frame-ancestors 'none'",
               "frame-src https://*.amazonaws.com",
               "img-src 'self' data: blob: https://*.amazonaws.com",

@@ -704,8 +704,13 @@ CLI `Recording` FLAC contract remains distinct. Keep the originals; playback is 
 by the separate completed-set laptop worker, which now advertises protocol 2. Upgrade that
 worker before enabling browser recording; protocol-1 workers skip browser sets.
 
-When the server has an explicitly configured OpenAI secret, browser capture can request optional
-provisional live `gpt-transcribe` output and an independent final pass after stopping. A final
+When the server has an explicitly configured OpenAI secret, browser capture streams provisional
+`gpt-live-transcribe` output over a separate 24 kHz PCM channel, with English guidance, low delay,
+far-field noise reduction and client VAD commits (server VAD disabled). The immutable 32 kHz WAV
+archive remains unchanged. The independent final pass after stopping uses `gpt-transcribe` with
+English guidance. Long-lived credentials stay server-side; bounded ephemeral tokens are never
+persisted or logged. Preserve token-free provider events, and never automatically reconnect or
+repeat an ambiguous paid request. A final
 `BrowserTranscript` has unassigned speakers and window-boundary timestamps. Do not invent
 player identity, convert it to verified player attribution, or use it to automatically trigger
 editorial processing. Exact inputs and original provider responses remain immutable evidence.
@@ -788,26 +793,35 @@ than asking for a replacement image. Preserve map labels/geography, show a red s
 and red footprints along the user-requested journey, and retain uncertainty about unidentifiable
 locations. Planning and source selection do not authorize paid generation.
 
-## Assets image generation
+## Asset generation
 
-The Assets workspace creates maps, blueprints and location illustrations through
-`POST /asset-generation` version 1 requests. The subscription-backed laptop worker
-runs with `panther assets worker --work-dir /private/path/asset-generation`.
-Use only Codex's built-in image-generation tool under ChatGPT authentication;
-never use a paid API fallback or silently retry a stopped/ambiguous request.
-Preserve before-generation checkpoints and returned image bytes. Resume publication
-of a saved image with `--resume-job JOB_ID`; do not regenerate to recover an upload.
-Finished images pin their full immutable generation-provenance document with
-`sourceKeys`, carry explicit `extra.assetType` and current semantic version metadata,
-and record actual tool/provider/subscription provenance. Unreported model identity
-stays unknown. Maps remain top-down maps, blueprints remain floor plans, and locations
-remain environment illustrations rather than deceptively relabeled diagrams.
+The Assets workspace submits prompt-and-type generation requests. Query
+`GET /asset-generation?gameId=GAME&view=options` for executable types, model choices,
+styles and required inputs; asset kinds alone do not imply generation support.
+Local API workers support images, video, narration and text; the hosted broker
+currently supports images, including maps, blueprints, locations and portraits.
+Names come from a retained OpenAI Responses title request before inference, not
+from browser heuristics. Local rename preserves original bytes and metadata history.
 
-Character profile portrait generation uses the same subscription asset worker with type
-`portrait` and a required same-game `characterId`. Its immutable request pins structured
-character facts; its finished image must explicitly list that character. A generated profile
-thumbnail is separate from official portrait/model appearance selection. Unknown physical
-features remain creative interpretation, not new character facts.
+The image laptop worker runs with
+`panther assets worker --work-dir /private/path/asset-generation` and uses a private
+`OPENAI_API_KEY` to call the selected OpenAI Images model directly. Local Generate Asset also supports configured `FAL_API_KEY` text-to-image
+models discovered from the complete active fal catalog. Jobs pin executable prompt
+contracts, standard defaults and pricing evidence; unknown dispatches are never
+automatically resubmitted. Preserve exact original images and request/response
+lineage, and distinguish displayed provider unit estimates from billed charges. No fresh Codex
+image harness or provider fallback is used. Preserve before-generation checkpoints
+and actual responses. Resume publication with `--resume-job JOB_ID`; do not regenerate
+to recover an upload. Unknown title/image outcomes must not be repeated automatically.
+Historical successful tool outputs retain their actual subscription provenance.
+Finished images pin immutable generation provenance with `sourceKeys`, carry explicit
+`extra.assetType`, current semantic versions and actual selected model/provider facts.
+Unknown costs remain unknown. Maps are top-down maps, blueprints are floor plans,
+and locations are environment illustrations rather than relabeled diagrams.
+
+Portraits require a same-game character and pin its structured facts. Finished
+images explicitly list that character; thumbnail selection is a separate guarded
+revision. Unknown physical features remain creative interpretation, not character facts.
 
 Transcript reading summaries use the separate version 1 source-pinned projection. Use
 `panther transcripts summary-worker --work-dir /private/work/summaries` for fresh
@@ -822,7 +836,7 @@ Never invent capture timestamps, speakers or character associations to satisfy a
 
 After verified recording-set completion, the configured owned-compute session worker preserves
 raw ASR, creates separate conservative enrolled-player annotations, and commits the editorial
-pipeline. Follow Session finalization and Story & screen planning in Workshop. Novel completion
+pipeline. Follow Session finalization and Story & screen planning in Workflows. Novel completion
 is automatic; video preparation stops for approval of the exact script/storyboard. The standing
 session ceiling is $10 with the established fal models, not automatic spending permission or
 authority to retry, reset budgets, buy credits or clone voices. See `docs/session-automation.md`.

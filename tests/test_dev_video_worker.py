@@ -77,3 +77,78 @@ def test_model_routes_are_explicit_by_scene_type():
     assert worker.model_for({'sceneType': 'dialogue'}) == 'h3-max'
     assert worker.model_for({'sceneType': 'general'}) == 'veo-3.1-fast'
     assert worker.model_for({'sceneType': 'map', 'mapPin': {'key': 'example'}}) == 'veo-3.1-fast-image-silent'
+
+
+def standalone(tmp_path, monkeypatch, **changes):
+    import sys
+    from types import SimpleNamespace
+    store = worker.Store(tmp_path / 'standalone.sqlite')
+    identity = 'b' * 64
+    job = {'jobId': identity, 'gameId': 'fictional', 'mediaType': 'video', 'type': 'video',
+           'model': 'veo-3.1-fast', 'prompt': 'A city at dawn', 'status': 'QUEUED',
+           'inputs': {'duration': 8, 'aspectRatio': '16:9'}, 'inputRefs': [], 'sourceKeys': []}
+    job.update(changes)
+    store.put('asset-generation', identity, job, 'fictional')
+    def ensure_title(store, kind, identity, job, folder, client):
+        job['name'] = 'Dawn over the City'
+        store.put(kind, identity, job, job['gameId'])
+    monkeypatch.setitem(sys.modules, 'dev_asset_title', SimpleNamespace(ensure_title=ensure_title))
+    return store, identity
+
+
+def test_standalone_video_has_real_output_generated_title_and_no_scene(tmp_path, monkeypatch):
+    store, identity = standalone(tmp_path, monkeypatch)
+    client = Fal()
+    assert worker.process(store, identity, worker.private_root(tmp_path / 'work'), client,
+                          record_kind='asset-generation', downloader=fake_download, media_probe=fake_probe)
+    job = store.get('asset-generation', identity)
+    assert job['status'] == 'PUBLISHED'
+    metadata, _ = store.object(job['assetKey'])
+    assert metadata['title'] == 'Dawn over the City'
+    assert not any(k in metadata['extra'] for k in ('sceneRef', 'episodeId', 'sceneId'))
+    assert not store.list('scene') and not store.list('episode')
+    assert len([c for c in client.calls if c[0] == 'POST']) == 1
+    assert not worker.process(store, identity, tmp_path / 'work', client, record_kind='asset-generation')
+
+
+def test_standalone_video_missing_image_cannot_fallback_to_text(tmp_path, monkeypatch):
+    store, identity = standalone(tmp_path, monkeypatch, model='veo-3.1-fast-image')
+    client = Fal()
+    assert not worker.process(store, identity, worker.private_root(tmp_path / 'work'), client, record_kind='asset-generation')
+    assert not client.calls
+    assert store.get('asset-generation', identity)['status'] == 'FAILED'
+
+
+def test_standalone_unknown_submission_never_repeats(tmp_path, monkeypatch):
+    store, identity = standalone(tmp_path, monkeypatch)
+    client = Fal(fail=True)
+    root = worker.private_root(tmp_path / 'work')
+    assert not worker.process(store, identity, root, client, record_kind='asset-generation')
+    assert store.get('asset-generation', identity)['status'] == 'UNKNOWN'
+    assert not worker.process(store, identity, root, client, record_kind='asset-generation')
+    assert len(client.calls) == 1
+
+
+def test_standalone_image_model_pins_initial_frame_and_lineage(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+    import json
+    from io import BytesIO
+    from PIL import Image
+    buffer = BytesIO()
+    Image.new('RGB', (160, 90), 'blue').save(buffer, format='PNG')
+    raw = buffer.getvalue()
+    key = 'games/fictional/assets/starting-frame/original/frame.png'
+    pin = {'key': key, 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'size': len(raw), 'contentType': 'image/png'}
+    store, identity = standalone(tmp_path, monkeypatch, model='veo-3.1-fast-image', imagePin=pin, inputRefs=[pin], visualStyle='watercolor')
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (key, 'fictional', json.dumps({'kind': 'image', 'contentType': 'image/png'}), raw, '2026-01-01T00:00:00Z'))
+    client = Fal()
+    assert worker.process(store, identity, worker.private_root(tmp_path / 'work'), client,
+                          record_kind='asset-generation', downloader=fake_download, media_probe=fake_probe)
+    payload = client.calls[0][2]['json']
+    assert payload['image_url'] == 'data:image/png;base64,' + base64.b64encode(raw).decode()
+    assert 'Visual style: watercolor' in payload['prompt']
+    metadata, _ = store.object(store.get('asset-generation', identity)['assetKey'])
+    assert key in metadata['sourceKeys']
+    assert metadata['extra']['generation']['model'] == 'Veo 3.1 Fast'

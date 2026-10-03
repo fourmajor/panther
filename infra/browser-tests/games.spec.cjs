@@ -92,6 +92,7 @@ async function fixture(page, canEditGame = false, development = false) {
     }
     let body = {};
     if (url.pathname === '/recordings/live') body = {recordings:[]};
+    if (url.pathname === '/workflows') body = {types:[]};
     if (url.pathname === '/games') body = { games: currentGames };
     if (url.pathname === '/dashboard-recent') {
       const characters=id==='test-b'?[{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}]:[];
@@ -214,7 +215,7 @@ for (const width of [1280,390]) {
     const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     await page.goto('https://panther.place/');
     await expect(page.locator('#dashboard-name')).toHaveText('Campaign A');
-    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');
+    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');await expect(page.locator('.dashboard-card-arrow svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-arrow svg.lucide-arrow-up-right')).toHaveCount(0);
     await expect(page.locator('header #game-select-trigger')).toBeVisible();
     const selectorBox=await page.locator('#game-select-trigger').boundingBox();
     expect(selectorBox.y).toBeLessThan(100); expect(selectorBox.x).toBeLessThan(width/2);
@@ -383,7 +384,8 @@ for (const width of [1280, 390]) {
         '/tv-series':{records:[],cursor:null},'/tv-episodes':{records:[],cursor:null},
         '/video-collections':{collections:[],cursor:null}, '/scenes':{records:[],cursor:null},
         '/editorial/creations':{jobs:[],cursor:null},
-        '/browser-recording/capabilities':{canRecord:true,transcriptionAvailable:false},
+        '/browser-recording/capabilities':{canRecord:true,transcriptionAvailable:true},
+        '/asset-generation':{generationTypes:[{id:'map',name:'Map',available:true,models:[{id:'image-model',name:'Image model'}],defaultModel:'image-model',styles:[]}]},
       };
       return bodies[pathname]?route.fulfill({json:bodies[pathname],headers:jsonHeaders}):route.fallback();
     });
@@ -395,7 +397,7 @@ for (const width of [1280, 390]) {
     ]) {
       await page.goto(`https://panther.place/games/campaign-a/${section}`);
       const button=page.locator(selector);
-      await expect(button).toBeVisible();
+      await expect(button).toBeVisible();await expect(button).toBeEnabled();
       await expect(button).toBeInViewport();
       const measured=await button.evaluate(el=>{
         const style=getComputedStyle(el),rect=el.getBoundingClientRect();
@@ -439,18 +441,20 @@ for(const width of [1280,390])test(`all main page titles use one heading scale a
  let baseline;
  for(const section of ['dashboard','characters','sessions','novel','videos','assets','workflows']){
   await page.goto(`https://panther.place/games/campaign-a/${section}`);const title=page.locator('main .page-heading h1:visible').first();await expect(title).toBeVisible();
-  const scale=await title.evaluate(el=>{const s=getComputedStyle(el);return{size:s.fontSize,lineHeight:s.lineHeight,weight:s.fontWeight,marginTop:s.marginTop,marginBottom:s.marginBottom};});baseline ||= scale;expect(scale).toEqual(baseline);
+  const readScale=()=>title.evaluate(el=>{const s=getComputedStyle(el);return{size:s.fontSize,lineHeight:s.lineHeight,weight:s.fontWeight,marginTop:s.marginTop,marginBottom:s.marginBottom};});await expect.poll(async()=>Boolean((await readScale()).size)).toBe(true);baseline ||= await readScale();await expect.poll(readScale).toEqual(baseline);
   const mainPadding=await page.locator('main').evaluate(el=>getComputedStyle(el).paddingTop);expect(mainPadding).toBe(width===390?'12px':'16px');
   const headingPadding=await title.evaluate(el=>getComputedStyle(el.closest('.page-heading')).paddingTop);expect(headingPadding).toBe('8px');
  }
 });
 
-for(const width of [1280,390])test(`Settings tags can be created and reused in video autocomplete at ${width}px`,async({page})=>{
+for(const width of [1280,1920,390])test(`Settings tags are managed in a list and reused in episode filters at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});await fixture(page,true,true);let tags=['canonical'];const writes=[];
- await page.route('**/tags**',route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);tags.push(body.name);return route.fulfill({json:{tag:body.name,tags},headers:jsonHeaders});}return route.fulfill({json:{tags},headers:jsonHeaders});});
+ await page.route('**/tags**',route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);if(body.action==='rename')tags=tags.map(tag=>tag===body.name?body.newName:tag);else if(body.action==='delete')tags=tags.filter(tag=>tag!==body.name);else tags.push(body.name);return route.fulfill({json:{tag:body.name,tags},headers:jsonHeaders});}return route.fulfill({json:{tags},headers:jsonHeaders});});
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{const path=new URL(route.request().url()).pathname;const data={'/episodes':{records:[],cursor:null},'/assets':{assets:[],cursor:null},'/video-collections':{collections:[],cursor:null}};return data[path]?route.fulfill({json:data[path],headers:jsonHeaders}):route.fallback();});
- await page.goto('https://panther.place/games/campaign-a/settings');const input=page.getByRole('combobox',{name:'Game tags',exact:true});await expect(input).toBeVisible();await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);await input.click();await page.keyboard.press('Escape');await expect(input).toBeFocused();await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);await input.click();const search=page.getByRole('combobox',{name:'Search game tags',exact:true});await search.fill('Adventure');await expect(page.getByRole('option',{name:'Create “Adventure”',exact:true})).toBeVisible();await page.screenshot({path:test.info().outputPath(`tag-controls-${width}.png`)});await search.press('Enter');await expect(page.locator('#game-tags-control')).toContainText('Adventure');expect(writes[0]).toEqual({gameId:'campaign-a',name:'Adventure'});const chip=page.locator('#game-tags-control').getByText('Adventure',{exact:true});const padding=await chip.evaluate(el=>getComputedStyle(el.parentElement).paddingRight);expect(parseFloat(padding)).toBeGreaterThanOrEqual(8);await expect(search).toHaveCount(0);await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);
- await page.getByRole('link',{name:'Episodes',exact:true}).click();const filter=page.getByRole('combobox',{name:'Tags',exact:true});await filter.click();const tagSearch=page.getByRole('combobox',{name:'Search tags',exact:true});await tagSearch.fill('Adven');await expect(page.getByRole('option',{name:'Adventure',exact:true})).toBeVisible();await tagSearch.press('Enter');await expect(page.getByRole('button',{name:'Remove Adventure from tags',exact:true})).toBeVisible();expect(writes).toHaveLength(1);
+ await page.goto('https://panther.place/games/campaign-a/settings');const manager=page.locator('#game-tags-control');const tagHeading=manager.getByRole('heading',{name:'Tags',exact:true}),addTag=manager.getByRole('button',{name:'Add Tag',exact:true});await expect(addTag).toBeVisible();const [headingBox,addBox,managerBox]=await Promise.all([tagHeading.boundingBox(),addTag.boundingBox(),manager.boundingBox()]);expect(Math.abs(headingBox.y+headingBox.height/2-addBox.y-addBox.height/2)).toBeLessThan(2);expect(Math.abs(addBox.x+addBox.width-managerBox.x-managerBox.width)).toBeLessThan(2);const outer=await page.locator('#game-tags').evaluate(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{right:r.right,padding:Number.parseFloat(s.paddingRight),border:Number.parseFloat(s.borderRightWidth)};});expect(Math.abs(addBox.x+addBox.width-(outer.right-outer.padding-outer.border))).toBeLessThan(2);const headingStyle=await tagHeading.evaluate(el=>{const s=getComputedStyle(el);return{font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight};});expect(headingStyle).toEqual(await page.locator('#game-settings .settings-card-intro h2').first().evaluate(el=>{const s=getComputedStyle(el);return{font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight};}));expect(addBox.height).toBe(36);expect(await addTag.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);await expect(manager.getByRole('combobox')).toHaveCount(0);await expect(manager.getByRole('button',{name:'Rename tag canonical',exact:true})).toBeVisible();await manager.getByRole('button',{name:'Add Tag',exact:true}).click();let dialog=page.getByRole('dialog',{name:'Add Tag',exact:true});await dialog.getByRole('textbox',{name:'Tag name',exact:true}).fill('Adventure');await dialog.getByRole('button',{name:'Add Tag',exact:true}).click();await expect(manager.getByText('Adventure',{exact:true})).toBeVisible();expect(writes[0]).toEqual({gameId:'campaign-a',name:'Adventure'});
+ await manager.getByRole('button',{name:'Rename tag Adventure',exact:true}).click();dialog=page.getByRole('dialog',{name:'Rename Tag',exact:true});await dialog.getByRole('textbox',{name:'Tag name',exact:true}).fill('Voyage');await dialog.getByRole('button',{name:'Save',exact:true}).click();await expect(manager.getByText('Voyage',{exact:true})).toBeVisible();await expect(manager.getByText('Adventure',{exact:true})).toHaveCount(0);expect(writes[1]).toMatchObject({gameId:'campaign-a',action:'rename',name:'Adventure',newName:'Voyage'});expect(writes[1].operationId).toMatch(/^[a-f0-9]{32}$/);
+ await manager.getByRole('button',{name:'Delete tag canonical',exact:true}).click();dialog=page.getByRole('dialog',{name:'Delete Tag?',exact:true});await dialog.getByRole('button',{name:'Cancel',exact:true}).click();expect(writes).toHaveLength(2);await manager.getByRole('button',{name:'Delete tag canonical',exact:true}).click();await page.getByRole('dialog',{name:'Delete Tag?',exact:true}).getByRole('button',{name:'Delete',exact:true}).click();await expect(manager.getByText('canonical',{exact:true})).toHaveCount(0);expect(writes[2]).toMatchObject({gameId:'campaign-a',action:'delete',name:'canonical'});await page.screenshot({path:test.info().outputPath(`tag-manager-${width}.png`)});
+ await page.getByRole('link',{name:'Episodes',exact:true}).click();const filter=page.getByRole('combobox',{name:'Tags',exact:true});await filter.locator('..').click();await expect(page.getByRole('combobox',{name:'Search tags',exact:true})).toBeFocused();await page.keyboard.type('Voy');await expect(page.getByRole('option',{name:'Voyage',exact:true})).toBeVisible();await page.keyboard.press('Enter');await expect(page.getByRole('button',{name:'Remove Voyage from tags',exact:true})).toBeVisible();expect(writes).toHaveLength(3);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
 for (const width of [1280,390]) {

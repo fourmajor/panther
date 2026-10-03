@@ -1,4 +1,4 @@
-"""Leased subscription-image requests; AWS coordinates, never runs paid inference."""
+"""Leased API image requests; AWS coordinates, laptop workers run inference."""
 
 import hashlib
 import base64
@@ -10,13 +10,23 @@ import uuid
 from decimal import Decimal
 
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 from access_policy import authorized
 import index as media
 
-TYPES = {"map", "blueprint", "location", "portrait"}
+TYPES = {"image", "map", "blueprint", "location", "portrait"}
+MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
+STYLES = {"photorealistic", "anime", "illustrated-fantasy", "comic-book", "watercolor", "oil-painting", "stylized-3d", "pixel-art"}
+
+def options(game):
+    if not media._valid_slug(game):
+        raise ValueError("Choose a game")
+    record = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"]).get_item(Key={"pk":"GAMES","sk":game}, ConsistentRead=True).get("Item")
+    if not record:
+        raise ValueError("Game not found")
+    return {"generationTypes":[{"id":kind,"name":"Image" if kind == "image" else kind.title(),"available":True,"models":[{"id":model,"name":model,"inputs":{}} for model in sorted(MODELS)],"defaultModel":"gpt-image-1","styles":[{"id":style,"name":style.replace("-"," ").title()} for style in sorted(STYLES)],"defaultStyle":record.get("visualStyle","illustrated-fantasy")} for kind in sorted(TYPES)], "renameSupported":False}
 
 
 def table():
@@ -45,22 +55,29 @@ def read(job_id):
 
 
 def submit(body):
-    if not isinstance(body, dict) or set(body) != {
-        "gameId",
-        "type",
-        "name",
-        "prompt",
-        "operationId",
-    } | ({"characterId"} if body.get("type") == "portrait" else set()):
-        raise ValueError("Choose an asset type, name and prompt")
+    required = {"gameId", "type", "prompt", "operationId"}
+    allowed = required | {"name", "model", "style", "visualStyle", "characterId", "selectAsPortrait"}
+    if not isinstance(body, dict) or not required <= set(body) <= allowed:
+        raise ValueError("Choose an asset type and prompt")
     game = body["gameId"]
-    if not media._valid_slug(game) or body["type"] not in TYPES:
+    if not media._valid_slug(game) or not isinstance(body["type"], str) or body["type"] not in TYPES:
         raise ValueError("Invalid asset type or game")
-    if not re.fullmatch(r"[a-f0-9]{32}", body["operationId"] or ""):
+    if not isinstance(body["operationId"], str) or not re.fullmatch(r"[a-f0-9]{32}", body["operationId"]):
         raise ValueError("Invalid generation operation")
-    for name, maximum in (("name", 160), ("prompt", 4000)):
-        if not isinstance(body[name], str) or not 1 <= len(body[name].strip()) <= maximum:
-            raise ValueError("Choose an asset name and prompt")
+    if not isinstance(body["prompt"], str) or not 1 <= len(body["prompt"].strip()) <= 4000:
+        raise ValueError("Describe the asset to generate")
+    if "name" in body and (not isinstance(body["name"], str) or not 1 <= len(body["name"].strip()) <= 160):
+        raise ValueError("Invalid asset name")
+    style = body.get("style", body.get("visualStyle"))
+    if (
+        "style" in body and "visualStyle" in body
+        or not isinstance(body.get("model", "gpt-image-1"), str)
+        or body.get("model", "gpt-image-1") not in MODELS
+        or style is not None and (not isinstance(style, str) or style not in STYLES)
+    ):
+        raise ValueError("Choose a supported model and visual style")
+    if "selectAsPortrait" in body and (type(body["selectAsPortrait"]) is not bool or body["type"] != "portrait" or not body.get("characterId")):
+        raise ValueError("Only a character portrait can become the official portrait")
     game_record = (
         boto3.resource("dynamodb")
         .Table(os.environ["CATALOG_TABLE"])
@@ -70,7 +87,7 @@ def submit(body):
     if not game_record:
         raise ValueError("Game not found")
     character_reference = None
-    if body["type"] == "portrait":
+    if body["type"] == "portrait" or body.get("characterId"):
         character = body.get("characterId")
         if not media._valid_slug(character):
             raise ValueError("Choose a registered character")
@@ -97,7 +114,7 @@ def submit(body):
         }
         if len(json.dumps(character_reference).encode()) > 64000:
             raise ValueError("Character details exceed the portrait request limit")
-    request = {**body, "schemaVersion": 1}
+    request = {**body, "schemaVersion": 2}
     job_id = hashlib.sha256(
         json.dumps({"gameId": game, "operationId": body["operationId"]}, sort_keys=True).encode()
     ).hexdigest()
@@ -109,13 +126,14 @@ def submit(body):
         "status": "QUEUED",
         "createdAt": int(time.time()),
         "assetKey": None,
-        "visualStyle": game_record.get("visualStyle"),
+        "visualStyle": style or game_record.get("visualStyle", "illustrated-fantasy"),
+        "model": body.get("model", "gpt-image-1"),
         "generationAuthorized": True,
         **({"characterReference": character_reference} if character_reference else {}),
     }
     stored = read(job_id)
     if stored:
-        if any(stored.get(k) != v for k, v in request.items()):
+        if any(stored.get(k) != v for k, v in body.items()):
             raise ValueError("Generation operation was already used with different inputs")
         return public(stored)
     import asset_archive
@@ -138,7 +156,7 @@ def submit(body):
         if not read(job_id):
             raise ValueError('A selected source was archived; choose another source') from exc
     stored = read(job_id)
-    if any(stored.get(k) != v for k, v in request.items()):
+    if any(stored.get(k) != v for k, v in body.items()):
         raise ValueError("Generation operation was already used with different inputs")
     return public(stored)
 
@@ -208,7 +226,7 @@ def resume(body, claims):
     return {"job": public(result["Attributes"]), "lease": lease}
 
 
-def jobs_page(game, cursor=None):
+def jobs_page(game, cursor=None, character_id=None):
     if not media._valid_slug(game):
         raise ValueError("Choose a game")
     args = {
@@ -217,6 +235,10 @@ def jobs_page(game, cursor=None):
         "Limit": 25,
         "ScanIndexForward": False,
     }
+    if character_id:
+        if not media._valid_slug(character_id):
+            raise ValueError("Choose a registered character")
+        args["FilterExpression"] = Attr("characterId").eq(character_id)
     if cursor:
         if not isinstance(cursor, str) or len(cursor) > 4096:
             raise ValueError("Invalid generation cursor")
@@ -297,10 +319,11 @@ def worker_update(body, claims, operation):
             not isinstance(generation, dict)
             or generation.get("provider") != "OpenAI"
             or not isinstance(cost, dict)
-            or cost.get("status") != "subscription"
+            or cost.get("status") not in {"unknown", "billed", "estimated", "subscription"}
+            or (job.get("schemaVersion") == 2 and generation.get("model") != job["model"])
             or extra.get("relationshipRole") != "finished"
         ):
-            raise ValueError("Output requires honest subscription generation metadata")
+            raise ValueError("Output requires honest generation metadata")
         if (
             head.get("ContentType") != "image/png"
             or not 0 < head.get("ContentLength", 0) <= 20 * 1024**2
@@ -308,7 +331,10 @@ def worker_update(body, claims, operation):
             or head["ChecksumSHA256"] != extra.get("sha256")
         ):
             raise ValueError("Generated image bytes are unavailable or changed")
-        updates.update(status="PUBLISHED", assetKey=key)
+        title = metadata.get("title")
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
+            raise ValueError("Generated output requires its actual title")
+        updates.update(status="PUBLISHED", assetKey=key, name=title)
     elif operation == "defer":
         message = body["message"]
         if not isinstance(message, str) or not 1 <= len(message) <= 500:
@@ -317,6 +343,49 @@ def worker_update(body, claims, operation):
     names = {f"#u{i}": k for i, k in enumerate(updates)}
     values = {f":u{i}": v for i, v in enumerate(updates.values())}
     values.update({":lease": body["lease"], ":actor": claims["sub"]})
+    if operation == "complete" and job.get("selectAsPortrait") is True:
+        catalog = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"])
+        old = catalog.get_item(Key={"pk": f"GAME#{job['gameId']}", "sk": f"CHARACTER#{job['characterId']}"}, ConsistentRead=True).get("Item")
+        if old and old.get("detailsRevision") == job.get("characterReference", {}).get("revision"):
+            from boto3.dynamodb.types import TypeSerializer
+            from datetime import datetime, timezone
+            import asset_archive
+            serializer = TypeSerializer()
+            def encode(value):
+                return {k: serializer.serialize(v) for k, v in value.items()}
+            details = json.loads(old["detailsJson"])
+            details["thumbnailAssetKey"] = body["assetKey"]
+            revision = uuid.uuid4().hex
+            revised = {**old, "detailsRevision": revision, "detailsThumbnailKey": body["assetKey"], "detailsJson": json.dumps(details, separators=(",", ":"))}
+            history = {"pk": f"CHARACTER_DETAILS_HISTORY#{job['gameId']}#{job['characterId']}", "sk": revision, "revision": revision,
+                       "name": old["name"], "previousName": old["name"], "detailsJson": revised["detailsJson"], "previousDetailsJson": old["detailsJson"],
+                       "previousRevision": old["detailsRevision"], "recordedAt": datetime.now(timezone.utc).isoformat(), "actor": claims["sub"], "reason": "Selected generated portrait"}
+            updates["portraitAssigned"] = True
+            revised_job = {**job, **updates}
+            writes = [
+                {"Put": {"TableName": catalog.name, "Item": encode(revised), "ConditionExpression": "detailsRevision=:revision", "ExpressionAttributeValues": encode({":revision": old["detailsRevision"]})}},
+                {"Put": {"TableName": catalog.name, "Item": encode(history), "ConditionExpression": "attribute_not_exists(pk)"}},
+                {"Put": {"TableName": table().name, "Item": encode(revised_job), "ConditionExpression": "lease=:lease AND actor=:actor AND #state=:generating", "ExpressionAttributeNames": {"#state": "status"}, "ExpressionAttributeValues": encode({":lease": body["lease"], ":actor": claims["sub"], ":generating": "GENERATING"})}},
+            ]
+            owner = f"character:{job['characterId']}"
+            reference_key = {"pk": f"asset-references-v1#{job['gameId']}", "sk": owner}
+            previous_references = asset_archive.db().get_item(Key=reference_key, ConsistentRead=True).get("Item")
+            reference_keys = [body["assetKey"], json.loads(old["detailsJson"]).get("thumbnailAssetKey"), *(previous_references or {}).get("keys", [])]
+            reference_operations = asset_archive.reference_writes(job["gameId"], owner, reference_keys, active=(previous_references or {}).get("active"))
+            for operation in reference_operations:
+                put = operation.get("Put")
+                if put and put["Item"].get("sk") == encode({"sk": owner})["sk"]:
+                    put["ConditionExpression"] = "#keys=:previous" if previous_references else "attribute_not_exists(pk)"
+                    if previous_references:
+                        put["ExpressionAttributeNames"] = {"#keys": "keys"}
+                        put["ExpressionAttributeValues"] = encode({":previous": previous_references["keys"]})
+            writes.extend(reference_operations)
+            boto3.client("dynamodb").transact_write_items(TransactItems=writes)
+            return public(revised_job)
+        updates.update(portraitAssigned=False, assignmentMessage="The profile changed during generation. The portrait is available in Assets.")
+        names = {f"#u{i}": k for i, k in enumerate(updates)}
+        values = {f":u{i}": v for i, v in enumerate(updates.values())}
+        values.update({":lease": body["lease"], ":actor": claims["sub"]})
     result = table().update_item(
         Key={"pk": "JOBS", "sk": job["jobId"]},
         UpdateExpression="SET " + ", ".join(f"#u{i}=:u{i}" for i in range(len(updates))),
@@ -347,8 +416,10 @@ def handler(event, _context):
             value = submit(json.loads(event.get("body") or "{}"))
         elif route == "GET /asset-generation":
             q = event.get("queryStringParameters") or {}
+            if q.get("view") == "options":
+                return media._response(200, options(q.get("gameId")))
             if not q.get("jobId"):
-                return media._response(200, jobs_page(q.get("gameId"), q.get("cursor")))
+                return media._response(200, jobs_page(q.get("gameId"), q.get("cursor"), q.get("characterId")))
             job = read(q.get("jobId"))
             if not job or job["gameId"] != q.get("gameId"):
                 return media._response(404, {"error": "Generation job not found"})
@@ -363,6 +434,6 @@ def handler(event, _context):
             return media._response(404, {"error": "Route not found"})
         return media._response(200, value)
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-        return media._response(400, {"error": "Choose a valid asset type, name and prompt"})
+        return media._response(400, {"error": "Choose a valid asset type and prompt"})
     except ClientError:
         return media._response(503, {"error": "Asset generation is temporarily unavailable"})

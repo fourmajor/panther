@@ -91,3 +91,47 @@ def test_review_cannot_commit_after_source_task_changes(library, monkeypatch):  
     body = {'gameId': 'test-game', 'chapterId': job['jobId'], 'status': 'approved', 'comment': '', 'operationId': uuid.uuid4().hex, 'expectedRevision': None}
     assert call(library, 'novel-review', body=body)['statusCode'] == 409
     assert not library[1].browse_index.table().get_item(Key={'pk': 'novel-review#test-game', 'sk': job['jobId']}).get('Item')
+
+
+def test_tag_rename_delete_guarded_and_projection_preserves_sources(library):  # noqa: F811
+    module = importlib.import_module('tag_management')
+    table = library[1].browse_index.table()
+    table.put_item(Item={'pk': 'tags-v1#catalog', 'sk': 'ready'})
+    assert call(library, body={'gameId': 'test-game', 'name': 'Test'})['statusCode'] == 200
+    body = {'gameId': 'test-game', 'action': 'rename', 'name': 'Test', 'newName': 'Adventure', 'operationId': uuid.uuid4().hex}
+    result = call(library, 'tags/manage', body=body)
+    assert result['statusCode'] == 200, result
+    assert json.loads(result['body'])['tags'] == ['Adventure']
+    assert call(library, 'tags/manage', body=body) == result
+    assert call(library, 'tags/manage', body={**body, 'newName': 'Changed'})['statusCode'] == 409
+    events = importlib.import_module('user_metadata').tag_events('test-game')
+    asset = {'metadata': {'tags': ['Test']}, 'lastModified': '2020-01-01T00:00:00Z'}
+    assert module.project(asset, events)['metadata']['tags'] == ['Adventure']
+    assert asset['metadata']['tags'] == ['Test']
+    deleted = {key: value for key, value in body.items() if key != 'newName'}
+    deleted.update(action='delete', name='Adventure', operationId=uuid.uuid4().hex)
+    assert json.loads(call(library, 'tags/manage', body=deleted)['body'])['tags'] == []
+    events = importlib.import_module('user_metadata').tag_events('test-game')
+    assert module.project(asset, events)['metadata']['tags'] == []
+    assert call(library, 'tags/manage', body=deleted, user='unconfigured')['statusCode'] == 403
+    assert call(library, body={'gameId': 'test-game', 'name': 'Adventure'})['statusCode'] == 200
+    assert module.project(asset, events)['metadata']['tags'] == []
+    assert module.project({'metadata': {'tags': ['Adventure']}, 'lastModified': events[-1]['at'] + 1}, events)['metadata']['tags'] == ['Adventure']
+
+
+def test_tag_history_checks_item_bytes_before_transaction(library):  # noqa: F811
+    import pytest
+    module = importlib.import_module('user_metadata')
+    table = library[1].browse_index.table()
+    table.put_item(Item={'pk': 'tags-v1#catalog', 'sk': 'ready'})
+    assert call(library, body={'gameId': 'test-game', 'name': 'Test'})['statusCode'] == 200
+    events = [{'schemaVersion': 1, 'name': 'Earlier', 'action': 'delete', 'at': 1,
+               'padding': 'x' * (350 * 1024 - 200)}]
+    table.put_item(Item={'pk': 'tags-v1#policy#test-game', 'sk': 'current',
+                        'revision': 'prior', 'payload': json.dumps(events)})
+    body = {'gameId': 'test-game', 'action': 'rename', 'name': 'Test',
+            'newName': '星' * 64, 'operationId': uuid.uuid4().hex}
+    with pytest.raises(RuntimeError, match='compaction'):
+        module.manage_tag(body, 'fictional-operator')
+    assert json.loads(call(library)['body'])['tags'] == ['Test']
+    assert module.tag_events('test-game') == events

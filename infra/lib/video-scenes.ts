@@ -22,7 +22,7 @@ export class VideoScenes extends Construct {
     AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.browseTable.grant(fn,"dynamodb:GetItem","dynamodb:Query");
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["episode-scenes-v1#*","episode-scenes-v1-history#*","episode-scenes-v1-ops#*","episode-scenes-migration-v1#*"]}}}));
-    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[props.browseTable.tableArn],conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["episode-scenes-v1#episode#*","episode-scenes-v1#scene#*","v3#*#all","tv-library#episode#*"]}}}));
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[props.browseTable.tableArn],conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["episode-scenes-v1#episode#*","episode-scenes-v1#scene#*","v4#*#all","tv-library#episode#*"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem","dynamodb:Query"],resources:[props.catalogTable.tableArn],conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["GAMES"]}}}));
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"],resources:[props.catalogTable.tableArn],conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["GAME#*"]}}}));
     const integration = new integrations.HttpLambdaIntegration("Integration",fn);

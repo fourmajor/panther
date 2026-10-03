@@ -95,3 +95,34 @@ def test_probe_rejects_nonfinite_or_wrong_format_audio(monkeypatch, tmp_path):
     monkeypatch.setattr(worker.subprocess, 'run', lambda *args, **kwargs: result('2.0', 'aac'))
     with pytest.raises(ValueError, match='MP3'):
         worker.probe(tmp_path / 'audio.mp3')
+
+
+def test_standalone_narration_preserves_spoken_words_and_generates_title(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    store = worker.Store(tmp_path / 'standalone.sqlite')
+    identity = 'b' * 64
+    spoken = 'The harbor wakes beneath a red sunrise.'
+    store.put('asset-generation', identity, {'jobId': identity, 'gameId': 'fictional', 'type': 'narration',
+              'mediaType': 'audio', 'model': 'eleven_v3', 'prompt': spoken, 'text': spoken,
+              'voiceId': 'FictionalVoice123', 'direction': '', 'status': 'QUEUED', 'inputs': {}, 'inputRefs': [], 'sourceKeys': []}, 'fictional')
+    def title(store, kind, identity, job, folder, client):
+        job['name'] = 'Harbor Sunrise'
+        store.put(kind, identity, job, job['gameId'])
+    monkeypatch.setitem(sys.modules, 'dev_asset_title', SimpleNamespace(ensure_title=title))
+    class Speech(Client):
+        def generate(self, voice, text):
+            assert text == spoken
+            return super().generate(voice, text)
+    client = Speech()
+    assert worker.process(store, identity, worker.private_root(tmp_path / 'work'), client,
+                          record_kind='asset-generation', media_probe=lambda file: {'duration': 3})
+    job = store.get('asset-generation', identity)
+    assert job['status'] == 'PUBLISHED'
+    metadata, _ = store.object(job['assetKey'])
+    assert metadata['title'] == 'Harbor Sunrise'
+    assert metadata['extra']['generation']['model'] == 'Eleven v3'
+    assert 'sceneRef' not in metadata['extra']
+    assert not store.list('scene')
+    assert not worker.process(store, identity, tmp_path / 'work', client, record_kind='asset-generation')
+    assert client.calls == 1

@@ -50,10 +50,11 @@ def test_final_pass_uses_original_wavs_and_publishes_transcript_with_response_ev
     assert worker.process(store, identity, worker.private_root(tmp_path / 'work'), client)
     result = store.get('transcription', identity)
     assert result['status'] == 'DONE' and len(client.calls) == 1
+    assert client.calls[0]['extra_body'] == {'languages': ['en']}
     metadata, raw = store.object(result['transcriptKey'])
     transcript = json.loads(raw)
     assert transcript['segments'][0]['playerId'] is None
-    assert transcript['requestedModel'] == 'gpt-4o-transcribe'
+    assert transcript['requestedModel'] == 'gpt-transcribe'
     assert transcript['timestampPrecision'] == 'window-boundary'
     assert transcript['recordedAt'] == '2026-01-01T00:00:00Z'
     assert result['summaryJobId']

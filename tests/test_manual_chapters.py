@@ -118,3 +118,74 @@ def test_manual_chapters_reject_invalid_or_unavailable_sources(library, changes)
     m = importlib.import_module("manual_chapters")
     with pytest.raises(ValueError):
         m.save(novel_module.jobs.media, body(**changes), "synthetic-author")
+
+
+def test_generated_chapter_edit_pins_prior_output_and_starts_human_family(library):  # noqa: F811
+    _, novel_module = library
+    from test_novel import completed
+    from asset_storage import Storage
+
+    m = importlib.import_module("manual_chapters")
+    job, source_key = completed(novel_module)
+    original = novel_module.chapter(job)
+    # Place this synthetic completed output in the current physical catalog layout.
+    import hashlib
+
+    raw_client = novel_module.jobs.media.s3
+    source = raw_client.get_object(Bucket=novel_module.jobs.media.BUCKET_NAME, Key=source_key)
+    raw = source["Body"].read()
+    storage = Storage(raw_client, novel_module.jobs.media.BUCKET_NAME)
+    physical = storage.reserve(
+        source_key,
+        "novel-chapter",
+        {"characterIds": [], "extra": {"relationshipRole": "finished"}},
+        hashlib.sha256(raw).hexdigest(),
+        len(raw),
+        "2026-01-01T00:00:00Z",
+    )
+    raw_client.copy_object(
+        Bucket=novel_module.jobs.media.BUCKET_NAME,
+        Key=physical,
+        CopySource={"Bucket": novel_module.jobs.media.BUCKET_NAME, "Key": source_key},
+    )
+    novel_module.jobs.media.s3 = storage
+    request_body = body(previousChapterId=job["jobId"], markdown="A deliberately revised chapter.")
+    result = json.loads(m.save(novel_module.jobs.media, request_body, "synthetic-author")["body"])
+    saved = m.read("test-game", result["chapterId"], novel_module.jobs.media)
+    assert saved["details"]["previousChapterId"] == job["jobId"]
+    assert saved["details"]["sourceKeys"] == [source_key]
+    assert request_body["sourceKeys"] == []
+    assert saved["publicationStatus"] == "human-authored"
+    assert saved["reviewStatus"] == "not-reviewed"
+    assert novel_module.chapter(job)["markdown"] == original["markdown"]
+    projected = novel_module.browse_index.refresh(novel_module.jobs.media, result["assetKey"])
+    version = projected["metadata"]["extra"]["version"]
+    assert version["number"] == 1
+    assert version["seriesId"] == result["chapterId"]
+    assert "previousKey" not in version
+    assert projected["metadata"]["sourceKeys"] == [source_key]
+    assert projected["metadata"]["extra"]["generation"]["method"] == "human"
+    replay = json.loads(m.save(novel_module.jobs.media, request_body, "synthetic-author")["body"])
+    assert replay == result
+
+
+@pytest.mark.parametrize("invalid", ["unfinished", "foreign", "changed-bytes"])
+def test_generated_chapter_edit_rejects_uncommitted_foreign_or_changed_output(library, invalid):  # noqa: F811
+    _, novel_module = library
+    from test_novel import completed
+    from test_model_jobs import put
+
+    m = importlib.import_module("manual_chapters")
+    job, source_key = completed(
+        novel_module, status="RUNNING" if invalid == "unfinished" else "DONE"
+    )
+    if invalid == "foreign":
+        novel_module.jobs.table.update_item(
+            Key={"pk": "RUNS", "sk": job["jobId"]},
+            UpdateExpression="SET gameId = :game",
+            ExpressionAttributeValues={":game": "foreign-game"},
+        )
+    if invalid == "changed-bytes":
+        put(novel_module.jobs, source_key, b'{"changed":true}', "application/json")
+    with pytest.raises(ValueError):
+        m.save(novel_module.jobs.media, body(previousChapterId=job["jobId"]), "synthetic-author")

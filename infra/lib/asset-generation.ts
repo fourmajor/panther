@@ -7,6 +7,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { AssetArchive } from "./asset-archive";
 
 /** AWS stores requests; subscription-backed image inference runs only on the laptop. */
@@ -31,6 +32,8 @@ export class AssetGeneration extends Construct {
     AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.bucket.grantRead(fn,"games/*");
     props.catalogTable.grant(fn,"dynamodb:GetItem");
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.catalogTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["GAME#*","CHARACTER_DETAILS_HISTORY#*"]}}}));
     const integration = new integrations.HttpLambdaIntegration("Integration",fn);
     props.api.addRoutes({path:"/asset-generation",methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration,authorizer:props.authorizer});
     for(const action of ["claim","heartbeat","defer","complete","resume"])props.api.addRoutes({path:`/asset-generation/${action}`,

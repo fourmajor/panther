@@ -33,19 +33,18 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.locator('#username')).toBeHidden();
   await expect(page.getByText(/sample data|Example Fantasy System|Your game, your world/i)).toHaveCount(0);
   await page.goto(origin+'/games/preview-campaign/characters');
-  await page.getByRole('button',{name:'Add character',exact:true}).click();
+  await page.getByRole('button',{name:'Create Character',exact:true}).click();
   await page.locator('#character-create-form').getByLabel('Character name').fill('Ash Meadow');
-  await page.getByRole('button',{name:'Create character',exact:true}).click();
+  await page.getByRole('button',{name:'Create Character',exact:true}).click();
   await expect(page.locator('#character-name')).toHaveText('Ash Meadow');
   await page.reload();
   await expect(page.locator('#character-name')).toHaveText('Ash Meadow');
   await page.screenshot({path:testInfo.outputPath(`development-character-${width}.png`),fullPage:true});
   await page.goto(origin+'/games/preview-campaign/novel');
-  await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
-  await page.getByRole('button',{name:'Write manually',exact:true}).click();
+  await page.getByRole('button',{name:'Create Chapter',exact:true}).filter({visible:true}).click();
   await page.locator('#manual-chapter-form').getByLabel('Chapter title').fill('The northern gate');
   await page.locator('#manual-chapter-form').getByLabel('Chapter text').fill('A lantern burned beside the northern gate.');
-  await page.locator('#manual-chapter-form').getByRole('button',{name:'Save chapter',exact:true}).click();
+  await page.locator('#manual-chapter-form').getByRole('button',{name:'Create Chapter',exact:true}).click();
   await expect(page.locator('#novel-title')).toHaveText('The northern gate');
   await page.reload();
   await expect(page.locator('#novel-prose')).toContainText('A lantern burned');
@@ -54,9 +53,9 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await page.getByRole('button',{name:'Create Episode',exact:true}).click();
   await page.getByLabel('Episode title',{exact:true}).fill('The northern gate');
   await page.locator('form').filter({has:page.getByLabel('Episode title',{exact:true})}).getByRole('button',{name:'Create Episode',exact:true}).click();
-  await page.getByRole('button',{name:'Add scene',exact:true}).click();
+  await page.getByRole('button',{name:'Create Scene',exact:true}).click();
   await page.getByLabel('Scene title',{exact:true}).fill('Ash Meadow watches the northern gate');
-  await page.locator('form').filter({has:page.getByLabel('Scene title',{exact:true})}).getByRole('button',{name:'Add scene',exact:true}).click();
+  await page.locator('form').filter({has:page.getByLabel('Scene title',{exact:true})}).getByRole('button',{name:'Create Scene',exact:true}).click();
   await expect(page.locator('#scene-video-composer')).toBeVisible();
   const videoComposer=page.locator('#scene-video-composer');
   await page.getByRole('button',{name:'Edit scene',exact:true}).click();
@@ -86,6 +85,23 @@ for(const width of [1280,390])test(`Real local map upload feeds a pinned scene a
  await page.setViewportSize({width,height:900});await page.goto(origin+'/account');await page.getByRole('button',{name:'Regenerate demo data'}).click();await expect(page.getByText('Demo data regenerated.',{exact:true})).toBeVisible();
  await page.goto(origin+'/games/preview-campaign/assets');const library=page.getByRole('region',{name:'Assets',exact:true});await library.getByRole('button',{name:'Maps',exact:true}).click();await page.getByRole('button',{name:'Upload',exact:true}).click();const form=page.getByRole('form',{name:'Upload asset',exact:true});await form.getByLabel('Name (optional)',{exact:true}).fill('Northern route');
  const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=480;canvas.height=240;const c=canvas.getContext('2d');c.fillStyle='#e6d5aa';c.fillRect(0,0,480,240);c.fillStyle='#39392e';c.font='20px serif';c.fillText('Harbor',40,180);c.fillText('Hills',340,60);return canvas.toDataURL('image/png').split(',')[1];});await form.getByLabel('File',{exact:true}).setInputFiles({name:'route.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});await form.getByRole('button',{name:'Upload asset',exact:true}).click();await expect(library.getByRole('button',{name:'Northern route Map · PNG',exact:true})).toBeVisible();const mapCard=library.getByRole('button',{name:'Northern route Map · PNG',exact:true});await expect(mapCard.locator('img')).toBeVisible();await expect.poll(()=>mapCard.locator('img').evaluate(image=>image.complete&&image.naturalWidth)).toBe(480);await page.reload();await expect(mapCard).toBeVisible();await expect(mapCard.locator('img')).toBeVisible();await expect.poll(()=>mapCard.locator('img').evaluate(image=>image.complete&&image.naturalWidth)).toBe(480);
- await page.goto(origin+'/games/preview-campaign/episodes');await page.getByRole('button',{name:'Create Episode',exact:true}).click();await page.getByLabel('Episode title',{exact:true}).fill('A journey');await page.getByRole('form',{name:'Episode editor'}).getByRole('button',{name:'Create Episode',exact:true}).click();await page.getByRole('button',{name:'Add scene',exact:true}).click();const editor=page.getByRole('form',{name:'Scene editor'});await editor.getByLabel('Scene title',{exact:true}).fill('Travel from Harbor to Hills');await editor.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'Map',exact:true}).click();await editor.getByRole('combobox',{name:'Map image',exact:true}).click();await page.getByRole('option',{name:'Northern route',exact:true}).click();await editor.getByRole('button',{name:'Add scene',exact:true}).click();await expect(page.locator('#scene-video-composer')).toBeVisible();const composer=page.locator('#scene-video-composer');await expect(composer.getByRole('img',{name:'Northern route',exact:true})).toBeVisible();await composer.getByRole('button',{name:'Generate',exact:true}).click();await expect(composer.locator('form')).toBeHidden();await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');const renders=await page.request.get(origin+'/scene-renders?gameId=preview-campaign',{headers:{Authorization:'Bearer isolated-development-test'}});expect(renders.ok()).toBe(true);const jobs=(await renders.json()).jobs;expect(jobs).toHaveLength(1);expect(jobs[0]).toMatchObject({status:'QUEUED',sceneType:'map',prompt:'Travel from Harbor to Hills'});expect(jobs[0].mapPin.key).toMatch(/\/original\/route\.png$/);expect(jobs[0].mapPin.sha256).toMatch(/^[A-Za-z0-9+/]{43}=$/);expect(jobs[0].inputRefs).toContainEqual(jobs[0].mapPin);await page.reload();await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');
+ await page.goto(origin+'/games/preview-campaign/episodes');await page.getByRole('button',{name:'Create Episode',exact:true}).click();await page.getByLabel('Episode title',{exact:true}).fill('A journey');await page.getByRole('form',{name:'Episode editor'}).getByRole('button',{name:'Create Episode',exact:true}).click();await page.getByRole('button',{name:'Create Scene',exact:true}).click();const editor=page.getByRole('form',{name:'Scene editor'});await editor.getByLabel('Scene title',{exact:true}).fill('Travel from Harbor to Hills');await editor.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'Map',exact:true}).click();await editor.getByRole('combobox',{name:'Map image',exact:true}).click();await page.getByRole('option',{name:'Northern route',exact:true}).click();await editor.getByRole('button',{name:'Create Scene',exact:true}).click();await expect(page.locator('#scene-video-composer')).toBeVisible();const composer=page.locator('#scene-video-composer');await expect(composer.getByRole('img',{name:'Northern route',exact:true})).toBeVisible();await composer.getByRole('button',{name:'Generate',exact:true}).click();await expect(composer.locator('form')).toBeHidden();await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');const renders=await page.request.get(origin+'/scene-renders?gameId=preview-campaign',{headers:{Authorization:'Bearer isolated-development-test'}});expect(renders.ok()).toBe(true);const jobs=(await renders.json()).jobs;expect(jobs).toHaveLength(1);expect(jobs[0]).toMatchObject({status:'QUEUED',sceneType:'map',prompt:'Travel from Harbor to Hills'});expect(jobs[0].mapPin.key).toMatch(/\/original\/route\.png$/);expect(jobs[0].mapPin.sha256).toMatch(/^[A-Za-z0-9+/]{43}=$/);expect(jobs[0].inputRefs).toContainEqual(jobs[0].mapPin);await page.reload();await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');
  await page.goto(origin+'/games/preview-campaign/assets');await expect(page.getByRole('button',{name:'Generate',exact:true})).toBeDisabled();const imageJobs=await page.request.get(origin+'/asset-generation?gameId=preview-campaign',{headers:{Authorization:'Bearer isolated-development-test'}});expect(imageJobs.ok()).toBe(true);expect((await imageJobs.json()).jobs).toEqual([]);await expect(page.getByRole('button',{name:'Open asset',exact:true})).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:testInfo.outputPath(`real-local-assets-${width}.png`),fullPage:true});
+});
+
+for(const width of [1280,390]) test(`chapter generation polls its submitted non-preview game and denies another game at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});const headers={Authorization:'Bearer synthetic-development-test'};
+ const games=[{id:'northern-chronicle',name:'Northern Chronicle'},{id:'southern-chronicle',name:'Southern Chronicle'}];
+ for(const game of games){const response=await page.request.post(origin+'/games',{headers,data:{...game,purpose:'campaign',players:[],characters:[],memberships:[]}});expect(response.ok()).toBe(true);}
+ const reads=[];page.on('request',request=>{const url=new URL(request.url());if(url.pathname==='/editorial-jobs'&&request.method()==='GET')reads.push(url);});
+ await page.goto(origin+'/games/southern-chronicle/novel');await page.getByRole('button',{name:'Generate Chapter',exact:true}).filter({visible:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Generate Chapter',exact:true});await dialog.getByLabel('Prompt',{exact:true}).fill('Describe the companions arriving at the southern harbor.');
+ const submitted=page.waitForResponse(response=>new URL(response.url()).pathname==='/editorial-jobs'&&response.request().method()==='POST');await dialog.getByRole('button',{name:'Generate Chapter',exact:true}).click();
+ const response=await submitted;expect(response.ok()).toBe(true);const job=await response.json();expect(job.gameId).toBe('southern-chronicle');expect(job.jobId).toMatch(/^[a-f0-9]{64}$/);
+ const progress=page.locator('.novel-job-card');await expect(progress).toContainText('Generation unavailable');await expect(progress).not.toContainText('Generation job not found');
+ expect(reads.filter(url=>url.searchParams.has('jobId')).length).toBeGreaterThan(0);expect(reads.filter(url=>url.searchParams.has('jobId')).every(url=>url.searchParams.get('gameId')==='southern-chronicle'&&url.searchParams.get('jobId')===job.jobId)).toBe(true);
+ const actual=await page.request.get(origin+`/editorial-jobs?gameId=southern-chronicle&jobId=${job.jobId}`,{headers});expect(actual.ok()).toBe(true);expect((await actual.json()).job.gameId).toBe('southern-chronicle');
+ const denied=await page.request.get(origin+`/editorial-jobs?gameId=northern-chronicle&jobId=${job.jobId}`,{headers});expect(denied.status()).toBe(404);
+ await page.reload();await expect(progress).toContainText('Generation unavailable');await expect(progress).not.toContainText('Generation job not found');
+ await page.goto(origin+'/games/northern-chronicle/novel');await expect(page.locator('.novel-job-card')).toHaveCount(0);
 });

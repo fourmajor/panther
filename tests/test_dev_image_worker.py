@@ -36,6 +36,7 @@ def queued(tmp_path, kind='map'):
     body = {'gameId': 'fictional', 'type': kind, 'name': 'Imaginary ' + kind, 'prompt': 'A fictional river journey', 'operationId': 'a' * 32}
     if kind == 'portrait':
         body['characterId'] = 'guide'
+        body['selectAsPortrait'] = True
     submitted = store.submit_asset_generation(body)
     return store, submitted['jobId']
 
@@ -123,7 +124,7 @@ def test_queue_projects_actual_worker_health(tmp_path):
     import time
     store.put('service', 'images', {'status': 'RUNNING', 'updatedAt': time.time()})
     assert store.asset_generation_view(store.get('asset-generation', identity))['status'] == 'QUEUED'
-    store.put('service', 'images', {'status': 'RUNNING', 'updatedAt': time.time() - 41})
+    store.put('service', 'images', {'status': 'RUNNING', 'updatedAt': time.time() - 121})
     assert store.asset_generation_view(store.get('asset-generation', identity))['status'] == 'ATTENTION'
 
 def test_generation_view_hides_legacy_provider_and_filesystem_diagnostics(tmp_path):

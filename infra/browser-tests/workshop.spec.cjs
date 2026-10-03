@@ -3,25 +3,6 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 
-for(const width of [1440,390]) test(`Session finalization is visible and inspectable at ${width}px`,async({page})=>{
-  await page.setViewportSize({width,height:1000});const state=await fixture(page);
-  const job=sample('9'.repeat(64),'session-finalization','running','Session finalization · synthetic-session',[
-    {id:'verify-inputs',label:'Verify inputs',status:'done'},
-    {id:'preserve-raw-transcript',label:'Preserve raw transcript',status:'running'},
-    {id:'match-players',label:'Match players',status:'pending'},
-    {id:'start-adaptations',label:'Start adaptations',status:'pending'},
-  ],{source:'local-worker',reportedAt:Date.now()/1000});state.jobs.unshift(job);
-  await page.goto('https://panther.place/games/synthetic-game/workflows');
-  const group=page.locator('.workshop-group[data-kind=session-finalization]');
-  await expect(group).toBeVisible();await expect(group.getByRole('heading',{name:'Session finalization',exact:true})).toBeVisible();
-  await group.locator('.workshop-card').click();
-  await expect(page.locator('.workshop-stages li')).toHaveCount(4);
-  await expect(page.locator('#workshop-detail')).toContainText('Match players');
-  await expect(page.locator('.workshop-stages .is-working')).toHaveCount(1);
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-  await page.screenshot({path:test.info().outputPath(`session-finalization-${width}.png`),fullPage:true});
-});
-
 function sample(id,kind,status,title,stages,extra={}) {
   const common=stages.filter(s=>!s.id.startsWith('novel-')&&!s.id.startsWith('video-')).map(s=>s.id);
   const lanes=kind==='editorial'?[
@@ -31,7 +12,7 @@ function sample(id,kind,status,title,stages,extra={}) {
   const edges=lanes.flatMap(l=>l.stageIds.slice(1).map((to,i)=>({from:l.stageIds[i],to})));
   if(kind==='editorial'&&common.length)for(const l of lanes.filter(l=>l.id!=='shared'))edges.push({from:common.at(-1),to:l.stageIds[0]});
   const flow={schemaVersion:1,mode:kind==='editorial'?'branched':'sequence',lanes,edges,note:'Arrows show dependencies, not time remaining.'};
-  return {schemaVersion:1,id:kind+'~'+id,kind,gameId:'synthetic-game',title,status,createdAt:100,observedAt:Date.now()/1000,source:'durable-job',note:'Screen planning stops before paid generation.',stages,flow,activeStages:stages.filter(s=>!['done','pending'].includes(s.status)),totalStages:stages.length,completedStages:stages.filter(s=>s.status==='done').length,...extra};
+  return {schemaVersion:1,id:kind+'~'+id,kind,gameId:'synthetic-game',title,status,createdAt:Date.now()/1000,observedAt:Date.now()/1000,source:'durable-job',note:'Screen planning stops before paid generation.',stages,flow,activeStages:stages.filter(s=>!['done','pending'].includes(s.status)),totalStages:stages.length,completedStages:stages.filter(s=>s.status==='done').length,...extra};
 }
 async function fixture(page) {
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-reader'}))+'.test'})));
@@ -51,7 +32,12 @@ async function fixture(page) {
       if(state.error)return route.fulfill({status:503,json:{error:'Workflow history is being indexed'},headers});
       const id=url.searchParams.get('id');
       if(id)return route.fulfill({json:{workflow:state.jobs.find(j=>j.id===id)},headers});
-      return route.fulfill({json:{workflows:url.searchParams.get('cursor')?[sample('e'.repeat(64),'model','queued','Another workbench',[{id:'build',label:'Waiting for references',status:'queued'}])]:state.jobs,cursor:!url.searchParams.get('cursor')&&state.next?'next-page':null},headers});
+      if(url.searchParams.get('view')==='types') {
+        const types=[...new Set(state.jobs.map(j=>j.kind))].map(kind=>{const rows=state.jobs.filter(j=>j.kind===kind);return {id:kind,name:({'session-finalization':'Session finalization',editorial:'Story & screen planning',playback:'Audio assembly',model:'3D modeling','asset-generation':'Asset generation','video-production':'Video finishing'})[kind],total:rows.length,successful:rows.filter(j=>j.status==='done').length,failed:rows.filter(j=>j.status==='failed').length,latestRunAt:Math.max(...rows.map(j=>j.createdAt))};});
+        return route.fulfill({json:{types},headers});
+      }
+      const kind=url.searchParams.get('type');const rows=state.jobs.filter(j=>!kind||j.kind===kind);
+      return route.fulfill({json:{workflows:url.searchParams.get('cursor')?[sample('e'.repeat(64),kind||'model','queued','Another run',[{id:'build',label:'Prepare',status:'queued'}])]:rows,cursor:!url.searchParams.get('cursor')&&state.next?'next-page':null},headers});
     }
     const game={id:'synthetic-game',name:'The Lantern Expedition',purpose:'campaign',ruleset:null};
     const bodies={'/games':{games:[game]},'/game':{game,players:[],memberships:[],characters:[],canEditGame:false},'/characters':{characters:[]},'/recordings/live':{recordings:[]},'/objects':{objects:[],prefixes:[],cursor:null}};
@@ -66,99 +52,67 @@ async function fixture(page) {
   return state;
 }
 
-for(const width of [1440,390]) for(const design of ['studio','chronicle','cinema','mission','poster','field']) {
-  test(`Workshop workbenches in ${design} at ${width}px`,async({page})=>{
-    await page.setViewportSize({width,height:1000});
-    await fixture(page);
-    await page.goto(`https://panther.place/games/synthetic-game/workflows?ui=${design}`);
-    await expect(page.locator('.workshop-card')).toHaveCount(4);
-    await expect(page.locator('.workshop-group')).toHaveCount(7);
-    await expect(page.locator('.workshop-group[data-kind=editorial]')).toContainText('The Lanterns at Dawn');
-    await expect(page.locator('.workshop-group[data-kind=playback]')).toContainText('Continuous session audio');
-    await expect(page.locator('#primary-nav a[aria-current]')).toHaveText('Workflows');
-    await expect(page.locator('.workshop-card .is-working')).toHaveCount(1);
-    await expect(page.locator('#workshop')).toContainText('Local worker signal lost');
-    await expect(page.locator('#workshop')).toContainText('1 of 3 stages complete');
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-    await expect(page.locator('#workshop-refresh')).toBeHidden();
-    await expect(page.locator('#workshop details,#workshop summary,.workshop-group-chevron')).toHaveCount(0);
-    await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeVisible();
-    await page.screenshot({path:test.info().outputPath(`workshop-${design}-${width}.png`),fullPage:true});
-  });
-}
 
-for(const width of [1440,390]) test(`Workflow detail, filters and pagination at ${width}px`,async({page})=>{
-  await page.setViewportSize({width,height:1000});await fixture(page);
-  await page.goto('https://panther.place/games/synthetic-game/workflows');
-  await expect(page.locator('.workshop-card')).toHaveCount(4);
-  await page.locator('[data-filter=working]').click();await expect(page.locator('.workshop-card')).toHaveCount(1);
-  await page.locator('.workshop-card').click();
-  await expect(page.locator('#workshop-detail')).toBeVisible();
-  await expect(page.locator('.workshop-stages li')).toHaveCount(3);
-  await expect(page.locator('.workshop-flowchart')).toBeVisible();
-  await expect(page.locator('.workshop-flow-lines path')).toHaveCount(4);
-  await expect(page.locator('.workshop-stages .is-working')).toHaveCount(1);
-  await expect(page.locator('#workshop-detail')).toContainText('Attempt 2');
-  await expect(page.locator('#workshop-detail')).toContainText('Preflight review');
-  await expect(page.locator('#workshop-detail')).toContainText('Not started');
-  await page.screenshot({path:test.info().outputPath(`workshop-detail-${width}.png`),fullPage:true});
-  await page.reload();await expect(page.locator('.workshop-stages li')).toHaveCount(3);
-  await page.locator('.workshop-back').click();await page.locator('[data-filter=all]').click();
-  await page.locator('#workshop-more').click();await expect(page.locator('.workshop-card')).toHaveCount(5);
-  await expect(page.locator('#workshop-more')).toBeHidden();
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+for(const width of [1280,390]) test(`Workflow type hierarchy, exact totals and durable navigation at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});const state=await fixture(page);
+ await page.goto('https://panther.place/games/synthetic-game/workflows');
+ await expect(page.locator('.workflow-type')).toHaveCount(4);
+ await expect(page.locator('.workflow-run')).toHaveCount(0);
+ const type=page.locator('.workflow-type').filter({hasText:'Story & screen planning'});
+ await expect(type).toContainText('Successful');await expect(type).toContainText('Failed');
+ const box=await type.boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);
+ expect(await type.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.right-15,r.top+15));})).toBe(true);
+ await type.focus();await page.keyboard.press('Enter');await expect(page).toHaveURL(/workflows\/editorial$/);
+ await expect(page.locator('.workflow-run')).toHaveCount(1);
+ await expect(page.locator('.workflow-run')).toContainText('The Lanterns at Dawn');
+ await page.getByRole('button',{name:'Load more',exact:true}).click();await expect(page.locator('.workflow-run')).toHaveCount(2);
+ await page.locator('.workflow-run').first().click();await expect(page).toHaveURL(/workflows\/editorial\/editorial~a+$/);
+ await expect(page.locator('.workflow-stages li')).toHaveCount(3);await expect(page.locator('.workflow-detail')).toContainText('Writing the screenplay');
+ await page.reload();await expect(page.locator('.workflow-stages li')).toHaveCount(3);
+ await page.locator('.workflow-back').click();await expect(page).toHaveURL(/workflows\/editorial$/);
+ await page.locator('.workflow-back').click();await expect(page.locator('.workflow-type')).toHaveCount(4);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ await page.screenshot({path:test.info().outputPath(`workflow-types-${width}.png`),fullPage:true});
+});
+test('Incomplete type aggregates show an honest error instead of partial totals',async({page})=>{
+ const state=await fixture(page);state.error=true;
+ await page.goto('https://panther.place/games/synthetic-game/workflows');
+ await expect(page.getByRole('alert')).toContainText('Workflow history is being indexed');
+ await expect(page.locator('.workflow-type')).toHaveCount(0);
 });
 
-test('Live polling stays fresh, stops on navigation, and respects reduced motion',async({page})=>{
-  await page.clock.install();await page.emulateMedia({reducedMotion:'reduce'});const state=await fixture(page);state.next=false;
-  await page.goto('https://panther.place/games/synthetic-game/workflows');
-  await expect(page.locator('.workshop-card')).toHaveCount(4);
-  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeVisible();
-  await expect(page.locator('#workshop details,#workshop summary')).toHaveCount(0);
-  expect(await page.locator('.workshop-card .is-working .pixel-cat').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
-  state.jobs[0].stages[1].status='done';state.jobs[0].completedStages=2;state.jobs[0].activeStages=[];
-  await page.clock.fastForward(16000);
-  await expect(page.locator('#workshop')).toContainText('2 of 3 stages complete');
-  await expect(page.locator('.workshop-group[data-kind=playback] .workshop-card')).toBeVisible();
-  expect(state.reads.filter(u=>u.pathname==='/workflows').length).toBeGreaterThan(1);
-  await page.locator('#primary-nav').getByRole('link',{name:'Characters',exact:true}).click();
-  await expect(page.locator('#workshop')).toBeHidden();
-  const count=state.reads.filter(u=>u.pathname==='/workflows').length;
-  await page.clock.fastForward(32000);
-  expect(state.reads.filter(u=>u.pathname==='/workflows').length).toBe(count);
+for(const width of [1280,390])test(`Compact workflow rows and zoomable output keep a single run status at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});const state=await fixture(page);
+ const key='games/synthetic-game/content/shared/images/map/original/map.png';
+ const output=sample('f'.repeat(64),'asset-generation','done','The riverside map',[{id:'generate',label:'Asset generation',status:'done',outputKey:key}]);
+ state.jobs=[output];
+ const imageUrl='https://synthetic.example/map.png';
+ await page.route('https://test.execute-api.us-west-2.amazonaws.com/object-url*',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{key,url:imageUrl,contentType:'image/png',size:250,metadata:{title:'The riverside map'}}}));
+ await page.route(imageUrl,route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" fill="#304c42"/><path d="M210 0Q400 180 250 400" fill="none" stroke="#84b4c4" stroke-width="65"/><circle cx="470" cy="220" r="20" fill="#e9ba59"/></svg>'}));
+ await page.goto('https://panther.place/games/synthetic-game/workflows');
+ const type=page.locator('.workflow-type');await expect(type).toHaveCount(1);
+ await expect(type.locator('svg.lucide-chevron-right')).toHaveCount(1);await expect(type.locator('svg.lucide-arrow-up-right')).toHaveCount(0);
+ const row=await type.boundingBox();expect(row.height).toBeLessThan(width<600?120:95);
+ await type.click();const run=page.locator('.workflow-run');await expect(run).toHaveCount(1);
+ await expect(run.locator('img')).toHaveAttribute('src',imageUrl);await expect(run.locator('svg.lucide-chevron-right')).toHaveCount(1);
+ await run.click();const detail=page.locator('.workflow-detail');
+ await expect(detail.getByText('Complete',{exact:true})).toHaveCount(1);await expect(detail.locator('.workflow-stages')).toHaveCount(0);
+ await expect(detail.getByText('Asset generation',{exact:true})).toHaveCount(1);await expect(detail.getByRole('button',{name:'View output',exact:true})).toHaveCount(0);
+ const thumbnail=detail.getByRole('button',{name:'Preview Output',exact:true});await expect(thumbnail).toBeInViewport();await expect(thumbnail.locator('img')).toHaveAttribute('src',imageUrl);
+ const bounds=await thumbnail.boundingBox();expect(bounds.width).toBeGreaterThan(150);expect(bounds.height).toBeGreaterThan(100);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);
+ expect(await thumbnail.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+ await page.screenshot({path:test.info().outputPath(`workflow-output-${width}.png`),fullPage:true});
+ await thumbnail.focus();await page.keyboard.press('Enter');await expect(page.locator('#preview-dialog')).toBeVisible();await expect(page.locator('#preview-body img')).toHaveAttribute('src',imageUrl);
+ await page.keyboard.press('Escape');await expect(page.locator('#preview-dialog')).not.toBeVisible();await expect(detail).toBeVisible();await expect(page).toHaveURL(/workflows\/asset-generation\/asset-generation~f+$/);
 });
 
-for(const width of [1440,390]) test(`Parallel adaptation flowchart at ${width}px`,async({page})=>{
-  await page.setViewportSize({width,height:1000});const state=await fixture(page);
-  const job=sample('f'.repeat(64),'editorial','running','Two paths from one transcript',[
-    {id:'context',label:'Context',status:'done'},
-    {id:'corrected-transcript',label:'Corrected transcript',status:'done'},
-    {id:'novel-draft',label:'Novel draft',status:'running',leaseUntil:Date.now()/1000+600},
-    {id:'novel-proof',label:'Novel proof',status:'pending'},
-    {id:'video-screenplay',label:'Screenplay',status:'running',leaseUntil:Date.now()/1000+600},
-    {id:'video-preflight',label:'Preflight',status:'pending'},
-  ]);state.jobs.push(job);
-  await page.goto('https://panther.place/games/synthetic-game/workflows?workflow='+job.id);
-  await expect(page.locator('.workshop-flow-lane')).toHaveCount(3);
-  await expect(page.locator('.workshop-flow-lines path')).toHaveCount(10);
-  await expect(page.locator('.workshop-stages .is-working')).toHaveCount(2);
-  const positions=await page.locator('.workshop-flow-lane').evaluateAll(lanes=>lanes.map(l=>{const r=l.getBoundingClientRect();return {top:r.top,left:r.left,width:r.width};}));
-  if(width>600) {expect(Math.abs(positions[1].top-positions[2].top)).toBeLessThan(2);expect(positions[2].left).toBeGreaterThan(positions[1].left);}
-  else expect(positions[2].top).toBeGreaterThan(positions[1].top);
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-  await page.screenshot({path:test.info().outputPath(`flowchart-parallel-${width}.png`),fullPage:true});
-});
-
-test('Incomplete history and polling failures are visible, never a fake empty library',async({page})=>{
-  await page.clock.install();const state=await fixture(page);state.error=true;
-  await page.goto('https://panther.place/games/synthetic-game/workflows');
-  await expect(page.locator('#workshop-health')).toContainText('being indexed');
-  await expect(page.locator('.workshop-empty')).toHaveCount(0);
-  await expect(page.locator('#workshop-refresh')).toBeHidden();
-  state.error=false;await page.clock.fastForward(16000);await expect(page.locator('.workshop-card')).toHaveCount(4);
-  state.error=true;await page.clock.fastForward(16000);
-  await expect(page.locator('#workshop-health')).toContainText('Could not update progress');
-  await expect(page.locator('#workshop-health')).toContainText('Retrying automatically');
-  await expect(page.locator('#workshop-health')).toBeVisible();
-  await expect(page.locator('.workshop-card')).toHaveCount(4);
+test('A single active stage retains real animated progress without duplicating its status badge',async({page})=>{
+ const state=await fixture(page);const job=sample('9'.repeat(64),'asset-generation','running','Riverside illustration',[{id:'generate',label:'Generating illustration',status:'running'}]);state.jobs=[job];
+ await page.goto(`https://panther.place/games/synthetic-game/workflows/asset-generation/${job.id}`);
+ const detail=page.locator('.workflow-detail');await expect(detail.getByText('Running',{exact:true})).toHaveCount(1);
+ await expect(detail.locator('.workflow-current-stage')).toHaveText('Generating illustration');
+ await expect(detail.locator('.workflow-stage-meter')).toHaveAttribute('aria-label','0 of 1 stages complete');
+ expect(await detail.locator('.workflow-stage-meter span').evaluate(el=>getComputedStyle(el).animationName)).toBe('pulse');
+ job.status='done';job.stages[0].status='done';job.completedStages=1;await page.reload();
+ await expect(detail.getByText('Complete',{exact:true})).toHaveCount(1);await expect(detail.locator('.workflow-stage-meter')).toHaveCount(0);await expect(detail.locator('.workflow-current-stage')).toHaveCount(0);
 });
