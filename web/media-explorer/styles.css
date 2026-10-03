@@ -1708,6 +1708,71 @@ body { padding-bottom:0; }
 /* Videos use the same compact top actions as Characters and Assets. */
 #episode-create-action,.explorer-heading > button.primary-button { flex:0 0 auto;min-height:44px;padding:.6rem 1rem;font-size:.9rem;line-height:1.2;white-space:nowrap; }
 .video-search-toolbar { display:flex;align-items:flex-end;gap:.75rem;margin:0 0 1rem; }
+
+/* Task navigation stays unmistakable across all six workspaces. */
+.game-context:not([hidden]) { display:flex;margin:1rem 0; }
+.game-context :is(.game-purpose,.game-ruleset) { display:none; }
+.storyboard-entry { margin-left:auto;display:inline-flex;align-items:center;min-height:44px;padding:.65rem 1rem;border:1px solid var(--accent);border-radius:.65rem;color:var(--accent);font-weight:600;text-decoration:none; }
+.approval-inbox { padding:1.5rem;margin:1.5rem 0 2rem;border:2px solid var(--accent);border-radius:1rem;background:var(--panel); }
+.approval-inbox h2 { font-size:1.5rem;margin:0 0 .7rem; }
+.approval-inbox > p { color:var(--muted);max-width:65ch;line-height:1.6; }
+.approval-card { display:flex;align-items:center;flex-wrap:wrap;gap:.75rem 1.5rem;padding:1rem 0;border-top:1px solid var(--line); }
+.approval-card h3 { flex:1;min-width:12rem;margin:0;overflow-wrap:anywhere; }
+.approval-card .eyebrow { width:100%;margin:0; }
+.approval-card a { display:inline-flex;text-decoration:none;min-height:44px;align-items:center;padding:.7rem 1rem; }
+.workspace-home { margin:2rem 0 4rem; }
+.workspace-home h2 { font-size:clamp(1.7rem,3vw,3rem);line-height:1.15; }
+.workspace-home a { color:var(--accent);text-underline-offset:4px; }
+.workspace-recent { padding:0;list-style:none;line-height:1.6; }
+.workspace-recent li { margin:.6rem 0;overflow-wrap:anywhere; }
+.workspace-collection { padding:1.5rem;min-width:0; }
+.workspace-collection h3 { font-size:1.3rem;margin:.6rem 0; }
+.workspace-number { font:500 .75rem ui-monospace,monospace;color:var(--muted); }
+.workspace-split { display:grid;grid-template-columns:minmax(180px,1fr) minmax(0,2fr);min-height:400px; }
+.workspace-index { display:flex;flex-direction:column;gap:.6rem;padding:1.5rem;background:var(--panel-raised); }
+.workspace-index button { text-align:left;min-height:48px;border:1px solid transparent; }
+.workspace-index button[aria-pressed=true] { border-color:var(--accent);color:var(--accent);background:var(--panel); }
+.workspace-index input { width:100%;box-sizing:border-box;margin-bottom:1rem; }
+.workspace-page { padding:2rem;min-width:0;background:var(--panel); }
+.workspace-page > .workspace-collection { padding:0; }
+[data-layout=chronicle] .workspace-split { box-shadow:0 18px 50px #30281f18;border:1px solid var(--line); }
+[data-layout=chronicle] .workspace-index { border-right:6px double var(--line); }
+[data-layout=chronicle] .workspace-page { font:1.1rem/1.8 Georgia,serif; }
+[data-layout=chronicle] .workspace-page h3 { font-size:2.5rem; }
+.workspace-kanban { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;align-items:start; }
+.workspace-lane { background:var(--panel-raised);padding:1rem;border-radius:.8rem;min-width:0; }
+.workspace-lane > h3 { font:.75rem ui-monospace,monospace;letter-spacing:.1em; }
+.workspace-lane .workspace-collection { background:var(--panel);border:1px solid var(--line);margin:1rem 0;border-radius:.7rem; }
+.workspace-feature { background:linear-gradient(120deg,#421521,var(--panel));padding:clamp(2rem,5vw,5rem);border-radius:1rem; }
+.workspace-feature h2 { max-width:14ch;font-size:clamp(2.5rem,6vw,5rem); }
+.workspace-feature a { display:inline-flex;padding:1rem;margin-top:1rem;color:var(--accent-dark);text-decoration:none; }
+.workspace-shelf { border-bottom:1px solid var(--line);padding:1.5rem 0; }
+.workspace-shelf .workspace-recent { display:flex;overflow:auto;gap:1rem;padding-bottom:.5rem; }
+.workspace-shelf .workspace-recent li { flex:0 0 220px;background:var(--panel);padding:1.5rem;border:1px solid var(--line);min-height:80px;border-radius:.6rem; }
+.workspace-pinboard { display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1.5rem;padding:1rem; }
+.workspace-pinboard .workspace-collection { grid-column:span 2;background:var(--panel);border:3px solid var(--ink);box-shadow:7px 7px 0 var(--ink);position:relative; }
+.workspace-pinboard .workspace-collection:nth-child(2n) { transform:rotate(2deg); }
+.workspace-pinboard .workspace-collection:nth-child(2n+1) { transform:rotate(-1deg); }
+.workspace-pinboard .workspace-collection:nth-child(4),.workspace-pinboard .workspace-collection:nth-child(5) { grid-column:span 3; }
+.workspace-pinboard .workspace-collection::before { content:'';position:absolute;top:-7px;left:45%;width:40px;height:16px;background:var(--accent);border:1px solid var(--ink); }
+/* A bottom launch strip makes the pinboard a different navigation system. */
+@media(min-width:1001px){
+  [data-interface=poster] .masthead .primary-nav { position:fixed;bottom:0;left:0;right:0;z-index:20;justify-content:center;background:var(--panel);border-top:3px solid var(--ink);padding:.5rem; }
+  [data-interface=poster] body { padding-bottom:90px; }
+}
+@media(max-width:800px){
+  .workspace-split { grid-template-columns:1fr; }
+  .workspace-index { flex-direction:row;flex-wrap:wrap;padding:1rem; }
+  .workspace-index input { flex-basis:100%; }
+  .workspace-index button { flex:1 0 120px; }
+  .workspace-page { padding:1.3rem; }
+  .workspace-kanban { grid-template-columns:1fr; }
+  .workspace-pinboard { grid-template-columns:1fr;padding:.5rem; }
+  .workspace-pinboard .workspace-collection,.workspace-pinboard .workspace-collection:nth-child(n) { grid-column:1;transform:none; }
+  .storyboard-entry { margin:0;width:100%;box-sizing:border-box;justify-content:center; }
+  .approval-inbox { padding:1rem; }
+  .approval-card a { width:100%;justify-content:center;box-sizing:border-box; }
+}
 .video-search-toolbar > div { flex:1;min-width:0; }
 .video-search-toolbar label { display:block;font-size:.8rem;color:var(--muted);margin-bottom:.3rem; }
 .video-search-toolbar input { width:100%;box-sizing:border-box;min-height:44px;padding:.65rem .8rem;border:1px solid var(--line);border-radius:.45rem;background:var(--paper);color:var(--ink);font:inherit; }

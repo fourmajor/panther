@@ -18,6 +18,7 @@ async function fixture(page) {
       '/recordings/live':{recordings:[]},
       '/characters':{characters:[],cursor:null},
       '/objects':{prefixes:[],objects:[],cursor:null},
+      '/assets':{assets:[{key:'games/synthetic-game/assets/review/original/plan.json',kind:'movie-review-plan',name:'plan.json',metadata:{title:'Last session storyboard',sessionId:'synthetic-session'}}],cursor:null},
     };
     await route.fulfill({json:bodies[pathname] || {},headers:{'access-control-allow-origin':'https://panther.place'}});
   });
@@ -59,9 +60,20 @@ for(const width of [1440,390]) for(const design of designs) {
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await accessible(page.locator('#storyboard-entry'),width);
+    await expect(page.locator('#approval-inbox')).toContainText('Last session storyboard');
+    if(design==='studio')await expect(page.locator('#workspace-home')).toBeHidden();
+    else {
+      await expect(page.locator('#dashboard-sections')).toBeHidden();
+      await expect(page.locator('#workspace-home')).toHaveAttribute('data-layout',design);
+      const signature={chronicle:'.workspace-split',field:'.workspace-index input',cinema:'.workspace-feature',mission:'.workspace-kanban',poster:'.workspace-pinboard'}[design];
+      await expect(page.locator(signature)).toBeVisible();
+      if(['chronicle','field'].includes(design)){
+        await page.locator('.workspace-index button').filter({hasText:'The archive'}).click();
+        await expect(page.locator('.workspace-page')).toContainText('The archive');
+      }
+    }
     if(width===1440) {
-      const columns=await page.locator('.dashboard-sections').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length);
-      expect(columns).toBe(design==='chronicle'?1:['studio','mission'].includes(design)?3:2);
       const header=await page.locator('.masthead').boundingBox();
       if(design==='chronicle') expect(header.width).toBeLessThan(250);
       if(design==='field') expect(header.x).toBeGreaterThan(1000);
@@ -125,4 +137,15 @@ test('Atlas keyboard, invalid preference, cancellation and blocked storage',asyn
   await page.locator('#design-keep').click();
   await expect(page.locator('#design-feedback')).toContainText('prevented saving');
   await expect(page.locator('html')).toHaveAttribute('data-interface','cinema');
+});
+
+test('storyboard approval doorway is game-scoped and does not generate or approve anything',async({page})=>{
+  const reads=await fixture(page);
+  await page.goto('https://panther.place/games/synthetic-game/dashboard');
+  const entry=page.locator('#storyboard-entry');
+  await expect(entry).toHaveAttribute('href','/games/synthetic-game/videos?review=1');
+  await entry.click();
+  await expect(page.locator('#video-approval-inbox')).toContainText('Last session storyboard');
+  await expect(page.locator('#video-approval-inbox .approval-card a')).toHaveAttribute('href',/videos\?project=games%2Fsynthetic-game/);
+  expect(reads.every(path=>!path.includes('generate')&&!path.includes('submit'))).toBe(true);
 });

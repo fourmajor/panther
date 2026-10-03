@@ -5,11 +5,11 @@ const config = window.PANTHER_CONFIG;
 (() => {
   const designs = [
     {id:"studio", name:"Studio", label:"The original", description:"Quiet dark surfaces, familiar tabs, balanced cards. The original interface remains the default."},
-    {id:"chronicle", name:"Chronicle", label:"An illuminated archive", description:"Warm paper, bookish typography, a contents rail and a chapter-like reading rhythm."},
-    {id:"cinema", name:"Cinema", label:"The premiere", description:"An edge-to-edge dark stage, crimson accents, expansive titles and widescreen media shelves."},
-    {id:"mission", name:"Mission Control", label:"Everything at a glance", description:"A compact navigation console, precision typography and a dense, instrument-like workspace."},
-    {id:"poster", name:"Poster Wall", label:"Loud by design", description:"Oversized type, acid yellow, thick purple outlines and a graphic, asymmetric poster grid."},
-    {id:"field", name:"Field Guide", label:"Room to breathe", description:"Soft green, generous paper cards and a right-hand index. A calm field notebook for your world."},
+    {id:"chronicle", name:"Chronicle", label:"Turn the campaign’s pages", description:"A two-page campaign book. Choose a chapter from the table of contents, then read its recent entries on the facing page."},
+    {id:"cinema", name:"Cinema", label:"Browse a streaming library", description:"A screening-room home with a featured screening, horizontal media shelves and a production doorway."},
+    {id:"mission", name:"Production Board", label:"Follow the assembly line", description:"Three working lanes: source material, stories in production, and finished media. Reviews sit above the board."},
+    {id:"poster", name:"Pinboard", label:"Explore a wall of evidence", description:"Numbered, oversized notes arranged around a central campaign hub. Follow the connections to your cast and stories."},
+    {id:"field", name:"Explorer", label:"Search, select, inspect", description:"A searchable directory and inspector. Pick a collection on the left; inspect its recent contents on the right."},
   ];
   const key = "panther.interface.v1";
   const valid = id => designs.some(design => design.id === id);
@@ -29,6 +29,7 @@ const config = window.PANTHER_CONFIG;
     const showing = comparing ? saved : candidate;
     root.dataset.interface = showing;
     root.dataset.interfacePreview = String(candidate !== saved);
+    document.dispatchEvent(new CustomEvent("panther-interface-changed"));
     document.getElementById("design-current").textContent = designs.find(item => item.id === showing).name;
     tools.hidden = candidate === saved;
     compare.setAttribute("aria-pressed", String(comparing));
@@ -649,6 +650,9 @@ async function selectGame(requested, epoch) {
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
   elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
+  const reviewEntry = document.getElementById("storyboard-entry");
+  reviewEntry.href = `${gamePath("videos")}?review=1`;
+  reviewEntry.onclick = event => {if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();navigate(reviewEntry.href);};
   renderGameStyle();
   if (liveGame !== selected) { liveGame = selected; void refreshLive(); }
   return true;
@@ -682,6 +686,66 @@ function renderDashboard() {
     const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
     const list=document.createElement('ul');list.className='dashboard-recent-links';list.setAttribute('aria-label',`Recent ${label.toLowerCase()}`);card.append(title,list);cards.append(card);
   }
+  renderWorkspaceHome();
+  void loadApprovalInbox(document.getElementById("approval-inbox"), routeEpoch);
+}
+
+// Each workspace has its own information architecture; shared editors remain mounted.
+// These home projections copy navigation links, not media players or mutable forms.
+function renderWorkspaceHome() {
+  const host=document.getElementById('workspace-home');if(!host)return;
+  const design=document.documentElement.dataset.interface;
+  const source=document.getElementById('dashboard-sections');host.replaceChildren();
+  source.hidden=design!=='studio';host.hidden=design==='studio';if(host.hidden)return;
+  host.dataset.layout=design;
+  const collections=[['characters','The cast'],['sessions','Session records'],['novel','The novel'],['videos','Screening room'],['assets','The archive']];
+  const copyLinks=(section,destination)=>{
+    const links=source.querySelector(`[data-section="${section}"] ul`);
+    const list=document.createElement('ul');list.className='workspace-recent';
+    for(const row of links?.children||[]){const original=row.querySelector('a');if(!original)continue;const li=document.createElement('li'),a=document.createElement('a');a.href=original.href;a.textContent=original.textContent;a.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();original.click();};li.append(a);list.append(li);}
+    if(!list.children.length)list.append(movieNode('li','No recent entries. Open the collection to browse.'));
+    destination.append(list);
+  };
+  const collection=(section,title,index)=>{
+    const card=movieNode('article',undefined,'workspace-collection');card.dataset.collection=section;
+    card.append(movieNode('span',String(index+1).padStart(2,'0'),'workspace-number'),movieNode('h3',title));copyLinks(section,card);
+    const link=movieNode('a',`Open ${title.toLowerCase()} →`);gameLink(link,section);card.append(link);return card;
+  };
+  if(['chronicle','field'].includes(design)){
+    const book=movieNode('div',undefined,'workspace-split'),index=movieNode('nav',undefined,'workspace-index'),page=movieNode('article',undefined,'workspace-page');index.setAttribute('aria-label',design==='chronicle'?'Book contents':'Collection directory');
+    const search=movieNode('input');search.type='search';search.placeholder='Find a collection';search.setAttribute('aria-label','Find a collection');if(design==='field')index.append(search);
+    function select(section,title,number){for(const button of index.querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.collection===section));page.replaceChildren(movieNode('p',design==='chronicle'?`CHAPTER ${number+1}`:'COLLECTION','eyebrow'),collection(section,title,number));}
+    for(const [number,[section,title]]of collections.entries()){const button=movieButton(`${number+1}. ${title}`,()=>select(section,title,number));button.dataset.collection=section;index.append(button);}
+    search.oninput=()=>{for(const button of index.querySelectorAll('button'))button.hidden=!button.textContent.toLowerCase().includes(search.value.toLowerCase());};
+    book.append(index,page);host.append(movieNode('h2',design==='chronicle'?'Your campaign, bound together':'Explore your world'),book);select(...collections[design==='chronicle'?2:0],design==='chronicle'?2:0);
+  }else if(design==='mission'){
+    host.append(movieNode('h2','From the table to the screen'));
+    const board=movieNode('div',undefined,'workspace-kanban');
+    for(const [name,sections]of [['01 / SOURCE',['sessions','characters']],['02 / MAKE',['novel','workflows']],['03 / WATCH',['videos','assets']]]){const lane=movieNode('section',undefined,'workspace-lane');lane.append(movieNode('h3',name));for(const section of sections){const title=collections.find(c=>c[0]===section)?.[1]||'Workflow progress';lane.append(collection(section,title,collections.findIndex(c=>c[0]===section)));}board.append(lane);}host.append(board);
+  }else if(design==='cinema'){
+    const feature=movieNode('section',undefined,'workspace-feature');feature.append(movieNode('p','YOUR PRIVATE PREMIERE','eyebrow'),movieNode('h2','Stories worth pressing play for.'),movieNode('p','Watch finished episodes, or step behind the screen to review the next one.'));const link=movieNode('a','Enter the screening room →','primary-button');gameLink(link,'videos');feature.append(link);host.append(feature);
+    for(const [number,[section,title]]of [...collections.entries()].sort((a,b)=>(a[1][0]==='videos'?-1:b[1][0]==='videos'?1:0))){const shelf=collection(section,title,number);shelf.classList.add('workspace-shelf');host.append(shelf);}
+  }else{
+    host.append(movieNode('h2','A world of connected stories'));
+    const board=movieNode('div',undefined,'workspace-pinboard');for(const [number,[section,title]]of collections.entries())board.append(collection(section,title,number));host.append(board);
+  }
+}
+document.addEventListener('panther-interface-changed',()=>renderWorkspaceHome());
+
+async function loadApprovalInbox(host,epoch,cursor=null,append=false) {
+  const gameId=state.gameId,current=()=>epoch===routeEpoch&&gameId===state.gameId&&host.isConnected;
+  if(!append){host.replaceChildren(movieNode('h2','Review & approve storyboards'),movieNode('p','Choose a session below. Review the shots and script, then approve its exact plan and budget. Approval never silently starts a paid request.'));}
+  const status=movieNode('p','Finding prepared storyboards…');status.setAttribute('role','status');host.append(status);
+  try{
+    const result=await api('/assets',{gameId,section:'videos',cursor});if(!current())return;
+    if(!Array.isArray(result.assets))throw new Error('Storyboard catalog unavailable');
+    let count=0;
+    for(const asset of result.assets.filter(a=>a.kind==='movie-review-plan'&&sameGameKey(a.key))){count++;const card=movieNode('article',undefined,'approval-card');card.append(movieNode('p',asset.metadata?.sessionId?`SESSION / ${asset.metadata.sessionId}`:'PREPARED MOVIE PLAN','eyebrow'),movieNode('h3',asset.metadata?.title||asset.name));
+      const link=movieNode('a','Review storyboard & approve →','primary-button');link.href=`${gamePath('videos')}?project=${encodeURIComponent(asset.key)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};card.append(link);host.append(card);}
+    status.textContent=count?'Approval is available inside each plan after every shot is reviewed and its checks pass.':result.cursor?'No prepared storyboards on this catalog page. More entries are available below.':'No prepared storyboards on this page. If your session is still being prepared, check its workflow.';
+    if(result.cursor){const more=movieButton('Find more storyboards',()=>{more.remove();void loadApprovalInbox(host,epoch,result.cursor,true);});host.append(more);}
+    if(!append){const workflow=movieNode('a','Check session preparation in Workflows →');gameLink(workflow,'workflows');host.append(workflow);}
+  }catch(error){if(current()){status.textContent=`Could not load storyboard reviews: ${error.message}`;host.append(movieButton('Retry storyboard list',()=>void loadApprovalInbox(host,epoch)));}}
 }
 
 async function loadDashboardRecent(epoch) {
@@ -703,6 +767,7 @@ async function loadDashboardRecent(epoch) {
       const count=result.counts?.[key];
       if(Number.isInteger(count)&&count>items.slice(0,5).length){const row=document.createElement('li'),link=document.createElement('a');gameLink(link,section);link.textContent=`+ ${count-items.slice(0,5).length} more`;row.append(link);list.append(row);}
     }
+    renderWorkspaceHome();
   }catch(error){if(epoch===routeEpoch&&gameId===state.gameId){const host=document.getElementById('dashboard-recent');host.hidden=false;host.textContent=error.message;}}
 }
 
@@ -3110,6 +3175,9 @@ function renderLiveSessionEntries(){
 }
 
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
+  const inbox=document.getElementById('video-approval-inbox');
+  inbox.hidden=section!=='videos'||new URLSearchParams(location.search).has('project');
+  if(!inbox.hidden&&!cursor)void loadApprovalInbox(inbox,epoch);
   document.getElementById("session-library").dataset.paged = String(previousAssets.length > 0 || Boolean(cursor));
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
@@ -3475,7 +3543,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
       }
   }
   function renderAside() {
-    aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));
+    aside.replaceChildren(movieNode("p", "STORYBOARD APPROVAL", "eyebrow"), movieNode("h3", "Review before you spend"));
     const cost = movieNode("div", undefined, "movie-cost");
     cost.append(movieNode("strong", data.readiness.costComplete ? movieMoney(data.readiness.knownCostUsd) : "Unquoted"),
       movieNode("span", "estimated generation cost", "movie-muted")); aside.append(cost);
