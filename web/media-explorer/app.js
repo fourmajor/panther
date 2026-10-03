@@ -600,6 +600,7 @@ function characterPath(character) {
 }
 
 function gamePath(section) {
+  if(section==="videos")section="episodes";
   return state.gameId ? `/games/${encodeURIComponent(state.gameId)}/${section}` : `/${section}`;
 }
 
@@ -684,7 +685,7 @@ function renderDashboard() {
     document.querySelector(selector)?.setAttribute('hidden','');
   }
   const cards = document.getElementById("dashboard-sections");for(const icon of cards.querySelectorAll("[data-dashboard-icon]"))window.PantherUI.unmountIcon?.(icon);cards.replaceChildren();
-  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Video Episodes"],["assets","Assets"]]) {
+  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Episodes"],["assets","Assets"]]) {
     const card=document.createElement('section');card.className='dashboard-card';card.dataset.section=section;
     const icon=document.createElement('span'),arrow=document.createElement('span');icon.className='dashboard-section-icon';arrow.className='dashboard-card-arrow';icon.dataset.dashboardIcon=section;arrow.dataset.dashboardIcon='arrow';icon.setAttribute('aria-hidden','true');arrow.setAttribute('aria-hidden','true');card.append(icon,arrow);window.PantherUI.mountIcon(icon,section);window.PantherUI.mountIcon(arrow,'arrow');
     const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
@@ -1739,6 +1740,8 @@ function panCharacterModel(horizontal, vertical) {
 
 async function renderRoute() {
   closeOptionalInfoDialogs();
+  const legacyEpisodeRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/videos((?:\/[^?#]*)?)$/);
+  if(legacyEpisodeRoute){navigate(`${legacyEpisodeRoute[1]||''}/episodes${legacyEpisodeRoute[2]}${location.search}${location.hash}`,{replace:true});return;}
   const legacySessionRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/(?:audio|transcripts)\/?$/);
   if(legacySessionRoute){navigate(`${legacySessionRoute[1]||''}/sessions${location.search}${location.hash}`,{replace:true});return;}
   closeLiveReader();
@@ -1771,7 +1774,7 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|episodes|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1790,7 +1793,8 @@ async function renderRoute() {
     if (epoch === routeEpoch) pageLoading.hidden = true;
   }
   if (epoch !== routeEpoch) return;
-  const section = gameRoute?.[2] || window.location.pathname.slice(1);
+  const requestedSection = gameRoute?.[2] || window.location.pathname.slice(1);
+  const section=requestedSection==="episodes"?"videos":requestedSection;
   await roomCapture.render(section, epoch);
   if (epoch !== routeEpoch) return;
   if(section === "workflows") {
@@ -1915,7 +1919,8 @@ function drawAssetLibrary(epoch){
     onThumbnail:async asset=>{const resolved=await api('/object-url',{key:asset.key});if(resolved.contentType?.startsWith('video/')){const key=resolved.thumbnailKey||asset.thumbnailKey;return key?(await api('/object-url',{key})).url:'';}return resolved.url;},
     onDelete:async(asset,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/delete',{},{body:{gameId,key:asset.key,sha256:source.sha256,operationId}});if(result.deleted!==true||result.key!==asset.key)throw new Error('Deletion could not be confirmed.');await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=assetListing.assets.filter(item=>item.key!==asset.key);drawAssetLibrary(epoch);}},
     onCapabilities:config.development===true?()=>api('/generation-capabilities'):undefined,
-    onCharacters:()=>api('/characters',{gameId}),
+    onCharacters:cursor=>api('/characters',{gameId,cursor:typeof cursor==='string'?cursor:null}),
+    onTags:()=>api('/tags',{gameId}),
     onUpload:request=>uploadGameAsset(gameId,request),
     onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request}});assetGenerationJobs.set(job.jobId,job);return job;},
     onGenerationStatus:async job=>{const result=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,result);if(result.status==='PUBLISHED'&&result.assetKey&&!assetListing.assets.some(asset=>asset.key===result.assetKey)){const asset=describeResolvedAsset(await api('/object-url',{key:result.assetKey}));await window.PantherUI.invalidate(apiScope(),['/assets','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets];drawAssetLibrary(epoch);}}return result;}});
@@ -2923,7 +2928,7 @@ function sceneMapPicker(gameId, selectedKey, current, onChange = () => {}) {
   return {host,value,select,start(){if(started)return;started=true;void load();void preview();}};
 }
 function episodeRouteParams() {
-  const params=new URLSearchParams(location.search),match=location.pathname.match(/\/videos\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const params=new URLSearchParams(location.search),match=location.pathname.match(/\/(?:episodes|videos)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   if(match){params.set('episode',match[1]);if(match[2])params.set('scene',match[2]);else params.delete('scene');}
   return params;
 }
@@ -3014,7 +3019,7 @@ function renderEpisodeWorkspace(epoch) {
   const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);url.pathname=gamePath('videos')+(episodeId?'/'+episodeId:'')+(sceneId?'/scenes/'+sceneId:'');for(const name of ['episode','scene','view','series','episodeRevision'])url.searchParams.delete(name);history.replaceState(null,'',url);};
   let activeEditorDialog=null;
   const clearEditor=()=>{activeEditorDialog?.close();activeEditorDialog=null;for(const dialog of editor.querySelectorAll('[data-panther-dialog]'))if(dialog.open)dialog.close();for(const native of editor.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);editor.replaceChildren();};
-  const back=button('Back to episodes',()=>{clearEditor();host.stopPreview();selectedEpisode=null;selectedScene=null;detail.hidden=true;host.dataset.view='library';document.getElementById('library-title').hidden=false;back.hidden=true;create.hidden=false;updateURL(null,null);drawEpisodes();});back.textContent='← Video Episodes';back.classList.add('episode-back','text-link-button');detail.before(back);back.hidden=true;
+  const back=button('Back to episodes',()=>{clearEditor();host.stopPreview();selectedEpisode=null;selectedScene=null;detail.hidden=true;host.dataset.view='library';document.getElementById('library-title').hidden=false;back.hidden=true;create.hidden=false;updateURL(null,null);drawEpisodes();});back.textContent='← Episodes';back.classList.add('episode-back','text-link-button');detail.before(back);back.hidden=true;
   host.stopEditing=clearEditor;
   const automaticPlans=document.createElement('section');automaticPlans.id='session-video-plans';automaticPlans.hidden=true;host.append(automaticPlans);
   void api('/editorial-jobs',{gameId}).then(result=>{
@@ -3204,7 +3209,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     drawLive();
     if(liveReaderOpen)for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
-  document.getElementById("library-title").textContent = {sessions:"Sessions", videos:"Video Episodes"}[section];
+  document.getElementById("library-title").textContent = {sessions:"Sessions", videos:"Episodes"}[section];
   document.getElementById("library-title").hidden=section==="videos"&&episodeRouteParams().has("episode");
   status.hidden = false;
   status.dataset.empty = "false";
@@ -4493,30 +4498,24 @@ function openSceneVideoComposer(scene, epoch, onSceneSaved) {
   };
 }
 
+const transcriptSourceLists=new WeakMap();
 function transcriptSourceChoice(asset,destination,selected,updateSubmit,gameId,current) {
-  const row=document.createElement('div');row.className='editorial-source-choice';
-  const label=document.createElement('label'),input=document.createElement('input'),copy=document.createElement('span'),title=document.createElement('strong'),meta=document.createElement('span'),summary=document.createElement('span');
-  let name='Session';input.type='checkbox';input.value=asset.key;input.setAttribute('aria-label',name);title.textContent=name;copy.className='editorial-source-copy';meta.className='editorial-source-meta';copy.append(title,meta,summary);label.append(input,copy);row.append(label);
-  input.onchange=()=>{input.checked?selected.add(asset.key):selected.delete(asset.key);updateSubmit();};
-  let record=null,reviewSummary=null,reviewCaption=null,review=null,observedSessionName=null,summaryError='';
-  const humanTitle=value=>typeof value==='string'&&value.trim()&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
+  let list=transcriptSourceLists.get(destination);
+  if(!list||!list.host.isConnected){const host=document.createElement('div');host.className='transcript-source-picker';destination.append(host);list={host,items:[]};transcriptSourceLists.set(destination,list);}
+  if(list.items.some(item=>item.key===asset.key))return;
+  const item={key:asset.key,name:'Session',meta:'',summary:''};list.items.push(item);
+  let record=null,summaryError='';
+  const draw=()=>window.PantherUI.mountTranscriptSources(list.host,{items:list.items,selected:[...selected],onSelect:(key,checked)=>{checked?selected.add(key):selected.delete(key);updateSubmit();draw();}});
+  const humanTitle=value=>typeof value==='string'&&value.trim()&&value.trim().length<=80&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
   const render=()=>{
     const recordedAt=record?.recordedAt||asset.metadata?.recordedAt,date=recordedAt||asset.lastModified,timestamp=date?new Date(date):null;
     const formatted=timestamp&&!Number.isNaN(timestamp.valueOf())?timestamp.toLocaleString():null;
-    name=humanTitle(record?.summary?.title)||humanTitle(observedSessionName)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
-    title.textContent=name;input.setAttribute('aria-label',name);review?.setAttribute('aria-label',`Review ${name}`);if(reviewCaption?.isConnected)reviewCaption.textContent=name;
+    item.name=humanTitle(record?.summary?.title)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
     const participants=record?.participants||asset.transcript?.participants||[],characters=record?.characters||[];
-    meta.textContent=[formatted?`${recordedAt?'Recorded':'Uploaded'} ${formatted}`:null,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
-    summary.textContent=record?.summary?.summary||summaryError||(['QUEUED','GENERATING'].includes(record?.status)?'Preparing summary…':record?.status==='ATTENTION'?'Summary needs attention':'');if(reviewSummary?.isConnected)reviewSummary.textContent=summary.textContent;
+    item.meta=[formatted,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    item.summary=record?.summary?.summary||summaryError||(['QUEUED','GENERATING'].includes(record?.status)?'Preparing summary…':record?.status==='ATTENTION'?'Summary unavailable':'');draw();
   };render();
-  review=document.createElement('button');review.type='button';review.className='quiet-button editorial-source-review';review.textContent='Review';review.setAttribute('aria-label',`Review ${name}`);row.append(review);destination.append(row);
-  const load=async()=>{if(!current()||!row.isConnected||row.closest('form')?.hidden)return;try{const result=await api('/transcript-summaries',{gameId,key:asset.key});if(!current()||!row.isConnected)return;record=result;summaryError='';render();if(result.status==='MISSING'){record=await api('/transcript-summaries',{},{body:{gameId,key:asset.key}});if(current())render();}if(['QUEUED','GENERATING'].includes(record?.status))window.setTimeout(load,4000);}catch{summaryError='Summary unavailable';render();}};void load();
-  review.onclick=async()=>{
-    const dialog=window.PantherUI.createDialog();dialog.className='transcript-source-review';dialog.setAttribute('aria-label','Transcript review');const heading=document.createElement('header'),caption=document.createElement('h2'),close=document.createElement('button'),description=document.createElement('p'),regenerate=document.createElement('button'),speech=document.createElement('div'),status=document.createElement('p');caption.textContent=name;reviewCaption=caption;close.type='button';close.className='quiet-button';close.textContent='Close';close.onclick=()=>dialog.close();heading.append(caption,close);description.textContent=record?.summary?.summary||'';reviewSummary=description;regenerate.type='button';regenerate.className='quiet-button';regenerate.textContent='Regenerate summary';speech.className='source-utterances';status.setAttribute('role','status');dialog.append(heading,description,regenerate,status,speech);document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.showModal();
-    let pendingRegeneration=null;
-    regenerate.onclick=async()=>{regenerate.disabled=true;pendingRegeneration||={gameId,key:asset.key,operationId:crypto.randomUUID().replaceAll('-','')};try{record=await api('/transcript-summaries',{},{body:pendingRegeneration});pendingRegeneration=null;regenerate.textContent='Regenerate summary';if(!current()||!dialog.isConnected)return;render();description.textContent=record.summary?.summary||'';status.textContent=record.status==='READY'?'':'Summary queued';if(['QUEUED','GENERATING'].includes(record.status))window.setTimeout(load,4000);}catch(error){if(error.status===400)pendingRegeneration=null;status.textContent=error.message;regenerate.textContent='Retry summary';}finally{regenerate.disabled=false;}};
-    try{const detail=await api('/asset-document',{gameId,key:asset.key});if(!current()||!dialog.isConnected){dialog.close();return;}const doc=detail.document,transcript=doc?.payload?.transcript||doc;observedSessionName=transcript?.sessionName||doc?.sessionName;render();const players=new Map((transcript?.players||[]).map(person=>[person.id,person.name]));for(const segment of transcript?.segments||[]){const p=document.createElement('p'),speaker=document.createElement('strong');speaker.textContent=players.get(segment.playerId)||segment.playerId||'';if(speaker.textContent)p.append(speaker,document.createTextNode(': '));p.append(document.createTextNode(segment.text||''));speech.append(p);}if(!speech.children.length)status.textContent='Transcript text unavailable';}catch(error){status.textContent=error.message;}
-  };
+  const load=async()=>{if(!current()||!list.host.isConnected||list.host.closest('form')?.hidden)return;try{const result=await api('/transcript-summaries',{gameId,key:asset.key});if(!current()||!list.host.isConnected)return;record=result;summaryError='';render();if(result.status==='MISSING'){record=await api('/transcript-summaries',{},{body:{gameId,key:asset.key}});if(current())render();}if(['QUEUED','GENERATING'].includes(record?.status))window.setTimeout(load,4000);}catch{summaryError='Summary unavailable';if(current()&&list.host.isConnected)render();}};void load();
 }
 
 function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () => {}) {
@@ -4591,7 +4590,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
       try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
         choices(result.assets.filter(predicate),destination,set);status.textContent='';referenceStatus.textContent='';
         if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='Load more';more.onclick=()=>{more.remove();void page(section,destination,set,predicate,result.cursor);};destination.append(more);}
-        if(!destination.querySelector('label')){if(target==='novel'&&section==='transcripts'){destination.hidden=true;}else{const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No context sources yet.';destination.append(empty);}}
+        if(!destination.querySelector('label,[role=checkbox]')){if(target==='novel'&&section==='transcripts'){destination.hidden=true;}else{const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No context sources yet.';destination.append(empty);}}
       }catch(error){if(current()){status.textContent=error.message;referenceStatus.textContent=error.message;}}
     };
     const loadCast=async(cursor)=>{

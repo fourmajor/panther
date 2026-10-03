@@ -70,8 +70,10 @@ transcripts are optional sources: prompt composition extracts relevant source-lo
 facts with exact segment citations, preserving unknown speaker identities. Character
 profiles and other selected context guide the creative prompt without altering speech.
 
-Episodes have nested `/games/:gameId/videos/:episodeId` pages, with scene URLs below
-`/scenes/:sceneId`. The scene view is a read-only summary; Edit scene owns the prompt,
+Episodes have nested `/games/:gameId/episodes/:episodeId` pages, with scene URLs below
+`/scenes/:sceneId`. Previous `/videos` links redirect to the corresponding episode route. Individual video
+assets remain in Assets, with type, tag and character filters. The scene view is a read-only summary; Edit
+scene owns the prompt,
 character selection and optional source material. Scene records may include versioned
 `generationInputs`; missing inputs mean an empty selection, not inferred characters.
 Saves preserve those inputs across output selection and retain every earlier scene revision.

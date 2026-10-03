@@ -232,7 +232,7 @@ test('explicit novel references can preview and open same-game video collections
   await expect(preview).toContainText('A private collection of illustrated scenes.');
   expect(requested).not.toContain('other');
   await preview.getByRole('link',{name:'Open linked page'}).click();
-  await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
+  await expect(page).toHaveURL(`${origin}/games/campaign-a/episodes?collection=favorites`);
   await expect(page.getByRole('combobox',{name:'Tags',exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name:'Clip collection',exact:true})).toHaveCount(0);
 });
 

@@ -86,3 +86,71 @@ def test_summary_cancellation_during_provider_request_is_not_overwritten(tmp_pat
     assert store.get('transcript-summary', job['jobId'])['status'] == 'CANCELLED'
     assert len(responses.calls) == 1
     assert not [item for item in store.objects(job['gameId']) if item['kind'] == 'transcript-summary']
+
+
+def test_reader_summary_policy_is_concise_without_mixing_citations_into_prose(tmp_path):
+    store, job, original = queued(tmp_path)
+    responses = Responses()
+    assert worker.process(store, job['jobId'], worker.private_root(tmp_path / 'work'), SimpleNamespace(responses=responses))
+    instructions = responses.calls[0]['instructions']
+    assert 'This was a test.' in instructions
+    assert 'one to three short sentences' in instructions
+    assert 'separate structured fields' in instructions
+    assert 'segment numbers' in instructions
+    ready = store.transcript_summary_view(job['gameId'], job['key'])
+    assert ready['summaryPolicyVersion'] == 2
+    assert json.loads(store.object(ready['assetKey'])[1])['summaryPolicyVersion'] == 2
+    assert ready['summary']['segmentIndexes'] == [0]
+    assert store.object(job['key'])[1] == original
+
+
+def test_verbose_paid_summary_is_retained_without_automatic_retry(tmp_path):
+    store, job, original = queued(tmp_path)
+    class Verbose(Responses):
+        def create(self, **request):
+            response = super().create(**request)
+            document = json.loads(response.output_text)
+            document['summary'] = 'x' * 601
+            response.output_text = json.dumps(document)
+            return response
+    responses = Verbose()
+    assert not worker.process(store, job['jobId'], worker.private_root(tmp_path / 'work'), SimpleNamespace(responses=responses))
+    assert store.get('transcript-summary', job['jobId'])['status'] == 'ATTENTION'
+    assert not worker.process(store, job['jobId'], tmp_path / 'work', SimpleNamespace(responses=responses))
+    assert len(responses.calls) == 1
+    assert (tmp_path / 'work' / job['jobId'] / 'response.json').exists()
+    assert store.object(job['key'])[1] == original
+
+
+def test_explicit_summary_policy_rebuild_is_source_preserving_and_repeatable(tmp_path):
+    store, job, original = queued(tmp_path)
+    assert worker.process(store, job['jobId'], worker.private_root(tmp_path / 'work'), SimpleNamespace(responses=Responses()))
+    previous = store.get('transcript-summary', job['jobId'])
+    previous.pop('summaryPolicyVersion')  # a pre-policy-v2 published record
+    store.put('transcript-summary', job['jobId'], previous, job['gameId'])
+    old_asset = store.object(previous['assetKey'])
+    plan = worker.rebuild_policy(store)
+    assert plan['records'][0]['status'] == 'NEEDS_REBUILD'
+    assert store.transcript_summary_view(job['gameId'], job['key'])['jobId'] == job['jobId']
+    applied = worker.rebuild_policy(store, apply=True)
+    replacement = store.transcript_summary_view(job['gameId'], job['key'])
+    assert replacement['jobId'] != job['jobId']
+    assert replacement['previousSummaryKey'] == previous['assetKey']
+    assert replacement['summary'] == previous['summary']  # previous reading stays available
+    assert worker.rebuild_policy(store, apply=True)['blockers'] == []
+    assert len(store.list('transcript-summary')) == 2
+    assert store.get('transcript-summary', job['jobId']) == previous
+    assert store.object(previous['assetKey']) == old_asset
+    assert store.object(job['key'])[1] == original
+    assert worker.process(store, applied['records'][0]['jobId'], worker.private_root(tmp_path / 'work'), SimpleNamespace(responses=Responses()))
+    assert worker.rebuild_policy(store)['records'][0]['status'] == 'READY'
+
+
+def test_policy_rebuild_does_not_retry_unknown_paid_outcomes(tmp_path):
+    store, job, _ = queued(tmp_path)
+    responses = Responses(fail=True)
+    assert not worker.process(store, job['jobId'], worker.private_root(tmp_path / 'work'), SimpleNamespace(responses=responses))
+    result = worker.rebuild_policy(store, apply=True)
+    assert len(result['blockers']) == 1
+    assert len(store.list('transcript-summary')) == 1
+    assert len(responses.calls) == 1

@@ -453,12 +453,35 @@ Run `panther transcripts summary-worker --work-dir /private/work/summaries` on t
 subscription-authenticated laptop. While running, it discovers missing completed structured
 speech through bounded all-game materialized catalog pages at startup and every five minutes,
 with a persistent checkpoint. QUEUED jobs are leased; expired or failed jobs require attention.
-The local development SQLite service persists requests and honest source details, but reports
-that summary generation is not configured rather than inventing outputs or waiting forever.
+The complete local development stack uses the server-side OpenAI Responses API summary
+worker and persists requests, pinned source details and actual responses; it never invents
+outputs or automatically repeats ambiguous paid requests.
+
+Reader-summary policy v2 uses a specific title (at most 80 characters) and one to three
+short plain-language sentences (at most 600 characters). Test-only speech may simply be
+"This was a test." Evidence indices and capture uncertainty stay in structured fields;
+they are not reader-facing prose. Both summary drafting and independent production review
+use this policy. Source speech and previous summary assets are unchanged.
+
+For the private local database, inventory existing summaries without inference or writes:
+
+```sh
+.venv/bin/python tools/dev_summary_worker.py --database /private/development.sqlite \
+  --work-dir /private/work/summaries --rebuild-summary-policy \
+  --report /private/summary-policy-inventory.json
+```
+
+Repeat with `--apply` and a new private report path to queue one deterministic policy-v2
+replacement per ready source. The normal summary worker consumes those requests. Repeat
+inventory after completion: every record must be READY with no blockers. Previous results
+remain available while replacements run; failed/unknown paid outcomes are blockers and
+are never automatically retried. This operation does not modify transcript bytes, delete
+previous jobs or erase earlier summary assets. Restart workers with the updated policy
+before applying the backfill.
 
 For rollout, run `panther transcripts summaries-rebuild --report /private/summary-inventory.json`
 then repeat with `--apply` and a new report path. After workers finish, run `--verify` with
-another private report. Verification requires every discovered source's READY projection and
+another private report. Verification requires every discovered source's READY policy-v2 projection and
 exact source checksum; blockers fail verification and remain in the report. This versioned,
 repeatable all-game backfill preserves every source and previous summary. Private reports
 stay outside Git. Deployment/backfill is incomplete until authenticated production verification

@@ -10,7 +10,9 @@
   as navigation redirects, not duplicate libraries. Recording state belongs to its recording
   controls; do not show it on unrelated pages. Open transcript details in a dialog or nested view,
   preserving the list position and selection.
-- Videos uses episodes containing ordered, owned scenes, not an extra Video Project entity or
+- Episodes lives at `/games/:gameId/episodes` and lists/searches only episodes. Individual videos belong in
+  Assets with type, tag and character filters. Selected filter chips stay inside their controls. Episodes
+  contain ordered, owned scenes, not an extra Video Project entity or
   reusable scenes across episodes. Creating a scene requires its title only; other direction is
   optional and multiline. Typed scenes may select appropriate real assets (including a pinned map).
   Episode playback uses actual selected rendered outputs, never fabricated completion.

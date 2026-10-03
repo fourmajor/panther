@@ -19,7 +19,7 @@ export function AssetCreateForm({gameId,mode,initialType,initialName,initialProm
   const [characterId,setCharacterId]=useState(retained?.characterId||'');
   const submission=useRef(retained||null);
   const mutation=useMutation({retry:false,mutationFn:payload=>upload?onUpload(payload):onGenerate(payload),onSuccess:result=>{client.removeQueries({queryKey:cacheKey,exact:true});onComplete(result,submission.current);},onError:error=>{if(definitiveValidationError(error)){submission.current=null;client.removeQueries({queryKey:cacheKey,exact:true});}}});
-  const characterQuery=useQuery({queryKey:['asset-portrait-characters',gameId],queryFn:onCharacters,enabled:!upload&&type==='portrait'&&Boolean(onCharacters),retry:false,staleTime:30000});
+  const characterQuery=useQuery({queryKey:['asset-portrait-characters',gameId],queryFn:()=>onCharacters(),enabled:!upload&&type==='portrait'&&Boolean(onCharacters),retry:false,staleTime:30000});
   const choices=characterQuery.data?.characters||characters;
   const frozen=mutation.isPending||Boolean(submission.current);
   const submit=event=>{

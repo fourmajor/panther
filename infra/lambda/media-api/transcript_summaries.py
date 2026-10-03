@@ -298,6 +298,7 @@ def update(body, claims, action):
         if (
             doc.get("entityType") != "TranscriptSummary"
             or doc.get("schemaVersion") != 1
+            or doc.get("summaryPolicyVersion") != 2
             or doc.get("gameId") != job["gameId"]
             or doc.get("jobId") != job["jobId"]
             or doc.get("source") != job["source"]
@@ -308,9 +309,9 @@ def update(body, claims, action):
             not isinstance(summary, dict)
             or set(summary) != {"title", "summary", "segmentIndexes", "uncertainties"}
             or not isinstance(summary["title"], str)
-            or not 1 <= len(summary["title"]) <= 160
+            or not 1 <= len(summary["title"]) <= 80
             or not isinstance(summary["summary"], str)
-            or not 1 <= len(summary["summary"]) <= 4000
+            or not 1 <= len(summary["summary"]) <= 600
             or not isinstance(summary["segmentIndexes"], list)
             or not summary["segmentIndexes"]
             or not all(type(i) is int and i >= 0 for i in summary["segmentIndexes"])
@@ -328,7 +329,7 @@ def update(body, claims, action):
             or doc.get("reviewStatus") != "ai-reviewed-unverified"
         ):
             raise ValueError("Summary requires explicit source lineage and honest review status")
-        values.update(status="READY", assetKey=body["assetKey"], summary=summary)
+        values.update(status="READY", assetKey=body["assetKey"], summary=summary, summaryPolicyVersion=2)
     names = {f"#n{i}": k for i, k in enumerate(values)}
     parameters = {f":v{i}": v for i, v in enumerate(values.values())}
     result = table().update_item(

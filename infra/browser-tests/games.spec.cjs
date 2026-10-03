@@ -42,7 +42,7 @@ for(const width of [1280,390]) {
       ['Characters','/characters','#characters-status','#characters > .explorer-heading h1'],
       ['Sessions','/assets','#library-status','#library-title'],
       ['Novel','/novel','#novel-status','#novel > .explorer-heading h1'],
-      ['Video Episodes','/assets','#library-status','#library-title'],
+      ['Episodes','/assets','#library-status','#library-title'],
       ['Assets','/assets','#assets-library','#explorer h1'],
     ]) {
       // Reload the Assets page to exercise a cold catalog request.
@@ -419,7 +419,7 @@ for (const width of [1280, 390]) {
         const actionStyle=await action.evaluate(el=>{const c=getComputedStyle(el);return {height:el.getBoundingClientRect().height,border:c.borderTopStyle};});expect(actionStyle.height).toBe(36);expect(actionStyle.border).toBe('solid');
       }
       for(const select of await page.getByRole('combobox').all())if(await select.isVisible()){
-        const border=await select.evaluate(el=>{const c=getComputedStyle(el);return {style:c.borderTopStyle,width:c.borderTopWidth};});expect(border).toEqual({style:'solid',width:'1px'});
+        const border=await select.evaluate(el=>{const c=getComputedStyle(el.closest('.panther-multi-select-control')||el);return {style:c.borderTopStyle,width:c.borderTopWidth};});expect(border).toEqual({style:'solid',width:'1px'});
       }
       await page.screenshot({path:test.info().outputPath(`action-${section}-${width}.png`)});
     }
@@ -450,7 +450,7 @@ for(const width of [1280,390])test(`Settings tags can be created and reused in v
  await page.route('**/tags**',route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);tags.push(body.name);return route.fulfill({json:{tag:body.name,tags},headers:jsonHeaders});}return route.fulfill({json:{tags},headers:jsonHeaders});});
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{const path=new URL(route.request().url()).pathname;const data={'/episodes':{records:[],cursor:null},'/assets':{assets:[],cursor:null},'/video-collections':{collections:[],cursor:null}};return data[path]?route.fulfill({json:data[path],headers:jsonHeaders}):route.fallback();});
  await page.goto('https://panther.place/games/campaign-a/settings');const input=page.getByRole('combobox',{name:'Game tags',exact:true});await expect(input).toBeVisible();await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);await input.click();await page.keyboard.press('Escape');await expect(input).toBeFocused();await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);await input.click();const search=page.getByRole('combobox',{name:'Search game tags',exact:true});await search.fill('Adventure');await expect(page.getByRole('option',{name:'Create “Adventure”',exact:true})).toBeVisible();await page.screenshot({path:test.info().outputPath(`tag-controls-${width}.png`)});await search.press('Enter');await expect(page.locator('#game-tags-control')).toContainText('Adventure');expect(writes[0]).toEqual({gameId:'campaign-a',name:'Adventure'});const chip=page.locator('#game-tags-control').getByText('Adventure',{exact:true});const padding=await chip.evaluate(el=>getComputedStyle(el.parentElement).paddingRight);expect(parseFloat(padding)).toBeGreaterThanOrEqual(8);await expect(search).toHaveCount(0);await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);
- await page.getByRole('link',{name:'Video Episodes',exact:true}).click();const filter=page.getByRole('combobox',{name:'Tags',exact:true});await filter.click();const tagSearch=page.getByRole('combobox',{name:'Search tags',exact:true});await tagSearch.fill('Adven');await expect(page.getByRole('option',{name:'Adventure',exact:true})).toBeVisible();await tagSearch.press('Enter');await expect(page.getByRole('button',{name:'Remove Adventure from tags',exact:true})).toBeVisible();expect(writes).toHaveLength(1);
+ await page.getByRole('link',{name:'Episodes',exact:true}).click();const filter=page.getByRole('combobox',{name:'Tags',exact:true});await filter.click();const tagSearch=page.getByRole('combobox',{name:'Search tags',exact:true});await tagSearch.fill('Adven');await expect(page.getByRole('option',{name:'Adventure',exact:true})).toBeVisible();await tagSearch.press('Enter');await expect(page.getByRole('button',{name:'Remove Adventure from tags',exact:true})).toBeVisible();expect(writes).toHaveLength(1);
 });
 
 for (const width of [1280,390]) {

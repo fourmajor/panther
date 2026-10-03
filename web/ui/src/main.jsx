@@ -1,3 +1,4 @@
+import {TranscriptSources} from './transcript-sources.jsx';
 import {GameSystemPicker} from './game-system-picker.jsx';
 import React from "react";
 import {flushSync} from "react-dom";
@@ -88,6 +89,11 @@ export function unmountMultiSelect(host) {
 export function mountMultiSelect(host, props) {
   if (!multiSelectRoots.has(host)) multiSelectRoots.set(host, createRoot(host));
   multiSelectRoots.get(host).render(<MultiSelect {...props} modal={Boolean(host.closest('[role="dialog"]'))} />);
+}
+const transcriptSourceRoots=new WeakMap();
+export function mountTranscriptSources(host,props){
+  if(!transcriptSourceRoots.has(host))transcriptSourceRoots.set(host,createRoot(host));
+  flushSync(()=>transcriptSourceRoots.get(host).render(<TranscriptSources {...props}/>));
 }
 const gameSystemRoots=new WeakMap();
 export function mountGameSystemPicker(host,props){

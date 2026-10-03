@@ -62,19 +62,24 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  await expect(page.getByLabel('Title',{exact:true})).toHaveCount(0);
  await expect(page.getByLabel('Direction',{exact:true})).toHaveCount(0);
  await page.getByLabel('Prompt',{exact:true}).fill('Follow the companions across the river.');
- await expect(page.getByRole('dialog',{name:'Generate chapter',exact:true}).getByText('The companions discuss crossing the river.').first()).toBeVisible();
- await page.getByRole('button',{name:'Review First session',exact:true}).click();
- const review=page.getByRole('dialog',{name:'Transcript review',exact:true});await expect(review).toContainText('We should cross before sunset.');await expect(review).toContainText('Morgan');
- await review.getByRole('button',{name:'Regenerate summary',exact:true}).click();
- await review.getByRole('button',{name:'Close',exact:true}).click();
- await page.getByLabel('First session',{exact:true}).check();
- await page.getByLabel('Second session',{exact:true}).check();
+ const sourceDialog=page.getByRole('dialog',{name:'Generate chapter',exact:true});
+ const first=sourceDialog.getByRole('button',{name:'First session',exact:true}),second=sourceDialog.getByRole('button',{name:'Second session',exact:true});
+ await expect(first).toHaveAttribute('aria-expanded','false');await expect(second).toHaveAttribute('aria-expanded','false');
+ await expect(sourceDialog.getByText('The companions discuss crossing the river.').first()).not.toBeVisible();
+ await sourceDialog.getByRole('checkbox',{name:'First session',exact:true}).check();await expect(first).toHaveAttribute('aria-expanded','false');
+ await first.click();await expect(first).toHaveAttribute('aria-expanded','true');await expect(sourceDialog.getByText('The companions discuss crossing the river.').filter({visible:true})).toHaveCount(1);
+ await second.click();await expect(second).toHaveAttribute('aria-expanded','true');await expect(first).toHaveAttribute('aria-expanded','false');await expect(sourceDialog.getByRole('checkbox',{name:'First session',exact:true})).toBeChecked();
+ await sourceDialog.getByRole('checkbox',{name:'Second session',exact:true}).check();
+ await expect(sourceDialog.getByRole('button',{name:/Review|Regenerate/})).toHaveCount(0);expect(reads).not.toContain('/asset-document');
  await page.getByRole('button',{name:'Add context',exact:true}).click();
  await page.getByRole('dialog',{name:'Add context',exact:true}).getByLabel('Campaign lore',{exact:true}).check();
  await expect(composer.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
  await page.getByRole('dialog',{name:'Add context',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
  const submit=page.locator('#editorial-video-composer form, .novel-composer-dialog[data-panther-dialog] form').getByRole('button',{name:target==='novel'?'Generate chapter':'Create project',exact:true});
  await expect(submit).toBeInViewport();
+ const buttonBounds=await submit.boundingBox(),composerBounds=await sourceDialog.boundingBox();
+ expect(buttonBounds.x+buttonBounds.width).toBeLessThanOrEqual(composerBounds.x+composerBounds.width-8);
+ expect(buttonBounds.x).toBeGreaterThanOrEqual(composerBounds.x+8);
  expect(await submit.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await page.screenshot({path:testInfo.outputPath(`editorial-form-${width}.png`),fullPage:true});
  await submit.click();
@@ -90,7 +95,7 @@ async function editSceneInputs(page,prompt,{characters=[],transcript=false}={}) 
  const editor=page.getByRole('form',{name:'Scene editor',exact:true});
  await editor.getByLabel('Prompt',{exact:true}).fill(prompt);
  for(const name of characters){await editor.getByRole('combobox',{name:'Characters',exact:true}).click();await page.getByRole('combobox',{name:'Search characters',exact:true}).fill(name);await page.getByRole('option',{name,exact:true}).click();}
- if(transcript)await editor.getByLabel('First session',{exact:true}).check();
+ if(transcript)await editor.getByRole('checkbox',{name:'First session',exact:true}).check();
  await editor.getByRole('button',{name:'Save changes',exact:true}).click();await expect(editor).not.toBeVisible();
 }
 for(const width of [1280,390])for(const withSources of [false,true])test(`Prompt-led video with ${withSources?'optional transcripts':'characters only'} at ${width}px`,async({page,context},testInfo)=>{
@@ -172,20 +177,19 @@ for(const width of [1280,390])test(`Transcript picker replaces technical names w
  await page.setViewportSize({width,height:900});await fixture(context,{technicalSources:true});
  await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
  const composer=page.getByRole('dialog',{name:'Generate chapter',exact:true});await expect(composer.getByRole('checkbox',{name:'The river crossing'})).toHaveCount(2);
- await expect(composer).not.toContainText('089c592c');await expect(composer).toContainText('Recorded');await expect(composer).toContainText('Morgan');
- await page.getByRole('dialog',{name:'Generate chapter',exact:true}).getByRole('button',{name:'Review The river crossing'}).first().click();await expect(page.getByRole('dialog',{name:'Transcript review',exact:true}).getByRole('heading')).toHaveText('The river crossing');
+ await expect(composer).not.toContainText('089c592c');await expect(composer.locator('.editorial-source-meta').first()).toContainText('2026');await expect(composer).toContainText('Morgan');
+ const title=composer.getByRole('button',{name:'The river crossing',exact:true}).first();await expect(title).toHaveAttribute('aria-expanded','false');await title.click();await expect(title).toHaveAttribute('aria-expanded','true');await expect(composer.getByText('The companions discuss crossing the river.').filter({visible:true})).toHaveCount(1);await expect(page.getByRole('dialog',{name:'Transcript review',exact:true})).toHaveCount(0);
 });
 
-test('An uncertain summary regeneration retries the same operation',async({page,context})=>{
- await fixture(context);const operations=[];
- await context.route('https://test.execute-api.us-west-2.amazonaws.com/transcript-summaries**',route=>{
-  if(route.request().method()==='POST'){operations.push(route.request().postDataJSON().operationId);if(operations.length===1)return route.fulfill({status:503,json:{error:'Connection interrupted'},headers:{'access-control-allow-origin':'https://panther.place'}});}
-  return route.fulfill({json:{status:'READY',participants:[],summary:{summary:'The river crossing.'}},headers:{'access-control-allow-origin':'https://panther.place'}});
- });
+test('Compact transcript summaries use cached reads and never open raw artifacts or regenerate',async({page,context})=>{
+ const {reads}=await fixture(context);const writes=[];
+ page.on('request',request=>{if(request.url().includes('/transcript-summaries')&&request.method()==='POST')writes.push(request.url());});
  await page.goto('https://panther.place/games/test-game/novel');await page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter',exact:true}).click();
- await page.getByRole('button',{name:'Review First session',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Transcript review',exact:true});
- await dialog.getByRole('button',{name:'Regenerate summary',exact:true}).click();await dialog.getByRole('button',{name:'Retry summary',exact:true}).click();
- await expect.poll(()=>operations.length).toBe(2);expect(operations[0]).toMatch(/^[a-f0-9]{32}$/);expect(operations[1]).toBe(operations[0]);
+ const composer=page.getByRole('dialog',{name:'Generate chapter',exact:true}),first=composer.getByRole('button',{name:'First session',exact:true});
+ await expect(first).toBeVisible();await expect(composer).toContainText('Morgan');await expect(composer.locator('.editorial-source-meta').first()).toContainText('2026');
+ const initial=reads.filter(path=>path==='/transcript-summaries').length;
+ await first.focus();await first.press('Enter');await expect(first).toHaveAttribute('aria-expanded','true');await first.press('Enter');await expect(first).toHaveAttribute('aria-expanded','false');await first.press('Enter');await expect(first).toHaveAttribute('aria-expanded','true');
+ expect(reads.filter(path=>path==='/transcript-summaries').length).toBe(initial);expect(reads).not.toContain('/asset-document');expect(writes).toEqual([]);await expect(composer.getByRole('button',{name:/Review|Regenerate/})).toHaveCount(0);
 });
 
 for(const width of [1280,390]) test(`Chapter progress shows real activity and actionable failure at ${width}px`,async({page,context})=>{
@@ -278,7 +282,7 @@ for(const width of [1280,390])test(`Novel generation continues after navigation 
 
 for(const width of [1280,390])test(`Add scene types stay visible above the dialog and support keyboard selection at ${width}px`,async({page,context},testInfo)=>{
  await page.setViewportSize({width,height:900});await fixture(context);await page.goto('https://panther.place/games/test-game/videos');await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'Add scene',exact:true}).click();
- const dialog=page.getByRole('dialog',{name:'Add scene',exact:true}),select=dialog.getByRole('combobox',{name:'Scene type',exact:true});const transcriptCopy=dialog.locator('.editorial-source-copy').first();await expect(transcriptCopy).toBeVisible();expect((await transcriptCopy.boundingBox()).width).toBeGreaterThanOrEqual(160);expect((await transcriptCopy.locator('strong').boundingBox()).height).toBeLessThan(60);await select.click();const menu=page.getByRole('listbox');await expect(menu).toBeVisible();await expect.poll(()=>menu.evaluate(node=>getComputedStyle(node).opacity)).toBe('1');
+ const dialog=page.getByRole('dialog',{name:'Add scene',exact:true}),select=dialog.getByRole('combobox',{name:'Scene type',exact:true});const transcriptCopy=dialog.locator('.editorial-source-copy').first();await expect(transcriptCopy).toBeVisible();expect((await transcriptCopy.boundingBox()).width).toBeGreaterThanOrEqual(160);expect((await transcriptCopy.locator('.transcript-source-name').boundingBox()).height).toBeLessThan(60);await select.click();const menu=page.getByRole('listbox');await expect(menu).toBeVisible();await expect.poll(()=>menu.evaluate(node=>getComputedStyle(node).opacity)).toBe('1');
  expect(await menu.evaluate(node=>node.closest('[role=dialog]'))).toBeNull();const bounds=await menu.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.y).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);expect(bounds.y+bounds.height).toBeLessThanOrEqual(900);
  for(const name of ['General','Opener','Map','Travel','Action','Dialogue']){const option=page.getByRole('option',{name,exact:true});await expect(option).toBeInViewport();expect(await option.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
  await page.screenshot({path:testInfo.outputPath(`scene-type-menu-${width}.png`)});await page.getByRole('option',{name:'Dialogue',exact:true}).click();await expect(dialog).toBeVisible();await expect(select).toHaveText('Dialogue');await select.focus();await page.keyboard.press('Space');await expect(page.getByRole('option',{name:'Dialogue',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(page.getByRole('option',{name:'General',exact:true})).toBeFocused();await page.keyboard.press('Enter');await expect(select).toHaveText('General');await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).not.toBeVisible();
@@ -294,17 +298,17 @@ for(const width of [1280,390])test(`Escape during nested dialog registration pre
  // sleeping until the stale parent listener has happened to update.
  await page.evaluate(()=>{
   const escapeDuringRegistration=()=>{
-   const child=document.querySelector('[role="dialog"][aria-label="Transcript review"]');
+   const child=document.querySelector('[role="dialog"][aria-label="Add context"]');
    if(!child)return;
    document.removeEventListener('dismissableLayer.update',escapeDuringRegistration);
    child.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
   };
   document.addEventListener('dismissableLayer.update',escapeDuringRegistration);
  });
- await page.getByRole('button',{name:'Review First session',exact:true}).click();
+ await page.getByRole('button',{name:'Add context',exact:true}).click();
  await expect(composer).toBeVisible();await expect(composer.getByLabel('Prompt',{exact:true})).toHaveValue('Keep this unsent draft.');
  expect(submissions).toEqual([]);
- const review=page.getByRole('dialog',{name:'Transcript review',exact:true});
+ const review=page.getByRole('dialog',{name:'Add context',exact:true});
  if(await review.isVisible())await review.getByRole('button',{name:'Close',exact:true}).click();
- await expect(page.getByRole('button',{name:'Review First session',exact:true})).toBeFocused();
+ await expect(page.getByRole('button',{name:'Add context',exact:true})).toBeFocused();
 });

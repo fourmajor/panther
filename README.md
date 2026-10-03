@@ -16,14 +16,18 @@ Choose the current game in the header. Its sections are:
 - **Sessions:** browser recording, continuous playback and transcript browsing in one section.
   Previous Audio and Transcripts routes lead here. Transcript details open separately from the list.
 - **Novel:** generate a chapter from a prompt with optional transcript/context inputs, or write and
-  edit chapters manually. Source reviews preserve raw speech separately from summaries/adaptations.
-- **Videos:** searchable multi-tag and multi-character filters use removable selections. Episodes own ordered scenes. A scene can start with a title, use characters and optional
+  edit chapters manually. Compact transcript selections expand one concise summary at a time; raw speech
+  remains separate from adaptations.
+- **Episodes:** `/games/:gameId/episodes` searches episodes only. Episodes own ordered scenes. A scene can
+  start with a title, use characters and optional
   sources, and specify a scene type. Episode/scene forms open in dialogs; a focused editor keeps
   ordered scenes beside the selected scene’s prompt, cast and output choices. Playback opens in its
   own dialog. Map scenes select an actual map asset. An episode's playback
   follows its selected rendered scene outputs in order; drafting or planning does not imply footage
   has been generated.
-- **Assets:** browse and search game assets, filter by type, identify file formats, upload files and request image generation. Jobs show activity or an explicit worker/configuration problem.
+- **Assets:** browse individual videos, portraits and other game assets; search and filter by type, tags and
+  characters with selections contained inside the controls. Identify file formats, upload files and request
+  image generation. Jobs show activity or an explicit worker/configuration problem.
 - **Workflows:** inspect reported server/laptop job stages, dependencies and output links. Progress
   updates automatically; queued work is distinct from a running worker or completed output.
 - **Settings:** edit the game's name, description, system and visual defaults. Account settings have

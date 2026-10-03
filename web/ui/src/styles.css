@@ -144,3 +144,23 @@
 .panther-dom-dialog [data-panther-dialog]{position:static!important;inset:auto!important;transform:none!important;translate:none!important;width:100%!important;max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;overflow:visible!important;}.panther-dom-dialog [data-panther-dialog][hidden]{display:none!important;}.panther-dom-dialog>h2.sr-only{position:absolute;margin:0;font-size:1px;}.panther-dom-dialog .panther-dialog-close[hidden]{display:none;}
 
 .panther-dom-dialog.design-atlas{width:min(92vw,1400px);max-width:1400px;}.panther-dom-dialog.episode-playback-dialog,.panther-dom-dialog.preview{width:min(62rem,calc(100vw - 2rem));max-width:62rem;}.panther-dom-dialog.character-editor-dialog{width:min(52rem,calc(100vw - 2rem));max-width:52rem;}
+
+/* The composition form shares the Dialog's content width, including its footer. */
+.panther-dom-dialog.novel-composer-dialog {padding:1.5rem;display:block;}
+.panther-dom-dialog.novel-composer-dialog form,
+.panther-dom-dialog.novel-composer-dialog form > div {min-width:0;max-width:100%;}
+.panther-dom-dialog.novel-composer-dialog .editorial-form-actions {flex-wrap:wrap;gap:.5rem;bottom:0;}
+@media(max-width:600px){
+  .panther-dom-dialog.novel-composer-dialog {padding:1rem;}
+  .panther-dom-dialog.novel-composer-dialog .editorial-form-actions .text-link-button {flex-basis:100%;margin-right:0;text-align:left;}
+}
+
+.panther-multi-select-values {scrollbar-width:none;}
+.panther-multi-select-values::-webkit-scrollbar {display:none;}
+.panther-multi-select-control {overflow:hidden;}
+.assets-metadata-filters {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;max-width:40rem;}
+.assets-filter-scope {font-size:.8rem;color:var(--panther-muted);margin:0;}
+
+.panther-multi-select .panther-multi-select-control > [role="combobox"] {min-height:0;height:34px;}
+.panther-multi-select .panther-multi-select-control[data-selected="true"] > [role="combobox"] {width:2.25rem;}
+@media(max-width:600px){.assets-metadata-filters,.video-top-filter-fields {grid-template-columns:1fr;}}
