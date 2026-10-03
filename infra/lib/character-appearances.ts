@@ -1,3 +1,4 @@
+import {AssetArchive} from "./asset-archive";
 import * as path from "node:path";
 import { Duration } from "aws-cdk-lib";
 import { Construct } from "constructs";
@@ -12,6 +13,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 /** Versioned private appearance metadata, never an inference service or idle worker. */
 export class CharacterAppearances extends Construct {
   static grantProducer(fn: lambda.Function, browse: dynamodb.ITable, catalog: dynamodb.ITable) {
+    AssetArchive.grantReferenceWrites(fn,browse);
     fn.addEnvironment("ASSET_BROWSE_TABLE",browse.tableName);
     fn.addEnvironment("CATALOG_TABLE",catalog.tableName);
     browse.grant(fn,"dynamodb:GetItem","dynamodb:Query","dynamodb:BatchGetItem");
@@ -37,6 +39,7 @@ export class CharacterAppearances extends Construct {
         CATALOG_TABLE:props.catalogTable.tableName, MODEL_PUBLISHERS:props.accessEnvironment.MODEL_PUBLISHERS,
         ASSET_MIGRATORS:props.accessEnvironment.ASSET_MIGRATORS},
     });
+    AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.browseTable.grant(fn,"dynamodb:GetItem","dynamodb:Query","dynamodb:BatchGetItem");
     props.bucket.grantRead(fn,"games/*");
     fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],

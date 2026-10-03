@@ -1,50 +1,62 @@
+import {createPortal} from 'react-dom';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {File, FileAudio, FileCode, FileText, FileVideo, Image, Search, Sparkles, Upload} from 'lucide-react';
+import {FolderOpen, File, FileAudio, FileCode, FileText, FileVideo, Image, Trash2, Search, Sparkles, Upload} from 'lucide-react';
+import {useQuery} from '@tanstack/react-query';
 import {Button} from './components/ui/button.jsx';
 import {Input} from './components/ui/input.jsx';
-import {assetLibraryType,assetFileFormat} from './assets-library-data.js';
+import {assetLibraryType,assetFileFormat,assetIsImage,assetTypeLabel,ordinaryLibraryAsset} from './assets-library-data.js';
+import {Dialog,DialogContent,DialogTitle,DialogDescription} from './components/ui/dialog.jsx';
 import {AssetCreateForm} from './asset-create-form.jsx';
 import {AssetGenerationStatus} from './asset-generation-status.jsx';
 
 const emptyJobs=[];
-const filters=[['all','All'],['map','Maps'],['blueprint','Blueprints'],['location','Locations'],['other','Other']];
-const typeNames={map:'Map',blueprint:'Blueprint',location:'Location',other:'Other'};
-function AssetThumbnail({asset,onThumbnail}) {
+const baseFilters=[['all','All'],['map','Maps'],['blueprint','Blueprints'],['location','Locations'],['portrait','Portraits'],['artwork','Artwork'],['video','Videos'],['audio','Audio'],['document','Documents'],['model-3d','3D'],['other','Other']];
+
+function AssetThumbnail({asset,onThumbnail,gameId}) {
   const host=useRef(null);
-  const [url,setUrl]=useState(asset.previewUrl || '');
-  const image=asset.contentType?.startsWith('image/');
+  const [visible,setVisible]=useState(false),[failedUrl,setFailedUrl]=useState('');
+  const image=assetIsImage(asset);
   const format=assetFileFormat(asset);
+  const video=asset.contentType?.startsWith('video/')||['MP4','WEBM','MOV','M4V'].includes(format);
   const Icon=image?Image:asset.contentType?.startsWith('audio/')||['WAV','MP3','OGG','FLAC','M4A'].includes(format)?FileAudio:asset.contentType?.startsWith('video/')||['MP4','WEBM','MOV'].includes(format)?FileVideo:['JSON','XML','YAML','YML'].includes(format)?FileCode:['TXT','MD','PDF','DOCX'].includes(format)?FileText:File;
   useEffect(()=>{
-    setUrl(asset.previewUrl || '');
-    if(!image||asset.previewUrl||!onThumbnail)return;
-    let active=true, observer;
-    const load=()=>Promise.resolve().then(()=>onThumbnail(asset)).then(value=>{if(active)setUrl(value || '');}).catch(()=>{});
-    if(typeof IntersectionObserver==='undefined')load();
-    else {observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){observer.disconnect();load();}},{rootMargin:'160px'});observer.observe(host.current);}
-    return()=>{active=false;observer?.disconnect();};
-  },[asset.key,asset.previewUrl,image,onThumbnail]);
-  return <span ref={host} className="assets-card-image">{url?<img src={url} alt="" loading="lazy" onError={()=>setUrl('')}/>:<Icon size={32} aria-hidden="true"/>}</span>;
+    setFailedUrl('');
+    if(!image&&!video)return;
+    if(typeof IntersectionObserver==='undefined'){setVisible(true);return;}
+    const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){setVisible(true);observer.disconnect();}},{rootMargin:'160px'});
+    observer.observe(host.current);
+    return()=>observer.disconnect();
+  },[asset.key,image,video]);
+  const preview=useQuery({queryKey:['asset-thumbnail',gameId,asset.key],queryFn:()=>onThumbnail(asset),enabled:(image||video)&&visible&&!asset.previewUrl&&Boolean(onThumbnail),staleTime:240000,retry:false,refetchInterval:query=>video&&!query.state.data&&!query.state.error?3000:false});
+  const url=asset.previewUrl||preview.data||'';
+  return <span ref={host} className="assets-card-image">{url&&url!==failedUrl?<img src={url} alt="" loading="lazy" onError={()=>setFailedUrl(url)}/>:<Icon size={32} aria-hidden="true"/>}</span>;
 }
-export function AssetsLibrary({gameId,assets=[],loading=false,error='',hasMore=false,onMore,onOpen,onUpload,onGenerate,onThumbnail,onGenerationStatus,initialJobs=emptyJobs,browseFilesHref,onBrowseFiles}) {
+export function AssetsLibrary({gameId,assets=[],loading=false,error='',hasMore=false,onMore,onOpen,onUpload,onGenerate,onThumbnail,onGenerationStatus,initialJobs=emptyJobs,browseFilesHref,onBrowseFiles,onCapabilities,actionsHost,onDelete,characters=[],onCharacters}) {
+  const [deletion,setDeletion]=useState(null),[deletePending,setDeletePending]=useState(false),[deleteError,setDeleteError]=useState('');
+  const deleteAsset=async()=>{setDeletePending(true);setDeleteError('');try{await onDelete(deletion.asset,deletion.operationId);setCreated(items=>items.filter(item=>item.key!==deletion.asset.key));setDeletion(null);}catch(error){setDeleteError(error.message||'The asset could not be deleted.');}finally{setDeletePending(false);}};
+  const capabilities=useQuery({queryKey:['generation-capabilities'],queryFn:onCapabilities,enabled:Boolean(onCapabilities),staleTime:10000,refetchInterval:15000,retry:false});
+  const generationUnavailable=Boolean(onCapabilities)&&(capabilities.isPending||capabilities.isError||capabilities.data?.images!==true);
   const [type,setType]=useState('all'),[search,setSearch]=useState(''),[form,setForm]=useState(null),[jobs,setJobs]=useState([]),[created,setCreated]=useState([]);
   useEffect(()=>{setJobs(previous=>[...initialJobs,...previous.filter(job=>!initialJobs.some(incoming=>incoming.jobId===job.jobId))]);},[initialJobs]);
   const published=useCallback(job=>{setCreated(previous=>previous.some(asset=>asset.key===job.assetKey)?previous:[...previous,job.asset||{key:job.assetKey,title:job.name,kind:job.type}]);},[]);
-  const allAssets=useMemo(()=>[...assets,...created.filter(asset=>!assets.some(existing=>existing.key===asset.key))],[assets,created]);
-  const completed=(result,payload)=>{if(form.mode==='upload'){setCreated(previous=>[...previous,result.asset||result]);}else {setJobs(previous=>[{...result,name:result.name||payload.name,type:result.type||payload.type},...previous.filter(job=>job.jobId!==result.jobId)]);}setForm(null);};
+  const allAssets=useMemo(()=>[...assets,...created.filter(asset=>!assets.some(existing=>existing.key===asset.key))].filter(ordinaryLibraryAsset),[assets,created]);
+  const filters=useMemo(()=>[...baseFilters,...[...new Set(allAssets.map(assetLibraryType))].filter(type=>!baseFilters.some(([known])=>known===type)).sort().map(type=>[type,assetTypeLabel(type)])],[allAssets]);
+  const completed=(result,payload)=>{if(form.mode==='upload'){setCreated(previous=>[...previous,result.asset||result]);}else {setJobs(previous=>[{...result,name:result.name||payload.name,type:result.type||payload.type,openDetails:true},...previous.filter(job=>job.jobId!==result.jobId)]);}setForm(null);};
   useEffect(()=>{setType('all');setSearch('');setForm(null);setCreated([]);setJobs(initialJobs);},[gameId]);
   const visible=useMemo(()=>allAssets.filter(asset=>(type==='all'||assetLibraryType(asset)===type)&&(!search||[asset.title,asset.name,...(Array.isArray(asset.tags)?asset.tags:[])].filter(Boolean).join(' ').toLocaleLowerCase().includes(search.toLocaleLowerCase()))),[allAssets,type,search]);
+  const actions=<div className="assets-actions">{browseFilesHref&&<a className="assets-browse-files" aria-label="Browse files" title="Browse files" href={browseFilesHref} onClick={onBrowseFiles}><FolderOpen size={16} aria-hidden="true"/><span>Browse files</span></a>}{onUpload&&<Button data-action-role="upload" className="ui-action-button" variant="outline" disabled={Boolean(form)} onClick={()=>setForm({mode:'upload',type})}><Upload size={16} aria-hidden="true"/>Upload</Button>}{onGenerate&&<Button data-action-role="generate" className="ui-action-button" disabled={Boolean(form)||generationUnavailable} title={generationUnavailable?'Image generation is unavailable':undefined} onClick={()=>setForm({mode:'generate',type})}><Sparkles size={16} aria-hidden="true"/>Generate</Button>}</div>;
   return <section className="assets-library" aria-label="Assets">
-    {browseFilesHref&&<a className="assets-browse-files" href={browseFilesHref} onClick={onBrowseFiles}>Browse files</a>}
-    <div className="assets-toolbar"><label className="assets-search"><Search size={18} aria-hidden="true"/><span className="sr-only">Search assets</span><Input type="search" placeholder="Search assets" value={search} onChange={event=>setSearch(event.target.value)}/></label><div className="assets-actions">{onUpload&&<Button variant="secondary" disabled={Boolean(form)} onClick={()=>setForm({mode:'upload',type})}><Upload size={16} aria-hidden="true"/>Upload</Button>}{onGenerate&&<Button disabled={Boolean(form)} onClick={()=>setForm({mode:'generate',type})}><Sparkles size={16} aria-hidden="true"/>Generate</Button>}</div></div>
-    {form&&<AssetCreateForm key={`${gameId}:${form.mode}`} gameId={gameId} mode={form.mode} initialType={form.type} onUpload={onUpload} onGenerate={onGenerate} onComplete={completed} onClose={()=>setForm(null)}/>}
-    {jobs.length>0&&<div className="assets-generation-jobs" aria-label="Generation progress">{jobs.map(job=><AssetGenerationStatus key={job.jobId} gameId={gameId} job={job} onGenerationStatus={onGenerationStatus} onOpen={onOpen} onPublished={published}/>)}</div>}
+    {actionsHost&&createPortal(actions,actionsHost)}
+    <div className="assets-toolbar"><label className="assets-search"><Search size={18} aria-hidden="true"/><span className="sr-only">Search assets</span><Input type="search" placeholder="Search assets" value={search} onChange={event=>setSearch(event.target.value)}/></label>{!actionsHost&&actions}</div>
+    {form&&<AssetCreateForm key={`${gameId}:${form.mode}`} gameId={gameId} mode={form.mode} characters={characters} onCharacters={onCharacters} uploadTypes={filters.filter(([value])=>value!=='all').map(([value])=>value)} initialType={form.type} initialName={form.name} initialPrompt={form.prompt} onUpload={onUpload} onGenerate={onGenerate} onComplete={completed} onClose={()=>setForm(null)}/>}
+    {jobs.length>0&&<div className="assets-generation-jobs" aria-label="Generation progress">{jobs.map(job=><AssetGenerationStatus key={job.jobId} gameId={gameId} job={job} onGenerationStatus={onGenerationStatus} onOpen={onOpen} onPublished={published} onRetry={job=>setForm({mode:'generate',type:job.type,name:job.name,prompt:job.prompt})}/>)}</div>}
     <div className="assets-filters" role="group" aria-label="Asset type">{filters.map(([value,label])=><Button key={value} variant={type===value?'secondary':'ghost'} className="assets-filter" aria-pressed={type===value} onClick={()=>setType(value)}>{label}</Button>)}</div>
     {error&&<p role="alert" className="assets-error">{error}</p>}
     <div className="assets-grid" aria-busy={loading}>
-      {loading&&!allAssets.length?Array.from({length:6},(_,i)=><div key={i} className="assets-card assets-card-placeholder" aria-hidden="true"><span className="assets-card-image ui-skeleton"/><span className="ui-skeleton assets-title-skeleton"/></div>):visible.map(asset=><Button variant="secondary" key={asset.key} className="assets-card" onClick={()=>onOpen?.(asset)}><AssetThumbnail asset={asset} onThumbnail={onThumbnail}/><span className="assets-card-body"><span className="assets-card-title">{asset.title||asset.name||asset.key.split('/').at(-1)}</span><span className="assets-card-type">{typeNames[assetLibraryType(asset)]} · <span className="assets-card-format">{assetFileFormat(asset)}</span></span></span></Button>)}
+      {loading&&!allAssets.length?Array.from({length:6},(_,i)=><div key={i} className="assets-card assets-card-placeholder" aria-hidden="true"><span className="assets-card-image ui-skeleton"/><span className="ui-skeleton assets-title-skeleton"/></div>):visible.map(asset=><article className="assets-card-shell" key={asset.key}><Button variant="secondary" className="assets-card" onClick={()=>onOpen?.(asset)}><AssetThumbnail asset={asset} gameId={gameId} onThumbnail={onThumbnail}/><span className="assets-card-body"><span className="assets-card-title">{asset.title||asset.name||asset.key.split('/').at(-1)}</span><span className="assets-card-type">{assetTypeLabel(assetLibraryType(asset))} · <span className="assets-card-format">{assetFileFormat(asset)}</span></span></span></Button>{onDelete&&<Button variant="ghost" className="assets-delete" aria-label={`Delete ${asset.title||asset.name||asset.key.split('/').at(-1)}`} title="Delete asset" onClick={()=>{setDeleteError('');setDeletion({asset,operationId:crypto.randomUUID().replaceAll('-','')});}}><Trash2 size={16} aria-hidden="true"/></Button>}</article>)}
     </div>
     {!loading&&!visible.length&&!error&&<p className="assets-empty">{search?'No matching assets.':type==='all'?'No assets yet.':`No ${filters.find(([value])=>value===type)[1].toLowerCase()} yet.`}</p>}
+    {deletion&&<Dialog open onOpenChange={open=>{if(!open&&!deletePending)setDeletion(null);}}><DialogContent className="asset-delete-dialog"><DialogTitle>Delete asset?</DialogTitle><DialogDescription>Remove this asset from the library?</DialogDescription><p className="asset-delete-name">{deletion.asset.title||deletion.asset.name||deletion.asset.key.split('/').at(-1)}</p>{deleteError&&<p role="alert" className="asset-progress-error">{deleteError}</p>}<div className="assets-form-actions"><Button variant="secondary" disabled={deletePending} onClick={()=>setDeletion(null)}>Cancel</Button><Button disabled={deletePending} onClick={()=>void deleteAsset()}>{deletePending?'Deleting…':'Delete'}</Button></div></DialogContent></Dialog>}
     {hasMore&&<Button variant="secondary" disabled={loading} className="assets-more" onClick={onMore}>{loading?'Loading…':'Load more'}</Button>}
   </section>;
 }

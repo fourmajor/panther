@@ -157,6 +157,8 @@ test('Incomplete history and polling failures are visible, never a fake empty li
   await expect(page.locator('#workshop-refresh')).toBeHidden();
   state.error=false;await page.clock.fastForward(16000);await expect(page.locator('.workshop-card')).toHaveCount(4);
   state.error=true;await page.clock.fastForward(16000);
-  await expect(page.locator('#workshop-health')).toContainText('out of date');
+  await expect(page.locator('#workshop-health')).toContainText('Could not update progress');
+  await expect(page.locator('#workshop-health')).toContainText('Retrying automatically');
+  await expect(page.locator('#workshop-health')).toBeVisible();
   await expect(page.locator('.workshop-card')).toHaveCount(4);
 });

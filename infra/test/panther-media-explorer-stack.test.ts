@@ -91,9 +91,9 @@ test("appearance cutover is JWT protected and cannot overwrite game files", () =
   });
   const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("CharacterAppearances"));
   const serialized=JSON.stringify(policies);
-  assert.doesNotMatch(serialized,/s3:PutObject|s3:DeleteObject|dynamodb:UpdateItem|dynamodb:DeleteItem|states:|InvokeFunction/);
+  assert.doesNotMatch(serialized,/s3:PutObject|s3:DeleteObject|dynamodb:DeleteItem|states:|InvokeFunction/);
   const statements=policies.flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
-  const writes=statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  const writes=statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem") && ![s.Action].flat().includes("dynamodb:UpdateItem"));
   assert.equal(writes.length,1);
   assert.deepEqual(writes[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],[
     "character-looks#*","character-looks-history#*","character-looks-ops#*","character-looks-migration#*",
@@ -421,7 +421,7 @@ test("novel organization is scoped metadata, not manuscript or workflow mutation
   assert.match(serialized,/novel-library-history#\*/); assert.match(serialized,/dynamodb:ConditionCheckItem/);
   assert.doesNotMatch(serialized,/s3:|states:|InvokeFunction|UpdateItem|DeleteItem/);
   const statements=policies.flatMap(([,p])=>(p as any).Properties.PolicyDocument.Statement);
-  const writes=statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  const writes=statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem") && ![s.Action].flat().includes("dynamodb:UpdateItem"));
   assert.equal(writes.length,1);
   assert.deepEqual(writes[0].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],["novel-library#*","novel-library-history#*","novel-library-ops#*"]);
 });
@@ -595,7 +595,7 @@ test("media API is JWT protected with limited conditional upload permissions", (
     AuthorizerType: "JWT",
     IdentitySource: ["$request.header.Authorization"],
   });
-  template.resourceCountIs("AWS::ApiGatewayV2::Route", 122);
+  template.resourceCountIs("AWS::ApiGatewayV2::Route", 128);
   template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
     RouteKey: "PUT /character-portrait", AuthorizationType: "JWT",
   });
@@ -692,7 +692,7 @@ test("episode-owned scenes have authenticated metadata routes and no media gener
     assert.ok([statement.Action].flat().every((action:string)=>action.startsWith("dynamodb:") || action.startsWith("logs:")));
     assert.ok(![statement.Action].flat().includes("dynamodb:DeleteItem"));
   }
-  const writes = statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem"));
+  const writes = statements.filter(s=>[s.Action].flat().includes("dynamodb:PutItem") && ![s.Action].flat().includes("dynamodb:UpdateItem"));
   assert.equal(writes.length,1);
   assert.deepEqual(writes[0].Condition,{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":[
     "episode-scenes-v1#*","episode-scenes-v1-history#*","episode-scenes-v1-ops#*","episode-scenes-migration-v1#*"
@@ -785,4 +785,30 @@ test("transcript summaries use authenticated source-pinned subscription worker r
 test("actual raster style previews are packaged separately from private game assets", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("Custom::CDKBucketDeployment", {DestinationBucketKeyPrefix:"style-previews",Prune:false,DistributionPaths:["/style-previews/*"],SystemMetadata:Match.objectLike({"cache-control":"public,max-age=3600"})});
+});
+
+ test("tags and novel review use authenticated scoped metadata only", () => {
+  const template=mediaExplorerTemplate();
+  for(const path of ["tags","novel-review"]) for(const method of ["GET","POST"])
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:`${method} /${path}`,AuthorizationType:"JWT"});
+  const policies=Object.entries(template.findResources("AWS::IAM::Policy")).filter(([id])=>id.startsWith("EditorialProcessingUserMetadata"));
+  const serialized=JSON.stringify(policies);
+  assert.match(serialized,/novel-review-history#/); assert.match(serialized,/dynamodb:ConditionCheckItem/);
+  assert.doesNotMatch(serialized,/s3:|states:|InvokeFunction|UpdateItem|DeleteItem/);
+  assert.match(serialized,/dynamodb:LeadingKeys/);
+ });
+
+
+test("logical archive routes retain S3 bytes and scope transactional current-reference guards",()=>{
+ const template=mediaExplorerTemplate();
+ const functions=template.findResources("AWS::Lambda::Function");
+ const archive=Object.values(functions).find((value:any)=>value.Properties.Handler==="asset_archive.handler") as any;
+ assert.ok(archive);
+ template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:"POST /assets/delete",AuthorizationType:"JWT"});
+ template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:"POST /assets/archive-migration",AuthorizationType:"JWT"});
+ const policies=JSON.stringify(template.findResources("AWS::IAM::Policy"));
+ assert.ok(policies.includes("asset-reference-epoch-v1#*"));
+ assert.ok(policies.includes("asset-references-v1#*"));
+ assert.ok(policies.includes("asset-archives-v1#*"));
+ for(const [id,resource] of Object.entries(template.findResources("AWS::IAM::Policy"))){if(!/CharacterAppearances|VideoScenes/.test(id))continue;for(const statement of (resource as any).Properties.PolicyDocument.Statement){if([statement.Action].flat().includes("dynamodb:UpdateItem"))assert.deepEqual(statement.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],["asset-reference-epoch-v1#*","asset-references-v1#*"]);}}
 });

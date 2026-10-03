@@ -177,6 +177,29 @@ class Store:
             raise LookupError("Game not found")
         return {"game": {k: v for k, v in record.items() if k not in ("description", "descriptionRevision")}, "gameSettings": {k: record.get(k) for k in ("description", "descriptionRevision")}, "canEditGame": True, "visualStyles": [{"id": v, "label": v.replace("-", " ").title(), "previewImage": "/style-previews/" + v + ".webp"} for v in STYLES], "players": self.list("player", identity), "memberships": self.list("membership", identity), "characters": self.list("character", identity)}
 
+    def create_game(self, body):
+        fields = {"id", "name", "purpose", "players", "characters", "memberships"}
+        if not fields <= set(body) or set(body) - fields - {"ruleset", "visualStyle"} or not isinstance(body["id"], str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", body["id"]) or len(body["id"]) > 96:
+            raise ValueError("Invalid game details.")
+        for value in [body["name"], *([body["ruleset"]] if "ruleset" in body else [])]:
+            if not isinstance(value, str) or not 1 <= len(value) <= 120 or value != value.strip() or any(ord(c) < 32 for c in value):
+                raise ValueError("Enter a name of up to 120 characters.")
+        if body["purpose"] not in {"campaign", "test"} or body.get("visualStyle", "photorealistic") not in STYLES or any(not isinstance(body[field], list) for field in ("players", "characters", "memberships")):
+            raise ValueError("Invalid game details.")
+        if any(body[field] for field in ("players", "characters", "memberships")):
+            raise ValueError("Add people and characters after creating the game.")
+        identity = body["id"]
+        fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        record = {"id": identity, "name": body["name"], "purpose": body["purpose"], "ruleset": body.get("ruleset"), "visualStyle": body.get("visualStyle", "photorealistic"), "description": "", "descriptionRevision": uuid.uuid4().hex, "fingerprint": fingerprint, "createdAt": int(time.time())}
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT payload FROM records WHERE kind='game' AND id=?", (identity,)).fetchone()
+            if row and json.loads(row[0]).get("fingerprint") != fingerprint:
+                raise FileExistsError("A game with this identity already exists.")
+            if not row:
+                db.execute("INSERT INTO records VALUES ('game',?,?,?)", (identity, None, json.dumps(record)))
+        return self.game(identity)
+
     def create_character(self, body):
         game, identity = body["gameId"], body["id"]
         if not self.get("game", game) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity):
@@ -208,8 +231,8 @@ class Store:
     def save_story_entity(self, kind, body):
         game, identity, operation = body["gameId"], body["id"], body["operationId"]
         self.game(game)
-        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey"} if kind == "scene" else {"sceneIds"})
-        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "sceneIds"}
+        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs"} if kind == "scene" else {"sceneIds"})
+        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "sceneIds"}
         if not required_fields <= set(body) <= expected_fields:
             raise ValueError("Invalid episode or scene edit")
         if kind not in ("episode", "scene") or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity) or not re.fullmatch(r"[a-f0-9]{32}", operation):
@@ -232,6 +255,13 @@ class Store:
             previous = json.loads(row[0]) if row else None
             if body.get("expectedRevision") != (previous["revision"] if previous else None):
                 raise FileExistsError("This record changed. Reopen it before saving.")
+            if kind == "scene" and previous:
+                for job_kind in ("scene-render", "editorial"):
+                    for job_row in db.execute("SELECT payload FROM records WHERE kind=? AND game=?", (job_kind, game)):
+                        active = json.loads(job_row[0])
+                        ref = active.get("sceneRef") or active.get("creation", {}).get("sceneRef") or {}
+                        if ref.get("episodeId") == episode_id and ref.get("sceneId") == identity and active.get("status") in {"QUEUED", "SUBMITTED", "RUNNING", "PROCESSING", "COMPOSING", "IN_QUEUE", "IN_PROGRESS"}:
+                            raise FileExistsError("This scene is generating. You can edit it when generation finishes.")
             record = {"schemaVersion": 1, "entityType": "Episode" if kind == "episode" else "Scene", "gameId": game, "id": identity, "name": body["name"].strip(), "description": body.get("description", "").strip(), "revision": uuid.uuid4().hex, "updatedAt": datetime.now(timezone.utc).isoformat()}
             record["createdAt"] = previous["createdAt"] if previous else record["updatedAt"]
             if kind == "episode":
@@ -250,7 +280,7 @@ class Store:
                 if selected is not None:
                     if not isinstance(selected, str) or not selected.startswith(f"games/{game}/assets/"):
                         raise ValueError("Choose a same-game finished scene video")
-                    asset_row = db.execute("SELECT metadata FROM objects WHERE key=? AND game=?", (selected, game)).fetchone()
+                    asset_row = db.execute("SELECT metadata FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (selected, game)).fetchone()
                     meta = json.loads(asset_row[0]) if asset_row else {}
                     extra = meta.get("extra", {})
                     ref = extra.get("sceneRef", {})
@@ -266,6 +296,16 @@ class Store:
                 if map_key is not None:
                     self.map_asset(game, map_key, db)
                     record["mapAssetKey"] = map_key
+                production_asset_views()
+                import scene_inputs
+                inputs = scene_inputs.normalize(body.get("generationInputs", (previous or {}).get("generationInputs")), game)
+                for character_id in inputs["characterIds"]:
+                    if not db.execute("SELECT 1 FROM records WHERE kind='character' AND id=? AND game=?", (game + ":" + character_id, game)).fetchone():
+                        raise ValueError("Choose a character from this game")
+                for source_key in scene_inputs.asset_keys({"generationInputs": inputs}):
+                    if not db.execute("SELECT 1 FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (source_key, game)).fetchone():
+                        raise ValueError("A selected source is unavailable")
+                record["generationInputs"] = inputs
                 record.update( episodeId=episode_id, type=body.get("type", "general"), position=previous["position"] if previous else count, selectedOutputKey=selected, selectedOutputSceneRevision=selected_revision)
             db.execute("INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload", (kind, key, game, json.dumps(record)))
             history = {"record": record, "previousRecord": previous, "recordedAt": record["updatedAt"]}
@@ -290,7 +330,7 @@ class Store:
         if db is None:
             with self.connect() as connection:
                 return self.map_asset(game, key, connection)
-        row = db.execute("SELECT metadata,data FROM objects WHERE key=? AND game=?", (key, game)).fetchone()
+        row = db.execute("SELECT metadata,data FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (key, game)).fetchone()
         if not row:
             raise ValueError("Map image is unavailable in the catalog")
         meta, data = json.loads(row[0]), row[1]
@@ -345,8 +385,30 @@ class Store:
 
     def objects(self, game):
         with self.connect() as db:
-            rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? ORDER BY created DESC", (game,)).fetchall()
-        return [{"key": key, "name": key.rsplit("/", 1)[-1], "metadata": json.loads(meta), "contentType": json.loads(meta).get("contentType", "application/octet-stream"), "kind": json.loads(meta).get("kind", "other"), "size": size, "lastModified": created} for key, meta, size, created in rows]
+            rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key) ORDER BY created DESC", (game,)).fetchall()
+            thumbnails = {key: json.loads(payload) for key, payload in db.execute("SELECT id,payload FROM records WHERE kind='video-thumbnail' AND game=?", (game,))}
+        assets = [{"key": key, "name": key.rsplit("/", 1)[-1], "metadata": json.loads(meta), "contentType": json.loads(meta).get("contentType", "application/octet-stream"), "kind": json.loads(meta).get("kind", "other"), "size": size, "lastModified": created} for key, meta, size, created in rows]
+        for asset in assets:
+            if asset['contentType'].startswith('video/'):
+                thumbnail = thumbnails.get(asset['key'], {})
+                asset['thumbnailStatus'] = thumbnail.get('status', 'PENDING')
+                if thumbnail.get('status') == 'READY':
+                    asset['thumbnailKey'] = thumbnail['thumbnailKey']
+        return assets
+
+    def episode_thumbnails(self, game, episodes):
+        """Read-time posters come from the first ordered selected scene, in one join."""
+        with self.connect() as db:
+            rows = db.execute("SELECT json_extract(scene.payload,'$.episodeId'), thumbnail.payload FROM records scene LEFT JOIN records thumbnail ON thumbnail.kind='video-thumbnail' AND thumbnail.id=json_extract(scene.payload,'$.selectedOutputKey') AND thumbnail.game=scene.game WHERE scene.kind='scene' AND scene.game=? AND json_extract(scene.payload,'$.selectedOutputKey') IS NOT NULL ORDER BY json_extract(scene.payload,'$.position')", (game,)).fetchall()
+        first = {}
+        for episode, payload in rows:
+            first.setdefault(episode, json.loads(payload) if payload else {})
+        for episode in episodes:
+            thumbnail = first.get(episode['id'], {})
+            episode['thumbnailStatus'] = thumbnail.get('status', 'PENDING')
+            if thumbnail.get('status') == 'READY':
+                episode['thumbnailKey'] = thumbnail['thumbnailKey']
+        return episodes
 
     def transcript_summary_source(self, game, key):
         self.game(game)
@@ -403,12 +465,16 @@ class Store:
                 participants.append({"id": player})
                 declared.add(player)
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT data FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (key, game)).fetchone()
+            if not row or base64.b64encode(hashlib.sha256(row[0]).digest()).decode() != reference["sha256"]:
+                raise FileExistsError("This transcript changed. Choose it again before generating a summary.")
             existing = db.execute("SELECT payload FROM records WHERE kind='transcript-summary' AND id=?", (identity,)).fetchone()
             if not existing:
                 pointer_row = db.execute("SELECT payload FROM records WHERE kind='summary-source' AND id=?", (pointer_id,)).fetchone()
                 pointer = json.loads(pointer_row[0]) if pointer_row else {}
                 previous = self.get("transcript-summary", pointer.get("readyJobId", ""))
-                job = {"schemaVersion": 1, "gameId": game, "key": key, "jobId": identity, "source": reference, "operationId": operation, "status": "ATTENTION", "message": "Summary generation is not configured in local development.", "createdAt": int(time.time()), "participants": participants, "recordedAt": next((doc[field] for field in ("recordedAt", "startedAt", "capturedAt") if isinstance(doc.get(field), str)), None), "summary": None, "assetKey": None, "previousSummaryKey": previous.get("assetKey") if previous and previous["source"] == reference else None}
+                job = {"schemaVersion": 1, "gameId": game, "key": key, "jobId": identity, "source": reference, "operationId": operation, "status": "QUEUED", "message": None, "createdAt": int(time.time()), "participants": participants, "recordedAt": next((doc[field] for field in ("recordedAt", "startedAt", "capturedAt") if isinstance(doc.get(field), str)), None), "summary": None, "assetKey": None, "previousSummaryKey": previous.get("assetKey") if previous and previous["source"] == reference else None}
                 inserted = db.execute("INSERT OR IGNORE INTO records VALUES ('transcript-summary',?,?,?)", (identity, game, json.dumps(job)))
                 if inserted.rowcount:
                     db.execute("INSERT OR REPLACE INTO records VALUES ('summary-source',?,?,?)", (pointer_id, game, json.dumps({**pointer, "jobId": identity})))
@@ -433,7 +499,7 @@ class Store:
                 raise ValueError("Character details exceed the portrait request limit")
         request = {**body, "schemaVersion": 1}
         identity = hashlib.sha256(json.dumps({"gameId": body["gameId"], "operationId": body["operationId"]}, sort_keys=True).encode()).hexdigest()
-        job = {**request, "jobId": identity, "status": "ATTENTION", "message": "Image generation is not configured for this local database. Use the hosted app with a signed-in laptop running panther assets worker --work-dir /private/path/asset-generation. Local uploads remain available.", "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True, **({"characterReference": character_reference} if character_reference else {})}
+        job = {**request, "jobId": identity, "status": "QUEUED", "message": None, "createdAt": int(time.time()), "assetKey": None, "visualStyle": game.get("game", {}).get("visualStyle"), "generationAuthorized": True, **({"characterReference": character_reference} if character_reference else {})}
         with self.connect() as db:
             db.execute("INSERT OR IGNORE INTO records VALUES ('asset-generation',?,?,?)", (identity, body["gameId"], json.dumps(job)))
         saved = self.get("asset-generation", identity)
@@ -442,10 +508,13 @@ class Store:
         return self.asset_generation_view(saved)
 
     def asset_generation_view(self, job):
-        # Read-time projection preserves the original job and request history.
-        # No local image worker/broker is implemented; do not imply work is running.
+        if job and job.get("status") in {"FAILED", "BLOCKED", "ATTENTION", "UNKNOWN"} and not job.get("recoverableWaiting"):
+            message = "Image generation could not be confirmed." if job.get("outcomeUnknown") else "The image could not be saved." if job.get("publicationRecoveryAvailable") else {400: "The image could not be generated. Try another prompt.", 422: "The image could not be generated. Try another prompt.", 429: "Image generation is temporarily unavailable."}.get(job.get("errorCode"), "Image generation is unavailable. Check the server configuration.")
+            return {**job, "message": message, "error": None}
         if job and job.get("status") in {"QUEUED", "PENDING", "RUNNING", "GENERATING"}:
-            return {**job, "status": "ATTENTION", "message": "Image generation is not configured for this local database. Use the hosted app with a signed-in laptop running panther assets worker --work-dir /private/path/asset-generation. Local uploads remain available."}
+            service = self.get("service", "images") or {}
+            if service.get("status") != "RUNNING" or time.time() - service.get("updatedAt", 0) > 40:
+                return {**job, "status": "ATTENTION", "recoverableWaiting": True, "message": "Image generation is unavailable. Check the server configuration."}
         return job
 
     def asset_generation_page(self, game, cursor=None):
@@ -517,6 +586,342 @@ class Store:
         if not row:
             raise LookupError("Asset not found")
         return json.loads(row[0]), row[1]
+
+    def prepare_editorial_job(self, job):
+        """Snapshot local inputs for a real worker without changing their source bytes."""
+        game, creation = job["gameId"], job["creation"]
+        catalog = self.game(game)
+        catalog["officialArtwork"] = {}
+        references = []
+        for key in creation["sourceKeys"]:
+            reference, _ = self.transcript_summary_source(game, key)
+            references.append(reference)
+        contexts = []
+        for key in creation["contextKeys"]:
+            meta, raw = self.object(key)
+            if not key.startswith(f"games/{game}/assets/") or not 0 < len(raw) <= 2 * 1024**2:
+                raise ValueError("Choose bounded same-game context")
+            if meta.get("kind", "").startswith("novel") or meta.get("kind", "").startswith("video"):
+                raise ValueError("Adaptations cannot become factual context")
+            contexts.append({"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw), "contentType": meta.get("contentType", "application/octet-stream")})
+        cast = []
+        for identity in creation.get("characterIds", []):
+            character = self.get("character", game + ":" + identity)
+            if not character:
+                raise ValueError("Choose same-game characters")
+            cast.append({"characterId": identity, "name": character["name"], "details": character.get("details", {}), "appearance": None, "appearanceAssets": []})
+        return {**job, "workflowVersion": 4, "sessionId": "creation-" + job["jobId"][:24], "rawSources": references, "selectedContext": contexts, "catalog": catalog, "gameContext": catalog, "selectedCharacters": cast, "contextCutoff": int(time.time()), "sourceMode": "transcript" if references else "prompt", "status": "QUEUED", "message": None, "localWorkerVersion": 1}
+
+    def editorial_view(self, job):
+        if not job or job.get("status") not in {"SUBMITTED", "QUEUED", "RUNNING"}:
+            return job
+        worker = self.get("service", "editorial") or {}
+        if worker.get("status") == "RUNNING" and time.time() - worker.get("updatedAt", 0) < 120:
+            return job
+        return {**job, "status": "BLOCKED", "message": "Generation is temporarily unavailable. Your request is saved."}
+
+
+    def submit_transcription(self, body):
+        game, recording, mode = body["gameId"], body["recordingId"], body["mode"]
+        self.game(game)
+        if not re.fullmatch(r"recording-[a-f0-9]{32}", recording) or mode not in {"live", "final"}:
+            raise ValueError("Choose a valid recording")
+        inputs, manifest_pin = [], None
+        session = {"sessionId": recording, "sessionName": "Recording", "captureWarnings": [], "captureStatus": "complete"}
+        if mode == "final":
+            playback = self.get("playback", body["playbackJobId"])
+            if not playback or playback.get("gameId") != game or playback.get("chunkSetId") != recording:
+                raise LookupError("Completed recording not found")
+            self.browser_playback_job(game, playback["recordingKey"], playback["sourceManifestSha256"])
+            _, raw = self.object(playback["recordingKey"])
+            doc = json.loads(raw)
+            manifest_pin = {"key": playback["recordingKey"], "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)}
+            session = {"sessionId": doc["sessionId"], "sessionName": doc["sessionName"], "captureWarnings": doc["captureWarnings"], "captureStatus": doc["status"]}
+            parts = [(playback["recordingKey"].rsplit("/", 1)[0] + "/" + part["file"], part) for part in doc["parts"]]
+        else:
+            key = body["inputKey"]
+            if not re.fullmatch(rf"games/{re.escape(game)}/assets/{recording}/original/part-[0-9]{{4}}\.wav", key):
+                raise ValueError("Choose a same-recording audio part")
+            meta, _ = self.object(key)
+            part = meta.get("extra", {}).get("browserPart")
+            if not part or part.get("recordingId") != recording:
+                raise ValueError("Audio has no verified recording part metadata")
+            parts = [(key, part)]
+            session["sessionId"] = meta.get("sessionId") or recording
+        for key, part in parts:
+            _, raw = self.object(key)
+            if len(raw) != part["size"] or hashlib.sha256(raw).hexdigest() != part["sha256"]:
+                raise ValueError("Recording audio changed")
+            inputs.append({"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw), "duration": part["duration"], "start": part["start"]})
+        identity = hashlib.sha256(json.dumps({"mode": mode, "inputs": inputs, "recording": manifest_pin}, sort_keys=True).encode()).hexdigest()
+        job = self.get("transcription", identity)
+        if not job:
+            job = {"id": identity, "jobId": identity, "gameId": game, "recordingId": recording, "mode": mode, "status": "SUBMITTED", "inputs": inputs, "recording": manifest_pin, "createdAt": int(time.time()), **session}
+            self.put("transcription", identity, job, game)
+        return job
+
+    def narration_voices(self):
+        cached = self.get("service", "narration-voices")
+        if cached and time.time() - cached.get("updatedAt", 0) < 300:
+            return {"voices": cached["voices"]}
+        from dev_narration_worker import ElevenLabs
+        client = ElevenLabs()
+        response = client.session.get("https://api.elevenlabs.io/v1/voices", timeout=(10, 30), allow_redirects=False)
+        if response.status_code != 200:
+            raise ValueError("The voice list is temporarily unavailable.")
+        voices = [{"id": item["voice_id"], "name": item["name"], "previewUrl": item.get("preview_url")} for item in response.json().get("voices", []) if item.get("category") == "premade"]
+        self.put("service", "narration-voices", {"updatedAt": time.time(), "voices": voices})
+        return {"voices": voices}
+
+    def submit_narration(self, body):
+        game = body["gameId"]
+        self.game(game)
+        if body.get("episodeId") and not self.get("episode", game + ":" + body["episodeId"]):
+            raise ValueError("Choose an episode in this game.")
+        if not isinstance(body.get("text"), str) or not 1 <= len(body["text"].strip()) <= 5000 or not isinstance(body.get("direction", ""), str) or len(body.get("direction", "")) > 2000:
+            raise ValueError("Enter narration text under 5000 characters.")
+        if body.get("voiceId") not in {voice["id"] for voice in self.narration_voices()["voices"]}:
+            raise ValueError("Choose an available stock voice.")
+        sources = body.get("sourceKeys", [])
+        if not isinstance(sources, list) or len(sources) > 20:
+            raise ValueError("Choose valid narration sources.")
+        refs = []
+        for key in sources:
+            if not isinstance(key, str) or not key.startswith(f"games/{game}/assets/"):
+                raise ValueError("Choose sources from this game.")
+            _, raw = self.object(key)
+            refs.append({"key": key, "size": len(raw), "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode()})
+        if not isinstance(body.get("operationId"), str) or not re.fullmatch(r"[a-f0-9]{32}", body["operationId"]):
+            raise ValueError("Invalid narration request.")
+        identity = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        existing = self.get("narration", identity)
+        if existing:
+            return existing
+        job = {**body, "jobId": identity, "id": identity, "text": body["text"].strip(), "inputRefs": refs, "status": "QUEUED", "createdAt": int(time.time()), "updatedAt": int(time.time())}
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for ref in refs:
+                if db.execute("SELECT 1 FROM records WHERE kind='asset-deletion' AND id=?", (ref["key"],)).fetchone():
+                    raise FileExistsError("A selected source was deleted. Choose another source.")
+            db.execute("INSERT OR IGNORE INTO records VALUES ('narration',?,?,?)", (identity, game, json.dumps(job)))
+        return job
+
+    def tags(self, game):
+        self.game(game)
+        names = {r["name"] for r in self.list("tag", game)}
+        names.update(tag for asset in self.objects(game) for tag in asset.get("metadata", {}).get("tags", []))
+        return {"tags": sorted(names, key=str.casefold)}
+
+    def delete_asset(self, body):
+        game, key, operation = body["gameId"], body["key"], body.get("operationId", "")
+        self.game(game)
+        if not isinstance(key, str) or not key.startswith(f"games/{game}/assets/") or not re.fullmatch(r"[a-f0-9]{32}", operation):
+            raise ValueError("Choose an asset from this game.")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT metadata,data FROM objects WHERE key=? AND game=?", (key, game)).fetchone()
+            if not row:
+                raise LookupError("Asset not found")
+            sha = base64.b64encode(hashlib.sha256(row[1]).digest()).decode()
+            if body.get("sha256") != sha:
+                raise FileExistsError("This asset changed. Reopen it before deleting.")
+            previous = db.execute("SELECT payload FROM records WHERE kind='asset-deletion' AND id=?", (key,)).fetchone()
+            if previous:
+                return {"deleted": True, "key": key}
+            for kind, payload in db.execute("SELECT kind,payload FROM records WHERE game=?", (game,)):
+                record = json.loads(payload)
+                if kind == "character" and record.get("details", {}).get("thumbnailAssetKey") == key or kind == "scene" and key in {record.get("mapAssetKey"), record.get("selectedOutputKey"), *(record.get("generationInputs", {}).get("sourceKeys", [])), *(record.get("generationInputs", {}).get("contextKeys", []))}:
+                    raise FileExistsError("This asset is selected by a character or scene. Choose a replacement before deleting it.")
+                if kind in {"editorial", "scene-render", "episode-render", "narration", "transcription", "playback", "transcript-summary", "asset-generation"} and record.get("status") in {"QUEUED", "SUBMITTED", "RUNNING", "PROCESSING", "GENERATING", "COMPOSING", "IN_QUEUE", "IN_PROGRESS"}:
+                    def references(value):
+                        if isinstance(value, dict):
+                            return any(references(item) for item in value.values())
+                        if isinstance(value, list):
+                            return any(references(item) for item in value)
+                        return value == key
+                    if references(record):
+                        raise FileExistsError("This asset is being processed. Wait for it to finish before deleting it.")
+            tombstone = {"schemaVersion": 1, "entityType": "AssetDeletion", "gameId": game, "key": key, "sha256": sha, "operationId": operation, "deletedAt": int(time.time()), "previousMetadata": json.loads(row[0])}
+            db.execute("INSERT INTO records VALUES ('asset-deletion',?,?,?)", (key, game, json.dumps(tombstone)))
+        return {"deleted": True, "key": key}
+
+    def create_tag(self, body):
+        game, name = body["gameId"], body.get("name", "")
+        self.game(game)
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64 or any(ord(c) < 32 for c in name):
+            raise ValueError("Enter a tag of up to 64 characters.")
+        name = name.strip()
+        existing = next((value for value in self.tags(game)["tags"] if value.casefold() == name.casefold()), None)
+        name = existing or name
+        self.put("tag", game + ":" + name.casefold(), {"name": name, "createdAt": int(time.time())}, game)
+        return {"tag": name, **self.tags(game)}
+
+    def review_chapter(self, body):
+        game, identity = body["gameId"], body["chapterId"]
+        chapter = self.get("chapter", identity)
+        if not chapter or chapter["gameId"] != game:
+            raise LookupError("Chapter not found")
+        status, comment, operation = body.get("status"), body.get("comment", ""), body.get("operationId", "")
+        if status not in {"approved", "rejected"} or not isinstance(comment, str) or len(comment) > 4000 or not re.fullmatch(r"[a-f0-9]{32}", operation):
+            raise ValueError("Choose Approved or Rejected and a comment of up to 4000 characters.")
+        key = game + ":" + identity
+        payload = json.dumps(body, sort_keys=True)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous_operation = db.execute("SELECT payload,response FROM operations WHERE id=?", (operation,)).fetchone()
+            if previous_operation:
+                if previous_operation[0] != "novel-review:" + payload:
+                    raise FileExistsError("Operation reused with different content")
+                return json.loads(previous_operation[1])
+            row = db.execute("SELECT payload FROM records WHERE kind='novel-review' AND id=?", (key,)).fetchone()
+            previous = json.loads(row[0]) if row else None
+            if body.get("expectedRevision") != (previous["revision"] if previous else None):
+                raise FileExistsError("This review changed. Reopen it before saving.")
+            review = {"status": status, "comment": comment.strip() if status == "rejected" else "", "revision": uuid.uuid4().hex, "chapterId": identity, "gameId": game, "updatedAt": int(time.time())}
+            db.execute("INSERT INTO records VALUES ('novel-review',?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload", (key, game, json.dumps(review)))
+            db.execute("INSERT INTO records VALUES ('novel-review-history',?,?,?)", (key + ":" + review["revision"], game, json.dumps({"review": review, "previous": previous})))
+            result = {"review": review}
+            db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, "novel-review:" + payload, json.dumps(result)))
+        return result
+
+    def generation_capabilities(self):
+        def available(name):
+            worker = self.get("service", name) or {}
+            return worker.get("status") == "RUNNING" and time.time() - worker.get("updatedAt", 0) < 120
+        return {name: available(service) for name, service in {
+            "images": "images", "editorial": "editorial", "transcription": "transcription",
+            "summaries": "summary", "playback": "playback", "video": "video",
+            "narration": "narration", "episodes": "episodes"}.items()}
+
+    def generation_job_view(self, job, kind):
+        if not job:
+            return job
+        result = dict(job)
+        if job.get("status") in {"FAILED", "ATTENTION", "UNKNOWN"}:
+            name = {"scene-render": "Video generation", "episode-render": "Episode assembly", "narration": "Narration"}[kind]
+            result["message"] = name + (" could not be confirmed. Check its status before trying again." if job.get("status") == "UNKNOWN" or job.get("outcomeUnknown") else " failed. Your inputs are saved; you can try again.")
+            result.pop("error", None)
+        return result
+
+    def submit_episode_render(self, body):
+        composition = self.episode_composition(body["gameId"], body["episodeId"], body["revision"])
+        if not composition["ready"]:
+            raise ValueError("Choose a rendered video for every scene first.")
+        for scene in composition["scenes"]:
+            _, raw = self.object(scene["assetKey"])
+            scene.update(sha256=hashlib.sha256(raw).hexdigest(), size=len(raw))
+        composition["profile"] = "episode-sdr-720p24-aac-v1"
+        identity = hashlib.sha256(json.dumps(composition, sort_keys=True).encode()).hexdigest()
+        job = self.get("episode-render", identity)
+        if job and body.get("retry") is True and job["status"] in {"FAILED", "ATTENTION"}:
+            self.put("episode-render-history", identity + ":" + uuid.uuid4().hex, job, body["gameId"])
+            job = {**job, "status": "QUEUED", "updatedAt": int(time.time()), "message": None}
+            self.put("episode-render", identity, job, body["gameId"])
+        if not job:
+            job = {"jobId": identity, "gameId": body["gameId"], "episodeId": body["episodeId"], "composition": composition, "status": "QUEUED", "createdAt": int(time.time()), "updatedAt": int(time.time()), "message": None}
+            self.put("episode-render", identity, job, body["gameId"])
+        return job
+
+    def submit_scene_render(self, body):
+        game, episode, identity = body["gameId"], body["episodeId"], body["sceneId"]
+        scene = self.get("scene", game + ":" + episode + ":" + identity)
+        if not scene or scene.get("revision") != body["revision"]:
+            raise ValueError("The scene changed. Reopen it before generating.")
+        prompt = body.get("prompt") or scene["name"]
+        if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 4000:
+            raise ValueError("Describe the video you want.")
+        characters = body.get("characterIds", [])
+        if not isinstance(characters, list) or len(characters) > 12 or len(set(characters)) != len(characters):
+            raise ValueError("Choose valid characters.")
+        refs, character_context = [], []
+        for character in characters:
+            record = self.get("character", game + ":" + character)
+            if not record:
+                raise ValueError("Choose characters from this game.")
+            character_context.append({"id": character, "name": record["name"], "details": record.get("details", {})})
+            thumbnail = record.get("details", {}).get("thumbnailAssetKey")
+            if thumbnail:
+                _, raw = self.object(thumbnail)
+                refs.append({"key": thumbnail, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)})
+        source_keys, context_keys = body.get("sourceKeys", []), body.get("contextKeys", [])
+        for keys in (source_keys, context_keys):
+            if not isinstance(keys, list) or len(keys) > 20 or any(not isinstance(key, str) for key in keys) or len(set(keys)) != len(keys):
+                raise ValueError("Choose valid sources from this game.")
+        for key in dict.fromkeys(source_keys + context_keys):
+            if not key.startswith(f"games/{game}/assets/"):
+                raise ValueError("Choose sources from this game.")
+            if key in source_keys:
+                self.transcript_summary_source(game, key)
+            _, raw = self.object(key)
+            refs.append({"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)})
+        map_pin = self.pin_map(game, scene)
+        if map_pin:
+            refs.append(map_pin)
+        job = {"gameId": game, "sceneRef": {"episodeId": episode, "sceneId": identity, "revision": scene["revision"]}, "prompt": prompt.strip(), "sceneType": scene["type"], "sourceKeys": [ref["key"] for ref in refs], "inputRefs": refs, "mapPin": map_pin, "characterIds": characters, "characterContext": character_context, "transcriptKeys": source_keys, "contextKeys": context_keys}
+        operation = body["operationId"]
+        if not isinstance(operation, str) or not re.fullmatch(r"[a-f0-9]{32}", operation):
+            raise ValueError("Invalid generation request.")
+        key = hashlib.sha256(json.dumps({**job, "operationId": operation}, sort_keys=True).encode()).hexdigest()
+        existing = self.get("scene-render", key)
+        if existing:
+            return existing
+        job.update(id=key, jobId=key, status="QUEUED", createdAt=int(time.time()), updatedAt=int(time.time()))
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute("SELECT payload FROM records WHERE kind='scene' AND id=?", (game + ":" + episode + ":" + identity,)).fetchone()
+            if not current or json.loads(current[0])["revision"] != body["revision"]:
+                raise FileExistsError("The scene changed. Reopen it before generating.")
+            for ref in refs:
+                if db.execute("SELECT 1 FROM records WHERE kind='asset-deletion' AND id=?", (ref["key"],)).fetchone():
+                    raise FileExistsError("A selected source was deleted. Choose another source.")
+            duplicate = db.execute("SELECT payload FROM records WHERE kind='scene-render' AND id=?", (key,)).fetchone()
+            if duplicate:
+                return json.loads(duplicate[0])
+            for row in db.execute("SELECT payload FROM records WHERE kind='scene-render' AND game=?", (game,)):
+                active = json.loads(row[0])
+                if active.get("sceneRef", {}).get("episodeId") == episode and active.get("sceneRef", {}).get("sceneId") == identity and active.get("status") in {"QUEUED", "SUBMITTED", "RUNNING", "COMPOSING", "IN_QUEUE", "IN_PROGRESS"}:
+                    raise FileExistsError("This scene is already generating.")
+            db.execute("INSERT INTO records VALUES ('scene-render',?,?,?)", (key, game, json.dumps(job)))
+        return job
+
+    def workflows(self, game, identity=None, cursor=None):
+        """Observe real SQLite jobs without starting processing or inventing activity."""
+        self.game(game)
+        plan = json.loads((ROOT / "src/panther_journal/editorial-plan.json").read_text())
+        states = {"SUBMITTED": "queued", "QUEUED": "queued", "RUNNING": "running", "PROCESSING": "running", "DONE": "done", "NOVEL_READY": "done", "READY_FOR_VIDEO_DISCUSSION": "done", "FAILED": "failed", "BLOCKED": "paused", "DEFERRED": "paused", "IN_QUEUE": "queued", "IN_PROGRESS": "running", "PUBLISHED": "done", "ATTENTION": "failed", "UNKNOWN": "paused", "GENERATING": "running", "COMPOSING": "running"}
+        rows = []
+        for kind in ("editorial", "playback"):
+            for record in self.list(kind, game):
+                job = self.editorial_view(record) if kind == "editorial" else record
+                tasks = {task["stage"]: task for task in self.list("editorial-task", game) if task.get("jobId") == job["jobId"]} if kind == "editorial" else {}
+                target = job.get("creation", {}).get("target", "novel")
+                names = ((plan["correction"] if job.get("rawSources") and target == "novel" else ["context"]) + plan[target]) if kind == "editorial" else ["assemble-verify-publish"]
+                stages = []
+                for name in names:
+                    task = tasks.get(name, {}) if kind == "editorial" else job
+                    stages.append({"id": name, "label": name.replace("-", " ").capitalize(), "status": states.get(task.get("status"), "pending"), **({"outputKey": task["output"]["key"]} if isinstance(task.get("output"), dict) and task["output"].get("key") else {})})
+                row = {"schemaVersion": 1, "id": kind + "~" + job["jobId"], "kind": kind, "gameId": game, "title": job.get("creation", {}).get("title") or "Continuous audio playback", "status": states.get(job.get("status"), "unknown"), "sourceStatus": job.get("status"), "createdAt": job.get("createdAt", 0), "sessionId": job.get("sessionId"), "stages": stages, "note": job.get("message") or "", "observedAt": int(time.time()), "reportedAt": job.get("updatedAt", 0), "source": "local-worker", "workflowVersion": job.get("workflowVersion"), "completedStages": sum(s["status"] == "done" for s in stages), "totalStages": len(stages), "activeStages": [s for s in stages if s["status"] not in {"done", "pending"}]}
+                if row["id"] == identity:
+                    row["flow"] = {"schemaVersion": 1, "mode": "sequence", "lanes": [{"id": "sequence", "label": "Chapter generation" if kind == "editorial" and target == "novel" else "Processing", "stageIds": names}], "edges": [{"from": a, "to": b} for a, b in zip(names, names[1:])], "note": ""}
+                    return {"workflow": row}
+                rows.append(row)
+        for kind, title in (("scene-render", "Scene video"), ("episode-render", "Episode assembly"), ("narration", "Narration"), ("asset-generation", "Image generation"), ("transcription", "Transcription"), ("transcript-summary", "Transcript summary")):
+            for job in self.list(kind, game):
+                status = states.get(job.get("status"), "pending")
+                output = job.get("outputKey") or job.get("assetKey") or job.get("transcriptKey")
+                stages = [{"id": "processing", "label": title, "status": status, **({"outputKey": output} if output else {})}]
+                row = {"schemaVersion": 1, "id": kind + "~" + job["jobId"], "kind": kind, "gameId": game, "title": job.get("title") or job.get("name") or job.get("prompt") or title, "status": status, "sourceStatus": status, "createdAt": job.get("createdAt", 0), "stages": stages, "note": job.get("message") or "", "observedAt": int(time.time()), "reportedAt": job.get("updatedAt", 0), "source": "local-worker", "completedStages": int(status == "done"), "totalStages": 1, "activeStages": stages if status not in {"done", "pending"} else []}
+                if row["id"] == identity:
+                    row["flow"] = {"schemaVersion": 1, "mode": "sequence", "lanes": [{"id": "sequence", "label": title, "stageIds": ["processing"]}], "edges": [], "note": ""}
+                    return {"workflow": row}
+                rows.append(row)
+        if identity:
+            raise LookupError("Workflow not found in this game")
+        rows.sort(key=lambda row: (row["createdAt"], row["id"]), reverse=True)
+        offset = int(cursor or "0")
+        if offset < 0 or offset > len(rows):
+            raise ValueError("Invalid workflow cursor")
+        return {"workflows": rows[offset:offset + 40], "cursor": str(offset + 40) if len(rows) > offset + 40 else None}
 
 
 class Server(ThreadingHTTPServer):
@@ -590,6 +995,7 @@ class Handler(BaseHTTPRequestHandler):
                     records.sort(key=lambda record: record["position"])
                 else:
                     records = store.list(kind, game)
+                    records = store.episode_thumbnails(game, records)
                 if q.get("id"):
                     identity = game + ":" + ((q["episodeId"] + ":") if kind == "scene" else "") + q["id"]
                     if q.get("revision"):
@@ -599,6 +1005,8 @@ class Handler(BaseHTTPRequestHandler):
                         record = store.get(kind, identity)
                     if not record:
                         raise LookupError("Episode or scene not found")
+                    if kind == 'episode':
+                        record = store.episode_thumbnails(game, [record])[0]
                     result = {"record": record}
                 else:
                     result = {"records": records, "cursor": None}
@@ -637,27 +1045,60 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/object-url":
                 meta, raw = store.object(q["key"])
                 result = {"key": q["key"], "kind": meta.get("kind", "unclassified"), "filename": q["key"].rsplit("/", 1)[-1], "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "url": self.origin + "/development/object?key=" + q["key"], "size": len(raw), "metadata": meta, "expiresIn": None, "contentType": meta.get("contentType", "application/octet-stream")}
+                if meta.get('contentType', '').startswith('video/'):
+                    thumbnail = store.get('video-thumbnail', q['key']) or {}
+                    result['thumbnailStatus'] = thumbnail.get('status', 'PENDING')
+                    if thumbnail.get('status') == 'READY':
+                        result['thumbnailKey'] = thumbnail['thumbnailKey']
+            elif path == "/generation-capabilities":
+                result = store.generation_capabilities()
             elif path == "/browser-recording/capabilities":
                 worker = store.get("service", "playback") or {}
                 available = worker.get("status") == "RUNNING" and time.time() - worker.get("updatedAt", 0) < 120
-                result = {"canRecord": True, "transcriptionAvailable": False, "transcriptionUnavailableReason": "Transcription is not configured in local development.", "playbackAvailable": available, "playbackUnavailableReason": "Start local playback with: .venv/bin/python tools/dev_playback_worker.py --work-dir ~/.local/state/panther/development-playback", "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
+                result = {"canRecord": True, "transcriptionAvailable": bool((store.get("service", "transcription") or {}).get("status") == "RUNNING" and time.time() - (store.get("service", "transcription") or {}).get("updatedAt", 0) < 120), "transcriptionUnavailableReason": "Transcription service is offline.", "playbackAvailable": available, "playbackUnavailableReason": "Audio processing is temporarily unavailable. Your recording is saved.", "model": "gpt-transcribe", "chunkSeconds": 15, "maxParts": 1000}
             elif path == "/browser-transcriptions":
                 job = store.get("playback", q.get("playbackJobId", ""))
-                if job and job.get("status") == "SUBMITTED":
-                    job = {**job, "status": "BLOCKED", "message": "Playback processing is not configured in local development."}
-                result = {"jobs": [], "transcriptKey": None, **({"playback": job} if job else {})}
+                if job and job.get("gameId") != game:
+                    raise LookupError("Recording not found in this game")
+                if job and job.get("status") in {"SUBMITTED", "QUEUED", "RUNNING"} and not store.generation_capabilities()["playback"]:
+                    job = {**job, "status": "BLOCKED", "message": "Audio processing is temporarily unavailable. Your recording is saved."}
+                jobs = [item for item in store.list("transcription", game) if item.get("recordingId") == q.get("recordingId") and item.get("mode") == q.get("mode", "live")]
+                result = {"jobs": jobs, "transcriptKey": next((item.get("transcriptKey") for item in jobs if item.get("status") == "DONE"), None), **({"playback": job} if job else {})}
             elif path == "/novel":
                 result = {"chapters": store.list("chapter", game), "cursor": None}
+            elif path == "/tags":
+                result = store.tags(game)
+            elif path == "/novel-review":
+                chapter = store.get("chapter", q["chapterId"])
+                if not chapter or chapter["gameId"] != game:
+                    raise LookupError("Chapter not found")
+                result = {"review": store.get("novel-review", game + ":" + q["chapterId"])}
             elif path == "/novel-chapter":
                 result = store.get("chapter", q["chapterId"])
                 if not result or result["gameId"] != game:
                     raise LookupError("Chapter not found")
             elif path == "/editorial-jobs":
-                def local_job(job):
-                    if job and job.get("status") == "SUBMITTED":
-                        return {**job, "status": "BLOCKED", "message": "Generation is not connected in this local preview. Use the live app with its processing worker running."}
-                    return job
-                result = {"jobs": [local_job(job) for job in store.list("editorial", game)], "cursor": None} if "jobId" not in q else {"job": local_job(store.get("editorial", q["jobId"])), "tasks": []}
+                if "jobId" not in q:
+                    result = {"jobs": [store.editorial_view(job) for job in store.list("editorial", game)], "cursor": None}
+                else:
+                    job = store.get("editorial", q["jobId"])
+                    if not job or job.get("gameId") != game:
+                        raise LookupError("Generation job not found in this game")
+                    result = {"job": store.editorial_view(job), "tasks": [task for task in store.list("editorial-task", job.get("gameId", "") if job else "") if task.get("jobId") == q["jobId"]]}
+                    result["tasks"].sort(key=lambda task: task.get("ordinal", 0))
+            elif path == "/narration-voices":
+                result = store.narration_voices()
+            elif path in ("/episode-renders", "/scene-renders", "/narration-jobs"):
+                kind = {"/episode-renders": "episode-render", "/scene-renders": "scene-render", "/narration-jobs": "narration"}[path]
+                if q.get("jobId"):
+                    job = store.get(kind, q["jobId"])
+                    if not job or job["gameId"] != game:
+                        raise LookupError("Generation job not found")
+                    result = store.generation_job_view(job, kind)
+                else:
+                    result = {"jobs": [store.generation_job_view(job, kind) for job in store.list(kind, game) if not q.get("episodeId") or job.get("episodeId", job.get("sceneRef", {}).get("episodeId")) == q["episodeId"]]}
+            elif path == "/workflows":
+                result = store.workflows(game, q.get("id"), q.get("cursor"))
             elif path in ("/novel-stories", "/novel-books", "/tv-series", "/tv-episodes"):
                 kind = {"/novel-stories": "story", "/novel-books": "book", "/tv-series": "tv-series", "/tv-episodes": "tv-episode"}[path]
                 if "id" in q:
@@ -705,6 +1146,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def post(self, path, body):
         store = self.server.store
+        if path == "/games":
+            return self.send(store.create_game(body))
         if path == "/development/seed":
             return self.send(store.seed())
         if path == "/auth/account":
@@ -783,9 +1226,17 @@ class Handler(BaseHTTPRequestHandler):
             selected_map = store.pin_map(game, scene) if video else None
             identity_body = {**body, **({"selectedMap": selected_map} if selected_map else {})}
             identity = hashlib.sha256(json.dumps(identity_body, sort_keys=True).encode()).hexdigest()
-            job = store.get("editorial", identity) or {"jobId": identity, "gameId": game, "creation": creation, "workflowVersion": 4 if video else 3, "status": "BLOCKED", "message": "Generation is not connected in this local preview. Use the live app with its processing worker running.", "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "sourceMode": "transcript" if creation["sourceKeys"] else "prompt", **({"selectedMap": selected_map} if selected_map else {})} if video else {})}
+            job = store.get("editorial", identity)
+            if not job:
+                job = store.prepare_editorial_job({"jobId": identity, "gameId": game, "creation": creation, "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, **({"selectedMap": selected_map} if selected_map else {})} if video else {})})
             store.put("editorial", identity, job, game)
             return self.send(job)
+        if path == "/tags":
+            return self.send(store.create_tag(body))
+        if path == "/assets/delete":
+            return self.send(store.delete_asset(body))
+        if path == "/novel-review":
+            return self.send(store.review_chapter(body))
         if path == "/novel-chapters":
             game, operation = body["gameId"], body["operationId"]
             store.game(game)
@@ -820,16 +1271,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/transcript-summaries":
             return self.send(store.submit_transcript_summary(body))
         if path.startswith("/transcript-summaries/"):
-            return self.send({"error": "Summary workers are not configured in local development; source speech is preserved."}, status=501)
+            return self.send({"error": "This summary operation is unavailable. Your transcript is saved."}, status=501)
         if path == "/asset-generation":
             return self.send(store.submit_asset_generation(body))
         if path.startswith("/asset-generation/"):
-            return self.send({"error": "The local queue persists requests but does not support generation workers. Run the subscription worker against the authenticated Panther service."}, status=501)
+            return self.send({"error": "This generation operation is unavailable. Your request is saved."}, status=501)
         if path == "/uploads":
             key = store.upload_request(body)
             identity = uuid.uuid4().hex
             store.put("upload", identity, body, body["gameId"])
             return self.send({"key": key, "url": self.origin + "/development/upload/" + identity, "headers": {"Content-Type": body["contentType"], "x-amz-checksum-sha256": body["sha256"], "If-None-Match": "*"}})
+        if path == "/narration-jobs":
+            return self.send(store.generation_job_view(store.submit_narration(body), "narration"))
+        if path == "/episode-renders":
+            return self.send(store.generation_job_view(store.submit_episode_render(body), "episode-render"))
+        if path == "/scene-renders":
+            return self.send(store.generation_job_view(store.submit_scene_render(body), "scene-render"))
+        if path == "/browser-transcriptions":
+            return self.send(store.submit_transcription(body))
         if path == "/browser-recording/complete":
             job = store.browser_playback_job(body["gameId"], body["recordingKey"], body["manifestSha256"])
             existing = store.get("playback", job["jobId"])

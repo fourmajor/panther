@@ -18,6 +18,9 @@
   opinionated category choices. Preserve existing structured storage/metadata facts and historical
   categories during migrations; hiding an implementation detail is not permission to erase it.
 - Use the shared React/Radix/Tailwind components and TanStack Query cache/invalidation for new UI.
+  Use standard shadcn/ui components with Tailwind CSS 4 for controls and compositions; do not
+  invent replacement comboboxes, popup positioning, focus management or other widget behavior.
+  Prefer the official registry components and their documented composition patterns.
   Avoid unnecessary reloads, page spinners and refresh buttons. Loading placeholders should pulse
   without changing layout; errors must have useful recovery and reflect the operation that failed.
 - Keep primary actions compact and consistently at the top right of section headings/toolbars.
@@ -32,15 +35,24 @@
   operation and must preserve user-created records, assets and history. Keep fixtures synthetic.
 - Use the project virtual environment, install dependencies with
   `.venv/bin/python -m pip install -e ".[dev]"`, and build React with
-  `npm ci --prefix web/ui` / `npm run build --prefix web/ui` before running
-  `.venv/bin/python tools/dev_server.py`. See `docs/local-development.md`.
+  `npm ci --prefix web/ui`, configure the private gitignored `.env`, then run
+  `.venv/bin/python tools/dev.py` for the complete API/UI/nine-worker stack. The launcher
+  builds React and requires fresh processor heartbeats before exposing the app. Use
+  `tools/dev_server.py` alone only for an intentionally API-only development session.
+  See `docs/local-development.md`.
 - Continuous browser-recording playback is a separate local worker:
   `.venv/bin/python tools/dev_playback_worker.py --database PRIVATE_DB --work-dir PRIVATE_DIR`.
   It needs FFmpeg/ffprobe, verifies explicit completed immutable source sets, and publishes real
   MP3/manifest outputs into the same database. Keep assembly out of the browser/uploader/server
   request handler. Preserve capture warnings and exact source lineage; never overwrite originals.
-- Local development has no configured transcription or inference worker by default. Persist real
-  requests and show unavailable/waiting/failure states honestly. Never synthesize successful jobs,
+- Local editorial generation uses the direct OpenAI Responses API with a server-side key from
+  gitignored `.env` or the worker environment. Do not route local app requests through Codex CLI.
+  Preserve exact requests, responses, actual model/token usage and unknown billing outcomes.
+  Do not automatically repeat requests after ambiguous paid failures. The full local stack includes
+  editorial, images, transcription, summaries, playback, scene video, narration and episode assembly.
+  Optional transcript/context inputs are preprocessed into evidence-backed scene prompts. Narration
+  direction becomes bounded ElevenLabs v3 performance cues without rewriting approved spoken words.
+  Persist real requests and show unavailable/waiting/failure states honestly. Never synthesize successful jobs,
   invented output data, identities or summaries to make a preview seem functional. A separate local
   database/identity must not grant production access or bypass authenticated production operations.
 
@@ -320,9 +332,13 @@
   This does not authorize API inference as a fallback for any other workflow. See
   `docs/browser-recording.md`.
 
-- Model-workflow AI runs through Codex CLI on the owner's laptop using ChatGPT subscription
-  authentication. Never introduce API-key inference, paid generation providers, automatic credit
-  purchases, or usage-reset redemption as a fallback. Pause/checkpoint on limits. AWS coordinates
+- The user has authorized direct server-side OpenAI API inference for local application generation.
+  This replaces the subscription-only rule for those local jobs. Explicit local scene/narration
+  generation also uses the configured fal/ElevenLabs keys; do not require a read-only billing/admin
+  key or the comparison CLI ledger for those authorized browser requests. Keep exact model/input
+  provenance and unknown costs honest. This does not authorize voice cloning, credit purchases,
+  automatic paid retries or provider fallbacks. Existing cloud model-workflow workers remain
+  subscription-backed until migrated explicitly. Never use automatic credit purchases or usage-reset redemption. Pause/checkpoint on limits. AWS coordinates
   jobs and stores data; the agent and Blender run locally, while OpenAI hosts the model inference.
 - Prefer architectures with near-zero compute cost while Panther is inactive.
 - Avoid always-on infrastructure such as NAT Gateways, EC2 instances, load balancers, conventional

@@ -109,3 +109,28 @@ and full character details are omitted from dashboard summaries. This read-time 
 needs no asset rewrite or historical-date migration. A future indexed recency projection
 would require its own versioned all-game rebuild and verification before replacing this
 complete metadata traversal.
+
+## User tag vocabulary and chapter reviews
+
+The `tags-v1#<game>` projection stores the user tag vocabulary separately from asset rows.
+Tag names are case-insensitive identities, with the first stored spelling retained; existing
+asset tags remain unchanged. Source indexing transactionally adds each asset's observed tags
+alongside section updates. A tag remains available when no current asset uses it. `GET /tags`
+reads this bounded complete vocabulary; `POST /tags` creates a user tag without rewriting assets.
+Neither operation scans S3. A vocabulary above 1,000 names reports unavailable rather than
+silently returning a partial selector.
+
+Deploy this projection with the scoped metadata Lambda, then repeat the authenticated all-game
+`panther assets rebuild-index` dry-run, apply, verify and activate sequence above. Verification
+checks every existing asset tag against the vocabulary and writes a per-game `tags-v1#verified`
+marker only after the complete game passes. Activation requires both asset and tag verification
+for every discovered game before setting `tags-v1#catalog/ready`. Until activation, the new tag
+API returns an explicit migration-unavailable response. This migration preserves source bytes,
+original metadata and historical tag spellings; no source-content migration or inference occurs.
+
+`GET/POST /novel-review` stores the user's Approved/Rejected decision independently of the
+immutable manuscript and AI review evidence. Writes require the publisher capability, a guarded
+expected review revision and an idempotent operation identity. A transaction checks the completed
+source chapter record/output and retains each prior review with the exact chapter reference.
+This metadata Lambda cannot change manuscripts or jobs, dispatch generation, or access S3.
+The novel reader's existing read-only permissions remain unchanged.

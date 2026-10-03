@@ -453,3 +453,11 @@ def test_asset_worker_rejects_git_and_home_before_authentication(tmp_path, monke
         with pytest.raises(click.ClickException, match="outside a Git checkout"):
             worker.run_worker(root, True)
     assert not (checkout / "private-jobs").exists()
+
+
+def test_generation_submission_registers_active_source_guard(generation):
+    job = unpack(call(generation, body=request()))
+    import asset_archive
+    row = asset_archive.db().get_item(Key={'pk': 'asset-references-v1#test-game', 'sk': 'asset-generation:' + job['jobId']})['Item']
+    assert row['keys'] == []
+    assert row['active'] == {'table': generation.table().name, 'pk': 'JOBS', 'sk': job['jobId']}

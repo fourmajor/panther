@@ -1,3 +1,4 @@
+import {AssetArchive} from "./asset-archive";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Duration, RemovalPolicy } from "aws-cdk-lib";
@@ -43,6 +44,7 @@ export class EditorialProcessing extends Construct {
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
     });
     table.grantReadWriteData(fn);
+    AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.browseTable.grant(fn, "dynamodb:Query", "dynamodb:GetItem");
     props.catalogTable.grant(fn, "dynamodb:GetItem");
     props.bucket.grantRead(fn, "games/*");
@@ -162,6 +164,28 @@ export class EditorialProcessing extends Construct {
     for (const route of ["/novel-stories", "/novel-books", "/novel-illustrations"]) {
       props.api.addRoutes({path:route,methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration:libraryIntegration,authorizer:props.authorizer});
     }
+    const metadata = new lambda.Function(this, "UserMetadata", {
+      runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
+      handler: "user_metadata.handler", code, environment: {...environment,
+        ASSET_BROWSE_TABLE: props.browseTable.tableName, CATALOG_TABLE: props.catalogTable.tableName},
+      memorySize: 256, timeout: Duration.seconds(30),
+      logGroup: new logs.LogGroup(this, "UserMetadataLogs", {retention: logs.RetentionDays.ONE_MONTH}),
+    });
+    metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"],resources:[props.catalogTable.tableArn],
+      conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["GAMES"]}}}));
+    metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"],resources:[table.tableArn],
+      conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["RUNS","TASKS"]}}}));
+    metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[table.tableArn],
+      conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["TASKS"]}}}));
+    metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem","dynamodb:Query"],resources:[props.browseTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["tags-v1#*","novel-review#*","novel-review-ops#*","novel-library#chapter#*"]}}}));
+    metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"],resources:[props.browseTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#chapter#*"]}}}));
+    metadata.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["tags-v1#*","novel-review#*","novel-review-history#*","novel-review-ops#*"]}}}));
+    const metadataIntegration = new integrations.HttpLambdaIntegration("UserMetadataIntegration", metadata);
+    for(const path of ["/tags","/novel-review"]) props.api.addRoutes({path,
+      methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration:metadataIntegration,authorizer:props.authorizer});
     // Review decisions cannot dispatch jobs or spend. Retain immutable revision-specific audit rows.
     const reviews = new dynamodb.Table(this, "MovieReviews", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },

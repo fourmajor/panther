@@ -404,7 +404,20 @@ def add_character(body, actor):
         "createdBy": actor,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
-    table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
+    import asset_archive
+
+    boto3.client("dynamodb").transact_write_items(
+        TransactItems=[
+            {
+                "Put": {
+                    "TableName": table.name,
+                    "Item": {k: serializer.serialize(v) for k, v in item.items()},
+                    "ConditionExpression": "attribute_not_exists(pk)",
+                }
+            },
+            *asset_archive.reference_writes(game, f"character:{character}", []),
+        ]
+    )
     return media._response(201, {"character": clean(item)})
 
 

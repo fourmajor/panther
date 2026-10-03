@@ -113,11 +113,30 @@ def submit(body):
         "generationAuthorized": True,
         **({"characterReference": character_reference} if character_reference else {}),
     }
+    stored = read(job_id)
+    if stored:
+        if any(stored.get(k) != v for k, v in request.items()):
+            raise ValueError("Generation operation was already used with different inputs")
+        return public(stored)
+    import asset_archive
+    from boto3.dynamodb.types import TypeSerializer
+    serializer = TypeSerializer()
+    source_keys = []
+    if character_reference:
+        thumbnail = character_reference['details'].get('thumbnailAssetKey')
+        if thumbnail:
+            source_keys.append(thumbnail)
     try:
-        table().put_item(Item=record, ConditionExpression="attribute_not_exists(pk)")
+        boto3.client('dynamodb').transact_write_items(TransactItems=[{'Put': {
+            'TableName': table().name, 'Item': {key: serializer.serialize(value) for key, value in record.items()},
+            'ConditionExpression': 'attribute_not_exists(pk)'}},
+            *asset_archive.reference_writes(game, 'asset-generation:' + job_id, source_keys,
+                active={'table': table().name, 'pk': 'JOBS', 'sk': job_id})])
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+        if exc.response['Error']['Code'] != 'TransactionCanceledException':
             raise
+        if not read(job_id):
+            raise ValueError('A selected source was archived; choose another source') from exc
     stored = read(job_id)
     if any(stored.get(k) != v for k, v in request.items()):
         raise ValueError("Generation operation was already used with different inputs")

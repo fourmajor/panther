@@ -140,25 +140,16 @@ for(const width of [1280,390]) test(`organized book and pinned editions are usab
   await expect(latest).toHaveCount(1);
   await latest.click();
   await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
+    await expect(page.locator('#novel > .explorer-heading')).toBeHidden();
+    await expect(page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate chapter'})).not.toBeVisible();
   expect(new URL(page.url()).searchParams.has('book')).toBe(false);
 });
 
-test('reading position is stored per account and game and resumes explicitly',async({page})=>{
-  await fixture(page);
-  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
-  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
-  await page.mouse.wheel(0,750);
-  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('panther.reading.v1:synthetic-reader:campaign-a')||'null')?.paragraph || 0)).toBeGreaterThan(0);
-  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('panther.reading.v1:synthetic-reader:campaign-a')));
-  expect(saved.chapterId).toBe(first); expect(saved.percent).toBeGreaterThan(0);
-  await page.reload();
-  const resume=page.getByRole('button',{name:new RegExp('Resume at .*saved on this device')});
-  await expect(resume).toBeVisible(); await resume.click();
-  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(0);
-  await page.evaluate(()=>{const tokens=JSON.parse(sessionStorage.getItem('panther.tokens'));tokens.id_token='test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,sub:'different-synthetic-reader','cognito:username':'example-operator'}))+'.test';sessionStorage.setItem('panther.tokens',JSON.stringify(tokens));});
-  await page.reload();
-  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
-  await expect(page.locator('#novel-resume')).toBeHidden();
+for(const width of [1280,390])test(`Chapter review persists without device reading state at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});await fixture(page);let review=null;const submissions=[];
+ await page.route('**/novel-review**',route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();submissions.push(body);expect(body.expectedRevision).toBe(review?.revision||null);review={...body,revision:(submissions.length.toString(16)).repeat(32)};}return route.fulfill({headers,json:{review}});});
+ await page.goto(`${origin}/games/campaign-a/novel/${first}`);const section=page.getByRole('region',{name:'Chapter review',exact:true});await expect(section.getByRole('button',{name:'Approve',exact:true})).toBeEnabled();await expect(page.locator('#novel-resume,#novel-progress')).toHaveCount(0);await section.getByRole('button',{name:'Approve',exact:true}).click();await expect(section.getByRole('status')).toHaveText('Approved');await page.reload();await expect(section.getByRole('button',{name:'Approve',exact:true})).toHaveAttribute('aria-pressed','true');await section.getByRole('button',{name:'Reject',exact:true}).click();await section.getByLabel('Comment (optional)',{exact:true}).fill('Give the guide more dialogue.');await section.getByRole('button',{name:'Reject chapter',exact:true}).click();await expect(section.getByRole('status')).toContainText('Give the guide more dialogue.');await page.reload();await expect(section.getByRole('button',{name:'Reject',exact:true})).toHaveAttribute('aria-pressed','true');expect(submissions).toHaveLength(2);expect(submissions[1].comment).toBe('Give the guide more dialogue.');expect(await page.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('panther.reading.')))).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.goto(`${origin}/games/campaign-a/novel`);const title=page.locator('.novel-card h2 a').first();await expect(title).toBeVisible();expect(await title.evaluate(el=>getComputedStyle(el).textDecorationLine)).toBe('none');expect(parseFloat(await title.evaluate(el=>getComputedStyle(el).fontSize))).toBeLessThanOrEqual(18);
 });
 
 for (const width of [1280,390]) test(`chapter Details connects finished assets at ${width}`,async({page})=>{
@@ -329,7 +320,7 @@ for(const width of [1280,390]) {
     await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
     await expect(page.locator('#novel-prose strong')).toHaveText('amber light');
     await expect(page.locator('#novel-manuscript')).not.toContainText('Editorial audit');
-    await expect(page.getByText('Editorial audit: synthetic private note.',{exact:true})).not.toBeVisible();
+    await expect(page.locator('#novel-details').getByText('Editorial audit: synthetic private note.',{exact:true}).filter({visible:true})).toHaveCount(0);
     const details=page.getByRole('button',{name:'Details',exact:true});
     await accessibleInViewport(details,width);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -340,7 +331,7 @@ for(const width of [1280,390]) {
     expect(text).toContain('# The Lantern Room'); expect(text).not.toContain('Editorial audit'); expect(text).not.toContain('Uncertain spelling');
     await details.click();
     await expect(page.locator('#novel-manuscript')).not.toBeVisible();
-    await expect(page.getByText('Editorial audit: synthetic private note.',{exact:true})).toBeVisible();
+    await expect(page.locator('#novel-details').getByText('Editorial audit: synthetic private note.',{exact:true}).filter({visible:true})).toHaveCount(1);
     await page.getByRole('link',{name:/Earlier ·.*The Earlier Lantern/}).click();
     await expect(page.locator('#novel-title')).toHaveText('The Earlier Lantern');
     await expect(page.locator('#novel-notice')).toContainText('earlier version');
@@ -432,7 +423,7 @@ for (const width of [1280,390]) test(`typed narrative links and character appear
   await expect(page).toHaveURL(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-name')).toHaveText('Mira Vale');
   await expect(page.locator('#character-assets')).toBeVisible();
-  const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
+  const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Preview Harbor chart',exact:true});
   await appearance.scrollIntoViewIfNeeded();
   await accessibleInViewport(appearance,width);
   await page.screenshot({path:test.info().outputPath(`character-assets-${width}.png`),fullPage:true});
@@ -510,7 +501,7 @@ test('migrated metadata refreshes character associations without changing the fi
   await page.goto(`${origin}/games/campaign-a/characters/mira`);await expect(page.locator("#character-assets")).toBeVisible();
   await expect(page.locator('#character-assets-list a')).toHaveCount(0);
   migrated=true; await page.reload();await expect(page.locator("#character-assets")).toBeVisible();
-  const link=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
+  const link=page.locator('#character-assets-list').getByRole('link',{name:'Preview Harbor chart',exact:true});
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute('href',`/games/campaign-a/media?asset=${encodeURIComponent(key)}`);
 });

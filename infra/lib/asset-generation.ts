@@ -7,13 +7,15 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as logs from "aws-cdk-lib/aws-logs";
+import { AssetArchive } from "./asset-archive";
 
 /** AWS stores requests; subscription-backed image inference runs only on the laptop. */
 export class AssetGeneration extends Construct {
+  readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer;
-    bucket:s3.IBucket; catalogTable: dynamodb.ITable; accessEnvironment: Record<string,string>}) {
+    bucket:s3.IBucket; catalogTable: dynamodb.ITable; browseTable: dynamodb.ITable; accessEnvironment: Record<string,string>}) {
     super(scope,id);
-    const jobs = new dynamodb.Table(this,"Jobs",{partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},
+    const jobs = this.table = new dynamodb.Table(this,"Jobs",{partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},
       sortKey:{name:"sk",type:dynamodb.AttributeType.STRING},billingMode:dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption:dynamodb.TableEncryption.AWS_MANAGED,removalPolicy:RemovalPolicy.RETAIN});
     jobs.addGlobalSecondaryIndex({indexName:"StatusIndex",partitionKey:{name:"status",type:dynamodb.AttributeType.STRING},
@@ -26,6 +28,7 @@ export class AssetGeneration extends Construct {
         CATALOG_READERS:props.accessEnvironment.CATALOG_READERS,MODEL_PUBLISHERS:props.accessEnvironment.MODEL_PUBLISHERS,MODEL_WORKERS:props.accessEnvironment.MODEL_WORKERS},
       memorySize:128,timeout:Duration.seconds(30),logGroup:new logs.LogGroup(this,"Logs",{retention:logs.RetentionDays.ONE_MONTH})});
     jobs.grantReadWriteData(fn);
+    AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.bucket.grantRead(fn,"games/*");
     props.catalogTable.grant(fn,"dynamodb:GetItem");
     const integration = new integrations.HttpLambdaIntegration("Integration",fn);

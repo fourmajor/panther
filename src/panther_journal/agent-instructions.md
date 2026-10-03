@@ -826,3 +826,9 @@ pipeline. Follow Session finalization and Story & screen planning in Workshop. N
 is automatic; video preparation stops for approval of the exact script/storyboard. The standing
 session ceiling is $10 with the established fal models, not automatic spending permission or
 authority to retry, reset budgets, buy credits or clone voices. See `docs/session-automation.md`.
+
+Logical removal uses `panther assets archive` with the exact immutable asset checksum, never
+S3 deletion. Archived files leave current listings while originals and historical references
+remain readable. Current selections and active processing pins block archive. The v1 all-game
+reference migration is `panther assets archive-migrate --all-games --mode dry-run|apply|verify|activate`;
+activation requires verified current references for every game. See `docs/asset-archives.md`.

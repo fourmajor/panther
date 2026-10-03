@@ -102,7 +102,8 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   await expect(panel).not.toContainText('Must not appear as spoken dialogue');
   await expect(panel).toContainText('Valid speech after the gap.');
   await expect(badge).toHaveText('Recording in progress');
-  const gapBox = await gap.boundingBox();
+  let gapBox;
+  await expect.poll(async()=>{gapBox=await gap.boundingBox();return Boolean(gapBox);}).toBe(true);
   expect(gapBox.x).toBeGreaterThanOrEqual(0); expect(gapBox.x+gapBox.width).toBeLessThanOrEqual(width);
   // History controls increase panel height: scroll as a reader would, not by forced click.
   await page.mouse.wheel(0, Math.max(0,gapBox.y+gapBox.height-900));

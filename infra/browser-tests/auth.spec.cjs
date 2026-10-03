@@ -163,6 +163,7 @@ test('logout revokes remembered sign-in and signs out other tabs', async ({ cont
   await page.goto('https://panther.place/media');
   await other.goto('https://panther.place/media');
   await expect(other.locator('#account')).toBeVisible();
+  if(!new URL(page.url()).pathname.startsWith('/account'))await page.getByRole('button',{name:'Account',exact:true}).click();
   await page.locator('#logout-button').click();
   await expect(page).toHaveURL(/test.amazoncognito.com\/logout/);
   await expect(other.locator('#welcome')).toBeVisible();
@@ -178,6 +179,7 @@ test('failed logout stays locally signed out and can retry revocation', async ({
   await page.goto('https://panther.place/media');
   await expect(page.locator('#account')).toBeVisible();
   state.failure = 503;
+  if(!new URL(page.url()).pathname.startsWith('/account'))await page.getByRole('button',{name:'Account',exact:true}).click();
   await page.locator('#logout-button').click();
   await expect(page.locator('#auth-error')).toContainText('Could not revoke');
   expect(await page.evaluate(() => sessionStorage.getItem('panther.tokens'))).toBeNull();
@@ -185,6 +187,7 @@ test('failed logout stays locally signed out and can retry revocation', async ({
   await other.goto('https://panther.place/media');
   await expect(other.locator('#welcome')).toBeVisible();
   state.failure = 0;
+  if(!new URL(page.url()).pathname.startsWith('/account'))await page.getByRole('button',{name:'Account',exact:true}).click();
   await page.locator('#logout-button').click();
   await expect(page).toHaveURL(/test.amazoncognito.com\/logout/);
   expect((await context.cookies()).some(c => c.name === COOKIE)).toBe(false);

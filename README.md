@@ -40,42 +40,39 @@ creative adaptations do not become evidence for subsequent transcript correction
 
 ## Local development
 
-Install Python and frontend dependencies, build the React components, then start the local server:
+Install Python/frontend dependencies and FFmpeg, then start the complete stack:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 npm ci --prefix web/ui
-npm run build --prefix web/ui
-.venv/bin/python tools/dev_server.py
+cp .env.example .env
+chmod 600 .env
+# Fill OPENAI_API_KEY, FAL_API_KEY and ELEVENLABS_API_KEY in .env.
+.venv/bin/python tools/dev.py
 ```
 
-Open [127.0.0.1:8765](http://127.0.0.1:8765). The SQLite database defaults to
-`~/.local/state/panther/development.sqlite`; `--database` selects another private file outside Git.
-Application reads use persistent database state, not static preview fixtures. An empty database
-stays empty until you create data or explicitly use Development → Regenerate demo data (`--seed`
-at startup). Demo regeneration preserves user-created content and uploads.
+Open [127.0.0.1:8766](http://127.0.0.1:8766). The launcher builds React, checks local
+requirements, starts the API and nine processors, and waits for fresh processor
+heartbeats before exposing the app. Logs/checkpoints and SQLite data live outside Git.
+See [local setup](docs/local-development.md) for individual workers, model settings and recovery.
 
-For real continuous playback of browser recordings, install FFmpeg (`ffmpeg` and `ffprobe`) and
-start the separate local worker in another terminal:
+Local creation uses direct provider APIs: OpenAI for chapters, summaries, transcription,
+images and prompt composition; fal for scene videos; ElevenLabs v3 for narration.
+Episodes assemble the selected scene videos locally with FFmpeg. Generation records
+actual outputs, immutable inputs, provider responses and honest failures. Unknown paid
+outcomes are never automatically submitted again. There is no AI CLI harness or dummy
+successful output in this local stack.
 
-```sh
-.venv/bin/python tools/dev_playback_worker.py \
-  --database ~/.local/state/panther/development.sqlite \
-  --work-dir ~/.local/state/panther/playback
-```
+The database defaults to `~/.local/state/panther/development.sqlite`; application reads
+use persisted data. Development → Regenerate demo data explicitly writes fictional
+records while preserving user-created content. Local identity/data remain separate
+from production. Cloud workers retain their existing transport until explicitly migrated.
 
-The worker verifies explicitly completed WAV sets, preserves originals, creates a continuous MP3,
-and publishes its source-linked manifest into the same database. `--once` drains current queued
-work and exits. Queue failures retain the source audio and a reason; existing bytes are never
-replaced. Its heartbeat lets the app distinguish a waiting job from available processing.
-
-Local development does not configure OpenAI transcription, image generation, transcript-summary
-inference or editorial workers. Requests can be persisted or report that generation is unavailable;
-they never return invented transcripts, images or completed manuscripts. The local identity and
-SQLite data are separate from hosted authentication and game data. Production generation runs
-through authenticated, subscription-backed laptop workflows. Browser transcription requires an
-explicit server-side OpenAI secret; paid video/narration needs separate approval.
+The React UI uses standard shadcn/ui registry components (Radix, Command and shared
+buttons/inputs) with Tailwind CSS 4 and TanStack Query. Keep application-specific forms
+and data handling in compositions of those components; widget focus, keyboard behavior
+and popup positioning belong to the underlying libraries.
 
 ## Verification and operations
 

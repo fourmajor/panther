@@ -1,3 +1,4 @@
+import {AssetArchive} from "./asset-archive";
 import * as fs from "node:fs";
 import { webRelease } from "./web-release";
 import * as path from "node:path";
@@ -484,8 +485,9 @@ export class PantherMediaExplorerStack extends Stack {
     new VideoScenes(this,"VideoScenes",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
       catalogTable:gameCatalog.table,accessEnvironment});
     new TranscriptSummaries(this,"TranscriptSummaries",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
-    new AssetGeneration(this,"AssetGeneration",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
+    const assetGeneration = new AssetGeneration(this,"AssetGeneration",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,browseTable:assetBrowse.table,accessEnvironment});
     const editorial = new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
+    new AssetArchive(this,"AssetArchive",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,catalogTable:gameCatalog.table,jobTables:[modeling.table,editorial.table,assetGeneration.table],accessEnvironment});
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
     const browserRecording = new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
     new WorkflowWorkshop(this,"WorkflowWorkshop",{api:mediaApi,authorizer,accessEnvironment,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table}});

@@ -86,8 +86,9 @@ for(const width of [1280,390]) {
     await expect(page.locator('#live-transcript')).toBeHidden();
     await expect(page.locator('#room-recorder')).not.toContainText('Capture the session');
     for(const id of ['room-start']) {
-      const box=await page.locator('#'+id).boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);expect(box.height).toBeGreaterThanOrEqual(44);
+      const box=await page.locator('#'+id).boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);expect(box.height).toBe(36);
       await expect(page.locator('#'+id)).toBeInViewport();
+      expect(await page.locator('#'+id).evaluate(el=>{const rect=el.getBoundingClientRect();return el.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));})).toBe(true);
     }
     await page.locator('#room-start').click();
     await expect.poll(()=>page.evaluate(()=>roomCapture.recording?'Recording':document.querySelector('#room-status').textContent)).toBe('Recording');
@@ -99,8 +100,9 @@ for(const width of [1280,390]) {
     await expect(page.locator('#room-live-text')).toBeVisible();
     const closeLive=page.getByRole('button',{name:'Close live transcript',exact:true});
     await expect(closeLive).toBeInViewport();
+    await expect.poll(async()=>(await closeLive.boundingBox()).width).toBeGreaterThanOrEqual(44);
     const closeBox=await closeLive.boundingBox();
-    expect(closeBox.width).toBeGreaterThanOrEqual(44);expect(closeBox.height).toBeGreaterThanOrEqual(44);
+    expect(closeBox.width).toBeGreaterThanOrEqual(44);expect(closeBox.height).toBeGreaterThanOrEqual(36);
     expect(closeBox.x).toBeGreaterThanOrEqual(0);expect(closeBox.x+closeBox.width).toBeLessThanOrEqual(width);
     expect(await closeLive.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     await page.screenshot({path:test.info().outputPath(`browser-live-dialog-${width}.png`),fullPage:true});
@@ -200,7 +202,7 @@ for(const width of [1280,390]) test(`cross-origin upload failure recovers after 
     await expect(page.locator('#room-status')).toContainText('safe in this browser');
     await expect(page.locator('#room-resume')).toBeEnabled();
     await expect(page.locator('#room-start')).toBeEnabled();
-    const retry=page.locator('#room-resume');await expect(retry).toBeInViewport();const box=await retry.boundingBox();expect(box.width).toBeGreaterThanOrEqual(44);expect(box.height).toBeGreaterThanOrEqual(44);expect(await retry.evaluate((e,p)=>e.contains(document.elementFromPoint(p.x,p.y)),{x:box.x+box.width/2,y:box.y+box.height/2})).toBe(true);
+    const retry=page.locator('#room-resume');await expect(retry).toBeInViewport();const box=await retry.boundingBox();expect(box.width).toBeGreaterThanOrEqual(44);expect(box.height).toBeGreaterThanOrEqual(36);expect(await retry.evaluate((e,p)=>e.contains(document.elementFromPoint(p.x,p.y)),{x:box.x+box.width/2,y:box.y+box.height/2})).toBe(true);
     await page.screenshot({path:test.info().outputPath(`recording-save-failure-${width}.png`),fullPage:true});
     const before=await page.evaluate(async()=>{const parts=await roomCapture.store('parts','getAll');return Promise.all(parts.map(async p=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await p.blob.arrayBuffer())))));});
     await page.reload();
@@ -304,5 +306,5 @@ for (const width of [1280,390]) test(`Missing playback job cannot leave preparin
 });
 
 for(const width of [1280,390])test(`Sessions recording action sits in the top-right page heading at ${width}px`,async({page})=>{
- await page.setViewportSize({width,height:900});await fixture(page,false);const start=page.locator('#room-start');await expect(start).toBeVisible();await expect(start).toBeInViewport();const title=await page.locator('#library-title').boundingBox(),record=await start.boundingBox();expect(record.x).toBeGreaterThan(title.x+title.width);expect(record.y).toBeLessThan(title.y+title.height+50);await expect(page.getByRole('button',{name:'Create episode',exact:true})).toHaveCount(0);await page.screenshot({path:test.info().outputPath(`sessions-heading-${width}.png`),fullPage:true});
+ await page.setViewportSize({width,height:900});await fixture(page,false);const start=page.locator('#room-start');await expect(start).toBeVisible();await expect(start).toBeInViewport();const title=await page.locator('#library-title').boundingBox(),record=await start.boundingBox();expect(record.x).toBeGreaterThan(title.x+title.width);expect(record.y).toBeLessThan(title.y+title.height+50);await expect(page.getByRole('button',{name:'Create Episode',exact:true})).toHaveCount(0);await page.screenshot({path:test.info().outputPath(`sessions-heading-${width}.png`),fullPage:true});
 });

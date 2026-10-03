@@ -203,7 +203,7 @@ def test_map_scene_title_only_then_selection_pins_exact_local_image(tmp_path):
     assert job["selectedScene"] == selected
     assert job["selectedMap"] == {"schemaVersion": 1, "key": key, "sha256": base64.b64encode(hashlib.sha256(b"original-map-bytes").digest()).decode(), "size": len(b"original-map-bytes"), "contentType": "image/png", "role": "first-frame", "instructions": dev.production_asset_views().MAP_SCENE_INSTRUCTIONS}
     assert "red footprints" in job["selectedMap"]["instructions"]
-    assert job["status"] == "BLOCKED" and "not connected" in job["message"] and job["videoGenerationAuthorized"] is False
+    assert job["status"] == "QUEUED" and job["message"] is None and job["videoGenerationAuthorized"] is False
     assert handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation}) == job
     assert store.get("scene", "preview-campaign:journey:road")["mapAssetKey"] is None
 
@@ -291,7 +291,8 @@ def test_local_asset_generation_persists_real_queue_and_rejects_changed_retry(tm
     body = {"gameId": "preview-campaign", "type": "map", "name": "Coast", "prompt": "A detailed coastline map", "operationId": "a" * 32}
     job = store.submit_asset_generation(body)
     assert job["status"] == "ATTENTION" and job["assetKey"] is None
-    assert "panther assets worker" in job["message"]
+    assert job["message"] == "Image generation is unavailable. Check the server configuration."
+    assert store.get("asset-generation", job["jobId"])["status"] == "QUEUED"
     assert dev.Store(store.path).submit_asset_generation(body) == job
     with pytest.raises(ValueError, match="Operation reused"):
         store.submit_asset_generation({**body, "prompt": "Another map"})
@@ -357,7 +358,7 @@ def test_local_recording_reports_unavailable_services_and_existing_queued_audio(
     from urllib.request import Request, urlopen
     store = dev.Store(tmp_path / "recording.sqlite")
     store.seed()
-    store.put("playback", "retained-audio", {"status": "SUBMITTED"}, "preview-campaign")
+    store.put("playback", "retained-audio", {"status": "SUBMITTED", "gameId": "preview-campaign"}, "preview-campaign")
     server = dev.Server(("127.0.0.1", 0), store)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -367,9 +368,9 @@ def test_local_recording_reports_unavailable_services_and_existing_queued_audio(
             return json.load(urlopen(Request(origin + path, headers={"Authorization": "Bearer local"})))
         capability = get("/browser-recording/capabilities")
         assert capability["canRecord"] and not capability["transcriptionAvailable"] and not capability["playbackAvailable"]
-        assert "not configured" in capability["transcriptionUnavailableReason"]
+        assert "offline" in capability["transcriptionUnavailableReason"]
         result = get("/browser-transcriptions?gameId=preview-campaign&playbackJobId=retained-audio")
-        assert result["playback"]["status"] == "BLOCKED" and "local development" in result["playback"]["message"]
+        assert result["playback"]["status"] == "BLOCKED" and "recording is saved" in result["playback"]["message"]
         assert result["jobs"] == [] and result["transcriptKey"] is None
         assert store.get("playback", "retained-audio")["status"] == "SUBMITTED"
     finally:
@@ -392,7 +393,7 @@ def test_local_transcript_summaries_pin_real_evidence_and_report_missing_worker(
     assert store.transcript_summary_view("preview-campaign", key)["status"] == "MISSING"
     body = {"gameId": "preview-campaign", "key": key}
     first = store.submit_transcript_summary(body)
-    assert first["status"] == "ATTENTION" and "not configured" in first["message"]
+    assert first["status"] == "QUEUED" and first["message"] is None
     assert first["source"] == {"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)}
     assert first["participants"] == [{"id": "player-1", "name": "Example Player"}, {"id": "player-2"}]
     assert first["recordedAt"] == document["recordedAt"] and first["summary"] is None
@@ -429,14 +430,14 @@ def test_local_editorial_queue_reports_missing_worker_without_mutating_history(t
     import threading
     from urllib.request import Request, urlopen
     store = dev.Store(tmp_path / "editorial.sqlite")
-    store.put("editorial", "prior-job", {"jobId": "prior-job", "status": "SUBMITTED", "creation": {"target": "novel", "brief": "A fictional river crossing"}}, "fictional-game")
+    store.put("editorial", "prior-job", {"jobId": "prior-job", "gameId": "fictional-game", "status": "SUBMITTED", "creation": {"target": "novel", "brief": "A fictional river crossing"}}, "fictional-game")
     server = dev.Server(("127.0.0.1", 0), store)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        response = json.load(urlopen(Request(f"http://127.0.0.1:{server.server_port}/editorial-jobs?jobId=prior-job", headers={"Authorization": "Bearer local"})))
+        response = json.load(urlopen(Request(f"http://127.0.0.1:{server.server_port}/editorial-jobs?gameId=fictional-game&jobId=prior-job", headers={"Authorization": "Bearer local"})))
         assert response["job"]["status"] == "BLOCKED"
-        assert "not connected" in response["job"]["message"]
+        assert response["job"]["message"] == "Generation is temporarily unavailable. Your request is saved."
         assert response["tasks"] == []
         assert store.get("editorial", "prior-job")["status"] == "SUBMITTED"
     finally:
@@ -453,5 +454,118 @@ def test_local_asset_generation_projects_old_queued_jobs_without_rewriting(tmp_p
     with store.connect() as db:
         db.execute("INSERT INTO records VALUES ('asset-generation',?,?,?)", ("old", "preview-campaign", json.dumps(job)))
     view = store.asset_generation_page("preview-campaign")["jobs"][0]
-    assert view["status"] == "ATTENTION" and "local database" in view["message"]
+    assert view["status"] == "ATTENTION" and view["message"] == "Image generation is unavailable. Check the server configuration."
     assert store.get("asset-generation", "old") == job
+
+
+def test_generation_capabilities_require_fresh_running_services(tmp_path, monkeypatch):
+    store = dev.Store(tmp_path / 'services.sqlite')
+    monkeypatch.setattr(dev.time, 'time', lambda: 1000)
+    assert not any(store.generation_capabilities().values())
+    store.put('service', 'images', {'status': 'RUNNING', 'updatedAt': 999})
+    store.put('service', 'video', {'status': 'RUNNING', 'updatedAt': 800})
+    store.put('service', 'editorial', {'status': 'STOPPED', 'updatedAt': 999})
+    assert store.generation_capabilities()['images']
+    assert not store.generation_capabilities()['video']
+    assert not store.generation_capabilities()['editorial']
+
+
+@pytest.mark.parametrize('status', ['QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'])
+def test_scene_cannot_change_during_background_generation(tmp_path, status):
+    store = dev.Store(tmp_path / 'locked.sqlite')
+    store.seed()
+    store.save_story_entity('episode', {'gameId': 'preview-campaign', 'id': 'episode-one', 'name': 'Gate', 'description': '', 'expectedRevision': None, 'operationId': 'a' * 32})
+    body = {'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'id': 'scene-one', 'name': 'The gate opens', 'description': '', 'type': 'opener', 'expectedRevision': None, 'operationId': 'b' * 32}
+    scene = store.save_story_entity('scene', body)['record']
+    store.put('scene-render', 'job-one', {'jobId': 'job-one', 'gameId': 'preview-campaign', 'sceneRef': {'episodeId': 'episode-one', 'sceneId': 'scene-one', 'revision': scene['revision']}, 'status': status}, 'preview-campaign')
+    with pytest.raises(FileExistsError, match='generating'):
+        store.save_story_entity('scene', {**body, 'name': 'Changed', 'expectedRevision': scene['revision'], 'operationId': 'c' * 32})
+    assert store.get('scene', 'preview-campaign:episode-one:scene-one') == scene
+    with pytest.raises(FileExistsError, match='generating'):
+        store.submit_scene_render({'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'sceneId': 'scene-one', 'revision': scene['revision'], 'operationId': 'd' * 32})
+    assert len(store.list('scene-render', 'preview-campaign')) == 1
+
+
+def test_tags_combine_existing_assets_with_inline_created_tags(tmp_path):
+    store = dev.Store(tmp_path / 'tags.sqlite')
+    store.seed()
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', ('games/preview-campaign/assets/map/original/map.png', 'preview-campaign', '{"tags":["Travel"]}', b'bytes', 'now'))
+    assert store.create_tag({'gameId': 'preview-campaign', 'name': ' travel '})['tag'] == 'Travel'
+    assert store.create_tag({'gameId': 'preview-campaign', 'name': 'night'})['tags'] == ['night', 'Travel']
+    assert store.tags('preview-sandbox')['tags'] == []
+    assert dev.Store(store.path).tags('preview-campaign') == store.tags('preview-campaign')
+    with pytest.raises(ValueError):
+        store.create_tag({'gameId': 'preview-campaign', 'name': 'bad\nname'})
+
+
+def test_chapter_review_is_guarded_idempotent_and_preserves_manuscript(tmp_path):
+    store = dev.Store(tmp_path / 'review.sqlite')
+    chapter = {'id': 'a' * 64, 'gameId': 'fictional', 'markdown': 'The gate opened.'}
+    store.put('chapter', chapter['id'], chapter, 'fictional')
+    body = {'gameId': 'fictional', 'chapterId': chapter['id'], 'status': 'rejected', 'comment': 'The gate was closed.', 'expectedRevision': None, 'operationId': 'a' * 32}
+    rejected = store.review_chapter(body)
+    assert store.review_chapter(body) == rejected
+    with pytest.raises(FileExistsError):
+        store.review_chapter({**body, 'operationId': 'b' * 32})
+    approved = store.review_chapter({**body, 'status': 'approved', 'expectedRevision': rejected['review']['revision'], 'operationId': 'b' * 32})
+    assert approved['review']['status'] == 'approved' and approved['review']['comment'] == ''
+    assert store.get('chapter', chapter['id']) == chapter
+    assert len(store.list('novel-review-history', 'fictional')) == 2
+    with pytest.raises(LookupError):
+        store.review_chapter({**body, 'gameId': 'another-game'})
+
+
+def test_creating_game_is_persistent_and_never_overwrites_existing_game(tmp_path):
+    store = dev.Store(tmp_path / 'games.sqlite')
+    body = {'id': 'imaginary-journey', 'name': 'Imaginary Journey', 'purpose': 'campaign', 'players': [], 'characters': [], 'memberships': []}
+    first = store.create_game(body)
+    assert store.create_game(body) == first
+    assert dev.Store(store.path).game(body['id']) == first
+    with pytest.raises(FileExistsError):
+        store.create_game({**body, 'name': 'Replacement'})
+
+
+def test_asset_deletion_hides_catalog_entry_but_preserves_original_and_provenance(tmp_path):
+    import base64
+    import hashlib
+    store = dev.Store(tmp_path / 'assets.sqlite')
+    store.seed()
+    key = 'games/preview-campaign/assets/fictional-map/original/map.png'
+    raw, metadata = b'original bytes', '{"kind":"map","sourceKeys":["evidence"]}'
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (key, 'preview-campaign', metadata, raw, 'now'))
+    body = {'gameId': 'preview-campaign', 'key': key, 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'operationId': 'a' * 32}
+    with pytest.raises(FileExistsError):
+        store.delete_asset({**body, 'sha256': 'changed'})
+    store.put('scene-render', 'active', {'status': 'IN_QUEUE', 'sourceKeys': [key]}, 'preview-campaign')
+    with pytest.raises(FileExistsError, match='processed'):
+        store.delete_asset(body)
+    store.put('scene-render', 'active', {'status': 'DONE', 'sourceKeys': [key]}, 'preview-campaign')
+    assert store.delete_asset(body) == store.delete_asset(body) == {'deleted': True, 'key': key}
+    assert store.objects('preview-campaign') == []
+    assert store.object(key)[1] == raw
+    assert store.get('asset-deletion', key)['previousMetadata']['sourceKeys'] == ['evidence']
+
+
+def test_scene_creative_inputs_survive_output_edits_and_protect_sources(tmp_path):
+    store = dev.Store(tmp_path / "development.sqlite")
+    store.seed()
+    game = "preview-campaign"
+    key = f"games/{game}/assets/context/original/map.png"
+    with store.connect() as db:
+        db.execute("INSERT INTO objects VALUES (?,?,?,X'0102','now')", (key, game, '{"kind":"map","contentType":"image/png"}'))
+    episode = store.save_story_entity("episode", {"gameId": game, "id": "story", "name": "Story", "expectedRevision": None, "operationId": "a" * 32})["record"]
+    inputs = {"schemaVersion": 1, "characterIds": ["lantern-guide"], "sourceKeys": [], "contextKeys": [key]}
+    body = {"gameId": game, "episodeId": episode["id"], "id": "arrival", "name": "Arrival", "generationInputs": inputs, "expectedRevision": None, "operationId": "b" * 32}
+    first = store.save_story_entity("scene", body)["record"]
+    updated = store.save_story_entity("scene", {k: v for k, v in {**body, "expectedRevision": first["revision"], "operationId": "c" * 32, "description": "At dusk"}.items() if k != "generationInputs"})["record"]
+    assert updated["generationInputs"] == inputs
+    assert dev.Store(store.path).get("scene", game + ":story:arrival")["generationInputs"] == inputs
+    import base64
+    import hashlib
+    with pytest.raises(FileExistsError, match="selected"):
+        store.delete_asset({"gameId": game, "key": key, "sha256": base64.b64encode(hashlib.sha256(b'\x01\x02').digest()).decode(), "operationId": "d" * 32})
+    for change in ({"characterIds": ["missing"]}, {"contextKeys": ["games/other/assets/source.png"]}, {"contextKeys": [key, key]}):
+        with pytest.raises(ValueError):
+            store.save_story_entity("scene", {**body, "generationInputs": {**inputs, **change}, "expectedRevision": updated["revision"], "operationId": "e" * 32})

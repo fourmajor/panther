@@ -393,6 +393,15 @@ def save(catalog, body, actor, migration_admin, source_evidence=None):
                 }
             }
         )
+    import asset_archive
+
+    writes.extend(
+        asset_archive.reference_writes(
+            game,
+            f"character:{character}",
+            [details["thumbnailAssetKey"]] if details["thumbnailAssetKey"] else [],
+        )
+    )
     try:
         boto3.client("dynamodb").transact_write_items(TransactItems=writes)
     except ClientError:

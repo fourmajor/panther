@@ -68,7 +68,7 @@ for(const width of [1280,390]) {
   });
 }
 
-async function fixture(page, canEditGame = false) {
+async function fixture(page, canEditGame = false, development = false) {
   const currentGames = games.map(g=>({...g}));
   const descriptions = new Map();
   const requests = [];
@@ -110,7 +110,7 @@ async function fixture(page, canEditGame = false) {
   await page.route('https://panther.place/**', route => {
     const pathname = new URL(route.request().url()).pathname;
     if(pathname.startsWith('/style-previews/'))return route.fulfill({contentType:'image/webp',body:fs.readFileSync(path.join(__dirname,'../../web/media-explorer',pathname.slice(1)))});
-    if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/"};'});
+    if (pathname === '/config.js') return route.fulfill({contentType:'application/javascript',body:'window.PANTHER_CONFIG={apiUrl:"https://test.execute-api.us-west-2.amazonaws.com",clientId:"test",cognitoDomain:"https://test.amazoncognito.com",redirectUri:"https://panther.place/",development:'+JSON.stringify(development)+'};'});
     const file = pathname === '/vendor/model-viewer.min.js' ? MODEL_VIEWER_BUNDLE_PATH : path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
@@ -124,8 +124,8 @@ for (const width of [1280, 390]) {
     await page.goto('https://panther.place/settings');
     const style = page.getByLabel('Generated visuals');
     await expect(style).toHaveValue('photorealistic');
-    await expect(page.locator('.visual-style-card')).toHaveCount(8);for(const image of await page.locator(".visual-style-card img").all()){await image.scrollIntoViewIfNeeded();await expect.poll(()=>image.evaluate(el=>el.naturalWidth)).toBe(1536);}await expect(page.getByRole('heading',{name:'Visual style',exact:true})).toBeVisible();expect(await page.getByRole('heading',{name:'Game details',exact:true}).evaluate(el=>getComputedStyle(el).fontFamily)).toContain('Georgia');
-    await page.getByRole('button',{name:'Zoom Anime',exact:true}).click();await expect(page.locator('#style-preview-dialog')).toBeVisible();await expect(page.locator('#style-preview-image')).toBeVisible();await expect.poll(()=>page.locator('#style-preview-image').evaluate(image=>image.naturalWidth)).toBe(1536);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(page.getByRole('button',{name:'Zoom Anime',exact:true})).toBeFocused();
+    await expect(page.locator('.visual-style-card')).toHaveCount(8);expect(await page.locator('#game-select-trigger').evaluate(el=>el.getBoundingClientRect().height)).toBe(36);await expect(page.getByRole('button',{name:/^Zoom /})).toHaveCount(0);for(const image of await page.locator(".visual-style-card img").all()){await image.scrollIntoViewIfNeeded();await expect.poll(()=>image.evaluate(el=>el.naturalWidth)).toBe(1536);}await expect(page.getByRole('heading',{name:'Visual style',exact:true})).toBeVisible();expect(await page.getByRole('heading',{name:'Game details',exact:true}).evaluate(el=>getComputedStyle(el).fontFamily)).toContain('Georgia');
+    await page.getByRole('button',{name:'Expand Anime',exact:true}).focus();await page.getByRole('button',{name:'Expand Anime',exact:true}).click();await expect(page.locator('#style-preview-dialog')).toBeVisible();await expect(page.locator('#style-preview-image')).toBeVisible();await expect.poll(()=>page.locator('#style-preview-image').evaluate(image=>image.naturalWidth)).toBe(1536);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(page.getByRole('button',{name:'Expand Anime',exact:true})).toBeFocused();
     await page.getByRole('button',{name:'Select Anime',exact:true}).click();
     await expect(page.getByRole('status').filter({hasText:'Style saved'})).toBeVisible();
     const box = await page.locator("#visual-style-cards").boundingBox();
@@ -137,7 +137,7 @@ for (const width of [1280, 390]) {
     await selectGame(page,'test-b');
     await expect(style).toHaveValue('photorealistic');
     await page.route('**/game/style', route=>route.fulfill({status:409,json:{error:'Style changed'},headers:jsonHeaders}));
-    await page.getByRole('button',{name:'Zoom Anime',exact:true}).click();await expect(page.locator('#style-preview-dialog')).toBeVisible();await expect(page.locator('#style-preview-image')).toBeVisible();await expect.poll(()=>page.locator('#style-preview-image').evaluate(image=>image.naturalWidth)).toBe(1536);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(page.getByRole('button',{name:'Zoom Anime',exact:true})).toBeFocused();
+    await page.getByRole('button',{name:'Expand Anime',exact:true}).focus();await page.getByRole('button',{name:'Expand Anime',exact:true}).click();await expect(page.locator('#style-preview-dialog')).toBeVisible();await expect(page.locator('#style-preview-image')).toBeVisible();await expect.poll(()=>page.locator('#style-preview-image').evaluate(image=>image.naturalWidth)).toBe(1536);await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(page.getByRole('button',{name:'Expand Anime',exact:true})).toBeFocused();
     await page.getByRole('button',{name:'Select Anime',exact:true}).click();
     await expect(page.locator('#style-status')).toContainText('Could not save');
   });
@@ -230,13 +230,15 @@ for (const width of [1280,390]) {
     await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Campaign A');
     await page.getByLabel('Game name',{exact:true}).fill('The Lantern Campaign');
     await page.getByLabel('Description',{exact:false}).fill('A fictional game for testing the shared archive.');
-    await page.getByLabel('Game system',{exact:true}).fill('Example System');
+    await page.getByRole('combobox',{name:'Game system',exact:true}).click();
+    await page.getByRole('option',{name:'Other',exact:true}).click();
+    await page.getByLabel('Custom game system',{exact:true}).fill('Example System');
     await page.getByRole('button',{name:'Save game details',exact:true}).click();
     await expect(page.locator('#game-settings-status')).toHaveText('Game details saved.');
     await expect(page.locator('#game-selector option:checked')).toHaveText('The Lantern Campaign');
     await page.reload();
     await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('The Lantern Campaign');
-    await expect(page.getByLabel('Game system',{exact:true})).toHaveValue('Example System');
+    await expect(page.getByLabel('Custom game system',{exact:true})).toHaveValue('Example System');
     await page.screenshot({path:test.info().outputPath(`settings-${width}.png`),fullPage:true});
     await page.locator('#primary-nav').getByRole('link',{name:'Dashboard',exact:true}).click();
     await expect(page.locator('#dashboard-name')).toHaveText('The Lantern Campaign');
@@ -366,4 +368,130 @@ for(const width of [1280,390])test(`Current Media folder is a plain label includ
  await page.locator('.media-browser').getByRole('button',{name:'maps',exact:true}).click();
  await expect(path.locator('[aria-current=location]')).toHaveText('maps');await expect(path.getByRole('button',{name:'maps',exact:true})).toHaveCount(0);await expect(path.getByRole('button',{name:'Campaign A',exact:true})).toBeVisible();
  await path.getByRole('button',{name:'Campaign A',exact:true}).click();await expect(path.locator('[aria-current=location]')).toHaveText('Campaign A');
+});
+
+for (const width of [1280, 390]) {
+  test(`page actions share one compact scale and unobstructed hit areas at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width,height:1000});
+    await fixture(page,true);
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/**', route => {
+      const pathname=new URL(route.request().url()).pathname;
+      const bodies={
+        '/assets':{assets:[],cursor:null},
+        '/novel':{chapters:[{id:'chapter-one',title:'A real chapter',gameId:'campaign-a',assetKey:'games/campaign-a/assets/chapter-one/original/chapter.json',publishedAt:100}],cursor:null},
+        '/novel-stories':{records:[],cursor:null}, '/novel-books':{records:[],cursor:null},
+        '/tv-series':{records:[],cursor:null},'/tv-episodes':{records:[],cursor:null},
+        '/video-collections':{collections:[],cursor:null}, '/scenes':{records:[],cursor:null},
+        '/editorial/creations':{jobs:[],cursor:null},
+        '/browser-recording/capabilities':{canRecord:true,transcriptionAvailable:false},
+      };
+      return bodies[pathname]?route.fulfill({json:bodies[pathname],headers:jsonHeaders}):route.fallback();
+    });
+    let baseline;
+    for(const [section,selector] of [
+      ['characters','#character-create'],['sessions','#room-start'],
+      ['novel','#novel .explorer-heading [data-generation-action]'],
+      ['videos','#episode-create-action'],['assets','.assets-actions .ui-button-primary'],
+    ]) {
+      await page.goto(`https://panther.place/games/campaign-a/${section}`);
+      const button=page.locator(selector);
+      await expect(button).toBeVisible();
+      await expect(button).toBeInViewport();
+      const measured=await button.evaluate(el=>{
+        const style=getComputedStyle(el),rect=el.getBoundingClientRect();
+        const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+        const heading=el.closest('.explorer-heading')||el.closest('.assets-toolbar');
+        const headingRect=heading.getBoundingClientRect();
+        const group=el.closest('.assets-actions')||el;const groupRect=group.getBoundingClientRect();
+        return {height:rect.height,fontSize:style.fontSize,fontWeight:style.fontWeight,lineHeight:style.lineHeight,paddingLeft:style.paddingLeft,paddingRight:style.paddingRight,border:style.borderWidth,radius:style.borderRadius,background:style.backgroundColor,color:style.color,fontFamily:style.fontFamily,letterSpacing:style.letterSpacing,textTransform:style.textTransform,hit:el===hit||el.contains(hit),right:groupRect.right,toolbarRight:headingRect.right};
+      });
+      expect(measured.height).toBe(36);
+      expect(measured.hit).toBe(true);
+      expect(measured.right).toBeCloseTo(measured.toolbarRight,0);
+      const {hit,right,toolbarRight,...scale}=measured;
+      baseline ||= scale;
+      expect(scale).toEqual(baseline);
+      if(section==='assets')expect((await page.getByRole('button',{name:'Upload',exact:true}).boundingBox()).height).toBe(36);
+      for(const action of await page.getByRole('button',{name:/^(Upload|Generate)(?: |$)/}).all()){
+        if(!await action.isVisible())continue;
+        await expect(action.locator('svg')).toHaveCount(1);await expect(action.locator('svg')).toHaveAttribute('aria-hidden','true');
+        await expect(action.locator('svg')).toHaveClass((await action.textContent()).trim().startsWith('Upload')?/lucide-upload/:/lucide-sparkles/);
+        const actionStyle=await action.evaluate(el=>{const c=getComputedStyle(el);return {height:el.getBoundingClientRect().height,border:c.borderTopStyle};});expect(actionStyle.height).toBe(36);expect(actionStyle.border).toBe('solid');
+      }
+      for(const select of await page.getByRole('combobox').all())if(await select.isVisible()){
+        const border=await select.evaluate(el=>{const c=getComputedStyle(el);return {style:c.borderTopStyle,width:c.borderTopWidth};});expect(border).toEqual({style:'solid',width:'1px'});
+      }
+      await page.screenshot({path:test.info().outputPath(`action-${section}-${width}.png`)});
+    }
+    await page.goto('https://panther.place/games/campaign-a/settings');
+    const save=page.getByRole('button',{name:'Save game details',exact:true});
+    await expect(save).toBeVisible();
+    expect((await save.boundingBox()).height).toBe(36);
+    await page.goto('https://panther.place/account');
+    const back=page.getByRole('button',{name:'Back to game',exact:true});
+    await expect(back).toBeVisible();
+    expect((await back.boundingBox()).height).toBe(36);
+  });
+}
+
+for(const width of [1280,390])test(`all main page titles use one heading scale and top inset at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page,true);
+ let baseline;
+ for(const section of ['dashboard','characters','sessions','novel','videos','assets','workflows']){
+  await page.goto(`https://panther.place/games/campaign-a/${section}`);const title=page.locator('main .page-heading h1:visible').first();await expect(title).toBeVisible();
+  const scale=await title.evaluate(el=>{const s=getComputedStyle(el);return{size:s.fontSize,lineHeight:s.lineHeight,weight:s.fontWeight,marginTop:s.marginTop,marginBottom:s.marginBottom};});baseline ||= scale;expect(scale).toEqual(baseline);
+  const mainPadding=await page.locator('main').evaluate(el=>getComputedStyle(el).paddingTop);expect(mainPadding).toBe(width===390?'12px':'16px');
+  const headingPadding=await title.evaluate(el=>getComputedStyle(el.closest('.page-heading')).paddingTop);expect(headingPadding).toBe('8px');
+ }
+});
+
+for(const width of [1280,390])test(`Settings tags can be created and reused in video autocomplete at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page,true,true);let tags=['canonical'];const writes=[];
+ await page.route('**/tags**',route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);tags.push(body.name);return route.fulfill({json:{tag:body.name,tags},headers:jsonHeaders});}return route.fulfill({json:{tags},headers:jsonHeaders});});
+ await page.route('https://test.execute-api.us-west-2.amazonaws.com/**',route=>{const path=new URL(route.request().url()).pathname;const data={'/episodes':{records:[],cursor:null},'/assets':{assets:[],cursor:null},'/video-collections':{collections:[],cursor:null}};return data[path]?route.fulfill({json:data[path],headers:jsonHeaders}):route.fallback();});
+ await page.goto('https://panther.place/games/campaign-a/settings');const input=page.getByRole('combobox',{name:'Game tags',exact:true});await expect(input).toBeVisible();await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);await input.click();await page.keyboard.press('Escape');await expect(input).toBeFocused();await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);await input.click();const search=page.getByRole('combobox',{name:'Search game tags',exact:true});await search.fill('Adventure');await expect(page.getByRole('option',{name:'Create “Adventure”',exact:true})).toBeVisible();await page.screenshot({path:`/work/tag-controls-${width}.png`});await search.press('Enter');await expect(page.locator('#game-tags-control')).toContainText('Adventure');expect(writes[0]).toEqual({gameId:'campaign-a',name:'Adventure'});const chip=page.locator('#game-tags-control').getByText('Adventure',{exact:true});const padding=await chip.evaluate(el=>getComputedStyle(el.parentElement).paddingRight);expect(parseFloat(padding)).toBeGreaterThanOrEqual(8);await expect(search).toHaveCount(0);await expect(page.getByText('No matches',{exact:true})).toHaveCount(0);
+ await page.getByRole('link',{name:'Video Episodes',exact:true}).click();const filter=page.getByRole('combobox',{name:'Tags',exact:true});await filter.click();const tagSearch=page.getByRole('combobox',{name:'Search tags',exact:true});await tagSearch.fill('Adven');await expect(page.getByRole('option',{name:'Adventure',exact:true})).toBeVisible();await tagSearch.press('Enter');await expect(page.getByRole('button',{name:'Remove Adventure from tags',exact:true})).toBeVisible();expect(writes).toHaveLength(1);
+});
+
+for (const width of [1280,390]) {
+  test(`game selector creates a game without redundant header labels at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:900});await fixture(page,true,true);
+    let created;
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/games',async route=>{
+      if(route.request().method()==='POST'){created=route.request().postDataJSON();return route.fulfill({headers:jsonHeaders,json:{game:created}});}
+      return route.fulfill({headers:jsonHeaders,json:{games:[...games,...(created?[created]:[])]}});
+    });
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/game?*',async route=>{
+      const id=new URL(route.request().url()).searchParams.get('gameId');
+      const game=created?.id===id?created:games.find(g=>g.id===id);
+      return route.fulfill({headers:jsonHeaders,json:{game,gameSettings:{description:''},players:[],memberships:[],characters:[],canEditGame:true,visualStyles:[]}});
+    });
+    await page.goto('https://panther.place/games/campaign-a/dashboard');
+    await expect(page.getByText('Current game',{exact:true})).toHaveCount(0);
+    await page.locator('#game-select-root').getByRole('combobox').click();
+    await page.getByRole('option',{name:'Create game…',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'Create game',exact:true});await expect(dialog).toBeVisible();
+    await dialog.getByLabel('Name',{exact:true}).fill('Imaginary Voyage');
+    await dialog.getByRole('combobox',{name:'Game system',exact:true}).click();
+    await page.getByRole('option',{name:'Other',exact:true}).click();
+    await dialog.getByLabel('Custom game system',{exact:true}).fill('Imaginary Rules');
+    await dialog.getByRole('button',{name:'Create game',exact:true}).click();
+    await expect(page).toHaveURL(/\/games\/imaginary-voyage-[a-f0-9]+\/dashboard$/);
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('#game-select-root').getByRole('combobox')).toContainText('Imaginary Voyage');
+    expect(created).toMatchObject({name:'Imaginary Voyage',ruleset:'Imaginary Rules',purpose:'campaign',players:[],characters:[],memberships:[]});
+  });
+}
+
+for(const width of [1280,390])test(`Create game searches rules editions and persists its selection at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page,true,true);let created;
+ await page.route('https://test.execute-api.us-west-2.amazonaws.com/games',route=>{if(route.request().method()==='POST'){created=route.request().postDataJSON();return route.fulfill({headers:jsonHeaders,json:{game:created}});}return route.fulfill({headers:jsonHeaders,json:{games:[...games,...(created?[created]:[])]}});});
+ await page.route('https://test.execute-api.us-west-2.amazonaws.com/game?*',route=>route.fulfill({headers:jsonHeaders,json:{game:created||games[0],gameSettings:{description:''},players:[],memberships:[],characters:[],canEditGame:true,visualStyles:[]}}));
+ await page.goto('https://panther.place/games/campaign-a/dashboard');await page.locator('#game-select-root').getByRole('combobox').click();await page.getByRole('option',{name:'Create game…',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Create game',exact:true});await dialog.getByLabel('Name',{exact:true}).fill('Edition Voyage');await dialog.getByRole('combobox',{name:'Game system',exact:true}).click();const search=page.getByRole('combobox',{name:'Search game systems',exact:true});await search.fill('D&D');
+ await expect(page.getByRole('option',{name:'Dungeons & Dragons — 5.5e (2024)',exact:true})).toBeVisible();await expect(page.getByRole('option',{name:'Dungeons & Dragons — 5e (2014)',exact:true})).toBeVisible();
+ await search.fill('Pathfinder');const option=page.getByRole('option',{name:'Pathfinder — 2e Remaster',exact:true});await expect(option).toBeInViewport();expect(await option.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+ await page.screenshot({path:test.info().outputPath(`game-systems-${width}.png`)});await search.press('Enter');await expect(dialog).toBeVisible();await expect(dialog.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');await expect(dialog.getByLabel('Custom game system',{exact:true})).toHaveCount(0);
+ await dialog.getByRole('button',{name:'Create game',exact:true}).click();await expect(page).toHaveURL(/\/games\/edition-voyage-[a-f0-9]+\/dashboard$/);expect(created.ruleset).toBe('Pathfinder — 2e Remaster');
+ await page.getByRole('link',{name:'Settings',exact:true}).click();await expect(page.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');
 });
