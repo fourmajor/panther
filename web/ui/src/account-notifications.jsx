@@ -1,4 +1,4 @@
-import React,{useState,useEffect} from 'react';
+import React,{useState,useEffect,useRef} from 'react';
 import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {Bell,Settings,LogOut,AlertCircle} from 'lucide-react';
 import {Popover,PopoverTrigger,PopoverContent} from './components/ui/popover.jsx';
@@ -15,6 +15,7 @@ function safeAvatar(value){try{const url=new URL(value,location.origin);return u
 
 export function AccountControls({scope,profile,onLoad,onRead,onOpen,onSettings,onSignOut,onHistory}){
  const client=useQueryClient(),[bell,setBell]=useState(false),[account,setAccount]=useState(false),[busy,setBusy]=useState(null),[error,setError]=useState('');
+ const accountNavigation=useRef(false);
  const inbox=useQuery({queryKey:['notifications',scope,'unread'],queryFn:()=>onLoad({view:'unread'}),refetchInterval:60_000,retry:1});
  const items=inbox.data?.notifications||[];
  const open=async notice=>{setError('');setBusy(notice.id);try{await onRead(notice.id);await client.invalidateQueries({queryKey:['notifications',scope]});setBell(false);onOpen(notice);}catch{setError('Could not mark this notification as read. Please try again.');}finally{setBusy(null);}};
@@ -29,7 +30,7 @@ export function AccountControls({scope,profile,onLoad,onRead,onOpen,onSettings,o
     {error&&<p role="alert">{error}</p>}<Button variant="ghost" className="notification-history-link" onClick={()=>{setBell(false);onHistory();}}>View all notifications →</Button>
    </PopoverContent></Popover>
   <Popover open={account} onOpenChange={setAccount}><PopoverTrigger asChild><Button variant="ghost" size="icon" className="account-avatar" aria-label="Account" title={profile.name||'Account'}>{picture&&!imageFailed?<img src={picture} alt="" onError={()=>setImageFailed(true)}/>:<span aria-hidden="true">{initials}</span>}</Button></PopoverTrigger>
-   <PopoverContent align="end" className="account-menu"><strong>{profile.name||profile.username||'Your account'}</strong><Button variant="ghost" onClick={()=>{setAccount(false);onSettings();}}><Settings size={16}/>Account settings</Button><Button variant="ghost" onClick={()=>{setAccount(false);onSignOut();}}><LogOut size={16}/>Sign out</Button></PopoverContent>
+   <PopoverContent align="end" className="account-menu" onCloseAutoFocus={event=>{if(accountNavigation.current){event.preventDefault();accountNavigation.current=false;}}}><strong>{profile.name||profile.username||'Your account'}</strong><Button variant="ghost" onClick={()=>{accountNavigation.current=true;setAccount(false);onSettings();}}><Settings size={16}/>Account settings</Button><Button variant="ghost" onClick={()=>{accountNavigation.current=true;setAccount(false);onSignOut();}}><LogOut size={16}/>Sign out</Button></PopoverContent>
   </Popover>
  </div>;
 }

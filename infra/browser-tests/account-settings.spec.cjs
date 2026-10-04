@@ -34,8 +34,7 @@ async function fixture(context,{signedIn=true,mfa=false}={}) {
 async function visibleControl(locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeInViewport();
-  const box=await locator.boundingBox();
-  expect(await locator.evaluate((node,p)=>node.contains(document.elementFromPoint(p.x,p.y)),{x:box.x+box.width/2,y:box.y+box.height/2})).toBe(true);
+  await expect.poll(()=>locator.evaluate(node=>{const box=node.getBoundingClientRect();return node.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));})).toBe(true);
 }
 
 for(const width of [1280,390]) {
@@ -181,6 +180,8 @@ test('Account supports direct URLs and browser back while discarding enrollment 
   await page.goto('https://panther.place/account');
   await expect(page.getByRole('heading',{name:'Account',exact:true})).toBeVisible();
   await expect(page.getByLabel('Display name')).toHaveValue('Example Member');
+  // One header profile lookup plus the account page's own fresh read.
+  await expect.poll(()=>calls.filter(call=>call.action==='get').length).toBe(2);
   await page.getByRole('button',{name:'Back to game'}).click();
   await expect(page.locator('#dashboard')).toBeVisible();
   await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
@@ -191,7 +192,7 @@ test('Account supports direct URLs and browser back while discarding enrollment 
   await page.goForward();
   await expect(page.getByLabel('Display name')).toBeVisible();
   await expect(page.getByLabel('Authenticator setup key')).toHaveCount(0);
-  expect(calls.filter(call=>call.action==='get')).toHaveLength(3);
+  expect(calls.filter(call=>call.action==='get')).toHaveLength(4);
 });
 
 test('Password recovery supports a direct signed-out URL',async({page,context})=>{

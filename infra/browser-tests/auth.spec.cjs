@@ -36,6 +36,7 @@ async function fixture(context, { remembered = true, username = 'test' } = {}) {
       expect(route.request().method()).toBe('POST');
       expect(headers.origin).toBe('https://panther.place');
       expect(headers['content-type']).toBe('application/json');
+      if (pathname === '/auth/account') return route.fulfill({json:{username,name:'Example Member',picture:''}});
       const expiredCookie = `${COOKIE}=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict`;
       if (pathname === '/auth/logout') {
         state.revocations += 1;
@@ -133,7 +134,7 @@ for (const width of [1280, 390]) {
     const page = await context.newPage();
     await page.goto('https://panther.place/media');
     await expect(page.locator('#account')).toBeVisible();
-    await expect.poll(() => state.apiPaths.filter(p => p !== '/recordings/live').length).toBe(4);
+    await expect.poll(() => state.apiPaths.filter(p => !['/recordings/live','/notifications'].includes(p)).length).toBe(4);
     expect(state.apiPaths.filter(p => p === '/games')).toHaveLength(2); // Exactly one retry.
     expect(state.refreshes).toBe(2);
     expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);
