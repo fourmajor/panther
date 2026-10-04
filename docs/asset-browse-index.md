@@ -82,6 +82,9 @@ No v3 fallback is used by readers; preserve the old projection until cutover ver
 
 Requests process 20 source reservations at a time with eight workers. A failed/interrupted run can
 be repeated with a fresh report: source data is untouched and writes are conditional/idempotent.
+Maintenance retries a concurrent index/transaction guard at most four times with short jittered
+backoff. Each attempt rereads current source data and the index revision; stale transactions are
+never replayed. Exhausted contention still fails the page and blocks activation.
 Do not activate a partial migration manually. The projection schema is versioned (`v3` keys);
 future schema changes require another full migration. There is no old S3-scan read fallback.
 The v1/v2 readiness/verification markers cannot authorize v3. Repeat the full dry-run/apply/verify

@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,6 +19,10 @@ VERSION = 4
 
 class IndexNotReady(RuntimeError):
     pass
+
+
+class ConcurrentIndexUpdate(RuntimeError):
+    """A source/transaction guard requires a fresh read, never a blind replay."""
 
 
 def table():
@@ -122,11 +127,23 @@ def refresh(media, reference, *, write=True):
         boto3.client("dynamodb").transact_write_items(TransactItems=operations)
     except ClientError as error:
         if error.response["Error"]["Code"] == "TransactionCanceledException":
-            raise RuntimeError(
+            raise ConcurrentIndexUpdate(
                 "Concurrent index update; retry by rereading current source"
             ) from error
         raise
     return asset
+
+
+def refresh_for_maintenance(media, reference, *, write):
+    # Shared tag rows can contend within this maintenance page. Every retry
+    # rereads the asset and its CAS revision; never reuse a stale transaction.
+    for attempt in range(4):
+        try:
+            return refresh(media, reference, write=write)
+        except ConcurrentIndexUpdate:
+            if not write or attempt == 3:
+                raise
+            time.sleep(random.uniform(0.05, 0.15) * (2 ** attempt))
 
 
 def page(game, section, cursor=None):
@@ -278,7 +295,7 @@ def rebuild_handler(event, _context):
             ref = obj["Key"][:-5].replace("/catalog/assets/", "/assets/", 1)
             storage_layout.parts(ref)
             try:
-                asset = refresh(media, ref, write=mode == "apply")
+                asset = refresh_for_maintenance(media, ref, write=mode == "apply")
             except ClientError as error:
                 from asset_storage import missing
 
