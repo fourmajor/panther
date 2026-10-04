@@ -28,7 +28,7 @@ async function fixture(page,{human=false,conflict=false,planning=false}={}) {
     if(u.pathname==='/episodes')body=u.searchParams.has('id')?{record:episode}:{records:[episode],cursor:null};
     if(u.pathname==='/scenes'){
       if(post){const request=route.request().postDataJSON();writes.push(request);if(conflict)return route.fulfill({status:409,headers,json:{error:'This scene changed. Reopen it before saving.'}});
-        if(request.storyboardDecision){scene={...scene,planningState:'ready',storyboard:{...scene.storyboard,decision:request.storyboardDecision}};}
+        if(request.storyboardDecision){scene={...scene,planningState:request.storyboardDecision.action==='approved'?'ready':'changes-requested',storyboard:{...scene.storyboard,decision:request.storyboardDecision}};}
         if(request.storyboardShots){const changed=JSON.stringify(request.storyboardShots)!==JSON.stringify(scene.storyboard.shots);scene={...scene,planningState:changed?'ready':scene.planningState,storyboard:{...scene.storyboard,origin:changed?'human':scene.storyboard.origin,shots:request.storyboardShots,decision:changed?null:scene.storyboard.decision}};}
         body={record:scene};
       }else body={records:published?[scene]:[],cursor:null};
@@ -51,16 +51,29 @@ for(const width of [1280,390]) {
    await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page);
    await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
    const board=page.getByRole('region',{name:'Scene storyboard'});
+   await expect(page.getByRole('img',{name:'Storyboard needs approval',exact:true})).toBeVisible();
    await expect(board).toContainText('Needs approval');await expect(board).toContainText('The party arrives at dusk.');
    await expect(page.getByRole('button',{name:'Generate',exact:true})).toBeDisabled();
    const frame=board.getByRole('button',{name:'Open storyboard frame for shot 1'});await frame.hover();
    const hover=await frame.evaluate(el=>getComputedStyle(el).borderColor);await page.mouse.move(0,0);expect(hover).not.toBe(await frame.evaluate(el=>getComputedStyle(el).borderColor));
    await board.getByRole('button',{name:'Approve',exact:true}).click();await expect(board.getByRole('button',{name:'Approve',exact:true})).toHaveCount(0);
    expect(writes[0].storyboardDecision).toEqual({revision:'e'.repeat(64),action:'approved'});
+   await expect(page.getByRole('img',{name:'Storyboard needs approval',exact:true})).toHaveCount(0);
+   await expect(page.getByRole('img',{name:'Storyboard approved',exact:true})).toBeVisible();
    await expect(page.getByRole('button',{name:'Generate',exact:true})).toBeEnabled();
    await expect(page.locator('#storyboard-entry,#approval-inbox,#video-approval-inbox,#session-video-plans')).toHaveCount(0);
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
    await page.screenshot({path:test.info().outputPath(`owned-storyboard-${width}.png`),fullPage:true});expect(errors).toEqual([]);
+ });
+ test(`rejected storyboard has a scene-list icon at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});await fixture(page);
+   await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+   const board=page.getByRole('region',{name:'Scene storyboard'});
+   await board.getByRole('button',{name:'Request changes',exact:true}).click();
+   await expect(page.getByRole('img',{name:'Storyboard rejected',exact:true})).toBeVisible();
+   await expect(page.getByRole('img',{name:'Storyboard approved',exact:true})).toHaveCount(0);
+   await expect(page.getByRole('button',{name:'Generate',exact:true})).toBeDisabled();
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  });
  test(`human storyboards save through the scene without approval at ${width}px`,async({page})=>{
    await page.setViewportSize({width,height:1000});const {writes}=await fixture(page,{human:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
