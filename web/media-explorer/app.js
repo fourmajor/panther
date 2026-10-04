@@ -4707,7 +4707,7 @@ function closeAccountSettings() {
   document.getElementById("account-page").hidden = true;
   document.getElementById("account-settings-body").replaceChildren();
   document.getElementById("account-settings-button").removeAttribute("aria-current");
-  document.getElementById("account-settings-button").hidden=false;
+  document.getElementById("account-settings-button").hidden=true;
   document.getElementById("account-game-back").hidden=true;
 }
 
@@ -4794,6 +4794,7 @@ async function openAccountSettings(recovery=false) {
     try {await ensureSession();} catch(error) {if(epoch===accountSettingsEpoch)showWelcome(error.message);return;}
     if(epoch!==accountSettingsEpoch)return;
     elements.account.hidden=false;
+    syncAccountControls();
   }
   if (recovery) {
     const section=accountSection(host,"Recover your account","Enter your username. Recovery requires a previously verified email address. We do not disclose whether an account exists.");
