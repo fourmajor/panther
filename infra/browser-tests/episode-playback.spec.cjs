@@ -34,6 +34,7 @@ async function fixture(page,context,{failSecond=false,uncertainSelection=false,d
  await page.getByRole('button',{name:'Arrival',exact:true}).click();
  return{changes,requests,scenes,episode};
 }
+async function showTake(page,title){const select=page.getByRole('combobox',{name:'Video',exact:true});if(await select.count()){await select.click();await page.getByRole('option',{name:title,exact:true}).click();}}
 for(const width of [1280,390])test(`Explicit episode order and continuous preview at ${width}px`,async({page,context},testInfo)=>{
  await page.setViewportSize({width,height:900});const{changes}=await fixture(page,context);const host=page.locator('#episode-workspace');
  await expect(host.getByRole('button',{name:'Preview episode',exact:true})).toBeDisabled();
@@ -41,7 +42,7 @@ for(const width of [1280,390])test(`Explicit episode order and continuous previe
  await expect(host.locator('.scene-order-row .scene-card').first()).toContainText('River crossing');expect(changes[0].sceneIds).toEqual(['river','gate']);
  await host.getByRole('button',{name:'Reorder City gate',exact:true}).focus();await page.keyboard.press('Space');await expect(host.locator('[data-dragging=true]')).toHaveCount(1);await expect(page.locator('[id^=DndLiveRegion]')).toContainText('over droppable area gate');await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await page.keyboard.press(width<500?'ArrowLeft':'ArrowUp');await expect(page.locator('[id^=DndLiveRegion]')).toContainText('over droppable area river');await page.keyboard.press('Space');await expect(host.locator('.scene-order-row .scene-card').first()).toContainText('City gate');
  await host.getByRole('button',{name:'Edit episode',exact:true}).click();await expect(page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Episode editor',exact:true})})).toBeVisible();await page.getByRole('form',{name:'Episode editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(3);expect(changes[2].expectedRevision).toBe('d'.repeat(32));
- await host.getByRole('button',{name:'City gate',exact:true}).click();const first=host.getByRole('button',{name:'Use in episode: City gate take',exact:true});await first.scrollIntoViewIfNeeded();await expect(first).toBeInViewport();await first.click();
+ await host.getByRole('button',{name:'City gate',exact:true}).click();await showTake(page,'City gate take');const first=host.getByRole('button',{name:'Use in episode: City gate take',exact:true});await first.scrollIntoViewIfNeeded();await expect(first).toBeInViewport();await first.click();
  await host.getByRole('button',{name:'Edit scene',exact:true}).click();await expect(page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Scene editor',exact:true})})).toBeVisible();await page.getByRole('form',{name:'Scene editor',exact:true}).getByRole('button',{name:'Save changes',exact:true}).click();await expect.poll(()=>changes.length).toBe(5);expect(changes[4].expectedRevision).toBe('f'.repeat(32));
  await host.getByRole('button',{name:'River crossing',exact:true}).click();const second=host.getByRole('button',{name:'Use in episode: River crossing take',exact:true});await second.scrollIntoViewIfNeeded();await expect(second).toBeInViewport();await second.click();
  expect([...new Set(changes.filter(body=>body.selectedOutputKey).map(body=>body.selectedOutputKey))]).toEqual([key('gate'),key('river')]);
@@ -54,7 +55,7 @@ for(const width of [1280,390])test(`Explicit episode order and continuous previe
 });
 test('Episode preview stops visibly on a broken selected clip',async({page,context})=>{
  await fixture(page,context,{failSecond:true});const host=page.locator('#episode-workspace');
- for(const name of ['City gate','River crossing']){await host.getByRole('button',{name,exact:true}).click();await host.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
+ for(const name of ['City gate','River crossing']){await host.getByRole('button',{name,exact:true}).click();await showTake(page,`${name} take`);await host.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
  await host.getByRole('button',{name:'Preview episode',exact:true}).click();
  await expect(page.locator('.episode-preview-status')).toContainText('Preview stopped at River crossing',{timeout:10000});
  await expect(page.locator('.episode-preview-status')).not.toHaveText('Preview complete.');
@@ -62,10 +63,10 @@ test('Episode preview stops visibly on a broken selected clip',async({page,conte
 
 test('Selecting another take invalidates the cached episode composition immediately',async({page,context})=>{
  const{requests}=await fixture(page,context);const host=page.locator('#episode-workspace');
- for(const name of ['City gate','River crossing']){await host.getByRole('button',{name,exact:true}).click();await host.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
+ for(const name of ['City gate','River crossing']){await host.getByRole('button',{name,exact:true}).click();await showTake(page,`${name} take`);await host.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
  await expect(host.getByRole('button',{name:'Preview episode',exact:true})).toBeEnabled();
  await expect.poll(()=>requests.filter(path=>path==='/episode-composition').length).toBeGreaterThan(0);const before=requests.filter(path=>path==='/episode-composition').length;
- await host.getByRole('button',{name:'City gate',exact:true}).click();await host.getByRole('button',{name:'Use in episode: City gate second take',exact:true}).click();
+ await host.getByRole('button',{name:'City gate',exact:true}).click();await showTake(page,'City gate take');await host.getByRole('combobox',{name:'Video',exact:true}).click();await page.getByRole('option',{name:'City gate second take',exact:true}).click();await host.getByRole('button',{name:'Use in episode: City gate second take',exact:true}).click();
  await expect.poll(()=>requests.filter(path=>path==='/episode-composition').length).toBeGreaterThan(before);
  await host.getByRole('button',{name:'Preview episode',exact:true}).click();const player=page.getByRole('dialog',{name:'Episode preview',exact:true}).locator('video[aria-label="Episode preview"]');await expect(player).toHaveAttribute('src','https://audio.example/gate-alt.webm');
  await expect.poll(()=>player.evaluate(video=>video.paused)).toBe(false);
@@ -76,8 +77,8 @@ test('Selecting another take invalidates the cached episode composition immediat
 
 test('An uncertain selection response is reconciled without repeating the write',async({page,context})=>{
  const{changes}=await fixture(page,context,{uncertainSelection:true});const host=page.locator('#episode-workspace');
- await host.getByRole('button',{name:'City gate',exact:true}).click();await host.getByRole('button',{name:'Use in episode: City gate take',exact:true}).click();
- await expect(host.getByRole('button',{name:'Selected: City gate take',exact:true})).toBeDisabled();
+ await host.getByRole('button',{name:'City gate',exact:true}).click();await showTake(page,'City gate take');await host.getByRole('button',{name:'Use in episode: City gate take',exact:true}).click();
+ await expect(host.getByRole('button',{name:'Remove from episode: City gate take',exact:true})).toBeEnabled();
  await expect(host.getByRole('status').filter({hasText:'Selected for this episode.'})).toHaveCount(1);expect(changes).toHaveLength(1);
 });
 
@@ -87,7 +88,7 @@ for(const width of [1280,390])test(`local scene generation sends prompt and rest
  await expect(page.getByRole('button',{name:'Create Episode',exact:true})).not.toBeVisible();
  await page.getByRole('button',{name:'Edit scene',exact:true}).click();const sceneEditor=page.getByRole('dialog',{name:'Edit scene',exact:true});await sceneEditor.getByLabel('Prompt',{exact:true}).fill('Travelers enter the city at sunrise');await sceneEditor.getByRole('button',{name:'Save changes',exact:true}).click();const composer=page.locator('#scene-video-composer');await expect(composer.locator('textarea,input[type=checkbox]')).toHaveCount(0);await composer.getByRole('button',{name:'Generate',exact:true}).click();
  const dialog=page.locator('.local-generation-inline[aria-label="Scene video"]');await expect(dialog).toBeVisible();await expect(page.getByRole('dialog',{name:'Scene video',exact:true})).toHaveCount(0);await expect(page.locator('.scene-prompt')).toHaveText('Travelers enter the city at sunrise');await expect(dialog).not.toContainText('Travelers enter the city at sunrise');await expect(dialog.getByRole('progressbar')).toBeVisible();await expect(page.locator('[data-scene-edit]')).toBeDisabled();
- await expect(dialog.locator('video')).toBeVisible({timeout:10000});await expect(dialog.locator('video')).toHaveAttribute('src','https://audio.example/gate.webm');
+ await expect.poll(()=>control.scenes[0].selectedOutputKey,{timeout:10000}).toBe(key('gate'));await expect(page.locator('.scene-output-list video')).toBeVisible({timeout:10000});await expect(page.locator('.scene-output-list video')).toHaveAttribute('src','https://audio.example/gate.webm');await expect(dialog.locator('video')).toBeHidden();
  expect(posted.sceneId).toBe('gate');expect(posted.episodeId).toBe('arrival');expect(posted.prompt).toContain('sunrise');expect(posted.operationId).toMatch(/^[a-f0-9]{32}$/);expect(posted.sourceKeys).toEqual([]);expect(posted.contextKeys).toEqual([]);
  await expect.poll(()=>control.scenes[0].selectedOutputKey).toBe(key('gate'));await expect(page.locator('[data-scene-edit]')).toBeEnabled();await page.screenshot({path:test.info().outputPath(`scene-render-${width}.png`)});
  await page.getByRole('button',{name:'← Episodes',exact:true}).click();await expect(page.getByRole('button',{name:'Create Episode',exact:true})).toBeVisible();
@@ -104,7 +105,7 @@ for(const width of [1280,390])test(`Local assembly and narration continue inline
  await page.route('**/episode-renders**',route=>{const post=route.request().method()==='POST';if(post)bodies.push(route.request().postDataJSON());const job={jobId:'assembled',status:'DONE',outputKey:key('gate')};return route.fulfill({headers,json:post||new URL(route.request().url()).searchParams.has('jobId')?job:{jobs:bodies.some(body=>!body.text)?[job]:[]}});});
  await page.route('**/narration-voices**',route=>route.fulfill({headers,json:{voices:[{id:'examplevoice123',name:'Storyteller'}]}}));
  await page.route('**/narration-jobs**',route=>{const post=route.request().method()==='POST';if(post)bodies.push(route.request().postDataJSON());const job={jobId:'narrated',status:'DONE',outputKey:'games/test-game/assets/narration/original/narration.mp3'};return route.fulfill({headers,json:post||new URL(route.request().url()).searchParams.has('jobId')?job:{jobs:bodies.some(body=>body.text)?[job]:[]}});});
- for(const name of ['City gate','River crossing']){await page.getByRole('button',{name,exact:true}).click();await page.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
+ for(const name of ['City gate','River crossing']){await page.getByRole('button',{name,exact:true}).click();await showTake(page,`${name} take`);await page.getByRole('button',{name:`Use in episode: ${name} take`,exact:true}).click();}
  const assemble=page.getByRole('button',{name:'Assemble',exact:true});await expect(assemble).toBeEnabled();await assemble.click();let dialog=page.getByRole('region',{name:'Episode video',exact:true});await expect(dialog.locator('video')).toBeVisible();expect(bodies[0].episodeId).toBe('arrival');await expect(page.locator('dialog[open]')).toHaveCount(0);
  await page.getByRole('button',{name:'Narration',exact:true}).click();const editor=page.getByRole('dialog',{name:'Episode Narration',exact:true});await expect(editor.getByLabel('Narration text')).toHaveAttribute('maxlength','5000');await expect(editor.getByLabel('Performance direction')).toHaveAttribute('maxlength','2000');await editor.getByLabel('Narration text').fill('Beyond the harbor, the journey begins.');await editor.locator('button[role=combobox][aria-label=Voice]').click();await page.getByRole('option',{name:'Storyteller',exact:true}).click();await editor.getByLabel('Performance direction').fill('Warm and adventurous');await editor.getByRole('button',{name:'Generate Narration',exact:true}).click();dialog=page.getByRole('region',{name:'Narration',exact:true});await expect(dialog.locator('audio')).toBeVisible();expect(bodies[1]).toMatchObject({episodeId:'arrival',voiceId:'examplevoice123',text:'Beyond the harbor, the journey begins.',direction:'Warm and adventurous'});expect(control.changes).toHaveLength(2);await expect(editor).not.toBeVisible();await page.reload();await expect(page.getByRole('region',{name:'Episode video',exact:true}).locator('video')).toBeVisible();await expect(page.getByRole('region',{name:'Narration',exact:true}).locator('audio')).toBeVisible();expect(bodies).toHaveLength(2);await expect(page.locator('dialog[open]')).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
@@ -161,4 +162,46 @@ for(const width of [1280,390])test(`Previous video links redirect to episode pag
  await page.goto('https://panther.place/games/test-game/videos/arrival/scenes/river');
  await expect(page).toHaveURL('https://panther.place/games/test-game/episodes/arrival/scenes/river');
  await expect(page.getByRole('heading',{name:'River crossing',exact:true})).toBeVisible();
+});
+
+for(const width of [1280,390])test(`map scenes explain missing input beside one generation action at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});const control=await fixture(page,context,{development:true});control.scenes[0].type='map';control.scenes[0].mapAssetKey=null;
+ let posts=0;await page.route('**/scene-renders**',route=>{if(route.request().method()==='POST')posts++;return route.fulfill({json:{jobs:[]},headers:{'access-control-allow-origin':'https://panther.place'}});});
+ await page.reload();const composer=page.locator('#scene-video-composer');await expect(composer.getByRole('button',{name:'Generate',exact:true})).toBeDisabled();await expect(composer.getByRole('status')).toHaveText('Select a map image in Edit scene before generating this map video.');
+ await expect(page.getByRole('button',{name:/Retry same request|Check submission|Try again/})).toHaveCount(0);expect(posts).toBe(0);
+ await page.getByRole('button',{name:'Edit scene',exact:true}).click();const editor=page.getByRole('dialog',{name:'Edit scene',exact:true});await expect(editor.getByRole('combobox',{name:'Map image',exact:true})).toBeVisible();
+});
+for(const width of [1280,390])test(`rejected scene submission explains correction without a duplicate retry at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});await fixture(page,context,{development:true});let posts=0;
+ await page.route('**/scene-renders**',route=>{if(route.request().method()==='POST'){posts++;return route.fulfill({status:400,json:{error:'Choose a same-game map image'},headers:{'access-control-allow-origin':'https://panther.place'}});}return route.fulfill({json:{jobs:[]},headers:{'access-control-allow-origin':'https://panther.place'}});});
+ const generate=page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true});await generate.click();
+ const progress=page.locator('#scene-work-progress');await expect(progress.getByRole('status')).toHaveText('Video generation could not start because the selected map image is missing or unavailable. Choose a map image in Edit scene, save the scene, then Generate again.');
+ await expect(progress.getByRole('button')).toHaveCount(0);await expect(generate).toBeEnabled();await expect(page.locator('[data-scene-edit]')).toBeEnabled();expect(posts).toBe(1);
+ await page.screenshot({path:test.info().outputPath(`scene-rejection-${width}.png`),fullPage:true});
+});
+test('uncertain scene submission has one status-check action and preserves the request identity',async({page,context})=>{
+ await fixture(page,context,{development:true});const posts=[];
+ await page.route('**/scene-renders**',route=>{if(route.request().method()==='POST'){posts.push(route.request().postDataJSON());if(posts.length===1)return route.abort('failed');return route.fulfill({json:{jobId:'recovered',status:'QUEUED',sceneRef:{episodeId:'arrival',sceneId:'gate'}},headers:{'access-control-allow-origin':'https://panther.place'}});}return route.fulfill({json:{jobs:[]},headers:{'access-control-allow-origin':'https://panther.place'}});});
+ await page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true}).click();const progress=page.locator('#scene-work-progress');await expect(progress.getByRole('status')).toContainText('Submission could not be confirmed.');await expect(page.locator('#scene-video-composer form')).toBeHidden();await expect(progress.getByRole('button',{name:'Check submission',exact:true})).toBeVisible();expect(posts).toHaveLength(1);
+ await progress.getByRole('button',{name:'Check submission',exact:true}).click();await expect(progress.getByRole('status')).toContainText('Waiting to start');expect(posts).toHaveLength(2);expect(posts[1]).toEqual(posts[0]);
+});
+
+test('failed scene generation restores only Generate and explains the failure',async({page,context})=>{
+ await fixture(page,context,{development:true});let posts=0;
+ const job={jobId:'failed',status:'FAILED',message:'The provider rejected the video prompt.',sceneRef:{episodeId:'arrival',sceneId:'gate'}};
+ await page.route('**/scene-renders**',route=>{if(route.request().method()==='POST'){posts++;return route.fulfill({json:job,headers:{'access-control-allow-origin':'https://panther.place'}});}return route.fulfill({json:{jobs:[]},headers:{'access-control-allow-origin':'https://panther.place'}});});
+ await page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true}).click();await expect(page.locator('#scene-work-progress').getByRole('status')).toHaveText('Video generation did not finish. The provider rejected the video prompt.');await expect(page.locator('#scene-work-progress').getByRole('button')).toHaveCount(0);await expect(page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeEnabled();expect(posts).toBe(1);
+});
+
+for(const width of [1280,390])test(`scene video selection can be removed without deleting its takes at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});const {changes,scenes}=await fixture(page,context);const host=page.locator('#episode-workspace');await host.getByRole('button',{name:'City gate',exact:true}).click();await showTake(page,'City gate take');
+ await expect(host.locator('.scene-output-list video')).toHaveCount(1);await expect(host).not.toContainText('Rendered takes');await expect(host).not.toContainText('Earlier scene version');
+ await host.getByRole('button',{name:'Use in episode: City gate take',exact:true}).click();await host.getByRole('button',{name:'Remove from episode: City gate take',exact:true}).click();await expect.poll(()=>scenes[0].selectedOutputKey).toBeNull();expect(changes.at(-1).selectedOutputKey).toBeNull();await expect(host.getByRole('button',{name:'Preview episode',exact:true})).toBeDisabled();await expect(host.getByRole('button',{name:'Use in episode: City gate take',exact:true})).toBeEnabled();
+ await host.getByRole('combobox',{name:'Video',exact:true}).click();await page.getByRole('option',{name:'City gate second take',exact:true}).click();await expect(host.locator('.scene-output-list video')).toHaveAttribute('src','https://audio.example/gate-alt.webm');await expect(host.locator('.scene-output-list video')).toHaveCount(1);await page.screenshot({path:test.info().outputPath(`scene-selection-${width}.png`),fullPage:true});
+});
+
+test('unknown scene outcome has one concise message and restores Generate after confirmed failure',async({page,context})=>{
+ await fixture(page,context,{development:true});let posts=0,reads=0;const ref={episodeId:'arrival',sceneId:'gate'};const headers={'access-control-allow-origin':'https://panther.place'};
+ await page.route('**/scene-renders**',route=>{if(route.request().method()==='POST'){posts++;return route.fulfill({headers,json:{jobId:'uncertain',status:'UNKNOWN',outcomeUnknown:true,message:'Video generation could not be confirmed. Check its status before trying again.',sceneRef:ref}});}if(new URL(route.request().url()).searchParams.has('jobId')){reads++;return route.fulfill({headers,json:{jobId:'uncertain',status:'FAILED',message:'The provider confirmed generation failed.',sceneRef:ref}});}return route.fulfill({headers,json:{jobs:[]}});});
+ await page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true}).click();const progress=page.locator('#scene-work-progress');await expect(progress.getByRole('status')).toHaveText('Generation is unconfirmed; it may still be running or billed. Check status for an update.');await expect(progress.getByRole('button')).toHaveCount(1);await expect(page.locator('#scene-video-composer form')).toBeHidden();await progress.getByRole('button',{name:'Check status',exact:true}).click();await expect(progress.getByRole('status')).toHaveText('Video generation did not finish. The provider confirmed generation failed.');await expect(progress.getByRole('button')).toHaveCount(0);await expect(page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeEnabled();expect(posts).toBe(1);expect(reads).toBe(1);
 });
