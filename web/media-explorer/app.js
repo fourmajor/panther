@@ -404,7 +404,7 @@ async function revalidateForeground() {
     if (games) {
       state.games = games.data.games;
       elements.gameSelector.replaceChildren(...state.games.map(game => new Option(game.name, game.id)));
-      elements.gameSelector.append(new Option("Create game…", "__create_game__"));
+      elements.gameSelector.append(new Option("Create Game…", "__create_game__"));
       elements.gameSelector.value = gameId; window.PantherUI.syncGameSelector();
     }
     if (foregroundPreservesView(section)) {
@@ -529,7 +529,7 @@ async function selectGame(requested, epoch) {
       option.textContent = game.name;
       elements.gameSelector.append(option);
     }
-    elements.gameSelector.append(new Option("Create game…", "__create_game__"));
+    elements.gameSelector.append(new Option("Create Game…", "__create_game__"));
   }
   let remembered = null;
   try { remembered = sessionStorage.getItem("panther.game"); } catch { /* Optional preference. */ }
@@ -2697,6 +2697,7 @@ function clearLibrary() {
   // Restore them before clearing the list so navigation cannot delete its player.
   restoreSessionCaptureResult();
   document.getElementById('episode-workspace')?.stopEditing?.();
+  for(const host of document.querySelectorAll(".video-search-toolbar"))window.PantherUI.unmountLibrarySearchFilters?.(host);
   for(const host of document.querySelectorAll("[data-multi-filter]"))window.PantherUI.unmountMultiSelect?.(host);
   for(const native of document.querySelectorAll('#episode-workspace select[data-react-select]'))window.PantherUI.destroySelect(native);
   document.getElementById("movie-workspace").replaceChildren();
@@ -2959,12 +2960,14 @@ function renderEpisodeWorkspace(epoch) {
 function renderVideoLibrary(assets,list,status,current,loadMore) {
   const gameId=state.gameId,workspace=document.getElementById('episode-workspace');
   if(videoLibraryView.gameId!==gameId)videoLibraryView={gameId,search:'',tags:[],characters:[]};
-  const view=videoLibraryView,bar=document.createElement('div'),searchField=document.createElement('label'),caption=document.createElement('span'),search=document.createElement('input'),tagHost=document.createElement('div'),characterHost=document.createElement('div'),fields=document.createElement('div');
-  searchField.className='library-search-field';caption.className='library-search-label';bar.className='video-search-toolbar';bar.setAttribute('aria-label','Episode search and filters');caption.textContent='Search';search.setAttribute('aria-label','Search episodes');search.type='search';search.placeholder='Search episodes';search.maxLength=300;search.value=view.search;const icon=document.createElement('span');icon.className='library-search-icon';window.PantherUI.mountIcon(icon,'search');searchField.append(caption,icon,search);tagHost.dataset.multiFilter='tags';characterHost.dataset.multiFilter='characters';fields.className='video-top-filter-fields library-filter-fields';fields.append(tagHost,characterHost);bar.append(searchField,fields);workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(bar);list.replaceChildren();list.hidden=true;status.hidden=true;
+  const view=videoLibraryView,bar=document.createElement('div');
+  bar.className='video-search-toolbar';
+  const previous=workspace?.querySelector('.video-search-toolbar');if(previous){window.PantherUI.unmountLibrarySearchFilters(previous);previous.remove();}
+  workspace?.prepend(bar);list.replaceChildren();list.hidden=true;status.hidden=true;
   let declaredTags=[];
   const apply=()=>workspace?.filterEpisodes?.(view.search,view.tags,view.characters);
-  const filters=()=>{window.PantherUI.mountMultiSelect(tagHost,{inlineLabel:true,label:'Tags',options:[...new Set([...declaredTags,...assets.flatMap(asset=>asset.metadata?.tags||[])])].sort().map(name=>({id:name,name})),value:view.tags,onCreate:async name=>{const result=await api('/tags',{},{body:{gameId,name}});declaredTags=result.tags;return result.tag;},onChange:value=>{view.tags=value;filters();apply();},placeholder:'Add tag…'});window.PantherUI.mountMultiSelect(characterHost,{inlineLabel:true,label:'Characters',options:(state.gameDetail?.characters||[]).map(character=>({id:character.id||character.characterId,name:character.name})),value:view.characters,onChange:value=>{view.characters=value;filters();apply();},placeholder:'Add character…'});};
-  filters();apply();search.oninput=()=>{view.search=search.value;apply();};void api('/tags',{gameId}).then(result=>{if(current()&&bar.isConnected){declaredTags=result.tags||[];filters();}}).catch(()=>{});
+  const filters=()=>window.PantherUI.mountLibrarySearchFilters(bar,{label:'Search episodes',search:view.search,onSearch:value=>{view.search=value;filters();apply();},tags:[...new Set([...declaredTags,...assets.flatMap(asset=>asset.metadata?.tags||[])])].sort().map(name=>({id:name,name})),selectedTags:view.tags,onCreateTag:async name=>{const result=await api('/tags',{},{body:{gameId,name}});declaredTags=result.tags;return result.tag;},onTags:value=>{view.tags=value;filters();apply();},characters:(state.gameDetail?.characters||[]).map(character=>({id:character.id||character.characterId,name:character.name})),selectedCharacters:view.characters,onCharacters:value=>{view.characters=value;filters();apply();}});
+  filters();apply();void api('/tags',{gameId}).then(result=>{if(current()&&bar.isConnected){declaredTags=result.tags||[];filters();}}).catch(()=>{});
   // Additional bounded video pages enrich episode filter facts and take selection only.
   if(loadMore){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='More filter options';more.onclick=()=>{more.disabled=true;loadMore();};bar.append(more);}
 }
@@ -3784,6 +3787,7 @@ class RoomRecorder {
     this.badge.hidden=!this.recording && !this.stopping;this.badge.textContent=this.paused?'Paused · Open recorder':'Recording · Open recorder';this.badge.dataset.paused=String(!!this.paused);
     this.liveStatus.textContent=this.liveFailed?'Live transcription disconnected · Audio is still recording':this.liveAuditFailed?'Live transcript saving delayed · Audio is retained':this.startFailed?'Recording did not start':this.starting?'Connecting microphone…':this.capabilities?.transcriptionAvailable?(this.nodes.size?'Live transcript':'Listening…'):'Live transcription unavailable';
     elements.gameSelector.disabled=this.recording || !!this.stopping || !!this.archiving;
+    document.getElementById("game-create-button").disabled=elements.gameSelector.disabled;
   }
   async pause() {
     if(!this.recording || this.stopping || this.pausing)return;
@@ -4025,9 +4029,11 @@ elements.gameSelector.addEventListener("change", () => {
   navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${section}`);
 });
 
-function openCreateGame() {
-  window.PantherUI.openCreateGameDialog({onCreate:body=>api('/games',{}, {body}),onComplete:id=>{state.games=null;navigate(`/games/${encodeURIComponent(id)}/dashboard`);},onClose:()=>document.querySelector('#game-select-root button')?.focus()});
+function openCreateGame(trigger=document.querySelector("#game-select-root button")) {
+  if(elements.gameSelector.disabled)return;
+  window.PantherUI.openCreateGameDialog({onCreate:body=>api('/games',{}, {body}),onComplete:id=>{state.games=null;navigate(`/games/${encodeURIComponent(id)}/dashboard`);},onClose:()=>trigger?.focus()});
 }
+document.getElementById("game-create-button").addEventListener("click",event=>openCreateGame(event.currentTarget));
 
 elements.modelLoad.addEventListener("click", loadCharacterModel);
 elements.modelReset.addEventListener("click", resetCharacterModel);

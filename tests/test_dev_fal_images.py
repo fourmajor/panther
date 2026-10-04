@@ -163,7 +163,7 @@ def test_options_curate_models_without_erasing_cached_or_queued_contracts(tmp_pa
         'minimax/h3-max/image-to-video': {'amount': '.04', 'unit': 'seconds'}}})
     options = store.asset_generation_options('fictional')
     image = next(item for item in options['generationTypes'] if item['id'] == 'image')
-    assert [item['id'] for item in image['models']] == ['fal-ai/flux-pro/v1.1', 'fal-ai/flux/schnell', 'gpt-image-1.5', 'gpt-image-1-mini']
+    assert [item['id'] for item in image['models']] == ['fal-ai/flux-pro/v1.1', 'gpt-image-2']
     assert image['defaultModel'] == 'fal-ai/flux-pro/v1.1'
     video = next(item for item in options['generationTypes'] if item['id'] == 'video')
     assert video['models'][0]['providerBasePrice']['amount'] == '.03'

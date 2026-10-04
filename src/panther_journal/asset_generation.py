@@ -115,8 +115,8 @@ def generate(job, folder, heartbeat, *, client=None):
             raise local.Deferred("Historical image generation outcome is uncertain; no request was repeated")
         started = json.loads(checkpoint.read_text())["startedAt"]
         return recover_legacy(folder, result, destination, started)
-    model = job.get("model", "gpt-image-1")
-    if model not in {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}:
+    model = job.get("model", "gpt-image-2")
+    if model not in {"gpt-image-2", "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}:
         raise ValueError("Unsupported selected image model")
     request_path, response_path = folder / "image-request.json", folder / "image-response.json"
     if not job.get("name"):

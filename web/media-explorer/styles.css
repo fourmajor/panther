@@ -1497,15 +1497,8 @@ body { padding-bottom:0; }
 }
 /* Videos use the same compact top actions as Characters and Assets. */
 #episode-create-action,.explorer-heading > button.primary-button { flex:0 0 auto;min-height:44px;padding:.6rem 1rem;font-size:.9rem;line-height:1.2;white-space:nowrap; }
-.video-search-toolbar { display:flex;align-items:flex-end;gap:.75rem;margin:0 0 1rem; }
-.video-search-toolbar > div { flex:1;min-width:0; }
-.video-search-toolbar label { display:block;font-size:.8rem;color:var(--panther-muted);margin-bottom:.3rem; }
-.video-search-toolbar input { width:100%;box-sizing:border-box;min-height:44px;padding:.65rem .8rem;border:1px solid var(--line);border-radius:.45rem;background:var(--paper);color:var(--ink);font:inherit; }
-.video-top-filter-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;min-width:0;}
-.video-search-toolbar {display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);align-items:end;}
-.video-top-filter-fields .panther-select-field {display:block;min-width:0;}
-.video-top-filter-fields [role="combobox"] {width:100%;min-height:44px;}
-@media(max-width:600px){#session-library > .explorer-heading {flex-wrap:nowrap;gap:.5rem;}#session-library > .explorer-heading h1 {font-size:1.8rem;}.video-search-toolbar {grid-template-columns:1fr;gap:.75rem;}}
+.video-search-toolbar {margin:0 0 1rem;min-width:0;}
+@media(max-width:600px){#session-library > .explorer-heading {flex-wrap:nowrap;gap:.5rem;}#session-library > .explorer-heading h1 {font-size:1.8rem;}}
 
 .settings-card-intro h2 {font:400 clamp(1.6rem,3vw,2.2rem)/1.2 Georgia,serif;}
 #game-style {grid-template-columns:1fr;gap:1rem;}
@@ -1971,3 +1964,7 @@ html[data-booting] .masthead .brand strong {display:none}
 #account-game-back {width:44px;height:44px;min-width:44px;padding:0;display:inline-flex;align-items:center;justify-content:center;}
 #account-game-back svg {display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;}
 @media(max-width:700px) {.account-column {gap:16px;}}
+
+.masthead #game-toolbar {grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;max-width:36rem;}
+#game-create-button {height:36px;white-space:nowrap;flex-shrink:0;}
+@media(max-width:360px) {#game-create-button {width:36px;min-width:36px;padding:0;}#game-create-button .game-create-label {display:none;}}

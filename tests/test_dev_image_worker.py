@@ -50,7 +50,7 @@ def test_real_png_published_with_preserved_response_lineage(tmp_path, kind):
     assert job['status'] == 'PUBLISHED'
     meta, png = store.object(job['assetKey'])
     assert png.startswith(b'\x89PNG')
-    assert meta['kind'] == kind and meta['extra']['generation']['model'] == 'gpt-image-1'
+    assert meta['kind'] == kind and meta['extra']['generation']['model'] == 'gpt-image-2'
     assert meta['extra']['generation']['cost'] == {'status': 'unknown'}
     worker.asset_metadata.validate_generation(meta['extra']['generation'])
     worker.asset_metadata.validate_version(meta['extra']['version'], job['assetKey'])
@@ -93,7 +93,7 @@ def test_retained_response_publishes_without_second_provider_request(tmp_path, m
     worker.run(store.path, tmp_path / 'work', client=SimpleNamespace(images=images), model='different-requested-model', once=True)
     assert store.get('asset-generation', identity)['status'] == 'PUBLISHED'
     assert len(images.calls) == 1
-    assert store.get('asset-generation', identity)['model'] == 'gpt-image-1'
+    assert store.get('asset-generation', identity)['model'] == 'gpt-image-2'
 
 
 def test_profile_edited_during_generation_is_never_overwritten(tmp_path):

@@ -128,7 +128,7 @@ for(const width of [1280,390]) {
       expect(await control.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     }
     const close=page.getByRole('button',{name:'Close recording',exact:true});
-    const closeBox=await close.boundingBox();expect(closeBox.width).toBeGreaterThanOrEqual(44);
+    const closeBox=await close.boundingBox();expect(closeBox.width).toBe(44);expect(closeBox.height).toBe(44);await expect(close).toHaveAttribute('data-slot','dialog-close');expect(await close.evaluate(el=>getComputedStyle(el).borderWidth)).toBe('0px');await expect(close.locator('svg.lucide-x')).toHaveCount(1);
     expect(await close.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     await page.screenshot({path:test.info().outputPath(`browser-recording-dialog-${width}.png`),fullPage:true});
     await close.click();
@@ -188,9 +188,11 @@ test('failed full-pass request reuses immutable interrupted manifest',async({pag
 
 test('recording remains stoppable on the Account page and processes directly below',async({page})=>{
   await fixture(page,true);
+  await expect(page.locator('#game-create-button')).toBeEnabled();
   await page.locator('#room-start').click();
   await expect(page.locator('#room-state')).toBeVisible();
   await expect.poll(()=>page.locator('#room-level').evaluate(element=>element.value)).toBeGreaterThan(0);
+  await expect(page.locator('#game-create-button')).toBeDisabled();
   await page.getByRole('button',{name:'Close recording',exact:true}).click();
   await page.getByRole('button',{name:'Account',exact:true}).click();
   await page.locator('#room-recording-indicator').click();
@@ -201,6 +203,7 @@ test('recording remains stoppable on the Account page and processes directly bel
   expect(await stop.evaluate((element,point)=>element.contains(document.elementFromPoint(point.x,point.y)),{x:rectangle.x+rectangle.width/2,y:rectangle.y+rectangle.height/2})).toBe(true);
   await stop.click();await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
   await page.getByRole('link',{name:'Back to game',exact:true}).click();await expect(page.locator('#room-result')).toBeVisible();
+  await expect(page.locator('#game-create-button')).toBeEnabled();
   await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
   expect((await page.locator('#room-result').boundingBox()).y).toBeGreaterThan((await page.locator('.room-controls').boundingBox()).y);
 });

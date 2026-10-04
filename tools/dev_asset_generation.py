@@ -5,9 +5,9 @@ import json
 import re
 import time
 
-IMAGE_MODELS = ('gpt-image-1', 'gpt-image-1.5', 'gpt-image-1-mini')
-CURATED_FAL_IMAGES = (('fal-ai/flux-pro/v1.1', 'FLUX 1.1 Pro'), ('fal-ai/flux/schnell', 'FLUX 1 Schnell'))
-CURATED_OPENAI_IMAGES = (('gpt-image-1.5', 'GPT Image 1.5'), ('gpt-image-1-mini', 'GPT Image Mini'))
+IMAGE_MODELS = ('gpt-image-2', 'gpt-image-1', 'gpt-image-1.5', 'gpt-image-1-mini')
+CURATED_FAL_IMAGES = (('fal-ai/flux-pro/v1.1', 'FLUX 1.1 Pro'),)
+CURATED_OPENAI_IMAGES = (('gpt-image-2', 'GPT Image 2'),)
 IMAGE_TYPES = {'image', 'map', 'blueprint', 'location', 'portrait'}
 CURATED_VIDEO_MODELS = ('h3-max', 'veo-3.1-fast', 'kling-3-pro')
 VIDEO_MODELS = ('veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image')
@@ -79,7 +79,7 @@ def submit(store, body):
         if not character_record:
             raise ValueError('Choose an initialized character from this game')
     media = 'video' if kind == 'video' else 'audio' if kind == 'narration' else 'text' if kind == 'text' else 'image'
-    default = 'veo-3.1-fast' if media == 'video' else 'eleven_v3' if media == 'audio' else (store.get('service', 'editorial' if media == 'text' else 'images') or {}).get('model', 'gpt-5-mini' if media == 'text' else 'gpt-image-1')
+    default = 'veo-3.1-fast' if media == 'video' else 'eleven_v3' if media == 'audio' else (store.get('service', 'editorial' if media == 'text' else 'images') or {}).get('model', 'gpt-5-mini' if media == 'text' else 'gpt-image-2')
     model = body.get('model', default)
     from dev_fal_image_catalog import selected
     fal_contract = selected(store, model) if media == 'image' and isinstance(model, str) else None
