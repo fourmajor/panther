@@ -74,7 +74,7 @@ for(const width of [1280,390]) {
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
    await expect(page.getByText(/Finished videos unavailable/)).toHaveCount(0);expect(errors).toEqual([]);
    await page.screenshot({path:test.info().outputPath(`shot-takes-${width}.png`),fullPage:true});
-   await board.getByRole('combobox',{name:'Take for shot 2'}).click();await page.getByRole('option',{name:'Take 2 · 8.0s'}).click();
+   await board.getByRole('combobox',{name:'Take for shot 2'}).click();await page.getByRole('option',{name:'Take 1 · 8.0s'}).click();
    await expect(board.getByRole('button',{name:'Assemble scene'})).toBeEnabled();
    await board.getByRole('button',{name:'Assemble scene'}).click();
    await expect.poll(()=>writes.some(item=>item.sceneId==='arrival'&&!item.shotId&&!item.shotSelection)).toBe(true);
