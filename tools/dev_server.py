@@ -1118,11 +1118,10 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.game(game)
             elif path == "/dashboard-recent":
                 production_asset_views()
-                import asset_metadata
+                from dashboard_recent import finished_asset, session_entries
                 assets = store.objects(game)
-                finished = [a for a in assets if not asset_metadata.internal(a["kind"]) and not a.get("lineageWarning") and a["metadata"].get("extra", {}).get("relationshipRole") not in {"processing", "intermediate", "internal"}]
+                finished = [a for a in assets if finished_asset(a)]
                 transcripts = [a for a in finished if "transcript" in a["kind"]]
-                from dashboard_recent import session_entries
                 sessions = session_entries(assets)
                 groups = {"characters": store.list("character", game), "transcripts": transcripts, "sessions": sessions, "episodes": store.list("episode", game), "videos": [a for a in finished if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game), "assets": finished}
                 for values in groups.values():

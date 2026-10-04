@@ -128,6 +128,18 @@ def character_summaries(catalog, game):
     return summaries
 
 
+def finished_asset(asset):
+    """Match the ordinary library projection; processing records remain stored."""
+    kind = asset.get("kind", "")
+    extra = asset.get("metadata", {}).get("extra", {})
+    return not (
+        asset_metadata.internal(kind) or asset.get("lineageWarning")
+        or "browserPart" in extra
+        or extra.get("relationshipRole") in {"processing", "intermediate", "internal"}
+        or re.search(r"(?:^|-)(?:provenance|receipts?|manifest|checkpoint|migration|audit|metadata|plans?|draft|storyboards?|packets?)(?:-|$)|^editorial-", kind)
+    )
+
+
 def session_entries(assets):
     """Group explicit session metadata and exact input links, preserving unknown identities."""
     by_key = {asset["key"]: asset for asset in assets}
@@ -209,7 +221,7 @@ def recent(catalog, game):
             "lastModified": date_value(asset.get("lastModified")),
         }
         paired_export = key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind
-        if not asset_metadata.internal(kind) and not asset.get("lineageWarning") and not paired_export:
+        if finished_asset(asset) and not paired_export:
             groups["assets"].append(entry)
         if kind in {"transcript", "raw-transcript", "corrected-transcript", "edited-transcript"}:
             if not (key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind):

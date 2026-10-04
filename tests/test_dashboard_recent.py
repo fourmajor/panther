@@ -125,6 +125,8 @@ def test_dashboard_assets_are_finished_images_from_catalog_metadata(catalog):
         (2, "unknown-image", {}),
         (3, "generation-provenance", {}),
         (4, "image", {"relationshipRole": "intermediate"}),
+        (5, "image", {"browserPart": 1}),
+        (6, "generation-plan", {}),
     ]:
         key = put_asset(db, index, number, kind=kind, suffix="png")
         row = db.get_item(Key={"pk": index.partition("test-game", "all"), "sk": key})["Item"]
