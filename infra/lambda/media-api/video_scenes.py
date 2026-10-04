@@ -289,7 +289,7 @@ def save(media, body, claims, kind):
             return media._response(403, {"error": "Only an owner can approve an AI storyboard"})
         episode_storyboards.apply(record, previous, body, actor=claims["sub"])
         if previous is None and not record.get('storyboard'):
-            record['storyboard'] = episode_storyboards.create([{'shotId': 'shot-1', 'description': record['description'] or record['name'], 'camera': '', 'durationSeconds': 8, 'frameKey': None, 'narration': ''}], game, origin='human', actor=claims['sub'])
+            record['storyboard'] = episode_storyboards.create([{'shotId': 'shot-1', 'description': record['description'] or record['name'], 'camera': '', 'durationSeconds': 8, 'frameKey': record.get('mapAssetKey'), 'narration': ''}], game, origin='human', actor=claims['sub'])
             record.update(planningState='ready', shotTakes={})
         for shot in (record.get("storyboard") or {}).get("shots", []):
             if shot["frameKey"]:
