@@ -327,6 +327,10 @@ def save(media, body, claims, name, *, maintenance_guards=(), maintenance_fields
     guards.extend(maintenance_guards)
     if maintenance_fields:
         record.update(maintenance_fields)
+    if name == "activation":
+        import asset_archive
+
+        guards.extend(asset_archive.reference_writes(game, f"appearance:{cid}", keys))
     return records.commit(db, PREFIX, record_kind, record, body, claims, fingerprint, guards, media)
 
 

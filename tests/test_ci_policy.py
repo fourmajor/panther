@@ -18,6 +18,10 @@ def test_playwright_runs_only_in_manually_dispatched_self_hosted_job():
     assert "refs/heads/main" in job["if"]
     assert "startsWith(github.ref, 'refs/heads/codex/')" in job["if"]
     assert workflow["permissions"] == {"contents": "read"}
-    browser_step = next(step for step in job["steps"] if step.get("run") == "npm run test:browser")
+    browser_step = next(
+        step for step in job["steps"]
+        if step.get("name") == "Playwright browser tests (self-hosted)"
+    )
+    assert browser_step["run"] == "npm run test:browser -- --reporter=line"
     assert browser_step["name"] == "Playwright browser tests (self-hosted)"
     assert browser_step["working-directory"] == "infra"

@@ -10,11 +10,14 @@ from decimal import Decimal
 
 import boto3
 from boto3.dynamodb.conditions import Key
-from boto3.dynamodb.types import TypeDeserializer
+from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
+from workflow_hierarchy import summary
+from tag_management import timestamp
 from botocore.exceptions import ClientError
 from access_policy import authorized
 
 DB = boto3.resource("dynamodb")
+TX = boto3.client("dynamodb")
 INDEX = DB.Table(os.environ["WORKSHOP_TABLE"])
 SOURCES = json.loads(os.environ["WORKSHOP_SOURCES"])
 PLAN = json.loads(os.environ["WORKSHOP_PLAN"])
@@ -114,12 +117,51 @@ def source_view(kind, key):
             "note": note, "observedAt": int(time.time()), "source": "durable-job", "workflowVersion": job.get("workflowVersion")}
 
 
+def type_inventory(game, kind):
+    """Bounded indexing-only backfill; browsing never enumerates run history."""
+    rows, cursor = [], None
+    for _ in range(100):
+        args = {"KeyConditionExpression": Key("pk").eq("GAME#" + game) & Key("sk").begins_with(kind + "~"), "Limit": 100, "ConsistentRead": True}
+        if cursor:
+            args["ExclusiveStartKey"] = cursor
+        page = INDEX.query(**args)
+        rows.extend(page.get("Items", []))
+        cursor = page.get("LastEvaluatedKey")
+        if not cursor:
+            return rows
+    raise ValueError("Workflow type exceeds supported rebuild bound")
+
+
 def store(value, previous):
     item = {**value, "pk": "GAME#" + value["gameId"], "sk": value["id"], "revision": uuid.uuid4().hex}
-    args = {"Item": item, "ConditionExpression": "revision = :previous" if previous else "attribute_not_exists(pk)"}
-    if previous:
-        args["ExpressionAttributeValues"] = {":previous": previous["revision"]}
-    INDEX.put_item(**args)
+    aggregate = get(INDEX, "TYPES#" + value["gameId"], value["kind"])
+    if aggregate:
+        counts = dict(aggregate["counts"])
+        if previous:
+            old = previous.get("status", "unknown")
+            counts[old if old in counts else "unknown"] -= 1
+        new = value.get("status", "unknown")
+        counts[new if new in counts else "unknown"] += 1
+        if any(n < 0 for n in counts.values()):
+            raise ValueError("Workflow type requires a complete rebuild")
+        totals = {**aggregate, "counts": counts, "total": sum(counts.values()), "successful": counts["done"], "failed": counts["failed"], "active": counts["running"] + counts["queued"], "latestRunAt": max(int(timestamp(aggregate.get("latestRunAt"))), int(timestamp(value.get("createdAt")))), "latestActivityAt": max(int(timestamp(aggregate.get("latestActivityAt"))), int(timestamp(value.get("reportedAt") or value.get("observedAt"))))}
+    else:
+        records = [row for row in type_inventory(value["gameId"], value["kind"]) if row["id"] != value["id"]]
+        totals = summary(value["kind"], [*records, value])
+    totals.update(pk="TYPES#" + value["gameId"], sk=value["kind"], revision=uuid.uuid4().hex)
+    serializer = TypeSerializer()
+    writes = []
+    for new_item, old_item in ((item, previous), (totals, aggregate)):
+        put = {"TableName": INDEX.name, "Item": serializer.serialize(new_item)["M"], "ConditionExpression": "revision = :previous" if old_item else "attribute_not_exists(pk)"}
+        if old_item:
+            put["ExpressionAttributeValues"] = {":previous": serializer.serialize(old_item["revision"])}
+        writes.append({"Put": put})
+    try:
+        TX.transact_write_items(TransactItems=writes)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "TransactionCanceledException" and all(reason.get("Code") in {"None", "ConditionalCheckFailed"} for reason in exc.response.get("CancellationReasons", [])):
+            raise ClientError({"Error": {"Code": "ConditionalCheckFailedException", "Message": "Workflow hierarchy revision changed"}}, "PutItem") from exc
+        raise
     return item
 
 
@@ -231,10 +273,23 @@ def handler(event, _context):
         marker = get(INDEX, **STATE)
         if not marker or set(marker.get("sources", [])) != set(SOURCES):
             return reply(503, {"error": "Workflow history is being indexed; the library is not complete yet."})
-        args = {"KeyConditionExpression": Key("pk").eq("GAME#" + game), "Limit": 30, "ConsistentRead": True}
+        if q.get("view") == "types":
+            if marker.get("hierarchyVersion") != 1:
+                return reply(503, {"error": "Workflow types are being indexed; totals are not complete yet."})
+            page = INDEX.query(KeyConditionExpression=Key("pk").eq("TYPES#" + game), Limit=30, ConsistentRead=True)
+            if page.get("LastEvaluatedKey"):
+                return reply(503, {"error": "Workflow type inventory exceeds its supported bound."})
+            return reply(200, {"schemaVersion": 1, "types": [{k: v for k, v in item.items() if k not in {"pk", "sk", "revision"}} for item in page.get("Items", [])]})
+        kind = q.get("type")
+        if q.get("view") == "runs" and kind not in KINDS:
+            raise ValueError("Unknown workflow type")
+        condition = Key("pk").eq("GAME#" + game)
+        if q.get("view") == "runs":
+            condition &= Key("sk").begins_with(kind + "~")
+        args = {"KeyConditionExpression": condition, "Limit": 30, "ConsistentRead": True}
         if q.get("cursor"):
             cursor = decode(q["cursor"])
-            if set(cursor) != {"pk", "sk"} or cursor["pk"] != "GAME#" + game or not isinstance(cursor["sk"], str):
+            if set(cursor) != {"pk", "sk"} or cursor["pk"] != "GAME#" + game or not isinstance(cursor["sk"], str) or q.get("view") == "runs" and not cursor["sk"].startswith(kind + "~"):
                 raise ValueError("Foreign workflow cursor")
             args["ExclusiveStartKey"] = cursor
         page = INDEX.query(**args)
@@ -264,6 +319,21 @@ def project_handler(event, _context):
     try:
         body = json.loads(event.get("body") or "{}")
         kind = body["kind"]
+        if kind == "hierarchy":
+            args = {"Limit": 25, "ConsistentRead": True}
+            if body.get("cursor"):
+                pointer = decode(body["cursor"])
+                if set(pointer) != {"kind", "key"} or pointer["kind"] != kind or set(pointer["key"]) != {"pk", "sk"}:
+                    raise ValueError("Invalid hierarchy rebuild cursor")
+                args["ExclusiveStartKey"] = pointer["key"]
+            page = INDEX.scan(**args)
+            for item in page.get("Items", []):
+                if item.get("pk", "").startswith("GAME#") and item.get("kind") in KINDS:
+                    store({k: v for k, v in item.items() if k not in {"pk", "sk", "revision"}}, item)
+            last = page.get("LastEvaluatedKey")
+            if not last:
+                INDEX.update_item(Key=STATE, UpdateExpression="SET hierarchyVersion = :version", ExpressionAttributeValues={":version": 1})
+            return reply(200, {"kind": kind, "inspected": len(page.get("Items", [])), "cursor": encode({"kind": kind, "key": last}) if last else None, "complete": not bool(last)})
         if kind not in SOURCES:
             raise ValueError("Invalid source")
         args = {"Limit": 25, "ConsistentRead": True, "ProjectionExpression": "pk, sk"}
@@ -277,7 +347,7 @@ def project_handler(event, _context):
             project(kind, key)
         last = page.get("LastEvaluatedKey")
         if not last:
-            INDEX.update_item(Key=STATE, UpdateExpression="ADD sources :source", ExpressionAttributeValues={":source": {kind}})
+            INDEX.update_item(Key=STATE, UpdateExpression="ADD sources :source, hierarchySources :source", ExpressionAttributeValues={":source": {kind}})
         return reply(200, {"kind": kind, "inspected": len(page.get("Items", [])), "cursor": encode({"kind": kind, "key": last}) if last else None, "complete": not bool(last)})
     except (ValueError, TypeError, KeyError):
         return reply(400, {"error": "Invalid rebuild request or unsupported workflow inventory"})

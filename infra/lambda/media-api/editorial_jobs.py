@@ -253,7 +253,10 @@ def submit(body):
         fields = {"schemaVersion", "target", "title", "brief", "sourceKeys", "contextKeys"}
         if version == 3:
             required = {"schemaVersion", "target", "brief", "sourceKeys", "contextKeys"}
-            if not required <= set(creation) <= required | {"title"} or creation["target"] != "novel":
+            if (
+                not required <= set(creation) <= required | {"title"}
+                or creation["target"] != "novel"
+            ):
                 raise ValueError("Expected a prompt-led novel request")
             prompt = creation["brief"]
             if not isinstance(prompt, str) or not prompt.strip():
@@ -410,9 +413,39 @@ def submit(body):
             selectedMap=selected_map,
         )
     try:
-        table.put_item(Item=job, ConditionExpression="attribute_not_exists(pk)")
+        import asset_archive
+        from boto3.dynamodb.types import TypeSerializer
+
+        serializer = TypeSerializer()
+        pinned = [ref["key"] for ref in [*references, *contexts]]
+        if selected_map:
+            pinned.append(selected_map["key"])
+        for character in cast:
+            pinned.extend(ref["key"] for ref in character.get("appearanceAssets", []))
+            if character.get("details", {}).get("thumbnailAssetKey"):
+                pinned.append(character["details"]["thumbnailAssetKey"])
+        boto3.client("dynamodb").transact_write_items(
+            TransactItems=[
+                {
+                    "Put": {
+                        "TableName": table.name,
+                        "Item": {key: serializer.serialize(value) for key, value in job.items()},
+                        "ConditionExpression": "attribute_not_exists(pk)",
+                    }
+                },
+                *asset_archive.reference_writes(
+                    body["gameId"],
+                    "editorial:" + job_id,
+                    pinned,
+                    {"table": table.name, "pk": "RUNS", "sk": job_id},
+                ),
+            ]
+        )
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+        if exc.response["Error"]["Code"] not in {
+            "ConditionalCheckFailedException",
+            "TransactionCanceledException",
+        }:
             raise
     return public(read("RUNS", job_id))
 
@@ -511,7 +544,10 @@ def claim(actor, version=1):
                 },
             }
         except ClientError as exc:
-            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            if exc.response["Error"]["Code"] not in {
+                "ConditionalCheckFailedException",
+                "TransactionCanceledException",
+            }:
                 raise
     return {"task": None}
 
@@ -607,7 +643,10 @@ def internal(event):
         try:
             table.put_item(Item=task, ConditionExpression="attribute_not_exists(pk)")
         except ClientError as exc:
-            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            if exc.response["Error"]["Code"] not in {
+                "ConditionalCheckFailedException",
+                "TransactionCanceledException",
+            }:
                 raise
             if read("TASKS", task["sk"])["taskToken"] != event["taskToken"]:
                 raise ValueError("Refusing mismatched stage token")

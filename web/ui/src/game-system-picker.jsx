@@ -1,0 +1,12 @@
+import React,{useId,useState} from 'react';
+import {Check,ChevronsUpDown} from 'lucide-react';
+import {Button} from './components/ui/button.jsx';
+import {Input} from './components/ui/input.jsx';
+import {Popover,PopoverTrigger,PopoverContent} from './components/ui/popover.jsx';
+import {Command,CommandInput,CommandList,CommandGroup,CommandItem,CommandEmpty} from './components/ui/command.jsx';
+import {GAME_SYSTEMS,isKnownGameSystem} from './game-systems.mjs';
+export function GameSystemPicker({value='',onChange,disabled=false}) {
+  const id=useId(),[open,setOpen]=useState(false),[custom,setCustom]=useState(Boolean(value&&!isKnownGameSystem(value)));
+  const choose=system=>{setCustom(false);onChange(system);setOpen(false);};
+  return <div className="grid min-w-0 gap-2"><label id={`${id}-label`} className="text-sm font-medium">Game system</label><Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild><Button variant="outline" role="combobox" aria-labelledby={`${id}-label`} aria-expanded={open} disabled={disabled} className="w-full min-w-0 justify-between font-normal"><span className="truncate">{custom?'Other':value||'Choose a system…'}</span><ChevronsUpDown size={16} className="shrink-0 opacity-50" aria-hidden="true"/></Button></PopoverTrigger><PopoverContent align="start" className="panther-combobox-content w-[var(--radix-popover-trigger-width)] p-0"><Command><CommandInput aria-label="Search game systems" placeholder="Search systems or editions…"/><CommandList><CommandEmpty>No matching systems.</CommandEmpty><CommandGroup>{GAME_SYSTEMS.map(system=><CommandItem key={system} value={`${system} ${system.includes('Dungeons')?'D&D DnD':''}`} onSelect={()=>choose(system)}>{system}<Check size={16} aria-hidden="true" className={value===system?'ml-auto opacity-100':'ml-auto opacity-0'}/></CommandItem>)}</CommandGroup><CommandGroup><CommandItem forceMount value="other" onSelect={()=>{setCustom(true);onChange('');setOpen(false);}}>Other</CommandItem><CommandItem forceMount value="not set" onSelect={()=>choose('')}>Not set</CommandItem></CommandGroup></CommandList></Command></PopoverContent></Popover>{custom&&<div className="grid gap-2"><label htmlFor={`${id}-custom`} className="text-sm font-medium">Custom game system</label><Input id={`${id}-custom`} maxLength={120} value={value} disabled={disabled} placeholder="System and edition" onChange={event=>onChange(event.target.value)}/></div>}</div>;
+}

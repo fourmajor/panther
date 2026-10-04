@@ -593,3 +593,23 @@ def test_map_selection_rejects_non_reference_assets(scenes, changes):
     )
     with pytest.raises(ValueError):
         scenes.map_asset(importlib.import_module("index"), "test-game", key)
+
+
+def test_scene_inputs_are_owned_persistent_and_archive_guarded(scenes):
+    import boto3
+    import os
+    game, key = 'test-game', 'games/test-game/assets/context/original/map.png'
+    boto3.resource('dynamodb').Table(os.environ['CATALOG_TABLE']).put_item(Item={'pk': 'GAME#test-game', 'sk': 'CHARACTER#guide', 'id': 'guide', 'gameId': game})
+    scenes.browse_index.table().put_item(Item={'pk': scenes.browse_index.partition(game, 'all'), 'sk': key, 'observed': 'one', 'payload': json.dumps({'key': key, 'kind': 'map', 'contentType': 'image/png', 'metadata': {}})})
+    unpack(call(scenes, body=edit()))
+    inputs = {'schemaVersion': 1, 'characterIds': ['guide'], 'sourceKeys': [], 'contextKeys': [key]}
+    body = edit(id='arrival', episodeId='harbor', generationInputs=inputs)
+    first = unpack(call(scenes, 'scene', body))['record']
+    updated = unpack(call(scenes, 'scene', edit(id='arrival', episodeId='harbor', description='At dusk', expectedRevision=first['revision'])))['record']
+    assert updated['generationInputs'] == inputs
+    assert scenes.pin_scene(game, {'episodeId': 'harbor', 'sceneId': 'arrival', 'revision': first['revision']})['generationInputs'] == inputs
+    import asset_archive
+    assert asset_archive.current_references(game, key)
+    for change in ({'characterIds': ['missing']}, {'contextKeys': ['games/other/map.png']}, {'contextKeys': [key, key]}):
+        response = call(scenes, 'scene', edit(id='arrival', episodeId='harbor', expectedRevision=updated['revision'], generationInputs={**inputs, **change}))
+        assert response['statusCode'] == 400, response

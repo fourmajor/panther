@@ -140,25 +140,16 @@ for(const width of [1280,390]) test(`organized book and pinned editions are usab
   await expect(latest).toHaveCount(1);
   await latest.click();
   await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
+    await expect(page.locator('#novel > .explorer-heading')).toBeHidden();
+    await expect(page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate Chapter'})).not.toBeVisible();
   expect(new URL(page.url()).searchParams.has('book')).toBe(false);
 });
 
-test('reading position is stored per account and game and resumes explicitly',async({page})=>{
-  await fixture(page);
-  await page.goto(`${origin}/games/campaign-a/novel/${first}`);
-  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
-  await page.mouse.wheel(0,750);
-  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('panther.reading.v1:synthetic-reader:campaign-a')||'null')?.paragraph || 0)).toBeGreaterThan(0);
-  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('panther.reading.v1:synthetic-reader:campaign-a')));
-  expect(saved.chapterId).toBe(first); expect(saved.percent).toBeGreaterThan(0);
-  await page.reload();
-  const resume=page.getByRole('button',{name:new RegExp('Resume at .*saved on this device')});
-  await expect(resume).toBeVisible(); await resume.click();
-  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(0);
-  await page.evaluate(()=>{const tokens=JSON.parse(sessionStorage.getItem('panther.tokens'));tokens.id_token='test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,sub:'different-synthetic-reader','cognito:username':'example-operator'}))+'.test';sessionStorage.setItem('panther.tokens',JSON.stringify(tokens));});
-  await page.reload();
-  await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
-  await expect(page.locator('#novel-resume')).toBeHidden();
+for(const width of [1280,390])test(`Chapter review persists without device reading state at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});await fixture(page);let review=null;const submissions=[];
+ await page.route('**/novel-review**',route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();submissions.push(body);expect(body.expectedRevision).toBe(review?.revision||null);review={...body,revision:(submissions.length.toString(16)).repeat(32)};}return route.fulfill({headers,json:{review}});});
+ await page.goto(`${origin}/games/campaign-a/novel/${first}`);const section=page.getByRole('region',{name:'Chapter review',exact:true});await expect(section.getByRole('button',{name:'Approve',exact:true})).toBeEnabled();await expect(page.locator('#novel-resume,#novel-progress')).toHaveCount(0);await section.getByRole('button',{name:'Approve',exact:true}).click();await expect(section.getByRole('status')).toHaveText('Approved');await page.reload();await expect(section.getByRole('button',{name:'Approve',exact:true})).toHaveAttribute('aria-pressed','true');await section.getByRole('button',{name:'Reject',exact:true}).click();await section.getByLabel('Comment (optional)',{exact:true}).fill('Give the guide more dialogue.');await section.getByRole('button',{name:'Reject Chapter',exact:true}).click();await expect(section.getByRole('status')).toContainText('Give the guide more dialogue.');await page.reload();await expect(section.getByRole('button',{name:'Reject',exact:true})).toHaveAttribute('aria-pressed','true');expect(submissions).toHaveLength(2);expect(submissions[1].comment).toBe('Give the guide more dialogue.');expect(await page.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('panther.reading.')))).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.goto(`${origin}/games/campaign-a/novel`);const title=page.locator('.novel-card h2 a').first();await expect(title).toBeVisible();expect(await title.evaluate(el=>getComputedStyle(el).textDecorationLine)).toBe('none');expect(parseFloat(await title.evaluate(el=>getComputedStyle(el).fontSize))).toBeLessThanOrEqual(18);
 });
 
 for (const width of [1280,390]) test(`chapter Details connects finished assets at ${width}`,async({page})=>{
@@ -175,15 +166,18 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
     markdown:'A finished chapter.', details:{review:{},artifact:{key:chapter},sourceKeys:[proof],rawReference:{key:raw}}}}));
   await page.goto(`${origin}/games/campaign-a/novel/${first}`);
   await page.getByRole('button',{name:'Details',exact:true}).click();
-  await expect(page.locator('#novel-details .generation-details')).toContainText('Subscription-covered');
-  await expect(page.locator('#novel-prose')).not.toContainText('Subscription-covered');
+  const generation=page.locator('#novel-details .generation-details');
+  await generation.getByRole('button',{name:'Generation details',exact:true}).click();
+  await expect(generation).toContainText('Included in subscription');
+  await generation.evaluate(async element=>await Promise.all(element.getAnimations({subtree:true}).filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{}))));
+  await expect(page.locator('#novel-prose')).not.toContainText('Included in subscription');
   const links=page.locator('#novel-details [data-connections]');
   await expect(links.getByRole('link')).toHaveText(['Corrected transcript']);
   expect((await links.allTextContents()).join('\n')).not.toContain('novel-proof');
   const link=links.getByRole('link',{name:'Corrected transcript',exact:true});
-  // Details is a normal document: reach its below-the-fold connections with user scrolling,
-  // then verify hit-testing (no forced clicks or scrolling a clipped element into place).
-  for (let scrolls=0; scrolls<5 && (await link.boundingBox()).y>900; scrolls++) {
+  // Scroll the visible Details popup with the pointer inside its actual scroll area.
+  const dialog=page.getByRole('dialog',{name:'Chapter Details',exact:true});await expect(dialog).toBeVisible();const bounds=await dialog.boundingBox();await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+  for (let scrolls=0; scrolls<8 && (await link.boundingBox()).y+(await link.boundingBox()).height>Math.min(1000,bounds.y+bounds.height)-12; scrolls++) {
     const before=(await link.boundingBox()).y;
     await page.mouse.wheel(0,350);
     await expect.poll(async()=> (await link.boundingBox()).y).toBeLessThan(before-1);
@@ -191,7 +185,19 @@ for (const width of [1280,390]) test(`chapter Details connects finished assets a
   await accessibleInViewport(link,width);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:test.info().outputPath(`chapter-connections-${width}.png`),fullPage:true});
-  await expect(page.getByRole('button',{name:'Provenance and revisions',exact:true})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Provenance and revisions',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(page.locator('#novel-manuscript')).toBeVisible();
+});
+
+
+for(const width of [1280,390])test(`reader toolbar and review retain their positions while Details opens at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});await fixture(page);
+ await page.route(`${api}/novel-chapter*`,route=>route.fulfill({headers,json:{...chapters[0],markdown:'The companions reached the harbor.\n\nA lantern shone beside the gate.',details:{authorship:'human',review:{},sourceKeys:[],artifact:{}}}}));
+ await page.goto(`${origin}/games/campaign-a/novel/${first}`);const tools=page.locator('#novel-reader .novel-tools'),actions=page.locator('.novel-reader-actions');
+ await expect(tools.getByRole('button',{name:'Read',exact:true})).toHaveCount(0);await expect(tools.locator('[aria-pressed]')).toHaveCount(0);
+ const edit=actions.getByRole('button',{name:'Edit',exact:true}),download=actions.getByRole('button',{name:'Download',exact:true}),details=actions.getByRole('button',{name:'Details',exact:true});
+ await expect(edit).toBeVisible();await expect(download).toBeVisible();await expect(edit.locator('svg.lucide-pencil')).toHaveCount(1);await expect(download.locator('svg.lucide-download')).toHaveCount(1);const [toolbarBox,actionBox,editBox,downloadBox]=await Promise.all([tools.boundingBox(),actions.boundingBox(),edit.boundingBox(),download.boundingBox()]);expect(Math.abs(toolbarBox.x+toolbarBox.width-actionBox.x-actionBox.width)).toBeLessThan(2);expect(editBox.height).toBe(downloadBox.height);expect(editBox.height).toBe(36);
+ const review=page.locator('#novel-review');await expect(review).toBeVisible();const approve=review.getByRole('button',{name:'Approve',exact:true}),reject=review.getByRole('button',{name:'Reject',exact:true});await expect(approve.locator('svg.lucide-thumbs-up')).toHaveCount(1);await expect(reject.locator('svg.lucide-thumbs-down')).toHaveCount(1);
+ const before=await review.evaluate(el=>el.getBoundingClientRect().y+scrollY);const prose=await page.locator('#novel-prose').textContent();await accessibleInViewport(details,width);await details.click();const popup=page.getByRole('dialog',{name:'Chapter Details',exact:true});await expect(popup).toBeVisible();expect(await review.evaluate(el=>el.getBoundingClientRect().y+scrollY)).toBeCloseTo(before,1);await expect(page.locator('#novel-prose')).toHaveText(prose);await expect(popup.getByRole('region',{name:'Chapter review',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');await expect(popup).toHaveCount(0);expect(await review.evaluate(el=>el.getBoundingClientRect().y+scrollY)).toBeCloseTo(before,1);await expect(details).toBeFocused();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:test.info().outputPath(`reader-toolbar-review-${width}.png`),fullPage:true});
 });
 
 async function accessibleInViewport(locator, width) {
@@ -238,7 +244,7 @@ test('explicit novel references can preview and open same-game video collections
   await expect(preview).toContainText('A private collection of illustrated scenes.');
   expect(requested).not.toContain('other');
   await preview.getByRole('link',{name:'Open linked page'}).click();
-  await expect(page).toHaveURL(`${origin}/games/campaign-a/videos?collection=favorites`);
+  await expect(page).toHaveURL(`${origin}/games/campaign-a/episodes?collection=favorites`);
   await expect(page.getByRole('combobox',{name:'Tags',exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name:'Clip collection',exact:true})).toHaveCount(0);
 });
 
@@ -329,18 +335,18 @@ for(const width of [1280,390]) {
     await expect(page.locator('#novel-title')).toHaveText('The Lantern Room');
     await expect(page.locator('#novel-prose strong')).toHaveText('amber light');
     await expect(page.locator('#novel-manuscript')).not.toContainText('Editorial audit');
-    await expect(page.getByText('Editorial audit: synthetic private note.',{exact:true})).not.toBeVisible();
+    await expect(page.locator('#novel-details').getByText('Editorial audit: synthetic private note.',{exact:true}).filter({visible:true})).toHaveCount(0);
     const details=page.getByRole('button',{name:'Details',exact:true});
     await accessibleInViewport(details,width);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:test.info().outputPath(`novel-reader-${width}.png`),fullPage:true});
     const download=page.waitForEvent('download');
-    await page.getByRole('button',{name:'Download story'}).click();
+    await page.getByRole('button',{name:'Download'}).click();
     const saved=await download, text=fs.readFileSync(await saved.path(),'utf8');
     expect(text).toContain('# The Lantern Room'); expect(text).not.toContain('Editorial audit'); expect(text).not.toContain('Uncertain spelling');
     await details.click();
-    await expect(page.locator('#novel-manuscript')).not.toBeVisible();
-    await expect(page.getByText('Editorial audit: synthetic private note.',{exact:true})).toBeVisible();
+    await expect(page.getByRole('dialog',{name:'Chapter Details',exact:true})).toBeVisible();await expect(page.locator('#novel-manuscript')).toBeVisible();
+    await expect(page.locator('#novel-details').getByText('Editorial audit: synthetic private note.',{exact:true}).filter({visible:true})).toHaveCount(1);
     await page.getByRole('link',{name:/Earlier ·.*The Earlier Lantern/}).click();
     await expect(page.locator('#novel-title')).toHaveText('The Earlier Lantern');
     await expect(page.locator('#novel-notice')).toContainText('earlier version');
@@ -426,13 +432,13 @@ for (const width of [1280,390]) test(`typed narrative links and character appear
   await chart.click(); await expect(page.locator('#preview-body img')).toBeVisible();
   await page.getByRole('button',{name:'Close preview'}).click();
   await expect(prose).toBeVisible();
-  const download=page.waitForEvent('download'); await page.getByRole('button',{name:'Download story'}).click();
+  const download=page.waitForEvent('download'); await page.getByRole('button',{name:'Download'}).click();
   expect(fs.readFileSync(await (await download).path(),'utf8')).toContain(markdown);
   await prose.getByRole('link',{name:'The navigator',exact:true}).click();
   await expect(page).toHaveURL(`${origin}/games/campaign-a/characters/mira`);
   await expect(page.locator('#character-name')).toHaveText('Mira Vale');
   await expect(page.locator('#character-assets')).toBeVisible();
-  const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
+  const appearance=page.locator('#character-assets-list').getByRole('link',{name:'Preview Harbor chart',exact:true});
   await appearance.scrollIntoViewIfNeeded();
   await accessibleInViewport(appearance,width);
   await page.screenshot({path:test.info().outputPath(`character-assets-${width}.png`),fullPage:true});
@@ -510,7 +516,7 @@ test('migrated metadata refreshes character associations without changing the fi
   await page.goto(`${origin}/games/campaign-a/characters/mira`);await expect(page.locator("#character-assets")).toBeVisible();
   await expect(page.locator('#character-assets-list a')).toHaveCount(0);
   migrated=true; await page.reload();await expect(page.locator("#character-assets")).toBeVisible();
-  const link=page.locator('#character-assets-list').getByRole('link',{name:'Harbor chart',exact:true});
+  const link=page.locator('#character-assets-list').getByRole('link',{name:'Preview Harbor chart',exact:true});
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute('href',`/games/campaign-a/media?asset=${encodeURIComponent(key)}`);
 });
@@ -539,24 +545,35 @@ for(const width of [1280,390]) test(`manually add a chapter and preserve its ear
     return record?route.fulfill({headers,json:record}):route.fallback();
   });
   await page.goto(`${origin}/games/campaign-a/novel`);
-  await page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true}).click();
-  await page.getByRole('button',{name:'Write manually',exact:true}).click();
+  await page.getByRole('button',{name:'Create Chapter',exact:true}).filter({visible:true}).click();
   const form=page.locator('#manual-chapter-form');
-  await expect(page.getByRole('button',{name:'Generate chapter',exact:true}).filter({visible:true})).toBeHidden();
+  await expect(page.locator('#novel > .explorer-heading').getByRole('button',{name:'Generate Chapter',exact:true})).toBeHidden();
   await expect(page.getByRole('button',{name:'Add chapter',exact:true})).toHaveCount(0);
   await form.getByLabel('Chapter title').fill('The River');
   await form.getByLabel('Chapter text').fill('An explicitly authored story.');
-  await form.getByRole('button',{name:'Save chapter'}).click();
+  await form.getByLabel('Chapter text').press('ControlOrMeta+a');await form.getByRole('button',{name:'Bold',exact:true}).click();
+  const footer=form.locator('.chapter-editor-footer');const boxes=await footer.getByRole('button').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {height:r.height,y:r.y,bottom:r.bottom,right:r.right};}));expect(boxes[0].height).toBe(36);expect(boxes[1].height).toBe(36);expect(boxes[0].y).toBe(boxes[1].y);expect(boxes[1].bottom).toBeLessThan(900);expect(boxes[1].right).toBeLessThanOrEqual(width);
+  await expect(form.getByRole('combobox',{name:'References'})).toBeVisible();await expect(form.locator('input[type=checkbox]')).toHaveCount(0);await form.getByRole('combobox',{name:'References'}).click();await page.getByRole('combobox',{name:'Search references'}).fill('Harbor');await page.getByRole('option',{name:'Harbor chart'}).click();
+  await form.getByRole('button',{name:'Create Chapter',exact:true}).click();
   await expect(page.locator('#novel-prose')).toContainText('An explicitly authored story.');
-  await page.getByRole('button',{name:'Edit chapter',exact:true}).click();
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
   await form.getByLabel('Chapter text').fill('A revised authored story.');
+  await page.locator('.chapter-editor-dialog').evaluate(async node=>{await Promise.all(node.getAnimations().filter(animation=>Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{})));});
   await page.screenshot({path:testInfo.outputPath(`manual-chapter-${width}.png`),fullPage:true});
-  await form.getByRole('button',{name:'Save new chapter version'}).click();
+  await form.getByRole('button',{name:'Save Chapter',exact:true}).click();
   await expect(page.locator('#novel-prose')).toContainText('A revised authored story.');
+  expect(created[0].sourceKeys).toEqual(['games/campaign-a/assets/chart-a/original/map.png']);
   expect(created[1].previousChapterId).toBe('d'.repeat(64));
-  expect(records.get('d'.repeat(64)).markdown).toBe('An explicitly authored story.');
+  expect(records.get('d'.repeat(64)).markdown).toBe('**An explicitly authored story.**');
   await page.getByRole('button',{name:'Details',exact:true}).click();
   await page.getByRole('link',{name:'Previous chapter version'}).click();
   await expect(page.locator('#novel-prose')).toContainText('An explicitly authored story.');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+});
+
+for(const width of [1280,390])test(`Markdown reader renders authored structures without remote HTML at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page);let external=0;await page.route('https://untrusted.invalid/**',route=>{external++;return route.abort();});
+ const markdown='## Departure\n\n**Bold** and *italic* with `code`.\n\n- Lantern\n- Rope\n\n1. Depart\n2. Arrive\n\n> A quiet harbor.\n\n```text\n<script>not executable</script>\n\nsecond line\n```\n\n| Name | Class |\n| --- | --- |\n| Mira | Guide |\n\n![Do not fetch](https://untrusted.invalid/image.png)\n\n<a href="https://untrusted.invalid/">Raw HTML</a>';
+ await page.route(`${api}/novel-chapter?*`,route=>route.fulfill({headers,json:{...chapters[0],markdown,details:{review:{},sourceKeys:[],artifact:{}}}}));
+ await page.goto(`${origin}/games/campaign-a/novel/${first}`);const prose=page.locator('#novel-prose');await expect(prose.getByRole('heading',{name:'Departure'})).toBeVisible();await expect(prose.locator('strong')).toHaveText('Bold');await expect(prose.locator('em')).toHaveText('italic');await expect(prose.locator('ul li')).toHaveText(['Lantern','Rope']);await expect(prose.locator('ol li')).toHaveText(['Depart','Arrive']);await expect(prose.locator('blockquote')).toHaveText('A quiet harbor.');await expect(prose.locator('pre code')).toHaveText('<script>not executable</script>\n\nsecond line');await expect(prose.getByRole('columnheader')).toHaveText(['Name','Class']);await expect(prose.getByRole('cell')).toHaveText(['Mira','Guide']);await expect(prose.locator('script,img,a[href^="https://untrusted"]')).toHaveCount(0);expect(external).toBe(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
 });

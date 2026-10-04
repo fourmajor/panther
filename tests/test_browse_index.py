@@ -24,7 +24,7 @@ def index(monkeypatch):
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
             AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST")
-        module.table().put_item(Item={"pk": "v3#catalog", "sk": "ready"})
+        module.table().put_item(Item={"pk": "v4#catalog", "sk": "ready"})
         yield module
 
 
@@ -97,7 +97,7 @@ def test_backfill_dry_run_apply_verify(index, monkeypatch):
 
 
 def test_initial_cutover_fails_closed(index):
-    index.table().delete_item(Key={"pk": "v3#catalog", "sk": "ready"})
+    index.table().delete_item(Key={"pk": "v4#catalog", "sk": "ready"})
     index.table().put_item(Item={"pk": "v1#catalog", "sk": "ready"})
     index.table().put_item(Item={"pk": "v2#catalog", "sk": "ready"})
     with pytest.raises(index.IndexNotReady):
@@ -188,3 +188,44 @@ def test_sessions_hides_explicit_browser_wave_parts_before_manifest_exists(index
     index.refresh(None, part["key"])
     assert index.page("example", "sessions")["assets"] == []
     assert index.page("example", "audio")["assets"] == [part]
+
+
+def test_tag_backfill_verification_blocks_activation_until_all_tags_exist(index, monkeypatch):
+    import sys
+    import user_metadata
+    monkeypatch.setenv('ASSET_MIGRATORS', 'example-owner')
+    current = asset()
+    current['metadata']['tags'] = ['canonical', 'Travel map']
+    library = importlib.import_module('asset_library')
+    monkeypatch.setattr(library, 'describe', lambda *_: current)
+    def listing(**args):
+        return {'CommonPrefixes': [{'Prefix': 'games/example/'}]} if args.get('Delimiter') else {'Contents': [{'Key': current['key'].replace('/assets/', '/catalog/assets/') + '.json'}]}
+    media = SimpleNamespace(BUCKET_NAME='test-bucket', _valid_slug=lambda value: value == 'example',
+        _response=lambda status, body: {'statusCode': status, 'body': body}, raw_s3=SimpleNamespace(list_objects_v2=listing, get_paginator=lambda _: SimpleNamespace(paginate=lambda **args: [listing(**args)])))
+    monkeypatch.setitem(sys.modules, 'index', media)
+    def rebuild(mode):
+        return index.rebuild_handler({'body': json.dumps({'gameId': 'example', 'mode': mode}),
+            'requestContext': {'authorizer': {'jwt': {'claims': {'sub': 'synthetic', 'cognito:username': 'example-owner'}}}}}, None)
+    rebuild('apply')
+    rebuild('verify')
+    index.table().delete_item(Key=user_metadata.tag_key('example', 'Travel map'))
+    assert rebuild('verify')['body']['records'][0]['status'] == 'mismatch'
+    assert rebuild('activate')['statusCode'] != 200
+    rebuild('apply')
+    assert rebuild('verify')['body']['records'][0]['status'] == 'verified'
+    assert rebuild('activate')['statusCode'] == 200
+    assert user_metadata.tags('example')['tags'] == ['canonical', 'Travel map']
+
+
+def test_sessions_excludes_generated_speech_and_includes_explicit_recording_playback(index, monkeypatch):
+    library = importlib.import_module('asset_library')
+    values = [
+        {**asset(1), 'kind': 'narration', 'contentType': 'audio/mpeg', 'name': 'speech.mp3'},
+        {**asset(2), 'kind': 'recording-playback', 'contentType': 'audio/mpeg', 'name': 'playback.mp3'},
+        {**asset(3), 'kind': 'recording-manifest', 'contentType': 'application/json', 'name': 'recording.json', 'recording': {'partCount': 2, 'status': 'complete'}},
+    ]
+    for current in values:
+        monkeypatch.setattr(library, 'describe', lambda *_, value=current: value)
+        index.refresh(None, current['key'])
+    monkeypatch.setattr(library, 'describe', lambda *_: pytest.fail('Sessions cannot read source storage'))
+    assert index.page('example', 'sessions')['assets'] == values[1:]

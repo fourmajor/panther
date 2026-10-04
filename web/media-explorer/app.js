@@ -144,11 +144,9 @@ const elements = {
   modelSize: document.querySelector("#model-size"),
   modelSource: document.querySelector("#model-source"),
   modelStatus: document.querySelector("#model-status"),
-  openOriginal: document.querySelector("#open-original"),
   primaryNav: document.querySelector("#primary-nav"),
   previewBody: document.querySelector("#preview-body"),
   previewClose: document.querySelector("#preview-close"),
-  previewDetails: document.querySelector("#preview-details"),
   previewDialog: document.querySelector("#preview-dialog"),
   previewTitle: document.querySelector("#preview-title"),
   refresh: document.querySelector("#refresh-button"),
@@ -356,6 +354,9 @@ async function completeLogin() {
   window.history.replaceState({}, "", saved.returnPath || "/dashboard");
 }
 
+window.PantherUI.enhanceDialog(elements.previewDialog,{onDismiss:closePreview});
+window.PantherUI.enhanceDialog(document.getElementById('style-preview-dialog'));
+
 async function logout() {
   markLogout(true);
   clearSession();
@@ -366,6 +367,8 @@ async function logout() {
     if (error.message !== "Session expired") {
       showWelcome("Signed out locally. Could not revoke the remembered sign-in; reconnect and retry sign-out.");
       elements.logout.hidden = false;
+      document.getElementById("account-page").hidden=false;
+      document.getElementById("account-settings-body").replaceChildren();
       elements.account.hidden = false;
       return;
     }
@@ -417,12 +420,14 @@ function apiScope() {
   return JSON.stringify([claims.iss || "", claims.sub || claims["cognito:username"] || claims.username || ""]);
 }
 function mutationReadPaths(path) {
+  if (path === "/games") return ["/games"];
   if (["/image-links", "/uploads", "/browser-transcriptions"].includes(path)) return [];
   if (path.startsWith("/game/") && path !== "/game/characters") return ["/games", "/game", "/dashboard-recent"];
   if (path === "/game/characters" || path.startsWith("/character-")) return ["/game", "/characters", "/character", "/character-details", "/character-details/history", "/character-versions", "/dashboard-recent"];
   if (path === "/novel-chapters") return ["/novel", "/novel-chapter", "/assets", "/objects", "/dashboard-recent"];
   if (["/episodes", "/scenes"].includes(path)) return ["/episodes", "/scenes", "/episode-composition", "/assets", "/dashboard-recent"];
   if (path === "/video-collections") return ["/video-collections", "/dashboard-recent"];
+  if (path === "/tags" || path === "/tags/manage") return ["/tags", "/assets", "/dashboard-recent"];
   if (path === "/editorial-jobs") return ["/editorial-jobs"];
   if (path === "/transcript-selection") return ["/transcript-selection", "/assets", "/dashboard-recent"];
   return ["/assets", "/objects", "/asset-document", "/dashboard-recent"];
@@ -435,7 +440,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|transcript-summaries|jobs|asset-generation|workflows|object-url|image-links)/.test(path);
+  const sensitive = /(?:live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -487,6 +492,7 @@ async function revalidateForeground() {
     if (games) {
       state.games = games.data.games;
       elements.gameSelector.replaceChildren(...state.games.map(game => new Option(game.name, game.id)));
+      elements.gameSelector.append(new Option("Create game…", "__create_game__"));
       elements.gameSelector.value = gameId; window.PantherUI.syncGameSelector();
     }
     if (foregroundPreservesView(section)) {
@@ -595,6 +601,7 @@ function characterPath(character) {
 }
 
 function gamePath(section) {
+  if(section==="videos")section="episodes";
   return state.gameId ? `/games/${encodeURIComponent(state.gameId)}/${section}` : `/${section}`;
 }
 
@@ -611,6 +618,7 @@ async function selectGame(requested, epoch) {
       option.textContent = game.name;
       elements.gameSelector.append(option);
     }
+    elements.gameSelector.append(new Option("Create game…", "__create_game__"));
   }
   let remembered = null;
   try { remembered = sessionStorage.getItem("panther.game"); } catch { /* Optional preference. */ }
@@ -681,7 +689,7 @@ function renderDashboard() {
     document.querySelector(selector)?.setAttribute('hidden','');
   }
   const cards = document.getElementById("dashboard-sections");for(const icon of cards.querySelectorAll("[data-dashboard-icon]"))window.PantherUI.unmountIcon?.(icon);cards.replaceChildren();
-  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Videos"],["assets","Assets"]]) {
+  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Episodes"],["assets","Assets"]]) {
     const card=document.createElement('section');card.className='dashboard-card';card.dataset.section=section;
     const icon=document.createElement('span'),arrow=document.createElement('span');icon.className='dashboard-section-icon';arrow.className='dashboard-card-arrow';icon.dataset.dashboardIcon=section;arrow.dataset.dashboardIcon='arrow';icon.setAttribute('aria-hidden','true');arrow.setAttribute('aria-hidden','true');card.append(icon,arrow);window.PantherUI.mountIcon(icon,section);window.PantherUI.mountIcon(arrow,'arrow');
     const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
@@ -818,10 +826,16 @@ function applyGameDetail(detail) {
 
 function renderGameSettings() {
   const detail = state.gameDetail, gameId = state.gameId, epoch = routeEpoch, canEdit = detail.canEditGame === true;
-  const form = document.getElementById("game-settings-form"), status = document.getElementById("game-settings-status"), button = form.querySelector("button");
+  const form = document.getElementById("game-settings-form"), status = document.getElementById("game-settings-status"), button = form.querySelector('button[type="submit"]');
   form.dataset.dirty = "false";
   const fields = {name: document.getElementById("game-name"), description: document.getElementById("game-description"), ruleset: document.getElementById("game-system")};
   fields.name.value = detail.game.name; fields.description.value = detail.gameSettings?.description || ""; fields.ruleset.value = detail.game.ruleset || "";
+  fields.ruleset.hidden=true;
+  document.querySelector('label[for="game-system"]').hidden=true;
+  let systemHost=document.getElementById('game-system-picker');
+  if(!systemHost){systemHost=document.createElement('div');systemHost.id='game-system-picker';fields.ruleset.after(systemHost);}
+  const drawSystem=()=>window.PantherUI.mountGameSystemPicker(systemHost,{gameId,value:fields.ruleset.value,disabled:!canEdit,onChange:value=>{fields.ruleset.value=value;form.dataset.dirty="true";drawSystem();}});
+  drawSystem();
   for (const field of Object.values(fields)) field.readOnly = !canEdit;
   button.disabled = !canEdit; status.textContent = ""; delete status.dataset.state;
   const notice = document.getElementById("game-settings-access"); notice.hidden = canEdit;
@@ -845,6 +859,17 @@ function renderGameSettings() {
     }
   };
   renderGameStyle();
+  void renderGameTags();
+}
+
+async function renderGameTags(){
+  const host=document.getElementById("game-tags-control"),status=document.getElementById("game-tags-status"),gameId=state.gameId,epoch=routeEpoch;
+  if(!host)return;
+  document.getElementById("game-tags").hidden=false;status.textContent="";
+  try{let {tags=[]}=await api("/tags",{gameId});if(state.gameId!==gameId||epoch!==routeEpoch)return;
+    const update=async(action,name,newName,operationId)=>{const result=await api('/tags/manage',{},{body:{gameId,action,name,...(action==='rename'?{newName}:{}),operationId}});await window.PantherUI.invalidate(apiScope(),['/tags','/assets','/object-url','/dashboard-recent'],gameId);return result.tags;};
+    window.PantherUI.mountTagManager(host,{gameId,tags,onAdd:async name=>{const result=await api('/tags',{},{body:{gameId,name}});await window.PantherUI.invalidate(apiScope(),['/tags'],gameId);return result.tags;},onRename:(name,newName,operationId)=>update('rename',name,newName,operationId),onDelete:(name,operationId)=>update('delete',name,null,operationId)});
+  }catch(error){if(state.gameId===gameId&&epoch===routeEpoch)status.textContent="Tags could not be loaded.";}
 }
 
 function renderGameStyle() {
@@ -861,8 +886,16 @@ function renderGameStyle() {
     const controls=document.createElement("div");controls.className="visual-style-actions";
     const chosen=style.id===expectedStyle,choose=document.createElement("button");choose.type="button";choose.className=chosen?"quiet-button":"primary-button";choose.textContent=chosen?"Selected":"Select";choose.setAttribute("aria-label",`${chosen?"Selected":"Select"} ${style.label}`);choose.disabled=!canEdit||chosen;
     const preview=style.previewImage===`/style-previews/${style.id}.webp`?style.previewImage:null;
-    if(preview){const image=document.createElement("img");image.src=preview;image.alt=`${style.label} preview`;image.loading="lazy";card.append(image);const zoom=document.createElement("button");zoom.type="button";zoom.className="icon-button";zoom.title="Zoom";zoom.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>';zoom.setAttribute("aria-label",`Zoom ${style.label}`);zoom.onclick=()=>{const dialog=document.getElementById("style-preview-dialog");document.getElementById("style-preview-title").textContent=style.label;const large=document.getElementById("style-preview-image");large.src=preview;large.alt=image.alt;dialog.showModal();document.getElementById("style-preview-close").onclick=()=>{dialog.close();zoom.focus();};};controls.append(zoom);image.onerror=()=>{image.remove();zoom.remove();};}
-    controls.append(choose);card.append(title,controls);grid.append(card);
+    if(preview){
+      const thumbnail=document.createElement("div");thumbnail.className="visual-style-thumbnail";
+      choose.className="visual-style-preview";choose.replaceChildren();
+      const image=document.createElement("img");image.src=preview;image.alt=`${style.label} preview`;image.loading="lazy";choose.append(image);
+      const expand=document.createElement("button");expand.type="button";expand.className="visual-style-expand";expand.setAttribute("aria-label",`Expand ${style.label}`);expand.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg>';
+      expand.onclick=event=>{event.stopPropagation();const dialog=document.getElementById("style-preview-dialog");document.getElementById("style-preview-title").textContent=style.label;const large=document.getElementById("style-preview-image");large.src=preview;large.alt=image.alt;dialog.showModal();document.getElementById("style-preview-close").onclick=()=>{dialog.close();expand.focus();};};
+      controls.append(expand);thumbnail.append(choose,controls);card.append(thumbnail);
+      image.onerror=()=>{thumbnail.remove();choose.className=chosen?"quiet-button":"primary-button";choose.textContent=chosen?"Selected":"Select";card.prepend(choose);};
+    }else{controls.append(choose);card.append(controls);}
+    card.append(title);grid.append(card);
     choose.onclick=async()=>{
       const epoch=routeEpoch;for(const button of grid.querySelectorAll("button"))button.disabled=true;status.textContent="Saving style…";
       try{const updated=await api("/game/style",{},{body:{gameId,visualStyle:style.id,expectedStyle}});if(state.gameId!==gameId||routeEpoch!==epoch)return;state.gameDetail=updated;renderGameStyle();status.textContent="Style saved.";}
@@ -965,8 +998,12 @@ async function loadCharacters() {
 async function createCharacter() {
   const host = document.getElementById("character-create-form");
   if (!host.hidden) return;
-  host.hidden = false;
+  const opener=document.activeElement,parent=host.parentElement,next=host.nextSibling,dialog=window.PantherUI.createDialog(),title=document.createElement("h2");
+  dialog.className="character-create-dialog";dialog.setAttribute("aria-label","Create Character");title.textContent="Create Character";
+  host.hidden = false;dialog.append(title,host);document.body.append(dialog);
+  dialog.addEventListener("close",()=>{host.hidden=true;parent.insertBefore(host,next);dialog.remove();if(opener?.isConnected)opener.focus({preventScroll:true});});
   const name = host.querySelector("input"), status = host.querySelector("[role=status]");
+  status.textContent="";host.querySelector("button[type=submit]").textContent="Create Character";dialog.showModal();
   name.value = ""; name.disabled = false; name.focus();
   let pending = null;
   host.onsubmit = async event => {
@@ -980,12 +1017,12 @@ async function createCharacter() {
       await api("/game/characters", {}, {body:pending});
       if (gameId !== state.gameId) return;
       state.gameDetail.characters.push({id,gameId,name:name.value.trim()});
-      host.hidden = true;
+      dialog.close();
       navigate(characterPath({id,gameId}));
     } catch(error) {status.textContent = error.message; if(error.status === 400 || error.status === 409) {pending = null;name.disabled = false;} else button.textContent = "Retry create";}
     finally {button.disabled = false;}
   };
-  host.querySelector("button[type=button]").onclick = () => {host.hidden = true;};
+  host.querySelector("button[type=button]").onclick = () => dialog.close();
 }
 
 async function loadCharacterThumbnails(epoch) {
@@ -1038,8 +1075,9 @@ function configureCharacter(profile) {
   state.currentCharacter = { gameId: character.gameId, characterId: character.id };
   elements.characterName.textContent = character.name;
   const facts = state.currentCharacterFacts;
-  elements.characterTitle.textContent = `Class / role · ${facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.role || "—" : "—"}`;
+  elements.characterTitle.textContent = facts?.gameId === character.gameId && facts?.characterId === character.id ? facts.details.role || "" : "";
   elements.characterSummary.textContent = "";
+  document.getElementById("character-appearance-panel").hidden = !model;
   document.querySelector("#character-model-area").hidden = !model;
   document.getElementById("character-artwork-empty").hidden=Boolean(model||poster);
   document.querySelector("#character-no-model").hidden = true;
@@ -1279,14 +1317,18 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
     state.currentCharacterFacts = record;
     loadProfilePortrait(record,epoch);
     const render = () => {
+      document.getElementById("character-editor-dialog")?.close();
       if(record.name)elements.characterName.textContent=record.name;
-      elements.characterTitle.textContent = `Class / role · ${record.details.role || "—"}`;
+      elements.characterTitle.textContent = record.details.role || "";
       for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
       host.replaceChildren();
-      const heading = document.createElement("div"); heading.className = "explorer-heading";
-
-      const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button"; edit.textContent = "Edit character information";
-      heading.className="profile-edit-action";document.querySelector(".character-bio-heading .profile-edit-action")?.remove();heading.append(edit);document.querySelector(".character-bio-heading").append(heading);
+      const bioHeading=document.querySelector(".character-bio-heading");
+      bioHeading.querySelector(".profile-edit-action")?.remove();
+      let heading=bioHeading.querySelector(".character-name-row");
+      if(!heading){heading=document.createElement("div");heading.className="character-name-row";elements.characterName.before(heading);heading.append(elements.characterName);}
+      heading.querySelector(".character-edit-link")?.remove();
+      const edit = document.createElement("button"); edit.type = "button"; edit.className = "back-button character-edit-link"; edit.textContent = "Edit";
+      heading.append(edit);
       const facts = document.createElement("dl"); facts.className = "character-fact-grid";
       const membership = state.gameDetail.memberships.filter(m => m.characterIds?.includes(characterId));
       const players = membership.map(m => state.gameDetail.players.find(p => p.id === m.playerId)?.name).filter(Boolean);
@@ -1320,10 +1362,11 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
       edit.onclick = () => editor();
     };
     const editor = () => {
-      document.querySelector(".character-bio-heading .profile-edit-action")?.remove();
-      for(const select of host.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(select);
-      host.replaceChildren();
+      const opener=document.activeElement,dialog=window.PantherUI.createDialog(),title=document.createElement("h2");
+      dialog.id="character-editor-dialog";dialog.className="character-editor-dialog";dialog.setAttribute("aria-label","Edit character");title.textContent="Edit character";
       const form = document.createElement("form"); form.className = "character-edit-form";
+      dialog.append(title,form);document.body.append(dialog);
+      dialog.addEventListener("close",()=>{for(const native of form.querySelectorAll("select[data-react-select]"))window.PantherUI.destroySelect?.(native);dialog.remove();if(opener?.isConnected)opener.focus({preventScroll:true});});
 
       const nameLabel = document.createElement("label"), nameInput = document.createElement("input");
       nameLabel.textContent = "Character name"; nameInput.value = record.name; nameInput.required = true; nameInput.maxLength = 120; nameLabel.append(nameInput); form.append(nameLabel);
@@ -1356,7 +1399,7 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         row.append(remove); stats.append(row); rows.push({row, ...controls});
       };
       record.details.statistics.forEach(addStat);
-      const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button"; add.textContent = "Add statistic"; add.onclick = () => {if (rows.filter(r => r.row.isConnected).length < 100) addStat();}; form.append(stats,add);
+      const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button"; add.textContent = "Add Statistic"; add.onclick = () => {if (rows.filter(r => r.row.isConnected).length < 100) addStat();}; form.append(stats,add);
       const relationships = document.createElement("fieldset"), connectionsLegend = document.createElement("legend"); connectionsLegend.textContent = "Relationships"; relationships.append(connectionsLegend);
       const connectionRows = [], connectionHelp = document.createElement("p");
       let connectionAssets = [];
@@ -1381,12 +1424,12 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
         connectionRows.push(row);relationships.append(element);window.PantherUI.enhanceSelect(target,"Player");window.PantherUI.enhanceSelect(relation,"Relationship");
       };
       record.details.relationships.filter(ref=>ref.entityType==="Player").forEach(addConnection);
-      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add relationship";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
+      const addConnectionButton=document.createElement("button");addConnectionButton.type="button";addConnectionButton.className="quiet-button";addConnectionButton.textContent="Add Relationship";addConnectionButton.onclick=()=>{if(connectionRows.filter(r=>r.element.isConnected).length<40)addConnection();};
       form.append(relationships,addConnectionButton,connectionHelp);
       const coverWrap = document.createElement("label"), cover = document.createElement("select"); coverWrap.textContent = "Profile portrait";
       const none = document.createElement("option"); none.value = ""; none.textContent = "No thumbnail"; cover.append(none);
       if (record.details.thumbnailAssetKey) {const selected = document.createElement("option"); selected.value = record.details.thumbnailAssetKey; selected.textContent = "Current selected thumbnail"; cover.append(selected);}
-      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); const uploadPortrait=document.createElement("button");uploadPortrait.type="button";uploadPortrait.className="quiet-button";uploadPortrait.textContent="Upload portrait";uploadPortrait.onclick=()=>document.getElementById("character-portrait-file").click();form.append(coverWrap,uploadPortrait);
+      cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); const uploadPortrait=document.createElement("button");uploadPortrait.type="button";uploadPortrait.className="quiet-button";uploadPortrait.textContent="Upload Portrait";uploadPortrait.onclick=()=>document.getElementById("character-portrait-file").click();form.append(coverWrap,uploadPortrait);
       void allAssets(gameId).then(assets=>{if (!current() || !cover.isConnected) return;
         connectionAssets = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" || a.metadata?.category === "reference");
         for(const row of connectionRows) if(row.type.value === "Asset")populateTargets(row);
@@ -1396,9 +1439,9 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
       }).catch(()=>{if (cover.isConnected) connectionHelp.textContent += " Thumbnail inventory could not be loaded; existing selection remains available.";});
 
       const buttons = document.createElement("div"), save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p");
-      buttons.className = "model-control-row"; save.type = "submit"; save.className = "primary-button"; save.textContent = "Save character information";
-      cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel edit"; status.setAttribute("role","status");
-      cancel.onclick = render; buttons.append(save,cancel); form.append(buttons,status); host.append(form);for(const select of form.querySelectorAll("select:not([hidden])"))window.PantherUI.enhanceSelect(select,select.getAttribute("aria-label")||"Profile portrait");
+      buttons.className = "model-control-row"; save.type = "submit"; save.className = "primary-button"; save.textContent = "Save changes";
+      cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; status.setAttribute("role","status");
+      cancel.onclick = ()=>dialog.close(); buttons.append(cancel,save); form.append(status,buttons); dialog.showModal();for(const select of form.querySelectorAll("select:not([hidden])"))window.PantherUI.enhanceSelect(select,select.getAttribute("aria-label")||"Profile portrait");
       let pending = null;
       form.onsubmit = async event => {
         event.preventDefault(); save.disabled = true;
@@ -1440,14 +1483,14 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
           if (!pending || error.status === 400) {
             pending = null;
             for (const c of form.querySelectorAll("input,textarea,select,fieldset,button")) c.disabled = false;
-            save.textContent = "Save character information";
+            save.textContent = "Save changes";
             status.textContent = error.message;
             return;
           }
           status.textContent = error.status === 409 ? "Another update changed this character. Cancel to review the latest version." : `${error.message}. Retry saves the same revision.`;
           save.disabled = error.status === 409;
           save.textContent = "Retry exact save"; cancel.disabled = false;
-          cancel.onclick = () => {void loadCharacterFacts(gameId,characterId,epoch);};
+          cancel.onclick = () => {dialog.close();void loadCharacterFacts(gameId,characterId,epoch);};
         }
       };
       nameInput.focus();
@@ -1460,31 +1503,33 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
 }
 
 function generateCharacterPortrait(gameId,characterId,epoch) {
-  const record=state.currentCharacterFacts,status=document.getElementById("character-portrait-status");
-  if(!record){status.textContent="Wait for the profile to load.";return;}
-  let form=document.getElementById("character-portrait-generation");if(form){form.hidden=!form.hidden;return;}
-  form=document.createElement("form");form.id="character-portrait-generation";form.className="character-edit-form";
-  const label=document.createElement("label"),prompt=document.createElement("textarea");label.textContent="Portrait direction";prompt.required=true;prompt.maxLength=4000;prompt.placeholder="Appearance, clothing, pose…";label.append(prompt);
-  const submit=document.createElement("button");submit.className="primary-button";submit.textContent="Generate portrait";submit.type="submit";form.append(label,submit);document.querySelector(".character-heading").append(form);
-  let request=null,job=null,saveBody=null;
+  void openCharacterAssetComposer(gameId,characterId,epoch,'generate',true);
+}
+const characterCompletedJobs=new Set();
+function drawCharacterGeneration(gameId,characterId,epoch) {
+  const jobs=[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&(job.characterId===characterId||job.characterIds?.includes(characterId))&&job.status!=='PUBLISHED');
   const current=()=>epoch===routeEpoch&&state.currentCharacter?.characterId===characterId;
-  const poll=async()=>{
-    if(!current())return;
-    try {
-      job=await api("/asset-generation",{gameId,jobId:job.jobId});
-      if(!current())return;
-      if(job.status==="PUBLISHED"){
-        const asset=await api("/object-url",{key:job.assetKey});
-        if(!sameGameKey(job.assetKey)||!asset.metadata?.characterIds?.includes(characterId))throw new Error("Generated portrait does not match this character.");
-        saveBody ||= {gameId,characterId,name:record.name,mode:"edit",details:{...record.details,thumbnailAssetKey:job.assetKey},expectedRevision:record.revision,expectedSourceHash:null,operationId:crypto.randomUUID().replaceAll("-",""),reason:"Selected generated profile portrait",dryRun:false};
-        await api("/character-details",{},{body:saveBody});
-        if(!current())return;assetIndex=null;await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);form.remove();status.textContent="";return;
-      }
-      if(job.status==="ATTENTION"){status.textContent=job.message||"Portrait generation needs attention.";return;}
-      status.textContent=job.status==="QUEUED"?"Portrait queued":"Generating portrait…";setTimeout(()=>void poll(),4000);
-    }catch(error){if(current()){status.textContent=error.message;submit.textContent="Continue portrait";submit.disabled=false;}}
-  };
-  form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{if(!job){request ||= {gameId,type:"portrait",characterId,name:`${record.name} portrait`,prompt:prompt.value.trim(),operationId:crypto.randomUUID().replaceAll("-","")};job=await api("/asset-generation",{},{body:request});prompt.disabled=true;}void poll();}catch(error){if(current()){status.textContent=error.message;submit.disabled=false;submit.textContent="Retry portrait request";}}};prompt.focus();
+  for(const [id,portrait] of [['character-portrait-progress',true],['character-assets-progress',false]]) {
+    window.PantherUI.mountCharacterGenerationJobs(document.getElementById(id),{gameId,jobs:jobs.filter(job=>Boolean(job.selectAsPortrait)===portrait),
+      onGenerationStatus:async job=>{const updated=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,updated);return updated;},
+      onPublished:async job=>{if(characterCompletedJobs.has(job.jobId))return;characterCompletedJobs.add(job.jobId);assetIndex=null;await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(!current())return;await loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);if(job.selectAsPortrait&&job.portraitAssigned===false)document.getElementById('character-portrait-status').textContent=job.assignmentMessage||'Portrait saved in Assets. The profile changed while it was generating.';drawCharacterGeneration(gameId,characterId,epoch);},
+      onOpen:asset=>void previewFile({key:asset.key,name:asset.title||asset.name||'Asset'})});
+  }
+  document.getElementById('character-portrait-generate').disabled=jobs.some(job=>job.selectAsPortrait&&!['FAILED','UNKNOWN','ATTENTION','BLOCKED','CANCELLED'].includes(job.status));
+}
+async function openCharacterAssetComposer(gameId,characterId,epoch,mode,selectAsPortrait=false) {
+  const host=document.getElementById('character-asset-composer'),status=document.getElementById('character-portrait-status');
+  const record=state.currentCharacterFacts;
+  if(!record||record.characterId!==characterId){status.textContent='Wait for the profile to load.';return;}
+  try {
+    const options=await api('/asset-generation',{gameId,view:'options'});
+    const assets=await allAssets(gameId);if(epoch!==routeEpoch)return;
+    window.PantherUI.mountAssetCreateForm(host,{gameId,mode,submissionScope:selectAsPortrait?"official-portrait":"character-assets",initialCharacterId:characterId,initialType:selectAsPortrait?'portrait':'image',characters:state.gameDetail.characters,generationTypes:options.generationTypes||[],imageAssets:assets.filter(asset=>(asset.contentType||'').startsWith('image/')),
+      onClose:()=>window.PantherUI.unmountAssetCreateForm(host),
+      onUpload:request=>uploadGameAsset(gameId,{...request,characterId}),
+      onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request,characterId,...(selectAsPortrait&&request.type==='portrait'?{selectAsPortrait:true}:{})}});assetGenerationJobs.set(job.jobId,job);return job;},
+      onComplete:async result=>{window.PantherUI.unmountAssetCreateForm(host);assetIndex=null;await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(epoch!==routeEpoch)return;drawCharacterGeneration(gameId,characterId,epoch);if(result?.status==='PUBLISHED')void loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);}});
+  }catch(error){if(epoch===routeEpoch)status.textContent=error.message;}
 }
 
 async function uploadCharacterPortrait(gameId,characterId,file,epoch,setThumbnail=true) {
@@ -1514,7 +1559,7 @@ async function loadCharacter(gameId, characterId) {
   const epoch = routeEpoch;
   state.currentCharacterFacts = null;
   for(const button of document.querySelectorAll("[data-character-panel]")){const panel=document.getElementById(button.dataset.characterPanel);panel.hidden=true;button.setAttribute("aria-expanded","false");button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute("aria-expanded",String(!panel.hidden));if(!panel.hidden&&panel.id==="character-assets")void loadCharacterAssets(gameId,characterId,epoch);if(!panel.hidden&&panel.id==="character-appearance-panel"&&!state.appearanceVersions)void loadAppearanceVersions(gameId,characterId,epoch);};}
-  document.getElementById("character-appearance-panel").hidden=false;document.getElementById("character-assets").hidden=false;
+  document.getElementById("character-appearance-panel").hidden=true;document.getElementById("character-assets").hidden=false;
   for(const button of document.querySelectorAll('[data-character-upload]'))button.onclick=()=>document.getElementById(button.dataset.characterUpload==="reference"?"character-reference-file":"character-portrait-file").click();
   for(const button of document.querySelectorAll('[data-character-generate]'))button.onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
   document.getElementById("character-reference-file").onchange=event=>void uploadCharacterPortrait(gameId,characterId,event.target.files?.[0],epoch,false);
@@ -1522,8 +1567,14 @@ async function loadCharacter(gameId, characterId) {
   document.getElementById("character-portrait-upload").onclick=()=>document.getElementById("character-portrait-file").click();
   document.getElementById("character-portrait-file").value="";
   document.getElementById("character-portrait-file").onchange=event=>void uploadCharacterPortrait(gameId,characterId,event.target.files?.[0],epoch);
-  document.getElementById("character-portrait-generation")?.remove();
+  window.PantherUI.unmountAssetCreateForm?.(document.getElementById("character-asset-composer"));
+  document.getElementById("character-assets-upload").onclick=()=>void openCharacterAssetComposer(gameId,characterId,epoch,"upload");
+  document.getElementById("character-assets-generate").onclick=()=>void openCharacterAssetComposer(gameId,characterId,epoch,"generate");
+  drawCharacterGeneration(gameId,characterId,epoch);
+  void (async()=>{let cursor=null;for(let pageIndex=0;pageIndex<100;pageIndex++){const page=await api("/asset-generation",{gameId,characterId,cursor});if(epoch!==routeEpoch)return;for(const job of page.jobs||[])assetGenerationJobs.set(job.jobId,job);drawCharacterGeneration(gameId,characterId,epoch);cursor=page.cursor;if(!cursor)return;}throw new Error('Older generation progress could not be loaded.');})().catch(error=>{if(epoch===routeEpoch)document.getElementById('character-portrait-status').textContent=error.message;});
   document.getElementById("character-portrait-generate").onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
+  const portraitGenerators=[document.getElementById("character-portrait-generate"),...document.querySelectorAll('[data-character-generate]')];for(const button of portraitGenerators){button.disabled=false;button.title="";}
+  if(config.development===true)void api('/generation-capabilities').then(capabilities=>{if(epoch!==routeEpoch)return;for(const button of portraitGenerators){button.disabled=capabilities.images===false;button.title=button.disabled?'Image generation is unavailable':'';}}).catch(()=>{if(epoch===routeEpoch)for(const button of portraitGenerators){button.disabled=true;button.title='Image generation is unavailable';}});
   document.getElementById("characters-more").hidden = true;
   document.getElementById("character-create").hidden = true;
   document.getElementById("character-create-form").hidden = true;
@@ -1536,7 +1587,7 @@ async function loadCharacter(gameId, characterId) {
   state.selectedAppearance = null;
   state.pendingAppearanceRestore = null;
   appearanceRequest++;
-  showLoading(document.getElementById("character-assets-status"), "Loading references…");
+  showLoading(document.getElementById("character-assets-status"), "Loading assets…");
   void loadCharacterAssets(gameId,characterId,epoch);
   elements.characterList.hidden = true;
   elements.characterProfile.hidden = false;
@@ -1559,43 +1610,64 @@ async function loadCharacter(gameId, characterId) {
   }
 }
 
+function characterReferenceAssets(assets,characterId) {
+  const seen=new Set();
+  return assets.filter(asset=>{
+    if(!sameGameKey(asset.key)||seen.has(asset.key)||!Array.isArray(asset.metadata?.characterIds)||!asset.metadata.characterIds.includes(characterId))return false;
+    const kind=asset.kind||'',role=asset.metadata?.extra?.relationshipRole;
+    if(['processing','intermediate','internal'].includes(role)||/(?:^|-)(?:provenance|receipts?|manifest|checkpoint|migration|audit|metadata|plans?|draft|storyboards?|packets?)(?:-|$)|^editorial-/.test(kind))return false;
+    const mime=asset.contentType||'',name=asset.name||asset.key.split('/').at(-1);
+    // Ordinary references are finished media; evidence JSON remains in stored lineage.
+    if(/\.(json|ya?ml|csv)$/i.test(name)||mime==='application/json')return false;
+    if(!/^(image|video|audio|text)\//.test(mime)&&!/^model\//.test(mime)&&! /\.(png|jpe?g|webp|gif|avif|svg|mp4|webm|mov|mp3|wav|flac|ogg|pdf|glb|blend)$/i.test(name))return false;
+    seen.add(asset.key);return true;
+  }).sort((a,b)=>String(b.lastModified||'').localeCompare(String(a.lastModified||'')));
+}
+function characterReferenceTitle(asset) {
+  if(asset.metadata?.title||asset.title)return asset.metadata?.title||asset.title;
+  const name=(asset.name||asset.key.split('/').at(-1)).replace(/\.[^.]+$/,'').replace(/[-_][a-f0-9]{16,}$/i,'').replace(/[-_]+/g,' ').trim();
+  return name?name.charAt(0).toUpperCase()+name.slice(1):'Reference';
+}
 async function loadCharacterAssets(gameId, characterId, epoch) {
-  const status = document.getElementById("character-assets-status");
-  const list = document.getElementById("character-assets-list");
-  const current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
+  const status = document.getElementById("character-assets-status"),list=document.getElementById("character-assets-list");
+  const current=()=>epoch===routeEpoch&&gameId===state.gameId&&state.tokens;
   try {
-    const assets = await allAssets(gameId);
-    if (!current()) return;
-    const matching = assets.filter(a => sameGameKey(a.key) && Array.isArray(a.metadata?.characterIds) && a.metadata.characterIds.includes(characterId));
-    matching.sort((a,b) => b.lastModified.localeCompare(a.lastModified));
-    list.replaceChildren();
-    let previousGroup = null;
-    matching.sort((a,b) => a.kind.localeCompare(b.kind) || b.lastModified.localeCompare(a.lastModified));
-    for (const asset of matching) {
-      const li = document.createElement("li");
-      const group = asset.kind;
-      if (group !== previousGroup) {const header = document.createElement("li"), h = document.createElement("h3"); h.textContent = group; header.append(h); list.append(header); previousGroup = group;}
-      const link = assetLink(asset);
-      if (asset.contentType?.startsWith("image/")) {
-        const image = document.createElement("img"); image.alt = asset.metadata?.title || asset.name;
-        image.loading = "lazy"; image.dataset.characterReference = asset.key;
-        link.prepend(image); li.className = "character-reference-card";
-      }
-      li.append(link, document.createTextNode((asset.metadata?.tags || []).length ? ` · ${asset.metadata.tags.join(" · ")}` : ""));
-      list.append(li);
+    const matching=characterReferenceAssets(await allAssets(gameId),characterId);
+    if(!current())return;
+    list.replaceChildren();list.classList.add('character-reference-gallery');
+    const previews=[];
+    for(const asset of matching){
+      const title=characterReferenceTitle(asset),li=document.createElement('li'),link=document.createElement('a'),frame=document.createElement('span'),label=document.createElement('span');
+      li.className='character-reference-card';frame.className='character-reference-preview';label.className='character-reference-title';label.textContent=title;
+      link.href=`${gamePath('media')}?asset=${encodeURIComponent(asset.key)}`;
+      link.addEventListener('click',event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();void previewFile({key:asset.key,name:title,size:asset.size});});
+      link.replaceChildren(frame,label);link.setAttribute('aria-label',`Preview ${title}`);
+      const version=asset.metadata?.extra?.version,stamp=new Date(asset.lastModified);const caption=document.createElement('span');caption.className='character-reference-caption';caption.textContent=[version?.schemaVersion===1&&Number.isInteger(version.number)?`Version ${version.number}`:null,!Number.isNaN(stamp.getTime())?stamp.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):null].filter(Boolean).join(' · ');if(caption.textContent)link.append(caption);
+      // The shared preview dialog opens without leaving the profile.
+      const mime=asset.contentType||'',filename=asset.name||asset.key.split('/').at(-1);
+      const image=mime.startsWith('image/')||/\.(png|jpe?g|webp|gif|avif|svg)$/i.test(filename),video=mime.startsWith('video/')||/\.(mp4|webm|mov)$/i.test(filename);
+      const indicator=document.createElement('span');indicator.className='character-reference-format';indicator.textContent=video?(asset.metadata?.extra?.episodeRef?'Episode':'Video'):image?'Image':mime.startsWith('audio/')?'Audio':mime.startsWith('text/')?'Text':/\.pdf$/i.test(filename)?'PDF':'3D';frame.append(indicator);
+      if(video){const play=document.createElement('span');play.className='character-video-play';play.setAttribute('aria-hidden','true');play.textContent='▶';frame.append(play);const seconds=Number(asset.metadata?.extra?.mediaProbe?.format?.duration??asset.metadata?.extra?.mediaProbe?.duration??asset.durationSeconds);if(Number.isFinite(seconds)&&seconds>0){const duration=document.createElement('span');duration.className='character-video-duration';duration.textContent=`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;frame.append(duration);}}
+      if(image||video){const media=document.createElement(video?'video':'img');if(image){media.alt='';media.loading='lazy';}else{media.muted=true;media.playsInline=true;media.preload='metadata';media.setAttribute('aria-hidden','true');media.addEventListener('loadedmetadata',()=>{if(!frame.querySelector('.character-video-duration')&&Number.isFinite(media.duration)&&media.duration>0){const duration=document.createElement('span');duration.className='character-video-duration';duration.textContent=`${Math.floor(media.duration/60)}:${String(Math.floor(media.duration%60)).padStart(2,'0')}`;frame.append(duration);}},{once:true});}media.hidden=true;frame.prepend(media);previews.push({asset,media,indicator,image});}
+      li.append(link);list.append(li);
     }
-    const images = [...list.querySelectorAll("img[data-character-reference]")];
-    for (let offset=0; offset<images.length; offset+=60) {
-      const batch = images.slice(offset,offset+60);
-      void api("/image-links", {}, {body:{gameId,keys:batch.map(img=>img.dataset.characterReference)}}).then(links=>{
-        if (!current()) return;
-        for (const img of batch) { const url = links.images?.[img.dataset.characterReference]?.url; if (url) img.src = url; else img.remove(); }
-      }).catch(()=>batch.forEach(img=>img.remove()));
+    // Resolve a bounded batch first; older APIs and newly uploaded assets may lack image-links entries.
+    for(let offset=0;offset<previews.length;offset+=20){
+      const batch=previews.slice(offset,offset+20);let links={};
+      try{const keys=batch.filter(item=>item.image).map(item=>item.asset.key);if(keys.length)links=(await api('/image-links',{},{body:{gameId,keys}})).images||{};}catch{}
+      if(!current())return;
+      await Promise.allSettled(batch.map(async({asset,media,indicator})=>{
+        let url=links[asset.key]?.url;
+        if(!url){try{const resolved=await api('/object-url',{key:asset.key});const thumbnail=resolved.thumbnailKey||asset.thumbnailKey;if(media.tagName==='VIDEO'&&thumbnail){const image=document.createElement('img');image.alt='';image.loading='lazy';media.replaceWith(image);media=image;url=(await api('/object-url',{key:thumbnail})).url;}else url=resolved.url;}catch{return;}}
+        if(!current()||!url)return;
+        const ready=()=>{if(current()){media.hidden=false;indicator.classList.add('character-reference-format-overlay');}};
+        media.addEventListener(media.tagName==='VIDEO'?'loadeddata':'load',ready,{once:true});
+        media.addEventListener('error',()=>{media.hidden=true;indicator.classList.remove('character-reference-format-overlay');},{once:true});media.src=url;media.hidden=false;
+      }));
     }
-    status.textContent = "";const empty=document.getElementById("character-reference-empty"),upload=document.querySelector('[data-character-upload="reference"]');empty.hidden=Boolean(matching.length);if(matching.length)document.querySelector("#character-assets .explorer-heading").append(upload);else empty.append(upload);
-  } catch (error) {
-    if (current()) status.textContent = error.message;
-  }
+    if(!current())return;
+    status.textContent='';const empty=document.getElementById('character-reference-empty');empty.hidden=Boolean(matching.length);empty.textContent=matching.length?'':'No assets yet.';
+  }catch(error){if(current())status.textContent=error.message;}
 }
 
 async function loadCharacterModel() {
@@ -1730,6 +1802,8 @@ function panCharacterModel(horizontal, vertical) {
 
 async function renderRoute() {
   closeOptionalInfoDialogs();
+  const legacyEpisodeRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/videos((?:\/[^?#]*)?)$/);
+  if(legacyEpisodeRoute){navigate(`${legacyEpisodeRoute[1]||''}/episodes${legacyEpisodeRoute[2]}${location.search}${location.hash}`,{replace:true});return;}
   const legacySessionRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/(?:audio|transcripts)\/?$/);
   if(legacySessionRoute){navigate(`${legacySessionRoute[1]||''}/sessions${location.search}${location.hash}`,{replace:true});return;}
   closeLiveReader();
@@ -1755,6 +1829,7 @@ async function renderRoute() {
   clearLibrary();
   closePreview();
   window.PantherUI.unmountAssetsLibrary?.(document.getElementById('assets-library'));
+  window.PantherUI.unmountTagManager?.(document.getElementById('game-tags-control'));
   document.getElementById('assets-library').hidden=true;document.getElementById('asset-view-actions').hidden=true;
   elements.entries.hidden=false;elements.breadcrumbs.hidden=false;elements.status.hidden=false;
   elements.novel.hidden = true;
@@ -1762,7 +1837,8 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
-  const gameRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const workflowRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/([^/]+))?\/?$/);
+  const gameRoute = workflowRoute || window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|episodes|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1781,12 +1857,13 @@ async function renderRoute() {
     if (epoch === routeEpoch) pageLoading.hidden = true;
   }
   if (epoch !== routeEpoch) return;
-  const section = gameRoute?.[2] || window.location.pathname.slice(1);
+  const requestedSection = gameRoute?.[2] || window.location.pathname.slice(1);
+  const section=requestedSection==="episodes"?"videos":requestedSection;
   await roomCapture.render(section, epoch);
   if (epoch !== routeEpoch) return;
   if(section === "workflows") {
     setActiveNavigation("workflows"); elements.characters.hidden = true; elements.explorer.hidden = true;
-    await workshop.open(epoch); return;
+    await workshop.open(epoch, gameRoute?.[3], gameRoute?.[4]); return;
   }
   if (section === "dashboard" || location.pathname === "/") {
     setActiveNavigation("dashboard"); elements.characters.hidden = true; elements.explorer.hidden = true;
@@ -1887,7 +1964,7 @@ async function uploadGameAsset(gameId,request){
     const file=request.file;if(!file||!file.size||file.size>100*1024**2)throw Object.assign(new Error('Choose a file under 100 MiB.'),{status:400});
     const raster=['map','blueprint','location'].includes(request.type);if(raster&&(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>20*1024**2))throw Object.assign(new Error('Choose a PNG, JPEG or WebP image under 20 MiB.'),{status:400});
     const bytes=await file.arrayBuffer(),sha256=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))));
-    pending={bytes,body:{gameId,assetId:`${request.type||'asset'}-${request.operationId}`,kind:request.type||'unknown',filename:file.name,size:file.size,contentType:file.type||'application/octet-stream',sha256,metadata:{title:(request.name||file.name).trim(),category:'reference',extra:{relationshipRole:'finished',generation:{schemaVersion:1,method:'unknown',cost:{status:'unknown'}}}}}};
+    pending={bytes,body:{gameId,assetId:`${request.type||'asset'}-${request.operationId}`,kind:request.type||'unknown',filename:file.name,size:file.size,contentType:file.type||'application/octet-stream',sha256,metadata:{title:(request.name||file.name).trim(),category:'reference',...(request.characterId?{characterIds:[request.characterId]}:{}),extra:{relationshipRole:'finished',generation:{schemaVersion:1,method:'unknown',cost:{status:'unknown'}}}}}};
     assetUploads.set(request.operationId,pending);
   }
   try{
@@ -1901,9 +1978,15 @@ async function uploadGameAsset(gameId,request){
 }
 function drawAssetLibrary(epoch){
   const host=document.getElementById('assets-library'),gameId=state.gameId;host.hidden=false;
-  window.PantherUI.mountAssetsLibrary?.(host,{...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,browseFilesHref:gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`),onBrowseFiles:event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`));},hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
+  window.PantherUI.mountAssetsLibrary?.(host,{actionsHost:document.querySelector('#explorer .explorer-heading'),...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,browseFilesHref:gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`),onBrowseFiles:event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`));},hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
     onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
-    onThumbnail:async asset=>(await api('/object-url',{key:asset.key})).url,
+    onThumbnail:async asset=>{const resolved=await api('/object-url',{key:asset.key});if(resolved.contentType?.startsWith('video/')){const key=resolved.thumbnailKey||asset.thumbnailKey;return key?(await api('/object-url',{key})).url:'';}return resolved.url;},
+    onDelete:async(asset,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/delete',{},{body:{gameId,key:asset.key,sha256:source.sha256,operationId}});if(result.deleted!==true||result.key!==asset.key)throw new Error('Deletion could not be confirmed.');await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=assetListing.assets.filter(item=>item.key!==asset.key);drawAssetLibrary(epoch);}},
+    onCapabilities:config.development===true?()=>api('/generation-capabilities'):undefined,
+    onGenerationOptions:()=>api('/asset-generation',{gameId,view:'options'}),
+    onRename:async(asset,title,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/rename',{},{body:{gameId,key:asset.key,title,sha256:source.sha256,operationId}});await window.PantherUI.invalidate(apiScope(),['/assets','/object-url','/asset-document','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId)assetListing.assets=assetListing.assets.map(item=>item.key===asset.key?result.asset:item);return result.asset;},
+    onCharacters:cursor=>api('/characters',{gameId,cursor:typeof cursor==='string'?cursor:null}),
+    onTags:()=>api('/tags',{gameId}),
     onUpload:request=>uploadGameAsset(gameId,request),
     onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request}});assetGenerationJobs.set(job.jobId,job);return job;},
     onGenerationStatus:async job=>{const result=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,result);if(result.status==='PUBLISHED'&&result.assetKey&&!assetListing.assets.some(asset=>asset.key===result.assetKey)){const asset=describeResolvedAsset(await api('/object-url',{key:result.assetKey}));await window.PantherUI.invalidate(apiScope(),['/assets','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets];drawAssetLibrary(epoch);}}return result;}});
@@ -1966,7 +2049,7 @@ function previewElement(contentType, url, title) {
     wrapper.append(activity); showLoading(activity, "Downloading the image preview…");
     const image = document.createElement("img");
     image.onload = () => activity.remove();
-    image.onerror = () => { activity.textContent = "Image preview unavailable. Try Open original or reopen this preview."; };
+    image.onerror = () => { activity.textContent = "Image preview unavailable. Use Download or reopen this preview."; };
     image.src = url;
     image.alt = title;
     wrapper.append(image); return wrapper;
@@ -1991,41 +2074,41 @@ function previewElement(contentType, url, title) {
   return frame;
 }
 
-async function previewFile(file) {
-  closeOptionalInfoDialogs();
+let previewReturnFocus = null;
+async function previewFile(file, {preserveDialog=false, returnFocus=null} = {}) {
+  previewReturnFocus = preserveDialog ? returnFocus : null;
+  if(!preserveDialog)closeOptionalInfoDialogs();
   dismissNarrativePreview();
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); }
   const epoch = ++previewEpoch;
   const download = document.getElementById("asset-download");
-  download.disabled = true; download.onclick = null;
-  document.getElementById("asset-download-status").textContent = "";
+  download.hidden = true; download.onclick = null; download.removeAttribute("href"); download.removeAttribute("download");
+  document.getElementById("asset-download-status").textContent = "";document.getElementById("asset-download-status").hidden=true;
   elements.previewTitle.textContent = file.name;
+  elements.previewBody.classList.remove("media-preview");
   showLoading(elements.previewBody, "Preparing a secure asset preview…");
-  document.getElementById("asset-generation").replaceChildren();
-  showLoading(document.getElementById("asset-versions"), "Finding earlier and later versions…");
+  window.PantherUI.clearGenerationDetails(document.getElementById("asset-generation"));
   showLoading(document.getElementById("asset-links"), "Finding this asset’s inputs and outputs…");
-  elements.previewDetails.textContent = formatBytes(file.size);
-  elements.openOriginal.removeAttribute("href");
   if (!elements.previewDialog.open) elements.previewDialog.showModal();
 
   try {
     const result = await api("/object-url", { key: file.key });
     if (epoch !== previewEpoch) return;
     elements.previewTitle.textContent=result.metadata?.title||file.name;
-    renderGeneration(document.getElementById("asset-generation"), result.metadata);
+
     // Physical folders may change; connections/readers use the API's stable asset identity.
     const assetRef = result.key || file.key;
-    download.disabled = false;
-    download.onclick = () => downloadAsset(assetRef, download, document.getElementById("asset-download-status"), () => epoch === previewEpoch);
+    download.hidden = false; download.href=result.url; download.download=result.filename||assetRef.split("/").at(-1);
+    download.onclick = event => {if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();if(download.getAttribute("aria-disabled")!=="true")void downloadAsset(assetRef, download, document.getElementById("asset-download-status"), () => epoch === previewEpoch);};
     const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
+    elements.previewBody.classList.toggle("media-preview",/^(image|video|audio)\//.test(result.contentType));
     if (structured) showLoading(elements.previewBody, "Reading the document and its metadata…");
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
-    elements.previewDetails.textContent = `${formatBytes(result.size)}${Number.isFinite(result.expiresIn) ? ` · link valid for ${Math.round(result.expiresIn / 60)} minutes` : ""}`;
-    elements.openOriginal.href = result.url;
+    document.getElementById("asset-generation").hidden=!result.metadata?.extra?.generation;
+    renderGeneration(document.getElementById("asset-generation"),result.metadata);
     if (/^(audio|video)\//.test(result.contentType)) attachMediaRecovery(elements.previewBody.firstChild, assetRef, () => epoch === previewEpoch);
     if (result.contentType.startsWith("video/")) configureVideoPreview({...result,key:assetRef},elements.previewBody.firstChild,epoch);
     void renderAssetLinks(assetRef, epoch, {...result,key:assetRef,name:result.filename||file.name,kind:result.kind||'unknown',sourceKeys:result.metadata?.sourceKeys||[]});
-    void renderAssetVersions(assetRef, epoch);
     if (structured) {
       const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef});
       if (epoch !== previewEpoch) return;
@@ -2035,13 +2118,12 @@ async function previewFile(file) {
     if (epoch !== previewEpoch) return;
     elements.previewBody.textContent = error.message;
     document.getElementById("asset-links").textContent = "Connections unavailable. Close and reopen the asset to retry.";
-    document.getElementById("asset-versions").textContent = "Versions unavailable. Close and reopen the asset to retry.";
   }
 }
 
 async function downloadAsset(key, button, status, current = () => true) {
-  button.disabled = true;
-  status.textContent = "Preparing download…";
+  button.disabled = true; button.setAttribute("aria-disabled","true");
+  status.hidden=true;status.textContent = "Preparing download…";
   try {
     // Obtain a fresh authenticated attachment URL on every click. Do not buffer
     // potentially gigabyte-sized originals into browser memory.
@@ -2050,33 +2132,32 @@ async function downloadAsset(key, button, status, current = () => true) {
     const link = document.createElement("a");
     link.href = result.url; link.download = result.filename || key.split("/").at(-1);
     document.body.append(link); link.click(); link.remove();
-    status.textContent = "Download requested. Check your browser’s downloads. If it fails or expires, choose Download original again.";
+    status.textContent = "";
   } catch (error) {
-    if (current()) status.textContent = `Download unavailable: ${error.message}. Sign in if needed, then retry.`;
-  } finally { if (current()) button.disabled = false; }
+    if (current()){status.hidden=false;status.textContent = `Download unavailable: ${error.message}. Sign in if needed, then retry.`;}
+  } finally { if (current()){button.disabled = false;button.removeAttribute("aria-disabled");} }
 }
 
 function closePreview() {
-  closeOptionalInfoDialogs();
+  const restore = previewReturnFocus;previewReturnFocus=null;
+  if(!restore)closeOptionalInfoDialogs();
+  else for(const dialog of elements.previewDialog.querySelectorAll('[data-panther-dialog][open],dialog[open]'))dialog.close();
   previewEpoch += 1;
   for (const media of elements.previewBody.querySelectorAll("audio, video")) { media.pause(); media.pantherCleanup?.(); media.removeAttribute("src"); media.load(); }
   elements.previewDialog.close();
   dismissNarrativePreview();
   elements.previewBody.replaceChildren();
-  elements.openOriginal.removeAttribute("href");
   document.getElementById("asset-links").replaceChildren();
-  document.getElementById("asset-generation").replaceChildren();
-  document.getElementById("asset-versions").replaceChildren();
+  window.PantherUI.clearGenerationDetails(document.getElementById("asset-generation"));
+  const focus=typeof restore==='function'?restore():restore;if(focus?.isConnected&&!focus.closest('[hidden]'))focus.focus({preventScroll:true});
 }
 
 function renderGeneration(host, metadata) {
   const g = metadata?.extra?.generation;
-  host.replaceChildren();
-  const heading = document.createElement("h3"); heading.textContent = "Generation details";
-  const list = document.createElement("dl");
+  window.PantherUI.clearGenerationDetails(host);
+  const rows=[];
   const row = (label, value) => {
-    const dt = document.createElement("dt"), dd = document.createElement("dd");
-    dt.textContent = label; dd.textContent = value; list.append(dt, dd);
+    rows.push([label,value]);
   };
   if (!g || g.schemaVersion !== 1) return;
   const methods = {ai:"AI-generated", "ai-assisted":"AI-assisted", procedural:"Software-generated", capture:"Recorded", human:"Human-created", unknown:"Unknown"};
@@ -2087,29 +2168,33 @@ function renderGeneration(host, metadata) {
   row("Inference ran", locations[g.inference] || "Unknown / not recorded");
   if (g.execution) row("Processing ran", locations[g.execution] || "Unknown");
   if (g.tool) row("Tools", g.tool);
-  const cost = g.cost || {};
-  if (["billed", "estimated"].includes(cost.status) && /^\d{1,9}(\.\d{1,9})?$/.test(cost.amount) && /^[A-Z]{3}$/.test(cost.currency)) {
-    row("Generation cost", `${cost.currency} ${cost.amount} · ${cost.status === "billed" ? "Billed" : "Estimate, not a charge"}`);
-  } else row("Generation cost", {subscription:"Subscription-covered · no per-asset charge recorded", "not-applicable":"No metered generation charge · hardware/storage excluded", unknown:"Unknown / not reconciled"}[cost.status] || "Unknown / not reconciled");
-  if (g.evidence) row("Evidence", g.evidence);
-  host.append(heading, list);
+  const cost = g.cost || {}, estimate = metadata?.extra?.costEstimate;
+  const priced = value => value && /^(?:0|[1-9]\d{0,8})(?:\.\d{1,9})?$/.test(value.amount) && /^[A-Z]{3}$/.test(value.currency);
+  const money = value => new Intl.NumberFormat(undefined, {style: "currency", currency: value.currency, minimumFractionDigits: 2, maximumFractionDigits: Number(value.amount) < .01 ? 6 : 4}).format(Number(value.amount));
+  if (cost.status === "billed" && priced(cost)) row("Generation cost", money(cost));
+  else if (estimate?.schemaVersion === 1 && estimate.status === "estimated" && priced(estimate)) row("Estimated cost", money(estimate));
+  else if (estimate?.schemaVersion === 1 && Number.isSafeInteger(estimate.credits) && estimate.credits > 0) row("Estimated usage", `${estimate.credits.toLocaleString()} credits`);
+  else if (cost.status === "estimated" && priced(cost)) row("Estimated cost", money(cost));
+  else if (cost.status === "subscription") row("Generation cost", "Included in subscription");
+  else if (cost.status === "not-applicable") row("Generation cost", "No generation charge");
+  window.PantherUI.mountGenerationDetails(host,rows);
 }
 
 const novel = Object.fromEntries(["status", "list", "reader", "prose", "title", "manuscript",
-  "details", "notice", "pagination", "read", "show-details", "download", "back", "refresh", "resume", "progress", "artwork", "art-before", "art-after"]
+  "details", "notice", "pagination", "show-details", "download", "back", "refresh", "review", "artwork", "art-before", "art-after"]
   .map(name => [name, document.getElementById(`novel-${name}`)]));
 let currentChapter = null;
 let currentNovelBook = null;
-let novelProgressCleanup = null;
+let chapterDetailsDialog = null;
 
 function clearNovel() {
-  novelProgressCleanup?.(); novelProgressCleanup = null;
+  chapterDetailsDialog?.close();
   currentNovelBook = null;
   dismissNarrativePreview(true);
   currentChapter = null;
   novel.reader.hidden = true;
   for (const part of ["list", "prose", "details", "pagination", "title", "notice"]) novel[part].replaceChildren();
-  novel.resume.replaceChildren(); novel.resume.hidden = true; novel.progress.textContent = "";
+  novel.review.replaceChildren();
   for(const name of ["artwork", "art-before", "art-after"]) novel[name].replaceChildren();
   novel.artwork.hidden=true;
 }
@@ -2170,59 +2255,15 @@ async function novelIllustrations(chapter,current) {
   toggle.onchange=show;show();
 }
 
-function novelProgressKey() {
-  try {
-    const sub = decodeToken(state.tokens?.id_token)?.sub;
-    return typeof sub === "string" && sub.length <= 256 ? `panther.reading.v1:${sub}:${state.gameId}` : null;
-  } catch { return null; }
-}
-
-function savedNovelProgress() {
-  try {
-    const key = novelProgressKey();
-    const value = key && JSON.parse(localStorage.getItem(key) || "null");
-    if (value?.schemaVersion !== 1 || value.gameId !== state.gameId || !/^[a-f0-9]{64}$/.test(value.chapterId)
-      || !Number.isInteger(value.paragraph) || value.paragraph < 0 || value.paragraph > 100000
-      || !Number.isFinite(value.percent) || value.percent < 0 || value.percent > 100
-      || (value.bookRevision !== null && !/^[a-f0-9]{32}$/.test(value.bookRevision))
-      || (value.bookId !== null && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.bookId))) return null;
-    return value;
-  } catch { return null; }
-}
-
-function readingProgress(chapter, book, current) {
-  const key = novelProgressKey();
-  if (!key) { novel.progress.textContent = "Reading position unavailable for this sign-in."; return; }
-  novel.progress.textContent = "Reading position is saved on this device.";
-  const saved = savedNovelProgress();
-  if (saved?.chapterId === chapter.id) {
-    const button = document.createElement("button"); button.className = "quiet-button";
-    button.textContent = `Resume at ${saved.percent}% · saved on this device`;
-    button.addEventListener("click", () => {
-      novelView(false);
-      const paragraphs = [...novel.prose.children];
-      const target = paragraphs[Math.min(saved.paragraph, paragraphs.length - 1)];
-      if (target) { target.tabIndex = -1; target.focus({preventScroll:true}); target.scrollIntoView({block:"start",behavior:"smooth"}); }
-    });
-    novel.resume.replaceChildren(button); novel.resume.hidden = false;
-  }
-  let timer;
-  const save = () => {
-    if (!current() || novel.manuscript.hidden || novel.reader.hidden) return;
-    const paragraphs = [...novel.prose.children];
-    if (!paragraphs.length || novel.prose.getBoundingClientRect().top > innerHeight) return;
-    let paragraph = 0;
-    for (let i = 0; i < paragraphs.length; i++) if (paragraphs[i].getBoundingClientRect().top <= innerHeight * .3) paragraph = i;
-    const percent = Math.round(100 * (paragraph + 1) / paragraphs.length);
-    try {
-      localStorage.setItem(key, JSON.stringify({schemaVersion:1,gameId:state.gameId,chapterId:chapter.id,
-        bookId:book?.id || null,bookRevision:book?.revision || null,paragraph,percent,title:chapter.title,updatedAt:Date.now()}));
-      novel.progress.textContent = `${percent}% through this chapter · position saved on this device`;
-    } catch { novel.progress.textContent = "This browser cannot save reading position. The chapter remains available."; }
-  };
-  const onScroll = () => { clearTimeout(timer); timer = setTimeout(save, 250); };
-  window.addEventListener("scroll", onScroll, {passive:true});
-  novelProgressCleanup = () => { clearTimeout(timer); window.removeEventListener("scroll", onScroll); };
+async function chapterReview(chapter,current){
+  const host=novel.review,gameId=state.gameId;host.replaceChildren();let revision=null,pending=null;
+  const heading=document.createElement('h2');heading.textContent='Chapter review';
+  const actions=document.createElement('div'),approve=document.createElement('button'),reject=document.createElement('button'),status=document.createElement('p');actions.className='novel-review-actions';approve.type=reject.type='button';approve.className=reject.className='quiet-button';approve.textContent='Approve';reject.textContent='Reject';for(const [button,icon] of [[approve,'approve'],[reject,'reject']]){const slot=document.createElement('span');slot.setAttribute('aria-hidden','true');button.prepend(slot);window.PantherUI.mountIcon(slot,icon);}status.setAttribute('role','status');
+  const form=document.createElement('form'),label=document.createElement('label'),comment=document.createElement('textarea'),save=document.createElement('button'),cancel=document.createElement('button');form.hidden=true;label.textContent='Comment (optional)';comment.maxLength=4000;label.append(comment);save.type='submit';save.className='primary-button';save.textContent='Reject Chapter';cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';const footer=document.createElement('div');footer.className='novel-review-actions';footer.append(cancel,save);form.append(label,footer);actions.append(approve,reject);const toolbar=document.createElement('div');toolbar.className='novel-review-heading';toolbar.append(heading,actions);host.append(toolbar,form,status);approve.disabled=reject.disabled=true;
+  const display=review=>{revision=review?.revision||null;approve.setAttribute('aria-pressed',String(review?.status==='approved'));reject.setAttribute('aria-pressed',String(review?.status==='rejected'));status.textContent=review?.status==='approved'?'Approved':review?.status==='rejected'?['Rejected',review.comment].filter(Boolean).join(' · '):'';};
+  try{const result=await api('/novel-review',{gameId,chapterId:chapter.id});if(!current())return;display(result.review);approve.disabled=reject.disabled=false;}catch{if(current()){status.textContent='Chapter review is unavailable.';status.setAttribute('role','alert');}return;}
+  const submit=async value=>{pending||={gameId,chapterId:chapter.id,status:value,comment:value==='rejected'?comment.value.trim():'',expectedRevision:revision,operationId:crypto.randomUUID().replaceAll('-','')};for(const button of [approve,reject,save,cancel])button.disabled=true;status.setAttribute('role','status');status.textContent='Saving review…';try{const result=await api('/novel-review',{},{body:pending});if(!current())return;pending=null;display(result.review);form.hidden=true;actions.hidden=false;await window.PantherUI.invalidate(apiScope(),['/novel-review'],gameId);}catch(error){if(current()){status.setAttribute('role','alert');status.textContent=error.status===409?'This review changed. Reopen the chapter before reviewing.':error.message;}}finally{if(current())for(const button of [approve,reject,save,cancel])button.disabled=false;}};
+  approve.onclick=()=>void submit('approved');reject.onclick=()=>{form.hidden=false;actions.hidden=true;comment.focus();};cancel.onclick=()=>{form.hidden=true;actions.hidden=false;reject.focus();};form.onsubmit=event=>{event.preventDefault();void submit('rejected');};
 }
 
 async function novelOrganization(gameId, current) {
@@ -2283,38 +2324,28 @@ async function novelCovers(gameId,current) {
 }
 
 function novelView(details) {
-  novel.manuscript.hidden = details;
-  novel.details.hidden = !details;
-  novel.read.setAttribute("aria-pressed", String(!details));
-  novel["show-details"].setAttribute("aria-pressed", String(details));
+  novel.manuscript.hidden = false;
+  novel.details.hidden = true;
+  if (!details || !currentChapter || chapterDetailsDialog) return;
+  const originalParent = novel.details.parentElement;
+  const dialog = window.PantherUI.createDialog();
+  dialog.className = 'chapter-details-dialog';
+  dialog.setAttribute('aria-label', 'Chapter Details');
+  const title = document.createElement('h2');title.textContent = 'Chapter Details';
+  novel.details.hidden = false;dialog.append(title, novel.details);
+  document.body.append(dialog);chapterDetailsDialog = dialog;
+  dialog.addEventListener('close', () => {
+    novel.details.hidden = true;originalParent.append(novel.details);
+    chapterDetailsDialog = null;dialog.remove();
+  }, {once:true});
+  dialog.showModal();
 }
 
-// A deliberately small prose-Markdown renderer. Raw HTML, images, and links stay inert text;
-// nothing from an AI artifact is ever assigned to innerHTML or fetched as a remote resource.
-function proseInline(parent, text, references) {
-  for (const part of text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g)) {
-    const strong = part.startsWith("**") && part.endsWith("**");
-    const emphasis = !strong && ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_")));
-    if (strong || emphasis) {
-      const el = document.createElement(strong ? "strong" : "em");
-      linkedProse(el, part.slice(strong ? 2 : 1, strong ? -2 : -1), references);
-      parent.append(el);
-    } else linkedProse(parent, part, references);
-  }
-}
-
+// Markdown structure is rendered as inert DOM; typed narrative destinations remain
+// the only links. Manuscript HTML and external image URLs never become resources.
 function proseMarkdown(parent, markdown, references) {
   if (narrativePreviewAnchor && parent.contains(narrativePreviewAnchor)) dismissNarrativePreview();
-  parent.replaceChildren();
-  for (const block of markdown.trim().split(/\n\s*\n/)) {
-    if (!block) continue;
-    const heading = block.match(/^(#{1,6}) (.+)$/);
-    const separator = /^(?:\*\s*){3,}$|^-{3,}$/.test(block.trim());
-    const quote = block.startsWith("> ");
-    const el = document.createElement(separator ? "hr" : heading ? `h${Math.min(heading[1].length + 1, 6)}` : quote ? "blockquote" : "p");
-    if (!separator) proseInline(el, heading ? heading[2] : quote ? block.replace(/^> ?/gm, "") : block, references);
-    parent.append(el);
-  }
+  window.PantherUI.renderProseMarkdown(parent,markdown,(node,text)=>linkedProse(node,text,references));
 }
 
 // Typed destinations, not artifact-supplied URLs. Add a resolver when a new data type has a page.
@@ -2624,7 +2655,7 @@ function chapterDate(chapter) {
 function chapterDetails(chapter, versions) {
   const heading = document.createElement("h2"); heading.textContent = "About this chapter";
   const summary = document.createElement("p");
-  summary.textContent = `Session: ${chapter.sessionId} · Published ${chapterDate(chapter)} · ${chapter.publicationStatus} · ${chapter.reviewStatus}. An adaptation, not a factual transcript.`;
+  summary.textContent = `Generated chapter · ${chapterDate(chapter)}`;
   const authored = chapter.details.authorship === "human";
   if (authored) summary.textContent = `Written manually · ${chapterDate(chapter)}`;
   const reviewTitle = document.createElement("h3"); reviewTitle.textContent = "Editorial review and notes"; reviewTitle.hidden = authored;
@@ -2651,78 +2682,44 @@ function chapterDetails(chapter, versions) {
     sources.replaceChildren();
     const key = chapter.details.artifact?.key;
     renderGeneration(creation, assets.find(a => a.key === key)?.metadata);
-    if (!assets.some(a => a.key === key)) { sources.textContent = "Chapter connections are not indexed yet."; return; }
+    if (!assets.some(a => a.key === key)) { sourceTitle.hidden = sources.hidden = true; return; }
     const connections = finishedAssetConnections(assets, key, gameId);
     appendFinishedConnections(sources, connections);
     if (connections.incomplete) sources.append("Some recorded connections are unavailable.");
   }).catch(() => {
     if (epoch === routeEpoch && state.gameId === gameId && state.tokens) sources.textContent = "Connections unavailable. Reload the page to try again.";
   });
-  const provenance = detailBlock("Provenance and revisions", chapter.details);
-  novel.details.replaceChildren(heading, summary, creation, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources, provenance);
+  novel.details.replaceChildren(heading, summary, creation, versionsTitle, versionList, reviewTitle, review, notes, sourceTitle, sources);
 }
 
+let manualChapterOpen = false;
 function manualChapterEditor(previous = null) {
-  const host = document.getElementById("manual-chapter-form");
-  host.hidden = false; host.replaceChildren();
-  const composer = document.getElementById("editorial-novel-composer");
-  const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
-  if (composer) composer.hidden = true;
-  if (create) create.hidden = true;
-  const gameId = state.gameId, epoch = routeEpoch;
-  const titleLabel = document.createElement("label"), title = document.createElement("input");
-  titleLabel.textContent = "Chapter title"; title.required = true; title.maxLength = 160; title.value = previous?.title || ""; titleLabel.append(title);
-  const proseLabel = document.createElement("label"), prose = document.createElement("textarea");
-  proseLabel.textContent = "Chapter text"; prose.required = true; prose.maxLength = 100000; prose.rows = 16; prose.value = previous?.markdown || ""; proseLabel.append(prose);
-  const selectedSources = new Set(previous?.details.sourceKeys || []);
-  const references = document.createElement("fieldset"), legend = document.createElement("legend"); legend.textContent = "References (optional)"; references.append(legend);
-  const save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p"), buttons = document.createElement("div");
-  save.type = "submit"; save.className = "primary-button"; save.textContent = previous ? "Save new chapter version" : "Save chapter";
-  cancel.type = "button"; cancel.className = "quiet-button"; cancel.textContent = "Cancel"; cancel.onclick = () => {host.hidden = true; if (!previous) {if (composer) composer.hidden = false; if (create) create.hidden = false; composer?.querySelector(".editorial-creation-panel")?.setAttribute("hidden", "");}syncNovelEmptyState();};
-  status.setAttribute("role","status"); buttons.className = "model-control-row"; buttons.append(save,cancel); host.append(titleLabel,proseLabel,references,buttons,status);
-  void allAssets(gameId).then(assets=>{
-    if(epoch !== routeEpoch || !host.isConnected) return;
-    const available = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" && !a.lineageWarning);
-    if (!available.length) {references.hidden = true; return;}
-    for (const asset of available) {
-      const label = document.createElement("label"), check = document.createElement("input"); check.type = "checkbox"; check.value = asset.key; check.checked = selectedSources.has(asset.key); check.onchange = () => {if(check.checked)selectedSources.add(asset.key);else selectedSources.delete(asset.key);};
-      label.append(check,document.createTextNode(asset.metadata?.title || asset.name)); references.append(label);
-    }
-  }).catch(()=>{references.hidden = true;});
-  let pending = null;
-  host.onsubmit = async event => {
-    event.preventDefault(); save.disabled = true;
-    try {
-      pending ||= {gameId,title:title.value.trim(),markdown:prose.value.trim(),sourceKeys:[...selectedSources],
-        operationId:crypto.randomUUID().replaceAll("-",""),previousChapterId:previous?.id || null};
-      for (const control of host.querySelectorAll("input,textarea,button")) control.disabled = true;
-      const result = await api("/novel-chapters", {}, {body:pending});
-      if (epoch !== routeEpoch || gameId !== state.gameId) return;
-      host.hidden = true; navigate(`${gamePath("novel")}/${result.chapterId}`);
-    } catch(error) {
-      if (epoch !== routeEpoch) return;
-      status.textContent = error.message;
-      if(error.status === 400 || error.status === 409) {pending = null; for(const c of host.querySelectorAll("input,textarea,button"))c.disabled = false;}
-      else {save.disabled = false; save.textContent = "Retry save";cancel.disabled = false;}
-    }
-  };
-  syncNovelEmptyState();
-  title.focus();
+  const gameId=state.gameId,epoch=routeEpoch;
+  manualChapterOpen=true;syncNovelEmptyState();
+  window.PantherUI.openChapterEditor({previous,gameId,scope:apiScope(),
+    onLoadReferences:async()=>{
+      const assets=await allAssets(gameId),seen=new Set();
+      const internal=asset=>['processing','intermediate','internal'].includes(asset.metadata?.extra?.relationshipRole)||asset.metadata?.extra?.recordingPart||/recording-(chunk|part|checkpoint|manifest)|generation-plan|review-report|provenance/.test(asset.kind||'')||/\/part-\d+\.(flac|wav|webm)$/.test(asset.key);
+      return assets.filter(asset=>!asset.lineageWarning&&!internal(asset)&&(asset.metadata?.extra?.relationshipRole==='finished'||/^(audio|video|image)\//.test(asset.contentType||'')||['transcript','raw-transcript','corrected-transcript','edited-transcript','novel-chapter','document','game-context','map','portrait','model-3d'].includes(asset.kind))).filter(asset=>{if(seen.has(asset.key))return false;if(/\.md$/.test(asset.key)&&assets.some(other=>other.key===asset.key.slice(0,-3)+'.json'&&other.kind===asset.kind))return false;seen.add(asset.key);return true;}).map(asset=>({id:asset.key,name:asset.metadata?.title||asset.name}));
+    },onSave:payload=>api('/novel-chapters',{}, {body:payload}),
+    onClose:()=>{manualChapterOpen=false;syncNovelEmptyState();},
+    onComplete:result=>{if(epoch===routeEpoch&&gameId===state.gameId)navigate(`${gamePath('novel')}/${result.chapterId}`);}
+  });
 }
 
 function syncNovelEmptyState() {
-  const empty=document.getElementById('novel-empty-state'),panel=document.querySelector('#editorial-novel-composer .editorial-creation-panel'),form=panel?.querySelector('form');
-  const editing=!document.getElementById('manual-chapter-form').hidden||Boolean(panel&&!panel.hidden&&form&&!form.hidden);
-  if(empty)empty.hidden=editing||Boolean(panel&&!panel.hidden&&panel.querySelector(".editorial-project-progress"));
-  const action=document.querySelector('#novel .explorer-heading [data-generation-action]');
-  if(action)action.hidden=editing||Boolean(currentChapter);
+  const empty=document.getElementById('novel-empty-state'),panel=document.querySelector('.novel-composer-dialog[data-panther-dialog]'),form=panel?.querySelector('form');
+  const editing=manualChapterOpen||Boolean(panel?.open&&form&&!form.hidden);
+  if(empty)empty.hidden=editing||Boolean(document.querySelector('#editorial-novel-composer .novel-job-card'));
+  const nullState=Boolean(empty)&&!document.querySelector('#editorial-novel-composer .novel-job-card');
+  for(const action of document.querySelectorAll('#novel .explorer-heading [data-generation-action],#novel .explorer-heading [data-create-action]'))action.hidden=editing||Boolean(currentChapter)||nullState;
 }
 
 function renderNovelEmptyState() {
   const empty=document.createElement('section');empty.id='novel-empty-state';empty.className='novel-empty-state';empty.setAttribute('aria-label','Create your first chapter');
   const heading=document.createElement('h2');heading.textContent='Create your first chapter';
   const purpose=document.createElement('p');purpose.textContent='Turn recorded sessions into story chapters you can read and collect into books—or start a new story from a prompt. Transcripts are optional.';
-  const generate=document.createElement('button');generate.type='button';generate.className='primary-button';generate.textContent='Generate chapter';
+  const generate=document.createElement('button');generate.type='button';generate.className='primary-button';generate.textContent='Generate Chapter';
   const examples=document.createElement('div');examples.className='novel-prompt-examples';
   const label=document.createElement('p');label.textContent='Try a prompt';examples.append(label);
   const start=async(prompt='')=>{
@@ -2730,7 +2727,7 @@ function renderNovelEmptyState() {
     try {
       await document.querySelector('#novel .explorer-heading [data-generation-action]').onclick();
       syncNovelEmptyState();
-      const brief=document.querySelector('#editorial-novel-composer textarea');
+      const brief=document.querySelector('.novel-composer-dialog[data-panther-dialog] textarea');
       if(brief){if(prompt){brief.value=prompt;brief.dispatchEvent(new Event('input',{bubbles:true}));}brief.focus();}
     } finally {for(const button of empty.querySelectorAll('button'))button.disabled=false;}
   };
@@ -2738,17 +2735,19 @@ function renderNovelEmptyState() {
   for(const prompt of ['Turn the selected session into a chapter with vivid scenes and natural dialogue.','Retell the session from one character’s point of view.','Write an original opening chapter for an adventure in this game.']){
     const example=document.createElement('button');example.type='button';example.className='quiet-button';example.textContent=prompt;example.onclick=()=>void start(prompt);examples.append(example);
   }
-  empty.append(heading,purpose,generate,examples);novel.list.append(empty);syncNovelEmptyState();
+  const create=document.createElement('button');create.type='button';create.className='quiet-button';create.dataset.buttonVariant='outline';create.textContent='Create Chapter';create.onclick=()=>manualChapterEditor();const actions=document.createElement('div');actions.className='novel-empty-actions';actions.append(create,generate);
+  empty.append(heading,purpose,actions,examples);novel.list.append(empty);syncNovelEmptyState();
 }
 
 async function loadNovel(chapterId, epoch) {
-  document.getElementById("manual-chapter-form").hidden = true;
+  document.querySelector("#novel > .explorer-heading").hidden = Boolean(chapterId);
+
   document.getElementById("manual-chapter-edit")?.remove();
   renderEditorialComposer("novel",epoch);
   const composer = document.getElementById("editorial-novel-composer");
   composer.hidden=Boolean(chapterId);
   const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
-  if (create) create.hidden = true;
+  for(const action of document.querySelectorAll("#novel .explorer-heading [data-generation-action],#novel .explorer-heading [data-create-action]"))action.hidden=true;
   const gameId = state.gameId;
   const current = () => epoch === routeEpoch && state.gameId === gameId && state.tokens;
   const loading = showLoading(novel.status, "Fetching the chapter list…");
@@ -2790,14 +2789,8 @@ async function loadNovel(chapterId, epoch) {
     }
     const ordered = selectedBook ? selectedBook.volumes.flatMap(v=>v.chapterKeys.map(k=>byKey.get(k)).filter(Boolean)) : [...sessions.values()].sort((a, b) => a.at(-1).createdAt - b.at(-1).createdAt || a[0].sessionId.localeCompare(b[0].sessionId)).map(v => v[0]);
     if (!chapterId) {
-      const saved = savedNovelProgress();
-      if (saved && chapters.some(c=>c.id===saved.chapterId)) {
-        const link = novelLink(`Resume ${chapters.find(c=>c.id===saved.chapterId).title} · ${saved.percent}% · saved on this device`,saved.chapterId,saved.bookId);
-        if(saved.bookId && saved.bookRevision)link.href += `&bookRevision=${encodeURIComponent(saved.bookRevision)}`;
-        novel.resume.append(link); novel.resume.hidden = false;
-      }
       if (selectedBook) {
-        if(create)create.hidden=Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
+        syncNovelEmptyState();
         novel.list.append(bookCard(selectedBook,organization.stories.find(s=>s.id===selectedBook.storyId),byKey,current));
         for(const volume of selectedBook.volumes) {
           const section=document.createElement("section"), heading=document.createElement("h2"), list=document.createElement("ol"); heading.textContent=volume.title;
@@ -2816,11 +2809,11 @@ async function loadNovel(chapterId, epoch) {
       novel.status.hidden = true;
       novel.status.textContent = "";
       if(!ordered.length&&!organization.stories.length)renderNovelEmptyState();
-      if(create)create.hidden=Boolean(composer.querySelector(".editorial-creation-panel:not([hidden]) form:not([hidden])"));
+      syncNovelEmptyState();
       for (const [index, chapter] of ordered.entries()) {
         const card = document.createElement("div"); card.className = "novel-card";
         const number = document.createElement("p"); number.className = "eyebrow"; number.textContent = `Chapter ${index + 1}`;
-        const title = document.createElement("h2"); title.append(novelLink(chapter.title, chapter.id));
+        const title = document.createElement("h2"); title.append(novelLink(chapter.title, chapter.id));card.dataset.chapterId=chapter.id;
         const meta = document.createElement("p"); meta.textContent = `${chapterDate(chapter)}${chapter.publicationStatus === "accepted-with-notes" ? " · Working draft" : ""}`;
         card.append(number, title, meta); novel.list.append(card);
       }
@@ -2835,9 +2828,9 @@ async function loadNovel(chapterId, epoch) {
     novel.title.textContent = chapter.title;
     proseMarkdown(novel.prose, chapter.markdown);
     chapterDetails(chapter, sessions.get(chapter.sessionId) || [chapter]);
-    if (chapter.details?.authorship === "human") {
-      const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button"; edit.textContent = "Edit chapter"; edit.id = "manual-chapter-edit"; edit.onclick = () => manualChapterEditor(chapter); document.querySelector("#novel-reader .novel-tools").append(edit);
-      if (chapter.details.previousChapterId) novel.details.append(novelLink("Previous chapter version",chapter.details.previousChapterId));
+    {
+      const edit = document.createElement("button"); edit.type = "button"; edit.className = "ui-button-ghost"; edit.textContent = "Edit"; edit.id = "manual-chapter-edit"; window.PantherUI.styleButton(edit,"ghost"); const editIcon=document.createElement("span");editIcon.setAttribute("aria-hidden","true");edit.prepend(editIcon);window.PantherUI.mountIcon(editIcon,"edit"); edit.onclick = () => manualChapterEditor(chapter); document.querySelector("#novel-reader .novel-reader-actions").prepend(edit);
+      if (chapter.details?.previousChapterId) novel.details.append(novelLink("Previous chapter version",chapter.details.previousChapterId));
     }
     novel.notice.textContent = [chapter.notice,
       chapter.publicationStatus === "accepted-with-notes" ? "Working draft · AI review left unresolved notes. See Details." : "",
@@ -2849,7 +2842,8 @@ async function loadNovel(chapterId, epoch) {
     novel.reader.hidden = false;
     novel.status.hidden = true;
     novelIllustrations(chapter,current);
-    readingProgress(chapter,selectedBook,current);
+    void chapterReview(chapter,current);
+
     // Link enrichment is optional: a catalog outage must not prevent reading the manuscript.
     proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, [], chapters));
     const collectionIds=[...new Set((chapter.readerReferences?.schemaVersion===1 && Array.isArray(chapter.readerReferences.mentions) && chapter.readerReferences.mentions.length<=200 ? chapter.readerReferences.mentions : [])
@@ -2962,23 +2956,99 @@ function sceneMapPicker(gameId, selectedKey, current, onChange = () => {}) {
   more.onclick=()=>void load();
   return {host,value,select,start(){if(started)return;started=true;void load();void preview();}};
 }
+function episodeRouteParams() {
+  const params=new URLSearchParams(location.search),match=location.pathname.match(/\/(?:episodes|videos)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  if(match){params.set('episode',match[1]);if(match[2])params.set('scene',match[2]);else params.delete('scene');}
+  return params;
+}
+function setSceneRenderLock(sceneId,locked) {
+  if(episodeRouteParams().get('scene')!==sceneId)return;
+  const edit=document.querySelector('[data-scene-edit]');if(edit){edit.disabled=locked;edit.title=locked?'Wait for the current video to finish':'';}
+  const form=document.querySelector('#scene-video-composer form');if(form)form.hidden=locked;const generate=document.querySelector('#scene-video-composer button[type=submit]');if(generate){generate.dataset.renderLocked=String(locked);generate.disabled=locked;}
+}
+async function watchLocalSceneRender(gameId,sceneId,epoch) {
+  const active=()=>routeEpoch===epoch&&state.gameId===gameId&&episodeRouteParams().get('scene')===sceneId;
+  if(!active())return;
+  try{const result=await api('/scene-renders',{gameId,episodeId:episodeRouteParams().get('episode')});if(!active())return;
+    const jobs=(result.jobs||[]).filter(job=>job.sceneRef?.sceneId===sceneId).sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));const job=jobs[0];if(!job)return;
+    await openLocalGeneration('Scene video','/scene-renders',{gameId,episodeId:job.sceneRef?.episodeId,sceneId,prompt:job.prompt},async finished=>{
+      const saved=await api('/scenes',{gameId,episodeId:finished.sceneRef?.episodeId,id:sceneId});if(active()&&saved.record)document.getElementById('episode-workspace')?.updateSceneRecord?.(saved.record);
+      const assets=await api('/assets',{gameId,section:'videos'});if(active())document.getElementById('episode-workspace')?.updateOutputs?.(assets.assets||[]);
+    },job);
+  }catch{/* Server mutation guards remain authoritative if progress cannot be read. */}
+}
+
+async function openLocalGeneration(title, endpoint, body, onDone=()=>{}, existingJob=null) {
+  const sceneJob=endpoint==='/scene-renders',inline=true,epoch=routeEpoch,opener=document.activeElement,dialog=document.createElement('section');
+  dialog.className=inline?'local-generation-inline':'local-generation-dialog';dialog.setAttribute('aria-label',title);
+  const header=document.createElement('header'),heading=document.createElement('h2'),close=document.createElement('button'),status=document.createElement('p'),progress=document.createElement('progress'),media=document.createElement(endpoint==='/narration-jobs'?'audio':'video'),actions=document.createElement('div'),retry=document.createElement('button');
+  heading.textContent=title;close.type='button';close.className='quiet-button';close.textContent='Close';close.onclick=()=>dialog.close();if(!sceneJob)header.append(heading);status.setAttribute('role','status');progress.setAttribute('aria-label',title+' progress');media.controls=true;media.hidden=true;media.setAttribute('aria-label',title+' output');if(media.tagName==='VIDEO')media.playsInline=true;retry.type='button';retry.className='primary-button';retry.hidden=true;actions.className='local-generation-actions';actions.append(retry);dialog.append(header,progress,status,media,actions);if(sceneJob){const host=document.getElementById('scene-work-progress');if(!host)return;host.replaceChildren(dialog);}else {const host=document.getElementById('episode-local-jobs');if(!host)return;const id=existingJob?.jobId||body.operationId||endpoint;const old=[...host.children].find(item=>item.dataset.jobId===id);if(old)return old;dialog.dataset.jobId=id;host.append(dialog);}
+  const stages=document.createElement('div');stages.className='editorial-stage-track scene-render-stages';stages.setAttribute('role','progressbar');stages.setAttribute('aria-label','Video generation stages');stages.setAttribute('aria-valuemin','0');stages.setAttribute('aria-valuemax','2');stages.hidden=true;if(sceneJob)progress.before(stages);
+  let job=existingJob,timer=null,busy=false,request={...body};const current=()=>epoch===routeEpoch&&dialog.isConnected&&(inline||dialog.open);
+  const showError=error=>{progress.hidden=true;status.textContent=error.message||'Could not check generation.';retry.hidden=false;retry.textContent=job?'Check status':'Retry same request';};
+  const render=async()=>{
+    if(!current())return;
+    if(job.jobId)dialog.dataset.jobId=job.jobId;
+    const active=['QUEUED','COMPOSING','RUNNING','GENERATING','SUBMITTED','IN_QUEUE','IN_PROGRESS'].includes(job.status);if(endpoint==='/scene-renders')setSceneRenderLock(body.sceneId||job.sceneRef?.sceneId,active);progress.hidden=!active;retry.hidden=true;
+    if(sceneJob){const complete=job.status==='DONE'?2:job.requestId||['SUBMITTED','IN_QUEUE','IN_PROGRESS'].includes(job.status)?1:0;stages.hidden=false;stages.setAttribute('aria-valuenow',String(complete));stages.replaceChildren();for(let i=0;i<2;i++){const segment=document.createElement('span');segment.dataset.state=i<complete?'done':i===complete&&active?'active':'pending';segment.title=i===0?'Prepare prompt':'Render video';stages.append(segment);}progress.hidden=true;}
+    status.textContent=job.status==='DONE'?'Ready':job.message||((job.phase&&!/^[A-Z_]+$/.test(job.phase))?job.phase:null)||({QUEUED:'Waiting to start…',COMPOSING:'Preparing video prompt…',RUNNING:'Rendering…',GENERATING:'Generating…',SUBMITTED:'Waiting for video generation…',IN_QUEUE:job.queuePosition>0?`Waiting in queue · ${job.queuePosition} ahead`:'Waiting in queue…',IN_PROGRESS:'Rendering video…',DONE:'Ready',FAILED:'Generation failed',UNKNOWN:'Provider outcome unknown',ATTENTION:'Generation needs attention'}[job.status]||'Generation needs attention');
+    if(job.status==='DONE'){
+      const key=job.outputKey||job.assetKey;if(!key)throw new Error('The completed job has no saved output.');
+      const object=await api('/object-url',{key});if(!current())return;
+      if(!object.url)throw new Error('The saved output is unavailable.');media.src=object.url;media.hidden=false;
+      await window.PantherUI.invalidate(apiScope(),['/assets','/scenes','/episodes','/episode-composition','/dashboard-recent'],body.gameId);await onDone(job);return;
+    }
+    if(active){timer=setTimeout(()=>void poll(),3000);return;}
+    retry.hidden=false;
+    if(job.status==='UNKNOWN'||job.outcomeUnknown){status.textContent+=' The provider outcome and charge are unknown. Check status before creating another request.';retry.textContent='Check status';}
+    else retry.textContent='Try again';
+  };
+  const poll=async()=>{if(!current()||busy)return;busy=true;retry.disabled=true;try{job=await api(endpoint,{gameId:body.gameId,jobId:job.jobId});await render();}catch(error){if(current())showError(error);}finally{busy=false;retry.disabled=false;}};
+  const start=async()=>{if(!current()||busy)return;busy=true;retry.disabled=true;retry.hidden=true;progress.hidden=false;status.textContent='Submitting…';try{job=await api(endpoint,{},{body:request});await render();}catch(error){if(current())showError(error);}finally{busy=false;retry.disabled=false;}};
+  retry.onclick=()=>{if(retry.textContent==='Check status'){void poll();return;}if(job){request={...body,operationId:crypto.randomUUID().replaceAll('-',''),...(endpoint==='/episode-renders'?{retry:true}:{})};job=null;}void start();};
+  dialog.addEventListener('close',()=>{clearTimeout(timer);media.pause();media.removeAttribute('src');media.load();dialog.remove();if(endpoint==='/scene-renders'&&job&&['QUEUED','COMPOSING','RUNNING','GENERATING','SUBMITTED','IN_QUEUE','IN_PROGRESS'].includes(job.status))void watchLocalSceneRender(body.gameId,body.sceneId||job.sceneRef?.sceneId,epoch);if(opener?.isConnected)opener.focus({preventScroll:true});});
+  if(body.prompt&&!sceneJob){const prompt=document.createElement('p');prompt.className='local-generation-prompt';prompt.textContent=body.prompt;dialog.prepend(prompt);}
+  if(!inline)dialog.showModal();if(existingJob)await poll();else await start();return dialog;
+}
+
+async function restoreEpisodeGeneration(gameId,episodeId,epoch){
+  const current=()=>routeEpoch===epoch&&state.gameId===gameId&&episodeRouteParams().get('episode')===episodeId;
+  for(const [endpoint,title] of [['/episode-renders','Episode video'],['/narration-jobs','Narration']]){
+    try{const result=await api(endpoint,{gameId,episodeId});if(!current())return;for(const job of result.jobs||[])await openLocalGeneration(title,endpoint,{gameId,episodeId},()=>{},job);}catch{/* Job failure states remain stored and will be read on the next visit. */}
+  }
+}
+
+function openEpisodeNarration(gameId,episode) {
+  const dialog=window.PantherUI.createDialog();dialog.className='local-generation-dialog narration-dialog';dialog.setAttribute('aria-label','Episode Narration');
+  const heading=document.createElement('h2'),form=document.createElement('form');heading.textContent='Narration';
+  const field=(name,type)=>{const label=document.createElement('label'),input=document.createElement(type);label.append(document.createTextNode(name),input);form.append(label);return input;};
+  const text=field('Narration text','textarea');text.required=true;text.maxLength=5000;text.rows=6;
+  const voice=field('Voice','select');voice.hidden=true;voice.required=true;voice.setAttribute('aria-label','Voice');voice.add(new Option('Loading voices…',''));
+  const direction=field('Performance direction','textarea');direction.rows=2;direction.maxLength=2000;direction.placeholder='Optional';
+  const status=document.createElement('p'),actions=document.createElement('div'),cancel=document.createElement('button'),generate=document.createElement('button');status.setAttribute('role','status');actions.className='local-generation-actions';cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();generate.type='submit';generate.className='primary-button';generate.textContent='Generate Narration';generate.disabled=true;actions.append(cancel,generate);form.append(status,actions);dialog.append(heading,form);document.body.append(dialog);
+  dialog.addEventListener('close',()=>{window.PantherUI.destroySelect?.(voice);dialog.remove();});dialog.showModal();text.focus();
+  void api('/narration-voices',{gameId}).then(response=>{if(!dialog.isConnected)return;voice.replaceChildren(new Option('Choose a voice',''));for(const item of response.voices||[]){const id=item.id||item.voiceId||item.voice_id;if(id)voice.add(new Option(item.name||id,id));}window.PantherUI.enhanceSelect(voice,'Voice');generate.disabled=false;if(voice.options.length===1){generate.disabled=true;status.textContent='No voices are configured.';}}).catch(error=>{if(dialog.isConnected){voice.replaceChildren(new Option('Voices unavailable',''));status.textContent=error.message;}});
+  form.onsubmit=async event=>{event.preventDefault();if(!text.value.trim()||!voice.value)return;generate.disabled=true;try{await openLocalGeneration('Narration','/narration-jobs',{gameId,episodeId:episode.id,text:text.value.trim(),direction:direction.value.trim(),voiceId:voice.value,sourceKeys:[],operationId:crypto.randomUUID().replaceAll('-','')});dialog.close();}finally{generate.disabled=false;}};
+}
+
 function renderEpisodeWorkspace(epoch) {
   const gameId=state.gameId, parent=document.getElementById('session-library');
   let host=document.getElementById('episode-workspace');
   if(!host){host=document.createElement('section');host.id='episode-workspace';host.setAttribute('aria-label','Episodes and scenes');parent.querySelector('.explorer-heading').after(host);}
   host.hidden=false;
   if(host.dataset.key===`${gameId}:${epoch}`)return;
-  for(const native of host.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);host.stopPreview?.();host.dataset.key=`${gameId}:${epoch}`;host.replaceChildren();
+  for(const native of host.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);host.stopPreview?.();for(const cards of host.querySelectorAll('.scene-cards'))window.PantherUI.unmountSortableScenes?.(cards);host.dataset.key=`${gameId}:${epoch}`;host.replaceChildren();
   const current=()=>state.gameId===gameId&&epoch===routeEpoch&&host.isConnected;
   const button=(text,action,primary=false)=>{const node=document.createElement('button');node.type='button';node.textContent=text;node.className=primary?'primary-button':'quiet-button';node.onclick=action;return node;};
   const episodes=[],scenes=[];let selectedEpisode=null,selectedScene=null,sceneGeneration=0;
   const toolbar=document.createElement('div'),heading=document.createElement('h2'),episodeCards=document.createElement('div'),episodeStatus=document.createElement('p'),editor=document.createElement('div'),detail=document.createElement('section');
-  toolbar.className='episode-toolbar';heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');episodeStatus.dataset.episodeEmpty='true';detail.className='episode-detail';detail.hidden=true;
-  const create=button('Create episode',()=>edit('episode'),true);create.id='episode-create-action';parent.querySelector('#episode-create-action')?.remove();parent.querySelector('.explorer-heading').append(create);toolbar.append(heading);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
-  const params=()=>new URLSearchParams(location.search);
-  const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);for(const [name,value] of Object.entries({episode:episodeId,scene:sceneId,view:null,series:null,episodeRevision:null})){if(value)url.searchParams.set(name,value);else url.searchParams.delete(name);}history.replaceState(null,'',url);};
-  const clearEditor=()=>{for(const dialog of editor.querySelectorAll('dialog'))if(dialog.open)dialog.close();for(const native of editor.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);editor.replaceChildren();};
-  const back=button('Back to episodes',()=>{clearEditor();host.stopPreview();selectedEpisode=null;selectedScene=null;detail.hidden=true;host.dataset.view='library';back.hidden=true;updateURL(null,null);drawEpisodes();});back.classList.add('episode-back');detail.before(back);back.hidden=true;
+  toolbar.className='episode-toolbar';toolbar.hidden=true;heading.textContent='Episodes';episodeCards.className='episode-cards';episodeStatus.setAttribute('role','status');episodeStatus.dataset.episodeEmpty='true';detail.className='episode-detail';detail.hidden=true;
+  const create=button('Create Episode',()=>edit('episode'),true);create.id='episode-create-action';parent.querySelector('#episode-create-action')?.remove();parent.querySelector('.explorer-heading').append(create);toolbar.append(heading);host.append(toolbar,editor,episodeStatus,episodeCards,detail);
+  const params=episodeRouteParams;
+  const updateURL=(episodeId,sceneId)=>{const url=new URL(location.href);url.pathname=gamePath('videos')+(episodeId?'/'+episodeId:'')+(sceneId?'/scenes/'+sceneId:'');for(const name of ['episode','scene','view','series','episodeRevision'])url.searchParams.delete(name);history.replaceState(null,'',url);};
+  let activeEditorDialog=null;
+  const clearEditor=()=>{activeEditorDialog?.close();activeEditorDialog=null;for(const dialog of editor.querySelectorAll('[data-panther-dialog]'))if(dialog.open)dialog.close();for(const native of editor.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);editor.replaceChildren();};
+  const back=button('Back to episodes',()=>{clearEditor();host.stopPreview();selectedEpisode=null;selectedScene=null;detail.hidden=true;host.dataset.view='library';document.getElementById('library-title').hidden=false;back.hidden=true;create.hidden=false;updateURL(null,null);drawEpisodes();});back.textContent='← Episodes';back.classList.add('episode-back','text-link-button');detail.before(back);back.hidden=true;
   host.stopEditing=clearEditor;
   const automaticPlans=document.createElement('section');automaticPlans.id='session-video-plans';automaticPlans.hidden=true;host.append(automaticPlans);
   void api('/editorial-jobs',{gameId}).then(result=>{
@@ -2990,148 +3060,90 @@ function renderEpisodeWorkspace(epoch) {
   }).catch(()=>{/* Workflow navigation remains available if this optional list cannot be read. */});
 
   function edit(kind,record=null){
-    const parentEpisode=selectedEpisode,returnFocus=document.activeElement;clearEditor();const dialog=document.createElement('dialog'),dialogHeading=document.createElement('h2');dialog.className='episode-edit-dialog';dialogHeading.textContent=record?`Edit ${kind}`:kind==='episode'?'Create episode':'Add scene';dialog.setAttribute('aria-label',dialogHeading.textContent);dialog.append(dialogHeading);const form=document.createElement('form');form.className='episode-editor';form.setAttribute('aria-label',kind==='episode'?'Episode editor':'Scene editor');
+    const parentEpisode=selectedEpisode,returnFocus=document.activeElement;clearEditor();const dialog=window.PantherUI.createDialog(),dialogHeading=document.createElement('h2');activeEditorDialog=dialog;dialog.className='episode-edit-dialog';dialogHeading.textContent=record?`Edit ${kind}`:kind==='episode'?'Create Episode':'Create Scene';dialog.setAttribute('aria-label',dialogHeading.textContent);dialog.append(dialogHeading);const form=document.createElement('form');form.className='episode-editor';form.setAttribute('aria-label',kind==='episode'?'Episode editor':'Scene editor');
     const label=(text,node)=>{const wrapper=document.createElement('label');wrapper.append(document.createTextNode(text),node);form.append(wrapper);return node;};
     const name=label(kind==='episode'?'Episode title':'Scene title',document.createElement('input'));name.required=true;name.maxLength=160;name.value=record?.name||'';
-    const description=label('Description',document.createElement('textarea'));description.maxLength=4000;description.placeholder='Optional';description.value=record?.description||'';
+    const description=label(kind==='scene'?'Prompt':'Description',document.createElement('textarea'));description.maxLength=4000;description.placeholder='Optional';description.value=record?.description||'';
     let type,map;if(kind==='scene'){type=label('Scene type',document.createElement('select'));for(const [value,text] of [['general','General'],['opener','Opener'],['map','Map'],['travel','Travel'],['action','Action'],['dialogue','Dialogue']])type.add(new Option(text,value));type.value=record?.type||'general';window.PantherUI.enhanceSelect(type,'Scene type');map=sceneMapPicker(gameId,record?.mapAssetKey,current);form.append(map.host);map.host.hidden=type.value!=='map';type.addEventListener('change',()=>{map.host.hidden=type.value!=='map';if(!map.host.hidden)map.start();});}
-    const actions=document.createElement('div'),save=button(record?'Save changes':kind==='episode'?'Create episode':'Add scene',null,true),cancel=button('Cancel',()=>clearEditor()),status=document.createElement('p');save.type='submit';status.setAttribute('role','status');actions.append(save,cancel);actions.className='episode-form-actions';form.append(actions,status);dialog.append(form);editor.append(dialog);dialog.addEventListener('close',()=>{for(const native of dialog.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);dialog.remove();if(returnFocus?.isConnected)returnFocus.focus({preventScroll:true});});dialog.showModal();name.focus();let pending=null;
+    const inputs={schemaVersion:1,characterIds:[...(record?.generationInputs?.characterIds||record?.characterIds||[])],sourceKeys:[...(record?.generationInputs?.sourceKeys||[])],contextKeys:[...(record?.generationInputs?.contextKeys||[])]};
+    if(kind==='scene') {
+      const castHost=document.createElement('div'),sources=document.createElement('fieldset'),legend=document.createElement('legend'),contexts=document.createElement('fieldset'),contextLegend=document.createElement('legend');legend.textContent='Transcripts';sources.append(legend);contextLegend.textContent='Context';contexts.append(contextLegend);form.append(castHost,sources,contexts);
+      const selected=new Set(inputs.sourceKeys),alive=()=>current()&&dialog.isConnected;
+      let castOptions=[];
+      const cast=()=>window.PantherUI.mountMultiSelect(castHost,{label:'Characters',options:castOptions,value:inputs.characterIds,onChange:value=>{inputs.characterIds=value;cast();},placeholder:'Add character…'});
+      cast();
+      const characters=async(cursor)=>{try{const result=await api('/characters',{gameId,cursor});if(!alive())return;castOptions.push(...(result.characters||[]).map(character=>({id:character.characterId||character.id,name:character.name})));cast();if(result.cursor){const more=button('More characters',()=>{more.remove();void characters(result.cursor);});castHost.after(more);}}catch{if(alive()){const notice=document.createElement('p');notice.textContent='Characters could not be loaded.';castHost.after(notice);}}};
+      const transcripts=async(cursor)=>{try{const result=await api('/assets',{gameId,section:'transcripts',cursor});if(!alive())return;for(const asset of result.assets||[])if(asset.kind==='raw-transcript'&&asset.key.endsWith('.json')){transcriptSourceChoice(asset,sources,selected,()=>{inputs.sourceKeys=[...selected];},gameId,alive);const check=[...sources.querySelectorAll('input')].find(input=>input.value===asset.key);if(check)check.checked=selected.has(asset.key);}if(result.cursor){const more=button('More transcripts',()=>{more.remove();void transcripts(result.cursor);});sources.append(more);}sources.hidden=!sources.querySelector('label,button');}catch{if(alive())sources.hidden=true;}};
+      const context=async(cursor)=>{try{const result=await api('/assets',{gameId,section:'all',cursor});if(!alive())return;for(const asset of result.assets||[]){if(asset.kind?.includes('provenance')||['processing','intermediate','internal'].includes(asset.metadata?.extra?.relationshipRole)||/(?:^|[\/_-])(audit|migration|provenance|manifest|processing)(?:[\/_.-]|$)/i.test(asset.key)||(!['game-context','lore','character-profile','corrected-transcript'].includes(asset.kind)&&asset.metadata?.extra?.contextUse!=='creative-evidence'))continue;const row=document.createElement('label'),check=document.createElement('input'),title=document.createElement('span');check.type='checkbox';check.value=asset.key;check.checked=inputs.contextKeys.includes(asset.key);title.textContent=asset.metadata?.title||asset.name||'Context';check.onchange=()=>{inputs.contextKeys=check.checked?[...new Set([...inputs.contextKeys,asset.key])]:inputs.contextKeys.filter(key=>key!==asset.key);};row.className='editorial-source-choice';row.append(check,title);contexts.append(row);}if(result.cursor){const more=button('More context',()=>{more.remove();void context(result.cursor);});contexts.append(more);}contexts.hidden=!contexts.querySelector('label,button');}catch{if(alive())contexts.hidden=true;}};
+      dialog.addEventListener('close',()=>window.PantherUI.unmountMultiSelect(castHost));
+      // Load only after the official Dialog has attached its content.
+      queueMicrotask(()=>{void characters();void transcripts();void context();});
+    }
+    const actions=document.createElement('div'),save=button(record?'Save changes':kind==='episode'?'Create Episode':'Create Scene',null,true),cancel=button('Cancel',()=>clearEditor()),status=document.createElement('p');save.type='submit';status.setAttribute('role','status');actions.append(save,cancel);actions.className='episode-form-actions';form.append(actions,status);dialog.append(form);editor.append(dialog);dialog.addEventListener('close',()=>{if(activeEditorDialog===dialog)activeEditorDialog=null;for(const native of dialog.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);dialog.remove();if(returnFocus?.isConnected)returnFocus.focus({preventScroll:true});});dialog.showModal();name.focus();let pending=null;
     if(map&&!map.host.hidden)map.start();
-    form.onsubmit=async event=>{event.preventDefault();pending||={gameId,id:record?.id||`${kind}-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),expectedRevision:record?.revision||null,operationId:crypto.randomUUID().replaceAll('-',''),...(kind==='scene'?{episodeId:parentEpisode.id,type:type.value,mapAssetKey:type.value==='map'?map.value():null,selectedOutputKey:record?.selectedOutputKey||null}:{sceneIds:record?.sceneIds||[]})};save.disabled=true;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=true;
+    form.onsubmit=async event=>{event.preventDefault();pending||={gameId,id:record?.id||`${kind}-${crypto.randomUUID().slice(0,8)}`,name:name.value.trim(),description:description.value.trim(),expectedRevision:record?.revision||null,operationId:crypto.randomUUID().replaceAll('-',''),...(kind==='scene'?{episodeId:parentEpisode.id,generationInputs:inputs,type:type.value,mapAssetKey:type.value==='map'?map.value():null,selectedOutputKey:record?.selectedOutputKey||null}:{sceneIds:record?.sceneIds||[]})};save.disabled=true;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=true;
       try{const response=await api(kind==='episode'?'/episodes':'/scenes',{},{body:pending});if(!current()||!form.isConnected||(kind==='scene'&&selectedEpisode?.id!==parentEpisode?.id))return;const saved=response.record;clearEditor();
         if(kind==='episode'){const index=episodes.findIndex(item=>item.id===saved.id);if(index<0)episodes.unshift(saved);else episodes[index]=saved;drawEpisodes();await chooseEpisode(saved);}
         else {if(response.episodeRecord){selectedEpisode=response.episodeRecord;const parentIndex=episodes.findIndex(item=>item.id===selectedEpisode.id);episodes[parentIndex]=selectedEpisode;drawEpisodes();}const index=scenes.findIndex(item=>item.id===saved.id);if(index<0)scenes.push(saved);else scenes[index]=saved;drawScenes();drawPlayback();chooseScene(saved);}
       }catch(error){if(current()){status.textContent=error.message;save.disabled=error.status===409;if(error.status===400){pending=null;for(const control of form.querySelectorAll('input,textarea,select'))control.disabled=false;}save.textContent=error.status===409?'Reopen to edit':'Retry save';}}
     };
   }
-  function drawEpisodes(){host.dataset.hasEpisodes=String(episodes.length>0);episodeStatus.hidden=episodes.length>0||Number(host.dataset.videoAssetCount)>0;if(episodes.length&&episodeStatus.textContent==='Create your first episode.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){if(host.videoSearch&&!`${episode.name} ${episode.description||''}`.toLowerCase().includes(host.videoSearch.toLowerCase()))continue;const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-label',episode.name);const name=document.createElement('strong'),count=document.createElement('span');name.textContent=episode.name;count.textContent=`${episode.sceneIds?.length||0} ${episode.sceneIds?.length===1?'scene':'scenes'}`;card.replaceChildren(name,count);card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);}}
-  host.filterEpisodes=value=>{host.videoSearch=value;drawEpisodes();};
+  function drawEpisodes(){host.dataset.hasEpisodes=String(episodes.length>0);episodeStatus.hidden=episodes.length>0||Number(host.dataset.videoAssetCount)>0;if(episodes.length&&episodeStatus.textContent==='Create your first episode.')episodeStatus.textContent='';episodeCards.replaceChildren();for(const episode of episodes){if(host.videoSearch&&!`${episode.name} ${episode.description||''}`.toLowerCase().includes(host.videoSearch.toLowerCase()))continue;const related=(host.sceneAssets||[]).filter(asset=>asset.metadata?.extra?.episodeRef?.episodeId===episode.id||asset.metadata?.extra?.sceneRef?.episodeId===episode.id),tags=new Set([...(episode.tags||[]),...related.flatMap(asset=>asset.metadata?.tags||[])]),characters=new Set([...(episode.characterIds||[]),...related.flatMap(asset=>asset.metadata?.characterIds||[])]);if((host.videoTags||[]).some(tag=>!tags.has(tag))||(host.videoCharacters||[]).some(id=>!characters.has(id)))continue;const card=button(episode.name,()=>void chooseEpisode(episode));card.className='episode-card';card.setAttribute('aria-label',episode.name);const name=document.createElement('strong'),count=document.createElement('span');name.textContent=episode.name;count.textContent=`${episode.sceneIds?.length||0} ${episode.sceneIds?.length===1?'scene':'scenes'}`;const thumbnail=document.createElement('div');thumbnail.className='episode-card-thumbnail';thumbnail.setAttribute('aria-hidden','true');thumbnail.innerHTML='<svg width=24 height=24 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x=3 y=3 width=18 height=18 rx=2/><path d="M3 8h18M3 16h18M8 3v18M16 3v18"/></svg>';card.replaceChildren(thumbnail,name,count);card.setAttribute('aria-pressed',String(selectedEpisode?.id===episode.id));episodeCards.append(card);if(episode.sceneIds?.length)void episodeThumbnail(episode,thumbnail);}if(episodes.length&&!episodeCards.children.length){episodeStatus.textContent='No matching episodes.';episodeStatus.hidden=false;}}
+  async function episodeThumbnail(episode,thumbnail){
+    if(!sameGameKey(episode.thumbnailKey))return;
+    try{const object=await api('/object-url',{key:episode.thumbnailKey});if(!current()||!thumbnail.isConnected||!object.contentType?.startsWith('image/')||!object.url)return;const image=document.createElement('img');image.alt='';image.onload=()=>{if(current()&&thumbnail.isConnected)thumbnail.replaceChildren(image);};image.src=object.url;
+    }catch{/* Missing thumbnail never prevents opening the episode. */}
+  }
+  host.filterEpisodes=(value,tags=[],characters=[])=>{host.videoSearch=value;host.videoTags=tags;host.videoCharacters=characters;drawEpisodes();};
   let sceneCards,sceneStatus,sceneDetail,sceneMore,previewHost,scenesComplete=false,mutationPending=false,mutationUncertain=false,previewGeneration=0,playbackView=0;
   const orderedScenes=()=>Array.isArray(selectedEpisode?.sceneIds)?selectedEpisode.sceneIds.map(id=>scenes.find(scene=>scene.id===id)):[];
   const finishedVideo=asset=>sameGameKey(asset.key)&&asset.contentType?.startsWith('video/')&&asset.metadata?.extra?.relationshipRole==='finished';
-  host.stopPreview=()=>{previewGeneration++;const video=previewHost?.querySelector('video');if(video){video.pause();video.removeAttribute('src');video.load();}for(const dialog of previewHost?.querySelectorAll('dialog[open]')||[])dialog.close();};
+  host.stopPreview=()=>{previewGeneration++;const video=previewHost?.querySelector('video');if(video){video.pause();video.removeAttribute('src');video.load();}for(const dialog of previewHost?.querySelectorAll('[data-panther-dialog][open],dialog[open]')||[])dialog.close();};
   async function saveOrder(ids){if(mutationPending)return;mutationPending=true;host.stopPreview();drawScenes();const episode=selectedEpisode;try{const result=await api('/episodes',{},{body:{gameId,id:episode.id,name:episode.name,description:episode.description||'',sceneIds:ids,expectedRevision:episode.revision,operationId:crypto.randomUUID().replaceAll('-','')}});if(!current()||selectedEpisode.id!==episode.id)return;selectedEpisode=result.record;episodes[episodes.findIndex(item=>item.id===episode.id)]=result.record;sceneStatus.textContent='Order saved.';}catch(error){if(current()&&selectedEpisode?.id===episode.id){mutationUncertain=true;const reconcile=async()=>{try{await window.PantherUI.invalidate(apiScope(),['/episodes','/episode-composition'],gameId);const result=await api('/episodes',{gameId,id:episode.id});if(!result.record||result.record.id!==episode.id||!Array.isArray(result.record.sceneIds))throw new Error('Episode unavailable');if(!current()||selectedEpisode.id!==episode.id)return;selectedEpisode=result.record;episodes[episodes.findIndex(item=>item.id===episode.id)]=result.record;mutationUncertain=false;sceneStatus.textContent=JSON.stringify(result.record.sceneIds)===JSON.stringify(ids)?'Order saved.':'Order changed; review it before moving scenes again.';drawScenes();drawPlayback();}catch(readError){if(current()){sceneStatus.textContent=`Order could not be confirmed: ${readError.message}`;sceneStatus.append(button('Check saved order',()=>void reconcile()));}}};await reconcile();}}finally{mutationPending=false;if(current()){drawEpisodes();drawScenes();drawPlayback();}}}
   async function selectOutput(asset){if(mutationPending)return;mutationPending=true;host.stopPreview();const scene=selectedScene;drawOutputs();try{const result=await api('/scenes',{},{body:{gameId,id:scene.id,episodeId:scene.episodeId,name:scene.name,description:scene.description||'',type:scene.type||'general',selectedOutputKey:asset.key,expectedRevision:scene.revision,operationId:crypto.randomUUID().replaceAll('-','')}});if(!current()||selectedEpisode?.id!==scene.episodeId)return;scenes[scenes.findIndex(item=>item.id===scene.id)]=result.record;if(selectedScene?.id===scene.id)selectedScene=result.record;sceneStatus.textContent='Selected for this episode.';}catch(error){if(current()&&selectedEpisode?.id===scene.episodeId){mutationUncertain=true;const reconcile=async()=>{try{await window.PantherUI.invalidate(apiScope(),['/scenes','/episode-composition'],gameId);const result=await api('/scenes',{gameId,episodeId:scene.episodeId,id:scene.id});if(!result.record||result.record.id!==scene.id||result.record.episodeId!==scene.episodeId)throw new Error('Scene unavailable');if(!current()||selectedEpisode?.id!==scene.episodeId)return;scenes[scenes.findIndex(item=>item.id===scene.id)]=result.record;if(selectedScene?.id===scene.id)selectedScene=result.record;mutationUncertain=false;sceneStatus.textContent=result.record.selectedOutputKey===asset.key?'Selected for this episode.':'Selection changed; review it before choosing again.';drawOutputs();drawScenes();drawPlayback();}catch(readError){if(current()){sceneStatus.textContent=`Selection could not be confirmed: ${readError.message}`;sceneStatus.append(button('Check saved selection',()=>void reconcile()));}}};await reconcile();}}finally{mutationPending=false;if(current()){drawOutputs();drawScenes();drawPlayback();}}}
-  function drawPlayback(){if(!previewHost||!selectedEpisode)return;host.stopPreview();previewHost.replaceChildren();const view=++playbackView;let ordered=orderedScenes();const missing=ordered.filter(scene=>!scene?.selectedOutputKey).length;const label=document.createElement('p');label.className='episode-preview-status';label.setAttribute('role','status');const start=button('Preview episode',()=>void begin(),true);start.disabled=mutationPending||mutationUncertain||!scenesComplete||!ordered.length||!!missing||ordered.length!==scenes.length;start.title=!scenesComplete?'Loading scenes':missing?`${missing} ${missing===1?'scene needs':'scenes need'} a video`:!ordered.length?'Add a scene first':ordered.length!==scenes.length?'Scene order is incomplete':'Play selected videos in scene order';label.hidden=true;previewHost.append(start,label);if(scenesComplete&&ordered.length&&!missing&&ordered.length===scenes.length){const episode=selectedEpisode;void api('/episode-composition',{gameId,episodeId:episode.id,revision:episode.revision}).then(composition=>{if(!current()||view!==playbackView)return;if(!composition.ready){start.disabled=true;label.textContent='One or more selected videos are unavailable.';return;}for(const asset of host.sceneAssets||[]){const extra=asset.metadata?.extra;if(finishedVideo(asset)&&extra?.episodeRef?.episodeId===episode.id&&extra.compositionHash===composition.compositionHash)previewHost.append(assetLink(asset,'Play episode'));}}).catch(error=>{if(current()&&view===playbackView){start.disabled=true;label.textContent=`Episode unavailable: ${error.message}`;}});}
-    async function begin(){const generation=++previewGeneration;start.disabled=true;try{const composition=await api('/episode-composition',{gameId,episodeId:selectedEpisode.id,revision:selectedEpisode.revision});if(!current()||generation!==previewGeneration)return;if(!composition.ready||composition.scenes.length!==ordered.length)throw new Error('Selected videos are incomplete');ordered=composition.scenes.map(item=>({...item.scene,selectedOutputKey:item.assetKey}));}catch(error){if(current()&&generation===previewGeneration){label.textContent=`Preview unavailable: ${error.message}`;label.hidden=false;start.disabled=false;}return;}for(const previous of previewHost.querySelectorAll('video')){previous.pause();previous.remove();}const playbackDialog=document.createElement('dialog'),playbackHeader=document.createElement('header'),playbackTitle=document.createElement('h2'),closePlayback=button('Close',()=>playbackDialog.close());playbackDialog.className='episode-playback-dialog';playbackDialog.setAttribute('aria-label','Episode preview');playbackTitle.textContent=selectedEpisode.name;playbackHeader.append(playbackTitle,closePlayback);playbackDialog.append(playbackHeader,label);label.hidden=false;previewHost.append(playbackDialog);playbackDialog.showModal();playbackDialog.onclose=()=>{video.pause();video.removeAttribute('src');video.load();if(playbackDialog.isConnected){previewGeneration++;label.hidden=true;playbackDialog.parentElement.append(label);playbackDialog.remove();start.disabled=false;if(start.isConnected&&!start.closest('[hidden]'))start.focus({preventScroll:true});}};const video=document.createElement('video');video.controls=true;video.playsInline=true;video.preload='metadata';video.setAttribute('aria-label','Episode preview');playbackDialog.append(video);let index=0;const active=()=>current()&&generation===previewGeneration&&video.isConnected;const fail=message=>{if(!active())return;video.pause();label.textContent=message;label.hidden=false;start.disabled=false;video.onended=null;};const next=async()=>{const scene=ordered[index];label.textContent=`Preview · ${index+1} of ${ordered.length} · ${scene.name}`;try{const result=await api('/object-url',{key:scene.selectedOutputKey});if(!active())return;if(!result.url||!result.contentType?.startsWith('video/'))throw new Error('Selected video unavailable');video.src=result.url;await video.play();}catch(error){fail(`Preview stopped at ${scene.name}: ${error.message}`);}};video.onerror=()=>fail(`Preview stopped at ${ordered[index].name}: video could not be played.`);video.onended=()=>{if(!active())return;if(++index<ordered.length)void next();else{label.textContent='Preview complete.';start.disabled=false;}};await next();}
+  function drawPlayback(){if(!previewHost||!selectedEpisode)return;host.stopPreview();previewHost.replaceChildren();const view=++playbackView;let ordered=orderedScenes();const missing=ordered.filter(scene=>!scene?.selectedOutputKey).length;const label=document.createElement('p');label.className='episode-preview-status';label.setAttribute('role','status');const start=button('Preview episode',()=>void begin(),true);start.disabled=mutationPending||mutationUncertain||!scenesComplete||!ordered.length||!!missing||ordered.length!==scenes.length;start.title=!scenesComplete?'Loading scenes':missing?`${missing} ${missing===1?'scene needs':'scenes need'} a video`:!ordered.length?'Add a scene first':ordered.length!==scenes.length?'Scene order is incomplete':'Play selected videos in scene order';label.hidden=true;previewHost.append(start,label);if(config.development===true){const assemble=button('Assemble',()=>void openLocalGeneration('Episode video','/episode-renders',{gameId,episodeId:selectedEpisode.id,revision:selectedEpisode.revision}));assemble.disabled=start.disabled;assemble.title=start.title;previewHost.append(assemble);}if(scenesComplete&&ordered.length&&!missing&&ordered.length===scenes.length){const episode=selectedEpisode;void api('/episode-composition',{gameId,episodeId:episode.id,revision:episode.revision}).then(composition=>{if(!current()||view!==playbackView)return;if(!composition.ready){start.disabled=true;label.textContent='One or more selected videos are unavailable.';return;}for(const asset of host.sceneAssets||[]){const extra=asset.metadata?.extra;if(finishedVideo(asset)&&extra?.episodeRef?.episodeId===episode.id&&extra.compositionHash===composition.compositionHash)previewHost.append(assetLink(asset,'Play episode'));}}).catch(error=>{if(current()&&view===playbackView){start.disabled=true;label.textContent=`Episode unavailable: ${error.message}`;}});}
+    async function begin(){const generation=++previewGeneration;start.disabled=true;try{const composition=await api('/episode-composition',{gameId,episodeId:selectedEpisode.id,revision:selectedEpisode.revision});if(!current()||generation!==previewGeneration)return;if(!composition.ready||composition.scenes.length!==ordered.length)throw new Error('Selected videos are incomplete');ordered=composition.scenes.map(item=>({...item.scene,selectedOutputKey:item.assetKey}));}catch(error){if(current()&&generation===previewGeneration){label.textContent=`Preview unavailable: ${error.message}`;label.hidden=false;start.disabled=false;}return;}for(const previous of previewHost.querySelectorAll('video')){previous.pause();previous.remove();}const playbackDialog=window.PantherUI.createDialog(),playbackHeader=document.createElement('header'),playbackTitle=document.createElement('h2'),closePlayback=button('Close',()=>playbackDialog.close());playbackDialog.className='episode-playback-dialog';playbackDialog.setAttribute('aria-label','Episode preview');playbackTitle.textContent=selectedEpisode.name;playbackHeader.append(playbackTitle,closePlayback);playbackDialog.append(playbackHeader,label);label.hidden=false;previewHost.append(playbackDialog);playbackDialog.showModal();playbackDialog.onclose=()=>{video.pause();video.removeAttribute('src');video.load();if(playbackDialog.isConnected){previewGeneration++;label.hidden=true;playbackDialog.parentElement.append(label);playbackDialog.remove();start.disabled=false;if(start.isConnected&&!start.closest('[hidden]'))start.focus({preventScroll:true});}};const video=document.createElement('video');video.controls=true;video.playsInline=true;video.preload='metadata';video.setAttribute('aria-label','Episode preview');playbackDialog.append(video);let index=0;const active=()=>current()&&generation===previewGeneration&&video.isConnected;const fail=message=>{if(!active())return;video.pause();label.textContent=message;label.hidden=false;start.disabled=false;video.onended=null;};const next=async()=>{const scene=ordered[index];label.textContent=`Preview · ${index+1} of ${ordered.length} · ${scene.name}`;try{const result=await api('/object-url',{key:scene.selectedOutputKey});if(!active())return;if(!result.url||!result.contentType?.startsWith('video/'))throw new Error('Selected video unavailable');video.src=result.url;await video.play();}catch(error){fail(`Preview stopped at ${scene.name}: ${error.message}`);}};video.onerror=()=>fail(`Preview stopped at ${ordered[index].name}: video could not be played.`);video.onended=()=>{if(!active())return;if(++index<ordered.length)void next();else{label.textContent='Preview complete.';start.disabled=false;}};await next();}
   }
   const drawOutputs=()=>{const output=sceneDetail?.querySelector('.scene-output-list');if(!output||!selectedScene)return;output.replaceChildren();
     const assets=(host.sceneAssets||[]).filter(asset=>{const ref=asset.metadata?.extra?.sceneRef;return finishedVideo(asset)&&ref?.episodeId===selectedEpisode.id&&ref?.sceneId===selectedScene.id;});
-    if(!assets.length)return;const heading=document.createElement('h4');heading.textContent='Videos';output.append(heading);
+    if(!assets.length)return;const heading=document.createElement('h4');heading.textContent='Rendered takes';output.append(heading);
     for(const asset of assets){const row=document.createElement('p');row.className='scene-output-row';row.append(assetLink(asset));const use=button(asset.key===selectedScene.selectedOutputKey?'Selected':'Use in episode',()=>void selectOutput(asset));use.disabled=mutationPending||mutationUncertain||asset.key===selectedScene.selectedOutputKey;use.setAttribute('aria-label',`${use.textContent}: ${asset.metadata?.title||asset.name}`);row.append(use);if(asset.metadata.extra.sceneRef.revision!==selectedScene.revision){const note=document.createElement('small');note.textContent=' · Earlier scene version';row.append(note);}output.append(row);}
   };
-  host.updateOutputs=assets=>{host.sceneAssets=assets;drawOutputs();if(!previewHost?.querySelector('video'))drawPlayback();};
-  function drawScenes(){sceneCards.replaceChildren();for(const [index,scene] of orderedScenes().entries()){const row=document.createElement('div');row.className='scene-order-row';if(!scene){row.textContent='Scene unavailable';sceneCards.append(row);continue;}const card=button(scene.name,()=>chooseScene(scene));card.className='scene-card';card.setAttribute('aria-label',scene.name);card.dataset.order=String(index+1)+'.';card.setAttribute('aria-pressed',String(selectedScene?.id===scene.id));const state=document.createElement('small');state.textContent=scene.selectedOutputKey?'Ready':scene.type&&scene.type!=='general'?scene.type[0].toUpperCase()+scene.type.slice(1):'Not rendered';const move=(direction)=>{const node=button(direction<0?'Move up':'Move down',()=>{const ids=[...selectedEpisode.sceneIds],next=index+direction;[ids[index],ids[next]]=[ids[next],ids[index]];void saveOrder(ids);});node.setAttribute('aria-label',`Move ${scene.name} ${direction<0?'up':'down'}`);node.textContent=direction<0?'↑':'↓';node.title=direction<0?'Move up':'Move down';node.classList.add('scene-move');node.disabled=mutationPending||mutationUncertain||!scenesComplete||index+direction<0||index+direction>=selectedEpisode.sceneIds.length;return node;};row.append(card,state,move(-1),move(1));sceneCards.append(row);}if(!scenes.length){const empty=document.createElement('p');empty.textContent='No scenes yet.';sceneCards.append(empty);}}
-  function chooseScene(scene){clearEditor();selectedScene=scene;updateURL(selectedEpisode.id,scene.id);drawScenes();for(const native of sceneDetail.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);sceneDetail.replaceChildren();const heading=document.createElement('h3');heading.textContent=scene.name;const description=document.createElement('p');description.textContent=scene.description;description.hidden=!scene.description;
-    const headingRow=document.createElement('header');headingRow.className='scene-editor-heading';headingRow.append(heading,button('Edit scene',()=>edit('scene',selectedScene)));
+  host.updateOutputs=assets=>{host.sceneAssets=assets;drawEpisodes();drawOutputs();if(!previewHost?.querySelector('video'))drawPlayback();};host.updateSceneRecord=saved=>{const index=scenes.findIndex(scene=>scene.id===saved.id);if(index>=0)scenes[index]=saved;if(selectedScene?.id===saved.id)selectedScene=saved;drawScenes();drawOutputs();drawPlayback();};
+  function drawScenes(){
+    const ordered=orderedScenes();
+    if(!scenes.length){window.PantherUI.unmountSortableScenes(sceneCards);sceneCards.textContent='No scenes yet.';return;}
+    window.PantherUI.mountSortableScenes(sceneCards,{items:ordered.filter(Boolean),selectedId:selectedScene?.id,disabled:mutationPending||mutationUncertain||!scenesComplete||ordered.some(scene=>!scene),onSelect:chooseScene,onReorder:ids=>void saveOrder(ids)});
+  }
+
+  function chooseScene(scene){clearEditor();selectedScene=scene;updateURL(selectedEpisode.id,scene.id);drawScenes();for(const native of sceneDetail.querySelectorAll('select[data-react-select]'))window.PantherUI.destroySelect(native);sceneDetail.replaceChildren();const heading=document.createElement('h3');heading.textContent=scene.name;const description=document.createElement('p');description.textContent=scene.description||'';description.className='scene-prompt';description.hidden=!scene.description;
+    const headingRow=document.createElement('header');headingRow.className='scene-editor-heading';const editScene=button('Edit scene',()=>edit('scene',selectedScene));editScene.dataset.sceneEdit='true';headingRow.append(heading,editScene);
     const composer=document.createElement('section');composer.id='scene-video-composer';const work=document.createElement('section'),outputs=document.createElement('div');work.id='scene-work-progress';outputs.className='scene-output-list';sceneDetail.append(headingRow,description,composer,work,outputs);drawOutputs();
     openSceneVideoComposer({...scene,host:composer},epoch,saved=>{const index=scenes.findIndex(item=>item.id===saved.id);if(index>=0)scenes[index]=saved;if(selectedScene?.id===saved.id)selectedScene=saved;drawScenes();drawOutputs();drawPlayback();});
-    void restoreSceneVideoProgress(scene,work,gameId,epoch);
+    if(config.development===true)void watchLocalSceneRender(gameId,scene.id,epoch);else void restoreSceneVideoProgress(scene,work,gameId,epoch);
   }
-  async function chooseEpisode(episode,restoreScene=null){clearEditor();if(selectedEpisode?.id!==episode.id)mutationUncertain=false;selectedEpisode=episode;selectedScene=null;host.dataset.view='editor';back.hidden=false;host.stopPreview();const generation=++sceneGeneration;scenes.length=0;scenesComplete=false;updateURL(episode.id,restoreScene);drawEpisodes();detail.hidden=false;detail.replaceChildren();
-    const toolbar=document.createElement('div'),title=document.createElement('h2'),description=document.createElement('p');toolbar.className='episode-toolbar';title.textContent=episode.name;toolbar.append(title,button('Add scene',()=>edit('scene'),true),button('Edit episode',()=>edit('episode',selectedEpisode)));description.textContent=episode.description;description.hidden=!episode.description;
-    sceneCards=document.createElement('div');sceneCards.className='scene-cards';sceneStatus=document.createElement('p');sceneStatus.setAttribute('role','status');sceneDetail=document.createElement('section');sceneDetail.className='selected-scene';sceneMore=document.createElement('div');previewHost=document.createElement('section');previewHost.className='episode-preview';previewHost.setAttribute('aria-label','Episode playback');const layout=document.createElement('div'),scenesPanel=document.createElement('section'),scenesHeading=document.createElement('h3');layout.className='episode-editor-layout';scenesPanel.className='episode-scenes-panel';sceneDetail.classList.add('episode-scene-panel');scenesHeading.textContent='Scenes';scenesPanel.append(scenesHeading,sceneStatus,sceneCards,sceneMore);layout.append(scenesPanel,sceneDetail);toolbar.append(previewHost);detail.append(toolbar,description,layout);drawPlayback();
+  async function chooseEpisode(episode,restoreScene=null){clearEditor();if(selectedEpisode?.id!==episode.id)mutationUncertain=false;selectedEpisode=episode;selectedScene=null;create.hidden=true;document.getElementById('library-title').hidden=true;host.dataset.view='editor';back.hidden=false;host.stopPreview();if(sceneCards)window.PantherUI.unmountSortableScenes?.(sceneCards);const generation=++sceneGeneration;scenes.length=0;scenesComplete=false;updateURL(episode.id,restoreScene);drawEpisodes();detail.hidden=false;detail.replaceChildren();
+    const toolbar=document.createElement('div'),title=document.createElement('h1'),description=document.createElement('p');toolbar.className='episode-toolbar';title.textContent=episode.name;toolbar.append(title,button('Edit episode',()=>edit('episode',selectedEpisode)));if(config.development===true)toolbar.append(button('Narration',()=>openEpisodeNarration(gameId,selectedEpisode)));description.textContent=episode.description;description.hidden=!episode.description;
+    sceneCards=document.createElement('div');sceneCards.className='scene-cards';sceneStatus=document.createElement('p');sceneStatus.setAttribute('role','status');sceneDetail=document.createElement('section');sceneDetail.className='selected-scene';sceneMore=document.createElement('div');previewHost=document.createElement('section');previewHost.className='episode-preview';previewHost.setAttribute('aria-label','Episode playback');const layout=document.createElement('div'),scenesPanel=document.createElement('section'),scenesHeading=document.createElement('h3');layout.className='episode-editor-layout';scenesPanel.className='episode-scenes-panel';sceneDetail.classList.add('episode-scene-panel');scenesHeading.textContent='Scenes';const addScene=button('Create Scene',()=>edit('scene'),true);addScene.classList.add('scene-add-action');scenesPanel.append(scenesHeading,addScene,sceneStatus,sceneCards,sceneMore);layout.append(scenesPanel,sceneDetail);toolbar.append(previewHost);const localJobs=document.createElement('section');localJobs.id='episode-local-jobs';localJobs.className='episode-local-jobs';localJobs.setAttribute('aria-label','Episode generation');detail.append(toolbar,description,localJobs,layout);drawPlayback();if(config.development===true)void restoreEpisodeGeneration(gameId,selectedEpisode.id,epoch);
     const page=async cursor=>{showLoading(sceneStatus,'Loading scenes…');try{const result=await api('/scenes',{gameId,episodeId:episode.id,cursor});if(!current()||generation!==sceneGeneration)return;if(!Array.isArray(result.records))throw new Error('Scenes unavailable');scenes.push(...result.records);scenesComplete=!result.cursor;sceneStatus.textContent='';drawScenes();drawPlayback();sceneMore.replaceChildren();if(result.cursor)sceneMore.append(button('More scenes',()=>void page(result.cursor)));if(restoreScene){const scene=scenes.find(item=>item.id===restoreScene);if(scene){chooseScene(scene);restoreScene=null;}else if(!result.cursor){sceneStatus.textContent='This scene is unavailable.';updateURL(episode.id,null);}}else if(!selectedScene&&scenes.length)chooseScene(orderedScenes().find(Boolean)||scenes[0]);}catch(error){if(current()&&generation===sceneGeneration)sceneStatus.textContent=error.status===403?'You cannot access scenes in this game.':`Scenes unavailable: ${error.message}`;}};
     await page();
   }
-  const load=async cursor=>{showLoading(episodeStatus,'Loading episodes…');try{const result=await api('/episodes',{gameId,cursor});if(!current())return;if(!Array.isArray(result.records))throw new Error('Episodes unavailable');episodes.push(...result.records);episodeStatus.textContent=episodes.length?'':'Create your first episode.';drawEpisodes();host.querySelector('.episodes-more')?.remove();if(result.cursor){const more=button('More episodes',()=>{more.remove();void load(result.cursor);});more.classList.add('episodes-more');episodeCards.after(more);}
-      const requested=params().get('episode');if(requested&&!selectedEpisode){const selected=episodes.find(item=>item.id===requested);if(selected)await chooseEpisode(selected,params().get('scene'));else if(!result.cursor){episodeStatus.textContent='This episode is unavailable.';updateURL(null,null);}}
+  const load=async cursor=>{if(!cursor)showLoading(episodeStatus,'Loading episodes…');try{const result=await api('/episodes',{gameId,cursor});if(!current())return;if(!Array.isArray(result.records))throw new Error('Episodes unavailable');episodes.push(...result.records);episodeStatus.textContent=episodes.length?'':'Create your first episode.';drawEpisodes();host.querySelector('.episodes-more')?.remove();if(result.cursor){const more=button('More episodes',()=>{more.remove();void load(result.cursor);});more.classList.add('episodes-more');episodeCards.after(more);}
+      const requested=params().get('episode');if(requested&&!selectedEpisode){const selected=episodes.find(item=>item.id===requested);if(selected)await chooseEpisode(selected,params().get('scene'));else if(!result.cursor){episodeStatus.textContent='This episode is unavailable.';updateURL(null,null);create.hidden=false;document.getElementById('library-title').hidden=false;}}
     }catch(error){if(current()){episodeStatus.textContent=error.status===403?'You cannot access episodes in this game.':`Episodes unavailable: ${error.message}`;if(error.status===403)create.disabled=true;}}};void load();
 }
 
-function renderVideoLibrary(assets, list, status, current, loadMore) {
-  const gameId = state.gameId;
-  const videoHost=document.createElement("div");videoHost.hidden=!assets.length&&!loadMore;list.append(videoHost);
-  if (videoLibraryView.gameId !== gameId) videoLibraryView = {gameId,search:"",tags:[],characters:[],collection:new URLSearchParams(location.search).get("collection") || ""};
-  const view = videoLibraryView;
-  view.collection=new URLSearchParams(location.search).get("collection") || "";
-  const cards=document.createElement('div');cards.className='video-library-cards';videoHost.append(cards);
-  const search=document.createElement('input');search.type='search';search.id='video-search';search.placeholder='Search videos and episodes';search.maxLength=300;search.value=view.search;
-  const label=document.createElement('label');label.htmlFor=search.id;label.textContent='Search videos';const searchField=document.createElement('div');searchField.append(label,search);
-  const tagHost=document.createElement('div'),characterHost=document.createElement('div');tagHost.dataset.multiFilter='tags';characterHost.dataset.multiFilter='characters';
-  const workspace=document.getElementById('episode-workspace'),filterBar=document.createElement('div'),filterFields=document.createElement('div');filterBar.className='video-search-toolbar';filterBar.setAttribute('aria-label','Video search and filters');filterFields.className='video-top-filter-fields';filterFields.append(tagHost,characterHost);filterBar.append(searchField,filterFields);
-  workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(filterBar);workspace?.filterEpisodes?.(view.search);
-  let displayed=view.collection?[]:assets,chosen=null;
-  const retry=document.createElement('button');retry.type='button';retry.className='quiet-button';retry.textContent='Retry preview images';retry.hidden=true;videoHost.append(retry);
-  const tags=()=>[...new Set(assets.flatMap(asset=>asset.metadata?.tags||[]))].sort().map(name=>({id:name,name}));
-  const characters=()=> (state.gameDetail?.characters||[]).map(character=>({id:character.id||character.characterId,name:character.name}));
-  const filters=()=>{
-    window.PantherUI.mountMultiSelect(tagHost,{label:'Tags',options:tags(),value:view.tags,onChange:value=>{view.tags=value;filters();draw();},placeholder:'Add tag…'});
-    window.PantherUI.mountMultiSelect(characterHost,{label:'Characters',options:characters(),value:view.characters,onChange:value=>{view.characters=value;filters();draw();},placeholder:'Add character…'});
-  };
-  const more = document.createElement("button"); more.type = "button"; more.className = "load-more"; more.textContent = "Load more videos"; more.hidden = !loadMore; videoHost.append(more);
-  more.onclick = () => { more.disabled = true; more.textContent = "Loading more…"; loadMore(); };
-  const posters = new Map(), posterLinks = new Map(), posterRequests = new Map(); let imageGeneration=0;
-  async function images() {
-    const generation=++imageGeneration;
-    retry.hidden = true;
-    const entries = [...posters.entries()], keys = entries.map(([key])=>key);
-    for (let offset=0;offset<keys.length;offset+=60) {
-      const batch = keys.slice(offset,offset+60);
-      try {
-        const missing=batch.filter(key=>!posterRequests.has(key) && (!posterLinks.has(key) || posterLinks.get(key).expires<=Date.now()));
-        if(missing.length) {
-          const request=api("/image-links", {}, {body:{gameId,keys:missing}}).then(links=>{
-            for(const key of missing)posterLinks.set(key,{...links.images?.[key],expires:Date.now()+Math.max(0,Number(links.expiresIn)-30)*1000});
-          }).finally(()=>{for(const key of missing)posterRequests.delete(key);});
-          for(const key of missing)posterRequests.set(key,request);
-        }
-        await Promise.all(batch.map(key=>posterRequests.get(key)).filter(Boolean));
-        if (!current() || generation!==imageGeneration) return;
-        for (const key of batch) for (const host of posters.get(key) || []) {
-          if (!host.isConnected) continue;
-          const image = document.createElement("img"); image.alt = host.dataset.alt; image.loading = "lazy";
-          image.onload = () => { if (current() && generation===imageGeneration && host.isConnected) host.replaceChildren(image); };
-          image.onerror = () => { if (current() && generation===imageGeneration && host.isConnected) { host.textContent = "Preview unavailable; the video can still be opened."; retry.hidden = false; } };
-          if (posterLinks.get(key)?.url) { image.src = posterLinks.get(key).url; host.replaceChildren(image); }
-          else { host.textContent = "Preview unavailable; the video can still be opened."; retry.hidden = false; }
-        }
-      } catch { if (current() && generation===imageGeneration) { for (const key of batch) for (const host of posters.get(key) || []) if(host.isConnected) host.textContent = "Preview unavailable; the video can still be opened."; retry.hidden = false; } }
-    }
-  }
-  retry.onclick = () => { posterLinks.clear(); void images(); };
-  function draw() {
-    if (!current()) return;
-    cards.replaceChildren(); posters.clear();
-    const needle = view.search.trim().toLocaleLowerCase();
-    const selected = displayed.filter(a => (!needle || [a.metadata?.title,a.metadata?.description,...(a.metadata?.tags || [])].filter(Boolean).join(" ").toLocaleLowerCase().includes(needle))
-      && view.tags.every(tag=>a.metadata?.tags?.includes(tag)) && view.characters.every(id=>a.metadata?.characterIds?.includes(id)));
-    status.textContent=displayed.length&&!selected.length?'No matching videos.':'';status.hidden=!status.textContent;
-    const episodesEmpty=document.querySelector('#episode-workspace [data-episode-empty]');
-    if(workspace)workspace.dataset.videoAssetCount=String(displayed.length);
-    if(episodesEmpty){episodesEmpty.hidden=displayed.length>0||workspace?.dataset.hasEpisodes==='true';if(!displayed.length)episodesEmpty.textContent='Create your first episode.';}
-    more.hidden = Boolean(chosen) || !loadMore;
-    videoPlaylist = chosen ? {gameId,collection:chosen,assets:displayed} : null;
-    for (const asset of selected) {
-      const card = document.createElement("article"); card.className = "novel-card session-card video-card";
-      const poster = document.createElement("div"); poster.className = "video-card-poster"; poster.textContent = "No preview image selected";
-      const imageKey = asset.metadata?.extra?.preview?.schemaVersion === 1 ? asset.metadata.extra.preview.imageKey : null;
-      poster.hidden = !imageKey;
-      if (sameGameKey(imageKey) && /\.(png|jpe?g|webp|avif|gif|svg)$/i.test(imageKey)) {
-        poster.textContent = "Loading selected preview…"; poster.dataset.alt = `Preview of ${asset.metadata?.title || asset.name}`;
-        if (!posters.has(imageKey)) posters.set(imageKey,[]); posters.get(imageKey).push(poster);
-      }
-      const title = document.createElement("h2"); title.append(assetLink(asset));
-      const description = document.createElement("p"); description.textContent = asset.metadata?.description || "";
-      const info = document.createElement("p"); info.textContent = [new Date(asset.lastModified).toLocaleString(),...(asset.metadata?.tags || [])].join(" · ");
-      const creator = asset.metadata?.extra?.creator; const credit = document.createElement("p"); credit.textContent = typeof creator === "string" ? `Creator: ${creator}` : "";
-      card.append(poster,title,description,info,credit);
-      const related = document.createElement("p");
-      for (const id of asset.metadata?.characterIds || []) { const c = state.gameDetail?.characters.find(c=>c.id===id); if (!c) continue; const link=document.createElement("a"); link.href=gamePath("characters")+`/${encodeURIComponent(id)}`; link.textContent=c.name; related.append(link,document.createTextNode(" · ")); }
-      if (asset.metadata?.sessionId) related.append(document.createTextNode(`Session: ${asset.metadata.sessionId}`));
-      if (related.childNodes.length) card.append(related);
-      cards.append(card);
-    }
-    void images();
-  }
-  search.oninput = () => { view.search=search.value;workspace?.filterEpisodes?.(view.search);draw(); };
-  filters();draw();
-  // Existing typed references retain their exact saved membership and order.
-  // Collections are no longer offered as a creation or filtering control.
-  if(view.collection)void(async()=>{
-    try{const result=await api('/video-collections',{gameId,id:view.collection});if(!current())return;chosen=result.collection;displayed=result.assets||[];videoHost.hidden=false;draw();}
-    catch(error){if(current()){status.textContent=`Videos unavailable: ${error.message}`;status.hidden=false;}}
-  })();
+function renderVideoLibrary(assets,list,status,current,loadMore) {
+  const gameId=state.gameId,workspace=document.getElementById('episode-workspace');
+  if(videoLibraryView.gameId!==gameId)videoLibraryView={gameId,search:'',tags:[],characters:[]};
+  const view=videoLibraryView,bar=document.createElement('div'),searchField=document.createElement('label'),caption=document.createElement('span'),search=document.createElement('input'),tagHost=document.createElement('div'),characterHost=document.createElement('div'),fields=document.createElement('div');
+  searchField.className='library-search-field';caption.className='library-search-label';bar.className='video-search-toolbar';bar.setAttribute('aria-label','Episode search and filters');caption.textContent='Search';search.setAttribute('aria-label','Search episodes');search.type='search';search.placeholder='Search episodes';search.maxLength=300;search.value=view.search;const icon=document.createElement('span');icon.className='library-search-icon';window.PantherUI.mountIcon(icon,'search');searchField.append(caption,icon,search);tagHost.dataset.multiFilter='tags';characterHost.dataset.multiFilter='characters';fields.className='video-top-filter-fields library-filter-fields';fields.append(tagHost,characterHost);bar.append(searchField,fields);workspace?.querySelector('.video-search-toolbar')?.remove();workspace?.prepend(bar);list.replaceChildren();list.hidden=true;status.hidden=true;
+  let declaredTags=[];
+  const apply=()=>workspace?.filterEpisodes?.(view.search,view.tags,view.characters);
+  const filters=()=>{window.PantherUI.mountMultiSelect(tagHost,{inlineLabel:true,label:'Tags',options:[...new Set([...declaredTags,...assets.flatMap(asset=>asset.metadata?.tags||[])])].sort().map(name=>({id:name,name})),value:view.tags,onCreate:async name=>{const result=await api('/tags',{},{body:{gameId,name}});declaredTags=result.tags;return result.tag;},onChange:value=>{view.tags=value;filters();apply();},placeholder:'Add tag…'});window.PantherUI.mountMultiSelect(characterHost,{inlineLabel:true,label:'Characters',options:(state.gameDetail?.characters||[]).map(character=>({id:character.id||character.characterId,name:character.name})),value:view.characters,onChange:value=>{view.characters=value;filters();apply();},placeholder:'Add character…'});};
+  filters();apply();search.oninput=()=>{view.search=search.value;apply();};void api('/tags',{gameId}).then(result=>{if(current()&&bar.isConnected){declaredTags=result.tags||[];filters();}}).catch(()=>{});
+  // Additional bounded video pages enrich episode filter facts and take selection only.
+  if(loadMore){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='More filter options';more.onclick=()=>{more.disabled=true;loadMore();};bar.append(more);}
 }
 
 function configureVideoPreview(asset, video, epoch) {
@@ -3196,10 +3208,37 @@ function configureVideoPreview(asset, video, epoch) {
 }
 
 let liveReaderOpen=false,liveReaderRecording=null;
-function ensureSessionGroup(list,sessionId){
+function sessionTime(value){const timestamp=typeof value==='number'?value*(value<1e12?1000:1):Date.parse(value||'');return Number.isFinite(timestamp)?timestamp:0;}
+function orderSessionGroups(list){const groups=[...list.querySelectorAll(':scope > .session-group')].sort((a,b)=>Number(b.dataset.startedAt||0)-Number(a.dataset.startedAt||0)||a.dataset.sessionId.localeCompare(b.dataset.sessionId));for(const group of groups.reverse())list.prepend(group);}
+function ensureSessionGroup(list,sessionId,title='Session',startedAt=null){
   let group=[...list.querySelectorAll('.session-group')].find(node=>node.dataset.sessionId===sessionId);
-  if(!group){group=document.createElement('section');group.className='session-group transcript-session';group.dataset.sessionId=sessionId;const title=document.createElement('h2');title.textContent=sessionId?`Session · ${sessionId}`:'Unassigned session';group.append(title);list.append(group);}return group;
+  if(!group){group=document.createElement('article');group.className='session-group session-card transcript-session';group.dataset.sessionId=sessionId;const heading=document.createElement('h2');heading.textContent=title;group.append(heading);list.append(group);}if(startedAt!==null)group.dataset.startedAt=String(sessionTime(startedAt));orderSessionGroups(list);return group;
 }
+function restoreSessionCaptureResult(){
+  const result=document.getElementById('room-result');if(result&&result.closest('.session-group'))document.getElementById('room-recorder').append(result);
+  document.getElementById('room-result-name').hidden=false;
+}
+function sessionName(asset,date){
+  const title=asset?.recording?.sessionName||asset?.metadata?.sessionName||asset?.metadata?.title;
+  if(typeof title==='string'&&title.trim()&&!/^(recording(?:-manifest|-playback)?|(?:raw-|corrected-|edited-)?transcript)$/i.test(title)&&!/[a-f0-9]{24,}|\.(json|wav|mp3|flac|md)$/i.test(title))return title;
+  const parsed=new Date(date||NaN);return !Number.isNaN(parsed.valueOf())?parsed.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}):'Session';
+}
+function sessionPlaybackRow(parent,player,key,current=()=>true){
+ let row=parent.querySelector(':scope > .session-playback-row');
+ if(!row){row=document.createElement('div');row.className='session-playback-row';parent.insertBefore(row,parent.querySelector(':scope > .session-asset-links')||parent.querySelector(':scope > #room-final-link')||null);}
+ let download=row.querySelector('.session-download-host');if(!download){download=document.createElement('div');download.className='session-download-host';row.append(download);}
+ row.prepend(player);window.PantherUI.mountSessionDownload(download,{onDownload:async()=>{const result=await api('/object-url',{key,download:'true'});if(!current())return;const link=document.createElement('a');link.href=result.url;link.download=result.filename||key.split('/').at(-1);document.body.append(link);link.click();link.remove();}});return row;
+}
+function attachSessionCaptureResult(list){
+ const draft=roomCapture?.draft,result=document.getElementById('room-result');if(!draft||draft.gameId!==state.gameId||!result||result.hidden)return;
+ const group=ensureSessionGroup(list,draft.sessionId,draft.sessionName||sessionName(null,draft.startedAt),draft.startedAt);
+ const old=group.querySelector(':scope > .session-playback-row');if(old){for(const host of old.querySelectorAll('.session-download-host'))window.PantherUI.unmountSessionDownload(host);old.remove();}
+ group.insertBefore(result,group.querySelector(':scope > .session-asset-links')||group.querySelector(':scope > .session-summary-host')||null);document.getElementById('room-result-name').hidden=true;
+ const player=document.getElementById('room-audio');result.dataset.playbackReady=String(Boolean(player&&!player.hidden&&roomCapture.audioKey));
+ if(player&&!player.hidden&&roomCapture.audioKey)sessionPlaybackRow(result,player,roomCapture.audioKey,()=>roomCapture.draft===draft&&state.gameId===draft.gameId);
+ const final=document.getElementById('room-final-link');final.hidden=Boolean(group.querySelector('.session-transcript-link'))||!final.getAttribute('href');
+}
+
 function closeLiveReader(){liveReaderOpen=false;liveReaderRecording=null;document.getElementById('live-transcript').hidden=true;const list=document.getElementById('library-list');if(list)list.hidden=false;}
 function openLiveReader(recordingId){const record=liveRecords.find(item=>item.recordingId===recordingId);if(record&&!liveHistory.get(historyKey(record))?.loaded)void loadLiveHistory(record);liveReaderOpen=true;liveReaderRecording=recordingId;liveRenderKey='';document.getElementById('library-list').hidden=true;document.getElementById('library-status').hidden=true;drawLive();document.getElementById('live-reader-back').focus();}
 document.getElementById('live-reader-back').onclick=()=>{closeLiveReader();document.querySelector('.session-live-entry button')?.focus();};
@@ -3207,7 +3246,7 @@ function renderLiveSessionEntries(){
   if(elements.primaryNav.querySelector('[aria-current]')?.dataset.section!=='sessions')return;
   const list=document.getElementById('library-list');for(const node of list.querySelectorAll('.session-live-entry'))node.remove();
   for(const group of list.querySelectorAll('.session-group[data-live-only]'))if(group.children.length===1)group.remove();
-  for(const record of liveRecords){const group=ensureSessionGroup(list,record.sessionId||'');if(group.children.length===1)group.dataset.liveOnly='true';const row=document.createElement('article');row.className='session-live-entry';const open=document.createElement('button');open.type='button';open.className='quiet-button';open.textContent='Open transcript';open.setAttribute('aria-label',`Open transcript for ${record.sessionId}`);open.onclick=()=>openLiveReader(record.recordingId);row.append(open);if(liveState(record)==='recording'){const state=document.createElement('span');state.className='session-recording-indicator';state.textContent='Recording';row.append(state);}group.insertBefore(row,group.children[1]||null);}
+  for(const record of liveRecords){const group=ensureSessionGroup(list,record.sessionId||record.recordingId,record.sessionName||sessionName(null,record.startedAt),record.startedAt);if(group.children.length===1)group.dataset.liveOnly='true';const row=document.createElement('article');row.className='session-live-entry';const open=document.createElement('button');open.type='button';open.className='quiet-button';open.textContent='Open transcript';open.setAttribute('aria-label','Open live transcript');open.onclick=()=>openLiveReader(record.recordingId);row.append(open);if(liveState(record)==='recording'){const state=document.createElement('span');state.className='session-recording-indicator';state.textContent='Recording';row.append(state);}group.insertBefore(row,group.children[1]||null);}
   if(liveRecords.length)document.getElementById('library-status').hidden=true;
 }
 
@@ -3221,7 +3260,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   document.getElementById("session-library").hidden = false;
   if(section === "videos") renderEpisodeWorkspace(epoch);else {const workspace=document.getElementById("episode-workspace");if(workspace){workspace.stopPreview?.();workspace.hidden=true;}}
   const episodeCreate=document.getElementById("episode-create-action");
-  if(episodeCreate)episodeCreate.hidden=section!=="videos";
+  if(episodeCreate)episodeCreate.hidden=section!=="videos"||episodeRouteParams().has('episode');
   const videoComposer=document.getElementById("editorial-video-composer");
   if(videoComposer)videoComposer.hidden=section!=="videos";
   document.getElementById("live-transcript").hidden = section!=="sessions" || !liveReaderOpen;
@@ -3229,7 +3268,8 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     drawLive();
     if(liveReaderOpen)for (const record of liveRecords) if (!liveHistory.has(historyKey(record))) void loadLiveHistory(record);
   }
-  document.getElementById("library-title").textContent = {sessions:"Sessions", videos:"Videos"}[section];
+  document.getElementById("library-title").textContent = {sessions:"Sessions", videos:"Episodes"}[section];
+  document.getElementById("library-title").hidden=section==="videos"&&episodeRouteParams().has("episode");
   status.hidden = false;
   status.dataset.empty = "false";
   const loading = showLoading(status, `Fetching ${section} from the catalog…`);
@@ -3239,6 +3279,8 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
     const assets = [...new Map([...previousAssets, ...page.assets].map(a => [a.key, a])).values()];
     if (!current()) return;
+    restoreSessionCaptureResult();
+    for(const summary of list.querySelectorAll('.session-summary-host'))window.PantherUI.unmountSessionSummary(summary);for(const host of list.querySelectorAll('.session-download-host'))window.PantherUI.unmountSessionDownload(host);
     list.replaceChildren();
     loading.update("Organizing recordings, transcripts and videos…");
     if (section === "videos" && new URLSearchParams(location.search).has("project")) await loadMovies(assets, epoch);
@@ -3248,9 +3290,9 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
     if (status.hidden) return;
     const manifests = new Set(assets.filter(a => a.recording?.partCount > 0).map(a => a.key.split("/")[3]));
     const keys = new Set(assets.map(a => a.key));
-    const isRecording=a=>a.recording?.partCount>0||((a.contentType?.startsWith("audio/")||/\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name))&&!manifests.has(a.key.split("/")[3]));
+    const isRecording=a=>a.kind==='recording-playback'||a.recording?.partCount>0||((a.contentType?.startsWith("audio/")||/\.(flac|wav|mp3|m4a|ogg)$/i.test(a.name))&&!manifests.has(a.key.split("/")[3]));
     const isTranscript=a=>["transcript","raw-transcript","corrected-transcript","edited-transcript"].includes(a.kind)&&!(a.key.endsWith(".md")&&keys.has(a.key.slice(0,-3)+".json"));
-    const selected=assets.filter(a=>section==="videos"?a.contentType?.startsWith("video/")||/\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name):isRecording(a)||isTranscript(a));
+    const selected=assets.filter(a=>section==="videos"?a.contentType?.startsWith("video/")||/\.(mp4|webm|mov|m4v|ogv)$/i.test(a.name):!['narration','music','voice-performance','speech'].includes(a.kind)&&(isRecording(a)||isTranscript(a)));
     status.dataset.empty=String(!selected.length);
     selected.sort((a,b) => (b.metadata?.sessionId || "").localeCompare(a.metadata?.sessionId || "") || b.lastModified.localeCompare(a.lastModified) || a.name.localeCompare(b.name));
     if (section === "videos") {
@@ -3258,17 +3300,31 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       renderVideoLibrary(selected,list,status,current,page.cursor ? () => { void loadLibrary(section,epoch,assets,page.cursor); } : null);
       return;
     }
-    status.textContent=selected.length?'':'No saved sessions yet.';status.hidden=!!selected.length||liveReaderOpen;
-    for(const asset of selected){
-      const sessionId=asset.metadata?.sessionId||'',group=ensureSessionGroup(list,sessionId),card=document.createElement('article');card.className='novel-card session-card';
-      const heading=document.createElement('h3'),kind=document.createElement('p'),version=asset.metadata?.extra?.version;
-      heading.append(assetLink(asset,asset.kind==='recording-manifest'?'Recording':asset.metadata?.title||asset.name));
-      kind.className='session-asset-meta';const type=isTranscript(asset)?asset.kind==='raw-transcript'?'Raw transcript':['corrected-transcript','edited-transcript'].includes(asset.kind)?'Corrected transcript':'Transcript':'Recording';
-      kind.textContent=type+(version?` · v${version.number}`:'');card.append(heading,kind);
-      const observed=asset.transcript;
-      if(observed?.state==='available'){const summary=document.createElement('p');summary.className='session-asset-meta';const speakers=(observed.participants||[]).map(person=>person.name||person.id);summary.textContent=[speakers.join(', '),observed.unassignedSegments?`${observed.unassignedSegments} unassigned segments`:'',observed.reviewStatus].filter(Boolean).join(' · ');if(summary.textContent)card.append(summary);}
-      group.append(card);
+    status.textContent=selected.length?'':'No saved sessions yet.';status.hidden=!!selected.length||liveReaderOpen||document.getElementById('room-result')?.hidden===false;
+    const byKey=new Map(selected.map(asset=>[asset.key,asset])), grouped=new Map();
+    const resolveSession=(asset,seen=new Set())=>{
+      if(asset.metadata?.sessionId)return asset.metadata.sessionId;
+      if(seen.has(asset.key))return null;seen.add(asset.key);
+      const linked=(asset.sourceKeys||asset.metadata?.sourceKeys||[]).map(key=>byKey.get(key)).filter(Boolean).map(source=>resolveSession(source,new Set(seen))||source.key);
+      const identities=[...new Set(linked)];return identities.length===1?identities[0]:null;
+    };
+    for(const asset of selected){const id=resolveSession(asset)||asset.key;if(!grouped.has(id))grouped.set(id,[]);grouped.get(id).push(asset);}
+    for(const [id,items] of grouped){
+      const recording=items.find(asset=>asset.recording?.partCount>0),transcripts=items.filter(isTranscript),audio=items.find(asset=>asset.kind==='recording-playback')||items.find(asset=>asset.contentType?.startsWith('audio/'));
+      const primary=recording||audio||transcripts[0],date=recording?.recording?.startedAt||primary.metadata?.recordedAt||primary.lastModified;
+      const group=ensureSessionGroup(list,id,sessionName(primary,date),date),meta=document.createElement('p');meta.className='session-asset-meta';
+      const duration=recording?.recording?.durationSeconds??audio?.metadata?.extra?.mediaProbe?.duration;
+      const names=[...new Set(transcripts.flatMap(asset=>(asset.transcript?.participants||[]).map(person=>person.name).filter(Boolean)))];
+      const parsedDate=new Date(date||NaN),dateLabel=!Number.isNaN(parsedDate.valueOf())?parsedDate.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}):'';
+      meta.textContent=[group.querySelector('h2').textContent.includes(dateLabel)?'':dateLabel,!audio&&Number.isFinite(duration)&&duration>=0?timestamp(duration):'',names.join(', ')].filter(Boolean).join(' · ');if(meta.textContent)group.append(meta);
+      const links=document.createElement('div');links.className='session-asset-links';
+      const transcript=transcripts.find(asset=>asset.kind==='raw-transcript')||transcripts[0];if(transcript){const link=assetLink(transcript,'Transcript');link.className='session-transcript-link';links.append(link);}
+      group.append(links);
+      if(audio&&!(roomCapture?.draft?.sessionId===id&&!document.getElementById('room-result').hidden)){const player=document.createElement('audio');player.className='session-library-audio';player.controls=true;player.preload='none';player.setAttribute('aria-label','Session recording');sessionPlaybackRow(group,player,audio.key,current);void api('/object-url',{key:audio.key}).then(signed=>{if(current()&&player.isConnected)player.src=signed.url;}).catch(()=>{if(player.isConnected)player.remove();});}
+      const raw=transcripts.find(asset=>asset.kind==='raw-transcript')||transcripts[0];
+      if(raw){const summary=document.createElement('div');summary.className='session-summary-host';group.append(summary);window.PantherUI.mountSessionSummary(summary,{scope:apiScope(),gameId,sourceKey:raw.key,onLoad:({signal})=>api('/transcript-summaries',{gameId,key:raw.key},{signal})});}
     }
+    attachSessionCaptureResult(list);
     renderLiveSessionEntries();list.hidden=liveReaderOpen;
     if (page.cursor) {
       const more = document.createElement("button");
@@ -3398,50 +3454,19 @@ async function renderAssetLinks(key, epoch, resolved = null) {
     host.replaceChildren();
     const connections = finishedAssetConnections(assets, key, gameId);
     appendFinishedConnections(host, connections);
-    const companions = assets.filter(a => a.key !== key && a.key.split("/")[3] === key.split("/")[3]);
-    if (companions.length) {
-      const list = document.createElement("ul");
-      for (const asset of companions) { const li = document.createElement("li"); li.append(assetLink(asset)); list.append(li); }
-      host.append(optionalInfoDialog("Technical files and original exports", list).host);
-    }
     const warnings = assets.filter(a => a.lineageWarning).length;
-    if (warnings || connections.incomplete) { const warning = document.createElement("p"); warning.textContent = "Some provenance is missing or unreadable; finished-asset connections may be incomplete."; host.append(warning); }
+    if (warnings || connections.incomplete) { const warning = document.createElement("p"); warning.textContent = "Some related assets are unavailable."; host.append(warning); }
 
   } catch (error) { if (current()) host.textContent = `Connections unavailable: ${error.message}. Close and reopen to retry.`; }
 }
 
-async function renderAssetVersions(key, epoch) {
-  const host = document.getElementById("asset-versions"), gameId = state.gameId;
-  const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
-  if (!sameGameKey(key)) { host.textContent = "Versions are available for game assets."; return; }
-  try {
-    const assets = await allAssets(gameId);
-    if (!current()) return;
-    const item = assets.find(asset => asset.key === key);
-    const version = item?.metadata?.extra?.version;
-    if (!version || version.schemaVersion !== 1) { host.replaceChildren(); return; }
-    const series = assets.filter(asset => asset.metadata?.extra?.version?.seriesId === version.seriesId)
-      .sort((a, b) => a.metadata.extra.version.number - b.metadata.extra.version.number);
-    const heading = document.createElement("h3"), list = document.createElement("ol");
-    heading.textContent = "Versions";
-    for (const asset of series) {
-      const li = document.createElement("li"), record = asset.metadata.extra.version;
-      li.append(assetLink(asset, `Version ${record.number} · ${asset.metadata?.title || asset.name}`));
-      if (asset.key === key) li.append(document.createTextNode(" · viewing now"));
-      list.append(li);
-    }
-    host.replaceChildren(heading, list);
-  } catch (error) { if (current()) host.textContent = `Versions unavailable: ${error.message}. Close and reopen to retry.`; }
-}
-
 function closeOptionalInfoDialogs() {
-  for (const dialog of [...document.querySelectorAll(".optional-info-dialog[open]")].reverse()) dialog.close();
+  for (const dialog of [...document.querySelectorAll('[data-panther-dialog][open]')].reverse()) dialog.close();
 }
 
-// Native modal dialogs supply focus containment and Escape dismissal; closing
-// restores focus to the opener while it remains in the active view.
+// Standard shadcn Dialog supplies Radix focus containment and Escape dismissal.
 function optionalInfoDialog(title, content, onOpen = () => {}) {
-  const host = document.createElement("div"), button = document.createElement("button"), dialog = document.createElement("dialog");
+  const host = document.createElement("div"), button = document.createElement("button"), dialog = window.PantherUI.createDialog();
   const header = document.createElement("header"), heading = document.createElement("h2"), close = document.createElement("button");
   host.className = "optional-info"; dialog.className = "optional-info-dialog";
   button.type = close.type = "button"; button.className = close.className = "quiet-button";
@@ -3454,13 +3479,32 @@ function optionalInfoDialog(title, content, onOpen = () => {}) {
 }
 
 function detailBlock(title, value) {
-  const pre = document.createElement("pre"); pre.textContent = JSON.stringify(value, null, 2);
-  return optionalInfoDialog(title, pre).host;
+  function render(value, depth = 0) {
+    if (value === null || value === undefined || value === "") {
+      const empty = document.createElement("span"); empty.className = "muted"; empty.textContent = "—"; return empty;
+    }
+    if (Array.isArray(value)) {
+      const list = document.createElement("ul"); list.className = "structured-detail-list";
+      for (const item of value) { const row = document.createElement("li"); row.append(render(item, depth + 1)); list.append(row); }
+      return list;
+    }
+    if (typeof value === "object" && depth < 8) {
+      const fields = document.createElement("dl"); fields.className = "structured-detail-fields";
+      for (const [key, item] of Object.entries(value)) {
+        const label = document.createElement("dt"), content = document.createElement("dd");
+        label.textContent = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ");
+        content.append(render(item, depth + 1)); fields.append(label, content);
+      }
+      return fields;
+    }
+    const text = document.createElement("p"); text.textContent = typeof value === "boolean" ? (value ? "Yes" : "No") : typeof value === "object" ? "Additional nested details" : String(value); return text;
+  }
+  return optionalInfoDialog(title, render(value)).host;
 }
 
 // Movie review is intentionally separate from the paid local generation CLI.
 function movieNode(tag, text, className) {
-  const node = document.createElement(tag);
+  const node = tag === 'dialog' ? window.PantherUI.createDialog() : document.createElement(tag);
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
@@ -3632,7 +3676,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
     const confirm = movieButton("Approve this plan", () => { confirm.disabled=true; void save("approved", dialog); }, "primary-button");
     confirm.disabled = true; check.onchange = () => {confirm.disabled=!check.checked;};
     dialog.append(movieButton("Keep reviewing", () => {dialog.close(); dialog.remove();}), confirm);
-    dialog.addEventListener("cancel", () => dialog.remove()); host.append(dialog); dialog.showModal();
+    dialog.addEventListener("close", () => dialog.remove()); host.append(dialog); dialog.showModal();
   }
   function renderContent() {
     tabs.replaceChildren(); content.replaceChildren();
@@ -3730,20 +3774,12 @@ function attachMediaRecovery(audio, key, current) {
 
 function renderStructuredAsset(asset, epoch) {
   const doc = asset.document;
-  if (!doc) { elements.previewBody.textContent = "Structured preview unavailable. Use Open original; the source is unchanged."; return; }
+  if (!doc) { elements.previewBody.textContent = "Structured preview unavailable. Use Download to read the source."; return; }
   const host = document.createElement("div"); host.className = "structured-asset";
   const transcript = ["PlayerTranscript", "BrowserTranscript"].includes(doc.entityType) ? doc : ["corrected-transcript", "edited-transcript"].includes(doc.stage) ? doc.payload?.transcript : null;
   if (transcript && Array.isArray(transcript.segments)) {
-    const notice = document.createElement("p"); notice.className = "novel-notice";
-    const edited = [asset.kind, doc.stage, doc.artifactType].some(kind => ["corrected-transcript", "edited-transcript"].includes(kind));
-    notice.textContent = `${edited ? "Corrected transcript" : "Raw transcript"}${doc.reviewStatus ? ` · ${doc.reviewStatus}` : ""}`;
-    if (doc.publicationStatus === "accepted-with-notes") notice.textContent += " Working draft with unresolved review notes.";
-    if (doc.entityType === "BrowserTranscript") {notice.textContent = `Browser transcript${doc.reviewStatus ? ` · ${doc.reviewStatus}` : ""}`;notice.title="Speakers are unassigned; timestamps mark transcription windows.";}
-    host.append(notice);
-    if (transcript.captureIntegrity) host.append(detailBlock("Capture integrity and warnings", transcript.captureIntegrity));
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
     const bundle=transcript.entityType==='EditorialTranscriptBundle';
-    if(bundle)notice.textContent+=' Times belong to each source session; this collection has no shared audio timeline.';
     const navigation = bundle ? {
       add(line,segment) {if(sameGameKey(segment.sourceKey)){const source=assetLink({key:segment.sourceKey},'Source transcript');line.append(source);}},
       finish() {},
@@ -3751,26 +3787,17 @@ function renderStructuredAsset(asset, epoch) {
     for (const segment of transcript.segments) {
       const line = document.createElement("section"); line.className = "transcript-segment";
       const heading = document.createElement("h3"), text = document.createElement("p");
-      heading.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)} · ${people.get(segment.playerId) || segment.playerId || "Unassigned speaker"}`;
+      heading.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)}${people.get(segment.playerId) ? ` · ${people.get(segment.playerId)}` : ""}`;
       text.textContent = typeof segment.text === "string" ? segment.text : "[Missing text]";
       line.append(heading, text);
       navigation.add(line, segment);
-      const annotations = Object.fromEntries(Object.entries(segment).filter(([k]) => !["start","end","text","playerId"].includes(k)));
-      if (Object.keys(annotations).length) line.append(detailBlock("Evidence and annotations", annotations));
       host.append(line);
     }
-    if (doc.payload?.review) host.append(detailBlock("Correction review", doc.payload.review));
-    host.append(detailBlock("Transcript corrections, uncertainty and provenance", Object.fromEntries(
-      Object.entries(transcript).filter(([key]) => key !== "segments")
-    )));
-    if (doc.revisionHistory) host.append(detailBlock("Editorial revision history", doc.revisionHistory));
     navigation.finish();
   } else if (["Recording", "BrowserRecording"].includes(doc.entityType) && Array.isArray(doc.parts)) {
     const audio = document.createElement("audio"); audio.controls = true; audio.preload = "metadata";
     const status = document.createElement("p"); status.setAttribute("role", "status"); showLoading(status, "Finding the continuous audio playback file…");
     host.append(audio, status);
-    if (doc.captureIntegrity) host.append(detailBlock("Capture integrity and warnings",doc.captureIntegrity));
-    if (doc.captureWarnings?.length) host.append(detailBlock("Capture warnings",doc.captureWarnings));
     const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
     void (async () => {
       try {
@@ -3793,156 +3820,56 @@ function renderStructuredAsset(asset, epoch) {
       } catch (error) { if (current()) status.textContent = `${error.message}. Close and reopen to retry. Original parts are retained.`; }
     })();
   } else {
-    const pre = document.createElement("pre"); pre.textContent = JSON.stringify(doc,null,2); host.append(pre);
+    const payload=doc.entityType==='EditorialArtifact'?(doc.payload||{}):doc;
+    const report=payload.review||payload.selection||payload;
+    const title=report.title||payload.title;
+    if(typeof title==='string'&&title.trim())elements.previewTitle.textContent=title;
+    const text=payload.chapter||payload.markdown||report.markdown||payload.summary||report.summary;
+    if(typeof text==='string'&&text.trim()){const prose=document.createElement('div');prose.className='artifact-prose';proseMarkdown(prose,text);host.append(prose);}
+    const list=(caption,values)=>{if(!Array.isArray(values)||!values.length)return;const section=document.createElement('section'),heading=document.createElement('h3'),items=document.createElement('ul');heading.textContent=caption;for(const value of values){const item=document.createElement('li');if(typeof value==='string')item.textContent=value;else if(value&&typeof value==='object'){item.textContent=[value.description,value.decision,value.reason,value.explanation,value.text,value.message].filter(v=>typeof v==='string').join(' — ');}if(item.textContent)items.append(item);}if(items.childNodes.length){section.append(heading,items);host.append(section);}};
+    list('Notes',report.uncertainties||payload.uncertainties);list('Editorial choices',report.decisions||payload.decisions);
+    for(const shot of payload.shots||report.shots||[]){const section=document.createElement('section'),heading=document.createElement('h3'),description=document.createElement('p');heading.textContent=shot.title||shot.shotId||'Scene';description.textContent=shot.description||'';section.append(heading,description);host.append(section);}
+    if(!host.childNodes.length){const text=document.createElement('p');text.className='muted';text.textContent='Preview unavailable for this document.';host.append(text);}
   }
   elements.previewBody.replaceChildren(host);
 }
 
 function transcriptNavigation(host, asset, transcript, epoch, people) {
-  const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
-  const sessionId = asset.metadata?.sessionId || transcript.sessionId;
-  const tools = document.createElement("section"); tools.className = "transcript-tools"; tools.setAttribute("aria-label", "Transcript navigation");
-  const navigationPicker = optionalInfoDialog("Transcript tools", tools); host.append(navigationPicker.host);
-  const label = document.createElement("label"), search = document.createElement("input"), results = document.createElement("p"), previous = document.createElement("button"), next = document.createElement("button");
-  label.textContent = "Search speech or player names"; search.type = "search"; search.maxLength = 500; search.id = "transcript-search"; label.htmlFor = search.id;
-  search.placeholder = "Find a name, place or phrase…"; results.setAttribute("role", "status");
-  previous.type = next.type = "button"; previous.className = next.className = "quiet-button";
-  previous.textContent = "Previous match"; next.textContent = "Next match";
-  tools.append(label, search, previous, next, results);
-  const versionLabel = document.createElement("label"), versions = document.createElement("select");
-  versions.id = "transcript-version"; versions.disabled = true; versionLabel.htmlFor = versions.id; versionLabel.textContent = "Session transcript version";
-  versions.add(new Option("Finding saved versions…", asset.key)); tools.append(versionLabel, versions);
-  const selection = document.createElement("div"), selectionStatus = document.createElement("p");
-  selectionStatus.setAttribute("role", "status"); selectionStatus.textContent = sessionId ? "Checking the explicit canonical selection…" : "Canonical selection unavailable: this transcript has no session identity.";
-  selection.append(selectionStatus); tools.append(selection);
-  const source = document.createElement("section"), sourceHeading = document.createElement("h3"), sourceStatus = document.createElement("p"), audio = document.createElement("audio");
-  sourceHeading.textContent = "Recording";
-  sourceStatus.setAttribute("role", "status"); sourceStatus.textContent = "Finding the exact source recording and its continuous listening copy…";
-  audio.controls = true; audio.preload = "metadata"; audio.hidden = true;
-  source.append(sourceHeading, sourceStatus, audio); tools.append(source);
-  const lines = []; let matches = [], position = -1;
-  const update = () => {
-    const query = search.value.trim().toLocaleLowerCase();
-    matches = []; position = -1;
-    lines.forEach((entry,index) => {
-      entry.line.classList.remove("transcript-match", "transcript-current-match");
-      if (query && entry.search.includes(query)) { matches.push(index); entry.line.classList.add("transcript-match"); }
-    });
-    previous.disabled = next.disabled = matches.length === 0;
-    results.textContent = query ? `${matches.length} matching ${matches.length === 1 ? "line" : "lines"}.` : "";
-  };
-  const move = direction => {
-    if (!matches.length) return;
-    lines.forEach(entry => entry.line.classList.remove("transcript-current-match"));
-    position = position < 0 ? (direction > 0 ? 0 : matches.length - 1) : (position + direction + matches.length) % matches.length;
-    const line = lines[matches[position]].line;
-    line.classList.add("transcript-current-match"); line.tabIndex = -1;
-    line.scrollIntoView({block:"center", behavior:"instant"}); line.focus({preventScroll:true});
-    results.textContent = `Match ${position+1} of ${matches.length}.`;
-  };
-  search.addEventListener("input", update);
-  search.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); move(event.shiftKey ? -1 : 1); } });
-  previous.onclick = () => move(-1); next.onclick = () => move(1);
-  versions.onchange = () => { const chosen = versions.value; if (sameGameKey(chosen)) void previewFile({key:chosen,name:versions.selectedOptions[0].textContent}); };
-  const seeks = [];
-  let duration = null;
-  const seek = async seconds => {
-    if (!current() || duration === null || !Number.isFinite(seconds) || seconds < 0 || seconds >= duration) return;
-    if (!navigationPicker.dialog.open) navigationPicker.dialog.showModal();
-    try { audio.currentTime = seconds; await audio.play(); }
-    catch { if (current()) sourceStatus.textContent = "Playback could not start. Use the source audio controls or refresh its link; transcript evidence is unchanged."; }
-  };
-  const configure = async () => {
-    try {
-      const assets = await allAssets(gameId);
-      if (!current()) return;
-      const variants = assets.filter(a => a.metadata?.sessionId === sessionId && ["transcript","raw-transcript","corrected-transcript","edited-transcript"].includes(a.kind) && a.key.endsWith(".json"));
-      variants.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
-      versions.replaceChildren();
-      for (const variant of variants) {
-        const v = variant.metadata?.extra?.version;
-        versions.add(new Option(`${variant.kind.replaceAll("-"," ")} · ${v ? `v${v.number}` : "version unavailable"} · ${variant.metadata?.title || variant.name}`, variant.key));
-      }
-      if (!variants.some(a => a.key === asset.key)) versions.add(new Option("Viewed version · not present in the catalog", asset.key));
-      versions.value = asset.key; versions.disabled = versions.options.length < 2;
-      const index = new Map(assets.map(a => [a.key,a])), visited = new Set(), pending = [asset.key], recordings = new Map();
-      while (pending.length) {
-        const key = pending.pop(); if (visited.has(key) || !sameGameKey(key)) continue; visited.add(key);
-        const candidate = index.get(key); if (!candidate) continue;
-        if (candidate.recording?.partCount > 0) { recordings.set(key,candidate); continue; }
-        pending.push(...(candidate.sourceKeys || []));
-      }
-      if (recordings.size !== 1) { sourceStatus.textContent = recordings.size ? "Multiple source recordings are associated. Open Inputs to choose one; no source is guessed." : "No exact source recording is linked. Original evidence remains available in Inputs."; return; }
-      const [recordingKey, recording] = [...recordings][0];
-      source.append(assetLink(recording, "Open source recording"));
-      const copies = assets.filter(a => a.playback?.recordingKey === recordingKey && sameGameKey(a.playback.audioKey) && index.get(a.playback.audioKey)?.kind === "recording-playback");
-      copies.sort((a,b) => b.lastModified.localeCompare(a.lastModified) || a.key.localeCompare(b.key));
-      if (!copies.length) { sourceStatus.textContent = "The linked source recording has no completed continuous listening copy yet. Open the source recording for status and original files."; return; }
-      const copy = copies[0].playback, signed = await api("/object-url", {key:copy.audioKey});
-      if (!current()) return;
-      audio.hidden = false; audio.src = signed.url;
-      attachMediaRecovery(audio, copy.audioKey, current);
-      const ready = () => { if (current()) { duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : null; seeks.forEach(({button,start}) => { button.disabled = duration === null || !Number.isFinite(start) || start < 0 || start >= duration; }); } };
-      audio.addEventListener("loadedmetadata", ready);
-      if (audio.readyState >= 1) ready();
-      sourceStatus.textContent = ""; sourceStatus.hidden = true;
-    } catch (error) { if (current()) { versions.replaceChildren(new Option("Version navigation unavailable",asset.key)); sourceStatus.textContent = `Source navigation unavailable: ${error.message}. Use Inputs or reopen to retry.`; } }
-  };
-  void configure();
-  if (sessionId && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sessionId)) void (async () => {
-    try {
-      let chosen = await api("/transcript-selection", {gameId,sessionId});
-      if (!current()) return;
-      const report = () => {
-        selectionStatus.textContent = chosen.warning || (chosen.selection
-          ? `${chosen.selection.key === asset.key ? "Viewing the canonical reading version" : "Viewing a non-canonical version"}.`
-          : "No canonical reading version has been designated.");
-        selection.querySelector('[data-canonical-link]')?.remove();
-        if (chosen.selection?.key && chosen.selection.key !== asset.key && sameGameKey(chosen.selection.key)) {
-          const link = assetLink({key:chosen.selection.key}, "Open canonical reading version"); link.dataset.canonicalLink = "true"; selection.append(link);
-        }
-      };
-      report();
-      const details = document.createElement("section"), heading = document.createElement("h3"), explanation = document.createElement("p"), reasonLabel = document.createElement("label"), reason = document.createElement("input"), confirmLabel = document.createElement("label"), confirm = document.createElement("input"), button = document.createElement("button"), status = document.createElement("p");
-      heading.textContent = "Choose this canonical reading version";
-      explanation.textContent = "This changes a session pointer only. It does not correct raw text, verify speakers, approve game facts or regenerate adaptations. Previous selections are retained.";
-      reason.id = "canonical-reason"; reason.maxLength = 500; reasonLabel.htmlFor = reason.id; reasonLabel.textContent = "Selection reason";
-      confirm.type = "checkbox"; confirmLabel.append(confirm, " I understand this is a reading selection, not human verification.");
-      button.type = "button"; button.className = "quiet-button"; button.textContent = "Use this version as canonical"; button.disabled = true;
-      status.setAttribute("role", "status");
-      const enable = () => { button.disabled = !confirm.checked || !reason.value.trim(); };
-      reason.addEventListener("input", enable); confirm.addEventListener("change", enable);
-      let request;
-      button.onclick = async () => {
-        request ||= {gameId, sessionId, key:asset.key, expectedRevision:chosen.selection?.revision || null,
-          reason:reason.value.trim(), operationId:crypto.randomUUID().replaceAll("-","")};
-        reason.disabled = confirm.disabled = button.disabled = true; status.textContent = "Saving the guarded selection…";
-        try {
-          await api("/transcript-selection", {}, {body:request});
-          chosen = await api("/transcript-selection", {gameId,sessionId});
-          if (!current()) return;
-          report(); status.textContent = "Selection saved. Immutable transcripts and review state are unchanged.";
-        } catch (error) { if (current()) { status.textContent = `Selection not confirmed: ${error.message}. An exact retry uses the same operation identity; reload if another selection changed.`; button.disabled = false; } }
-      };
-      details.append(explanation, reasonLabel, reason, confirmLabel, button, status); selection.append(optionalInfoDialog(heading.textContent, details).host);
-    } catch (error) { if (current()) selectionStatus.textContent = `Canonical selection unavailable: ${error.message}. No version is assumed canonical.`; }
-  })();
-  return {
-    add(line, segment) {
-      lines.push({line, search:`${people.get(segment.playerId) || segment.playerId || "Unassigned speaker"} ${segment.text || ""}`.toLocaleLowerCase()});
-      const button = document.createElement("button"); button.type = "button"; button.className = "quiet-button transcript-seek";
-      button.textContent = `Listen from ${timestamp(segment.start)}`; button.disabled = true;
-      button.onclick = () => { void seek(segment.start); }; line.append(button); seeks.push({button,start:segment.start});
-    },
-    finish: update,
-  };
+  const gameId=state.gameId,current=()=>epoch===previewEpoch && gameId===state.gameId && state.tokens;
+  const playback=document.createElement('div');playback.className='transcript-playback';
+  const audio=document.createElement('audio');audio.controls=true;audio.preload='metadata';audio.hidden=true;audio.setAttribute('aria-label','Session audio');
+  const audioStatus=document.createElement('p');audioStatus.setAttribute('role','status');showLoading(audioStatus,'Loading audio…');playback.append(audio,audioStatus);
+  const tools=document.createElement('section');tools.className='transcript-tools';tools.setAttribute('aria-label','Transcript search');
+  const label=document.createElement('label'),search=document.createElement('input'),results=document.createElement('p'),previous=document.createElement('button'),next=document.createElement('button');
+  label.textContent='Search transcript';search.type='search';search.maxLength=500;search.id='transcript-search';label.htmlFor=search.id;search.placeholder='Find a name, place or phrase…';
+  previous.type=next.type='button';previous.className=next.className='quiet-button';previous.textContent='Previous';next.textContent='Next';previous.setAttribute('aria-label','Previous match');next.setAttribute('aria-label','Next match');results.setAttribute('role','status');
+  tools.append(label,search,previous,next,results);host.append(playback,tools);
+  const lines=[],seeks=[];let matches=[],position=-1,duration=null;
+  const update=()=>{const query=search.value.trim().toLocaleLowerCase();matches=[];position=-1;lines.forEach((entry,index)=>{entry.line.classList.remove('transcript-match','transcript-current-match');if(query&&entry.search.includes(query)){matches.push(index);entry.line.classList.add('transcript-match');}});previous.disabled=next.disabled=!matches.length;results.textContent=query?`${matches.length} matching ${matches.length===1?'line':'lines'}.`:'';};
+  const move=direction=>{if(!matches.length)return;lines.forEach(entry=>entry.line.classList.remove('transcript-current-match'));position=position<0?(direction>0?0:matches.length-1):(position+direction+matches.length)%matches.length;const line=lines[matches[position]].line;line.classList.add('transcript-current-match');line.tabIndex=-1;line.scrollIntoView({block:'nearest',behavior:'instant'});line.focus({preventScroll:true});results.textContent=`Match ${position+1} of ${matches.length}.`;};
+  search.oninput=update;search.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();move(event.shiftKey?-1:1);}};previous.onclick=()=>move(-1);next.onclick=()=>move(1);
+  const ready=()=>{if(!current())return;duration=Number.isFinite(audio.duration)&&audio.duration>0?audio.duration:null;seeks.forEach(({button,start})=>{button.disabled=duration===null||!Number.isFinite(start)||start<0||start>=duration;});};
+  const seek=async seconds=>{if(!current()||duration===null||!Number.isFinite(seconds)||seconds<0||seconds>=duration)return;try{audio.currentTime=seconds;await audio.play();}catch{if(current()){audioStatus.hidden=false;audioStatus.textContent='Playback could not start. Use the audio controls to try again.';}}};
+  void(async()=>{try{
+    const assets=[...await allAssets(gameId)];if(!current())return;if(!assets.some(item=>item.key===asset.key))assets.push(asset);
+    const index=new Map(assets.map(item=>[item.key,item])),visited=new Set(),pending=[asset.key,...(asset.sourceKeys||[]),...(asset.metadata?.sourceKeys||[])];
+    while(pending.length){const key=pending.pop();if(visited.has(key)||!sameGameKey(key))continue;visited.add(key);pending.push(...(index.get(key)?.sourceKeys||[]));}
+    const copies=assets.filter(item=>item.playback&&visited.has(item.playback.recordingKey)&&sameGameKey(item.playback.audioKey)&&index.has(item.playback.audioKey));
+    copies.sort((a,b)=>b.lastModified.localeCompare(a.lastModified)||a.key.localeCompare(b.key));
+    let key=copies[0]?.playback.audioKey;
+    if(!key){const direct=assets.filter(item=>visited.has(item.key)&&/^audio\//.test(item.contentType||''));if(direct.length===1)key=direct[0].key;}
+    if(!key){audioStatus.textContent='Audio is not available for this transcript.';return;}
+    const signed=await api('/object-url',{key});if(!current())return;audio.hidden=false;audio.src=signed.url;audio.addEventListener('loadedmetadata',ready);if(audio.readyState>=1)ready();audioStatus.hidden=true;audioStatus.replaceChildren();attachMediaRecovery(audio,key,current);
+  }catch{if(current())audioStatus.textContent='Audio could not load. Close and reopen the transcript to try again.';}})();
+  return {add(line,segment){lines.push({line,search:`${people.get(segment.playerId)||''} ${segment.text||''}`.toLocaleLowerCase()});const heading=line.querySelector('h3'),button=document.createElement('button');button.type='button';button.className='quiet-button transcript-seek';button.dataset.buttonVariant='ghost';button.textContent=`${timestamp(segment.start)}–${timestamp(segment.end)}`;button.setAttribute('aria-label',`Play audio from ${timestamp(segment.start)}`);button.disabled=true;button.onclick=()=>void seek(segment.start);heading.replaceChildren(button);const name=people.get(segment.playerId);if(name)heading.append(document.createTextNode(` · ${name}`));seeks.push({button,start:segment.start});if(duration!==null)ready();},finish:update};
 }
 
 document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 novel.refresh.addEventListener("click", () => { assetIndex = null; void renderRoute(); });
 document.getElementById("character-create").addEventListener("click", createCharacter);
 novel.back.addEventListener("click", () => navigate(gamePath("novel") + (currentNovelBook ? `?book=${encodeURIComponent(currentNovelBook.id)}&bookRevision=${encodeURIComponent(currentNovelBook.revision)}` : "")));
-novel.read.addEventListener("click", () => novelView(false));
+[novel.download,novel["show-details"]].forEach(button=>window.PantherUI.styleButton(button,"ghost"));
+const chapterDownloadIcon=document.createElement("span");chapterDownloadIcon.setAttribute("aria-hidden","true");novel.download.prepend(chapterDownloadIcon);window.PantherUI.mountIcon(chapterDownloadIcon,"download");
 novel["show-details"].addEventListener("click", () => novelView(true));
 novel.download.addEventListener("click", () => {
   if (!currentChapter) return;
@@ -3956,22 +3883,28 @@ elements.logout.addEventListener("click", logout);
 elements.refresh.addEventListener("click", () => { assetIndex = null; return loadPrefix(state.currentPrefix); });
 elements.loadMore.addEventListener("click", () => loadPrefix(state.currentPrefix, state.nextCursor));
 elements.previewClose.addEventListener("click", closePreview);
-elements.previewDialog.addEventListener("cancel", event => { event.preventDefault(); closePreview(); });
 elements.previewDialog.addEventListener("click", (event) => {
   if (event.target === elements.previewDialog) closePreview();
 });
 // Room capture v1. IndexedDB retains closed PCM parts before any network request.
 class RoomRecorder {
   constructor() {
-    this.host=document.getElementById('room-recorder');this.controls=this.host.querySelector('.room-controls'); this.recording=false; this.draft=null; this.liveEnabled=false;
+    this.host=document.getElementById('room-recorder');this.controls=this.host.querySelector('.room-controls'); this.recording=false; this.draft=null;
     this.writeChain=Promise.resolve(); this.uploadChain=Promise.resolve(); this.nodes=new Map();
-    this.el=Object.fromEntries(['start','stop','status','state','timer','level','live-toggle','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
+    this.el=Object.fromEntries(['start','stop','status','state','timer','level','live','live-text','recovery','resume','download','result','result-name','audio','audio-status','capture-warning','final-status','final-link'].map(id=>[id,document.getElementById('room-'+id)]));
+    const recordDot=this.el.start.querySelector('.record-dot')||document.createElement('span');recordDot.className='record-dot';recordDot.setAttribute('aria-hidden','true');this.startLabel=document.createElement('span');this.startLabel.textContent='Record';this.el.start.replaceChildren(recordDot,this.startLabel);
     this.el.audio=document.createElement('audio');this.el.audio.id='room-audio';this.el.audio.controls=true;this.el.audio.preload='metadata';this.el.audio.hidden=true;
-    this.liveDialog=document.createElement('dialog');this.liveDialog.className='preview room-live-dialog';this.liveDialog.setAttribute('aria-label','Live transcript');this.liveDialog.title='Provisional recognition; speakers are unassigned';
-    const closeLive=document.createElement('button');closeLive.type='button';closeLive.className='icon-button';closeLive.textContent='×';closeLive.setAttribute('aria-label','Close live transcript');closeLive.onclick=()=>this.liveDialog.close();this.liveDialog.append(closeLive,this.el.live);document.body.append(this.liveDialog);
-    this.viewLive=document.createElement('button');this.viewLive.type='button';this.viewLive.className='quiet-button';this.viewLive.textContent='View transcript';this.viewLive.hidden=true;this.viewLive.onclick=()=>this.liveDialog.showModal();this.host.querySelector('.room-controls').append(this.viewLive);
-    this.el.start.onclick=()=>this.start(); this.el.stop.onclick=()=>this.stop();
-    this.el['live-toggle'].onclick=()=>{this.liveEnabled=!this.liveEnabled; this.buttons(); this.say(this.liveEnabled?'Live transcription enabled for new audio.':'New live requests paused. A full pass will still run after Stop.');};
+    this.dialog=window.PantherUI.createDialog();this.dialog.className='preview room-recording-dialog';this.dialog.setAttribute('aria-label','Recording');
+    const heading=document.createElement('div');heading.className='room-dialog-heading';const title=document.createElement('h2');title.textContent='Recording';
+    const close=document.createElement('button');close.type='button';close.className='icon-button';close.textContent='×';close.setAttribute('aria-label','Close recording');close.onclick=()=>this.dialog.close();heading.append(title,close);
+    this.captureControls=document.createElement('div');this.captureControls.className='room-capture-controls';
+    this.pauseButton=document.createElement('button');this.pauseButton.type='button';this.pauseButton.className='quiet-button';this.pauseButton.id='room-pause';this.pauseButton.textContent='Pause';this.pauseButton.onclick=()=>void this.pause();
+    const indicators=document.createElement('div');indicators.className='room-capture-indicators';indicators.append(this.el.state,this.el.timer,this.el.level);
+    this.liveStatus=document.createElement('p');this.liveStatus.id='room-live-status';this.liveStatus.setAttribute('role','status');
+    this.retryStart=document.createElement('button');this.retryStart.type='button';this.retryStart.className='primary-button';this.retryStart.textContent='Try again';this.retryStart.hidden=true;this.retryStart.onclick=()=>void this.start();
+    this.captureControls.append(this.retryStart,this.pauseButton,this.el.stop);this.dialog.append(heading,indicators,this.liveStatus,this.el.live,this.captureControls);document.body.append(this.dialog);
+    this.badge=document.createElement('button');this.badge.id='room-recording-indicator';this.badge.className='quiet-button';this.badge.type='button';this.badge.hidden=true;this.badge.onclick=()=>this.dialog.showModal();document.querySelector('.masthead').append(this.badge);
+    this.el.start.onclick=()=>{this.dialog.showModal();if(!this.recording)void this.start();}; this.el.stop.onclick=()=>this.stop();
     this.el.resume.onclick=()=>this.retrySave();
     this.el.result.append(this.el.recovery);
     this.retained=document.createElement('section');this.retained.id='room-retained';this.retained.setAttribute('aria-label','Unsaved recordings');this.retained.hidden=true;this.host.append(this.retained);
@@ -3994,7 +3927,7 @@ class RoomRecorder {
     });
   }
   persist() {const draft=this.draft; this.writeChain=this.writeChain.then(()=>this.store('drafts','put',structuredClone(draft))); return this.writeChain;}
-  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;if(error)(this.el.result.hidden?this.host:this.el.result).append(this.el.status);}
+  say(text,error=false) {this.el.status.textContent=text;this.el.status.hidden=!error;if(error)(this.dialog.open?this.dialog:this.el.result.hidden?this.host:this.el.result).append(this.el.status);}
   async retrySave() {
     if(this.recording || this.stopping || this.archiving) return;
     this.uploadError=false;this.storageError=null;this.writeChain=Promise.resolve();this.el.resume.disabled=true;this.say('');this.showResult('Saving audio…');
@@ -4014,24 +3947,35 @@ class RoomRecorder {
     for(const draft of pending) {
       const row=document.createElement('div'),name=document.createElement('span'),save=document.createElement('button'),download=document.createElement('button');name.textContent=draft.sessionName;
       for(const [button,text] of [[save,'Save recording'],[download,'Download']]) {button.type='button';button.className='quiet-button';button.textContent=text;button.disabled=this.recording || !!this.archiving || !!this.stopping;}
-      const activate=()=>{clearTimeout(this.pollTimer);this.draft=draft;this.writeChain=Promise.resolve();this.uploadChain=Promise.resolve();this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el.live.hidden=true;this.el['live-text'].replaceChildren();this.el.audio.pause();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.showResult('Not saved','error');this.el.recovery.hidden=false;this.el.resume.hidden=false;};
+      const activate=()=>{clearTimeout(this.pollTimer);this.draft=draft;this.writeChain=Promise.resolve();this.uploadChain=Promise.resolve();this.nodes.clear();this.dialog.close();this.el.live.hidden=true;this.el['live-text'].replaceChildren();this.el.audio.pause();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.showResult('Not saved','error');this.el.recovery.hidden=false;this.el.resume.hidden=false;};
       save.onclick=async()=>{if(this.recording || this.archiving || this.stopping)return;activate();await this.retrySave();};
       download.onclick=async()=>{if(this.recording || this.archiving || this.stopping)return;activate();await this.download();await this.listRetained();};
       row.append(name,save,download);this.retained.append(row);
     }
   }
   buttons() {
-    this.host.dataset.recording=String(this.recording); this.el.start.hidden=this.recording; this.el.stop.hidden=!this.recording;
-    this.el.start.disabled=!!this.archiving || !!this.stopping;
+    this.host.dataset.recording=String(this.recording);this.el.start.hidden=false;this.el.start.disabled=!!this.starting || !!this.archiving || !!this.stopping || !this.capabilities?.transcriptionAvailable;
+    this.startLabel.textContent=this.recording?'Recording':'Record';
+    this.el.stop.hidden=!this.recording;this.el.stop.disabled=!!this.stopping;
+    this.retryStart.hidden=!this.startFailed;this.retryStart.disabled=!!this.starting || !this.capabilities?.transcriptionAvailable;
+    this.pauseButton.hidden=!this.recording;this.pauseButton.disabled=!!this.stopping || !!this.pausing;this.pauseButton.textContent=this.paused?'Resume':'Pause';
     this.el.resume.disabled=this.recording || !!this.archiving || !!this.stopping;
-    this.el['live-toggle'].disabled=!this.capabilities?.transcriptionAvailable;this.el['live-toggle'].hidden=!this.recording || !this.capabilities?.transcriptionAvailable;
-    this.el['live-toggle'].setAttribute('aria-pressed',String(this.liveEnabled)); this.el['live-toggle'].textContent=this.liveEnabled?'Live text on':'Live text off';
-    this.el.state.textContent=this.stopping?'Finishing…':'Recording';this.el.state.hidden=!this.recording && !this.stopping;this.el.timer.hidden=!this.recording && !this.stopping;this.el.level.hidden=!this.recording;
+    this.el.state.textContent=this.stopping?'Finishing…':this.paused?'Paused':'Recording';this.el.state.hidden=!this.recording && !this.stopping;this.el.timer.hidden=!this.recording && !this.stopping;this.el.level.hidden=!this.recording;
+    this.badge.hidden=!this.recording && !this.stopping;this.badge.textContent=this.paused?'Paused · Open recorder':'Recording · Open recorder';this.badge.dataset.paused=String(!!this.paused);
+    this.liveStatus.textContent=this.liveFailed?'Live transcription disconnected · Audio is still recording':this.liveAuditFailed?'Live transcript saving delayed · Audio is retained':this.startFailed?'Recording did not start':this.starting?'Connecting microphone…':this.capabilities?.transcriptionAvailable?(this.nodes.size?'Live transcript':'Listening…'):'Live transcription unavailable';
     elements.gameSelector.disabled=this.recording || !!this.stopping || !!this.archiving;
   }
+  async pause() {
+    if(!this.recording || this.stopping || this.pausing)return;
+    this.pausing=true;const wasPaused=!!this.paused;this.buttons();
+    try {if(wasPaused)await this.context.resume();else {await this.context.suspend();await new Promise(resolve=>{const timeout=setTimeout(()=>{this.liveTransport?.pause();resolve();},1000);this.liveBoundary=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('live-boundary');});}this.paused=!wasPaused;this.el.level.value=0;}
+    catch(error){this.paused=wasPaused;this.say(error.message,true);}
+    finally{this.pausing=false;this.buttons();}
+  }
   async render(section,epoch) {
-    if(section!=='sessions')this.liveDialog.close();
-    const visible=section==='sessions' || this.recording || this.stopping;
+    this.section=section;
+    if(section!=='sessions'){restoreSessionCaptureResult();}
+    const visible=section==='sessions';this.buttons();
     this.controls.hidden=!visible;this.host.hidden=!visible; if(!visible) {this.el.audio.pause();return;}
     if(section==='sessions'){const heading=document.querySelector('#session-library > .explorer-heading');heading.append(this.controls);heading.after(this.host);}
     else {this.host.prepend(this.controls);document.getElementById('game-context').after(this.host);}
@@ -4041,25 +3985,25 @@ class RoomRecorder {
       if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;this.controls.hidden=true;return;}
       if(!this.capabilities.canRecord) {this.host.hidden=true;this.controls.hidden=true; return;}
       if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
-        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
+        this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.dialog.close();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
         const held=await navigator.locks?.query();
         if(held?.held.some(lock=>lock.name==='panther-room-capture')) {this.say('Another tab is using the room recorder.',true);this.el.start.disabled=true;return;}
         const drafts=await this.store('drafts','getAll');
         this.draft=drafts.filter(d=>d.gameId===state.gameId && d.owner===this.owner()).sort((a,b)=>b.startedAt.localeCompare(a.startedAt))[0] || null;
+        if(this.draft?.liveSession&&this.draft.liveEventBatches?.length){this.liveSession={...this.draft.liveSession,draft:this.draft,events:[],batches:this.draft.liveEventBatches,chain:Promise.resolve()};void this.flushLiveEvents();}
         if(this.draft) {if(this.draft.status==='archived'){this.processingStarted=this.draft.processingStarted || Date.now();this.showResult('Audio saved','ready');this.el.resume.hidden=true;this.el.recovery.hidden=false;this.el.download.hidden=false;this.transcriptionAvailability();this.schedulePoll();}else {if(this.draft.status==='recording'){this.draft.status='interrupted';this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');}await this.persist();this.showResult('Not saved','error');this.el.recovery.hidden=false;this.say('Audio is saved in this browser. Retry saving or download it.',true);}}
         await this.listRetained();
-        this.liveEnabled=!!this.capabilities.transcriptionAvailable;
       }
-      this.buttons();
+      this.buttons();if(!this.capabilities.transcriptionAvailable)this.say('Live transcription unavailable. Recording cannot start.',true);
       if (this.draft?.status === 'archived' && this.capabilities.playbackAvailable === false) this.processingUnavailable();
     } catch(error) {this.say(error.message,true);this.el.start.disabled=true;}
   }
   async start() {
-    if(this.recording || this.stopping || !this.capabilities?.canRecord || this.el.start.disabled) return;
+    if(this.recording || this.stopping || !this.capabilities?.transcriptionAvailable || !this.capabilities?.canRecord || this.el.start.disabled) return;
     if(!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode || !navigator.locks) {this.say('Use a current browser on HTTPS or localhost with microphone, AudioWorklet and Web Locks support.',true);return;}
     await navigator.locks.request('panther-room-capture',{ifAvailable:true},async lock=>{
       if(!lock) {this.say('Another tab is already recording. Return to that tab to stop it.',true);return;}
-      this.el.start.disabled=true;
+      this.el.start.disabled=true;this.starting=true;this.startFailed=false;this.say('');this.buttons();
       try {
         await this.db();
         this.stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:32000,echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
@@ -4068,9 +4012,16 @@ class RoomRecorder {
         await this.context.audioWorklet.addModule(document.querySelector('meta[name="panther-pcm-worklet"]').content);
         const track=this.stream.getAudioTracks()[0];
         this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+new Date().toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
-        this.writeChain=Promise.resolve(); this.storageError=null; await this.persist(); this.uploadError=false; this.nodes.clear(); this.liveDialog.close();this.viewLive.hidden=true;this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
+        this.writeChain=Promise.resolve(); this.storageError=null; await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
+        this.liveFailed=false;this.liveAuditFailed=false;this.liveStarting=true;
+        const liveSession={draft:this.draft,events:[],batches:[],chain:Promise.resolve(),operationId:crypto.randomUUID().replaceAll('-','')};this.liveSession=liveSession;
+        this.liveTransport=new window.PantherUI.LiveTranscription({onText:(id,text)=>{if(this.liveSession!==liveSession)return;if(!this.nodes.has(id)){const line=document.createElement('p');line.textContent=text;this.el['live-text'].append(line);this.nodes.set(id,line);}else this.nodes.get(id).textContent=text;this.buttons();},onError:()=>{if(this.liveSession===liveSession){this.liveFailed=true;this.buttons();}},onOrder:ids=>{if(this.liveSession!==liveSession)return;for(const id of ids){const node=this.nodes.get(id);if(node)this.el['live-text'].append(node);}},onProviderEvent:event=>{liveSession.events.push(event);if(liveSession.events.length>=100)void this.flushLiveEvents(liveSession);}});
+        const credentials=await api('/browser-recording/live-session',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,operationId:liveSession.operationId}});
+        liveSession.sessionId=credentials.sessionId;this.draft.liveSession={sessionId:liveSession.sessionId,operationId:liveSession.operationId};await this.persist();await this.liveTransport.connect(credentials);this.liveStarting=false;liveSession.timer=setInterval(()=>void this.flushLiveEvents(liveSession),1000);
         this.node=new AudioWorkletNode(this.context,'panther-pcm-capture-v1'); this.source=this.context.createMediaStreamSource(this.stream);
         this.node.port.onmessage=event=>{
+          if(event.data.type==='live-boundary'){this.liveTransport?.pause();this.liveBoundary?.();this.liveBoundary=null;}
+          if(event.data.type==='live-audio')this.liveTransport?.audio(event.data.samples,event.data.rms);
           if(event.data.type==='level') {const db=20*Math.log10(Math.max(event.data.peak,0.000001));this.el.level.value=Math.max(0,Math.min(1,(db+60)/60));this.el.level.title=`${Math.round(db)} dBFS`;this.el.level.setAttribute('aria-valuetext',`${Math.round(db)} decibels below full scale`);}
           if(event.data.type==='part') this.writeChain=this.writeChain.then(()=>this.savePart(event.data.samples)).catch(error=>{this.storageError=error;this.say(error.message,true);void this.stop('Browser storage failed; the active part may be incomplete.');});
           if(event.data.type==='stopped') {if(this.stopping) this.stopped?.();else if(this.recording) void this.stop('The supported recording length was reached; captured parts are retained.',true);}
@@ -4078,22 +4029,35 @@ class RoomRecorder {
         this.node.onprocessorerror=()=>void this.stop('The audio processor failed; the unfinished part may be missing.');
         track.onended=()=>{if(this.recording) void this.stop('The microphone disconnected.');};
         this.source.connect(this.node);this.node.connect(this.context.destination);await this.context.resume();
-        this.context.onstatechange=()=>{if(this.recording && this.context.state==='suspended') {this.draft.captureWarnings.push('The browser suspended capture; audio may be missing.');this.say('Audio capture is suspended by the browser. Return to this tab and Stop to retain captured parts.',true);}};
-        this.recording=true;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();await this.listRetained();this.say('');
-        this.timer=setInterval(()=>{this.el.timer.textContent=timestamp((performance.now()-this.started)/1000);},1000);
+        this.context.onstatechange=()=>{if(this.recording && !this.paused && !this.pausing && !this.stopping && this.context.state==='suspended') {this.draft.captureWarnings.push('The browser suspended capture; audio may be missing.');this.say('Audio capture is suspended by the browser. Return to this tab and Stop to retain captured parts.',true);}};
+        this.starting=false;this.recording=true;this.paused=false;this.el.live.hidden=false;this.el.timer.textContent='0:00'; this.started=performance.now(); this.buttons();await this.listRetained();this.say('');
+        this.timer=setInterval(()=>{this.el.timer.textContent=timestamp(this.context.currentTime);},1000);
         await new Promise(resolve=>{this.unlock=resolve;});
       } catch(error) {
-        this.stream?.getTracks().forEach(track=>track.stop());try{await this.context?.close();}catch{/* A prior capture context may already be closed. */}this.recording=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
-        this.say(error.name==='NotAllowedError'?'Microphone access was denied. Allow microphone access to start recording.':error.message,true);this.buttons();
+        this.stream?.getTracks().forEach(track=>track.stop());try{await this.context?.close();}catch{/* A prior capture context may already be closed. */}this.starting=false;this.startFailed=true;this.recording=false;this.paused=false;this.el.start.disabled=false;if(this.draft && !this.draft.parts.length){await this.store('drafts','delete',this.draft.id);this.draft=null;}
+        this.liveTransport?.close();clearInterval(this.liveSession?.timer);console.warn('Room microphone startup failed',error.name);this.say(this.liveStarting?'Live transcription could not connect. Try again.':error.name==='NotAllowedError'?'Microphone access was denied. Allow microphone access and try again.':error.name==='NotFoundError'?'No microphone found. Connect a microphone and try again.':'Recording could not start. Check your microphone and try again.',true);this.buttons();
       }
     });
+  }
+  async persistLiveAudit(draft){
+    const db=await this.db();return new Promise((resolve,reject)=>{const tx=db.transaction('drafts','readwrite'),table=tx.objectStore('drafts'),request=table.get(draft.id);request.onsuccess=()=>{const current=request.result;if(!current)return;current.liveEventBatches=structuredClone(draft.liveEventBatches||[]);if(draft.liveTranscriptStatus)current.liveTranscriptStatus=draft.liveTranscriptStatus;table.put(current);};tx.oncomplete=resolve;tx.onerror=()=>reject(new Error('Live transcript receipt could not be retained.'));tx.onabort=tx.onerror;});
+  }
+  flushLiveEvents(session=this.liveSession){
+    if(!session?.sessionId)return session?.chain;
+    const {draft,batches}=session;
+    if(session.events.length){const events=session.events.splice(0,100);batches.push({gameId:draft.gameId,recordingId:draft.id,sessionId:session.sessionId,operationId:session.operationId,batchId:crypto.randomUUID().replaceAll('-',''),events});}
+    // Pending token-free receipts survive reload; their retry writes the same
+    // idempotent batch and can never start another inference or reconnect.
+    draft.liveEventBatches=structuredClone(batches);
+    session.chain=session.chain.then(async()=>{const body=batches[0];if(!body)return;await this.persistLiveAudit(draft);await api('/browser-recording/live-events',{}, {body});if(batches[0]===body)batches.shift();draft.liveEventBatches=structuredClone(batches);await this.persistLiveAudit(draft);if(this.liveSession===session)this.liveAuditFailed=false;}).catch(()=>{if(this.liveSession===session){this.liveAuditFailed=true;this.buttons();}});
+    return session.chain;
   }
   async savePart(buffer) {
     const count=buffer.byteLength/2, blob=this.wav(new Int16Array(buffer));
     const bytes=await blob.arrayBuffer(), hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
     const sha=Array.from(hash,b=>b.toString(16).padStart(2,'0')).join('');
     const index=this.draft.parts.length, start=this.draft.parts.reduce((sum,p)=>sum+p.duration,0);
-    const part={file:`part-${String(index).padStart(4,'0')}.wav`,start,duration:count/32000,size:blob.size,sha256:sha,sampleRate:32000,channels:1,bitsPerSample:16,uploaded:false,liveWanted:this.liveEnabled};
+    const part={file:`part-${String(index).padStart(4,'0')}.wav`,start,duration:count/32000,size:blob.size,sha256:sha,sampleRate:32000,channels:1,bitsPerSample:16,uploaded:false,liveWanted:false};
     await this.store('parts','put',{id:this.draft.id+'#'+index,blob});this.draft.parts.push(part);
     await this.store('drafts','put',structuredClone(this.draft));
     void this.upload();
@@ -4123,22 +4087,20 @@ class RoomRecorder {
         const part=this.draft.parts[i];
         if(!part.uploaded) {
           const saved=await this.store('parts','get',this.draft.id+'#'+i);
-          const original={recordingId:this.draft.id,...Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted'].includes(key)))};
+          const original={recordingId:this.draft.id,...Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted','liveAttempted'].includes(key)))};
           const uploaded=await this.put(saved.blob,part.file,'recording',{browserPart:original,recordingId:this.draft.id});
           part.key=uploaded.key;part.uploaded=true;await this.persist();
         }
-        if(part.liveWanted && this.liveEnabled && !part.liveSubmitted && this.capabilities.transcriptionAvailable) {
-          try {await api('/browser-transcriptions',{}, {body:{gameId:this.draft.gameId,recordingId:this.draft.id,mode:'live',inputKey:part.key}});part.liveSubmitted=true;await this.persist();this.schedulePoll();}
-          catch {this.say('Live transcription is unavailable for this part. Source audio is retained for the full pass.',true);}
-        }
+
       }
     }).catch(error=>{this.uploadError=true;this.saveFailed(error);});
     return this.uploadChain;
   }
   async stop(warning=null,alreadyStopped=false) {
     if(!this.recording || this.stopping) return;
-    this.stopping=true;this.el.stop.disabled=true;this.buttons();this.showResult('Saving audio…');let flushFailed=false,failed=false;if(warning)this.draft.captureWarnings.push(warning);
+    this.stopping=true;this.dialog.close();this.el.stop.disabled=true;this.buttons();this.showResult('Saving audio…');let flushFailed=false,failed=false;if(warning)this.draft.captureWarnings.push(warning);
     try {
+      if(this.paused){await this.context.resume();this.paused=false;}
       if(!alreadyStopped) await new Promise(resolve=>{const timeout=setTimeout(()=>{flushFailed=true;this.draft.captureWarnings.push('The processor did not confirm its final flush; the active part may be missing.');resolve();},2000);this.stopped=()=>{clearTimeout(timeout);resolve();};this.node.port.postMessage('stop');});
       this.recording=false;await this.writeChain;
       if(this.storageError)throw this.storageError;
@@ -4146,7 +4108,7 @@ class RoomRecorder {
       this.draft.status=warning || flushFailed?'interrupted':'complete';await this.persist();
     } catch(error) {failed=true;this.saveFailed(error);}
     finally {
-      this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream?.getTracks().forEach(track=>track.stop());
+      const liveDraft=this.draft,liveSession=this.liveSession;if(liveDraft){liveDraft.liveTranscriptStatus='pending';void this.persistLiveAudit(liveDraft).catch(()=>{if(this.liveSession===liveSession){this.liveAuditFailed=true;this.buttons();}});}void this.liveTransport?.finish().then(async result=>{if(liveDraft)liveDraft.liveTranscriptStatus=result.complete?'complete':'incomplete';clearInterval(liveSession?.timer);if(liveSession){let pending;do{pending=liveSession.events.length+liveSession.batches.length;await this.flushLiveEvents(liveSession);}while(liveSession.events.length+liveSession.batches.length>0&&liveSession.events.length+liveSession.batches.length<pending);}if(liveDraft)await this.persistLiveAudit(liveDraft);}).catch(()=>{if(this.liveSession===liveSession){this.liveAuditFailed=true;this.buttons();}});this.recording=false;this.el.level.value=0;clearInterval(this.timer);this.stream?.getTracks().forEach(track=>track.stop());
       this.source?.disconnect();this.node?.disconnect();try{await this.context?.close();}catch{/* Capture is stopped; retain persisted originals. */}
       this.unlock?.();this.unlock=null;this.stopping=false;this.el.stop.disabled=false;this.buttons();
     }
@@ -4154,7 +4116,7 @@ class RoomRecorder {
     this.el.recovery.hidden=false;this.el.download.hidden=false;
     try {await this.archive();} catch(error) {this.saveFailed(error);} finally {await this.listRetained();}
   }
-  interrupt() {this.liveDialog.close();this.viewLive.hidden=true;if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
+  interrupt() {this.dialog.close();if(this.recording) void this.stop('Sign-in ended during capture. Retained parts need to be saved after signing in again.');this.capabilities=null;}
   async archive() {
     if(this.archiving) return this.archiving;
     this.archiving=this.saveArchive().finally(()=>{this.archiving=null;this.buttons();});this.buttons();return this.archiving;
@@ -4163,7 +4125,7 @@ class RoomRecorder {
     if(this.recording || this.stopping || !this.draft?.parts.length) {this.say('No completed audio parts to save yet.',true);return;}
     if(this.draft.owner!==this.owner()) throw new Error('Sign in to the capturing account to save retained audio.');
     await this.upload();if(this.uploadError) return;
-    const doc=this.draft.manifestDoc || {schemaVersion:1,entityType:'BrowserRecording',id:this.draft.id,gameId:this.draft.gameId,sessionId:this.draft.sessionId,sessionName:this.draft.sessionName,startedAt:this.draft.startedAt,device:this.draft.device,status:this.draft.status==='interrupted'?'interrupted':'complete',sourceFormat:'wav',captureWarnings:this.draft.captureWarnings,parts:this.draft.parts.map(part=>Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted','key'].includes(key))))};
+    const doc=this.draft.manifestDoc || {schemaVersion:1,entityType:'BrowserRecording',id:this.draft.id,gameId:this.draft.gameId,sessionId:this.draft.sessionId,sessionName:this.draft.sessionName,startedAt:this.draft.startedAt,device:this.draft.device,status:this.draft.status==='interrupted'?'interrupted':'complete',sourceFormat:'wav',captureWarnings:this.draft.captureWarnings,parts:this.draft.parts.map(part=>Object.fromEntries(Object.entries(part).filter(([key])=>!['uploaded','liveWanted','liveSubmitted','liveAttempted','key'].includes(key))))};
     this.draft.manifestDoc=doc;await this.persist();
     const manifest=await this.put(new Blob([JSON.stringify(doc)],{type:'application/json'}),'recording.json','recording-manifest',{recordingId:this.draft.id});
     const completed=await api('/browser-recording/complete',{}, {body:{gameId:this.draft.gameId,recordingKey:manifest.key,manifestSha256:manifest.hex,status:'COMPLETE'}});
@@ -4184,7 +4146,7 @@ class RoomRecorder {
     this.el.recovery.hidden = false; this.el.resume.hidden = true; this.el.download.hidden = false;
   }
   transcriptionAvailability() {if(!this.capabilities?.transcriptionAvailable){this.el['final-status'].hidden=false;this.el['final-status'].dataset.state='unavailable';this.el['final-status'].textContent=config.development?'Transcription unavailable locally':'Transcription not configured';this.el['final-status'].title=this.capabilities?.transcriptionUnavailableReason || 'Server transcription is not configured.';}}
-  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=true;this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);}
+  showResult(text,state='processing') {this.el.result.hidden=false;const libraryStatus=document.getElementById('library-status');if(libraryStatus.dataset.empty==='true' && !libraryStatus.querySelector('.loading-state')) libraryStatus.hidden=true;this.el['result-name'].textContent=this.draft.sessionName;this.el['audio-status'].textContent=text;this.el['audio-status'].dataset.state=state;this.el['capture-warning'].hidden=true;this.el['capture-warning'].title=this.draft.captureWarnings.at(-1);if(this.section==='sessions')attachSessionCaptureResult(document.getElementById('library-list'));}
   schedulePoll() {clearTimeout(this.pollTimer);this.pollTimer=setTimeout(()=>void this.poll(),1000);}
   async poll() {
     if(!this.draft || !state.tokens) return;
@@ -4211,14 +4173,14 @@ class RoomRecorder {
         pending ||= result.jobs.some(job=>['SUBMITTED','RUNNING'].includes(job.status));
         if(mode==='live') {
           for(const job of result.jobs) if(job.status==='DONE' && !this.nodes.has(job.id)) {
-            this.el.live.hidden=false;this.viewLive.hidden=false;const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
+            this.el.live.hidden=false;this.liveStatus.textContent='Live transcript';const line=document.createElement('p'), time=document.createElement('small'), text=document.createElement('span');time.textContent='~'+timestamp(job.start);text.textContent=job.text;line.append(time,text);this.el['live-text'].append(line);this.nodes.set(job.id,line);
           }
           if(result.jobs.some(job=>job.status==='UNKNOWN')) this.say('Some live transcription outcomes are unknown. Audio is retained; paid requests will not be repeated automatically.',true);
         } else {
           const blocked=['FAILED','BLOCKED','DEFERRED'].includes(result.playback?.status) || result.jobs.some(job=>['UNKNOWN','FAILED'].includes(job.status));
           pending ||= !result.transcriptKey && !blocked;
           this.el['final-status'].hidden=false;this.el['final-status'].dataset.state=result.transcriptKey?'ready':blocked?'error':Date.now()-(this.processingStarted || Date.now())>120000?'waiting':'processing';this.el['final-status'].textContent=result.transcriptKey?'Transcript ready':blocked?'Transcription unavailable':Date.now()-(this.processingStarted || Date.now())>120000?'Audio saved · Transcription delayed':'Transcribing…';
-          if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}
+          if(result.transcriptKey) {this.el['final-link'].hidden=false;this.el['final-link'].href=`/games/${this.draft.gameId}/media?asset=${encodeURIComponent(result.transcriptKey)}`;}if(this.section==='sessions')attachSessionCaptureResult(document.getElementById('library-list'));
         }
       }
       if(this.recording || pending) this.pollTimer=setTimeout(()=>void this.poll(),5000);
@@ -4236,9 +4198,17 @@ roomCapture = new RoomRecorder();
 
 elements.characterBack.addEventListener("click", () => navigate(gamePath("characters")));
 elements.gameSelector.addEventListener("change", () => {
+  if(elements.gameSelector.value==='__create_game__') {
+    elements.gameSelector.value=state.gameId;window.PantherUI.syncGameSelector();openCreateGame();return;
+  }
   const section = location.pathname.endsWith("/media") ? "media" : elements.primaryNav.querySelector("[aria-current]")?.dataset.section || "dashboard";
   navigate(`/games/${encodeURIComponent(elements.gameSelector.value)}/${section}`);
 });
+
+function openCreateGame() {
+  window.PantherUI.openCreateGameDialog({onCreate:body=>api('/games',{}, {body}),onComplete:id=>{state.games=null;navigate(`/games/${encodeURIComponent(id)}/dashboard`);},onClose:()=>document.querySelector('#game-select-root button')?.focus()});
+}
+
 elements.modelLoad.addEventListener("click", loadCharacterModel);
 elements.modelReset.addEventListener("click", resetCharacterModel);
 document.getElementById("model-version").addEventListener("change", showSelectedArtwork);
@@ -4469,6 +4439,7 @@ setInterval(() => { if (!document.hidden) drawLive(); }, 5000);
 async function start() {
   if (!config?.apiUrl || !config?.clientId || !config?.cognitoDomain || !config?.redirectUri) {
     showWelcome("The media explorer is not configured yet.");
+    document.documentElement.removeAttribute("data-booting");
     return;
   }
   try {
@@ -4482,7 +4453,7 @@ async function start() {
     document.getElementById("page-loading").hidden = true;
     // Offline/5xx failures must not discard a valid remembered session or route.
     showWelcome(error.message);
-  }
+  } finally {document.documentElement.removeAttribute("data-booting");}
 }
 
 // Creation requests select immutable sources; subscription workers own every editorial stage.
@@ -4494,38 +4465,43 @@ async function restoreSceneVideoProgress(scene,host,gameId,epoch) {
     const matches=(result.jobs||[]).filter(job=>job.creation?.target==='video'&&job.creation.sceneRef?.episodeId===scene.episodeId&&job.creation.sceneRef?.sceneId===scene.id);
     matches.sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
     const exact=matches.find(job=>job.creation.sceneRef.revision===scene.revision),job=exact||matches[0];if(!job)return;
-    if(!exact){const note=document.createElement('p');note.textContent='Earlier scene version';host.append(note);}
-    const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label','Video progress');host.append(progress);await showEditorialProgress(job.jobId,progress,gameId,'video');
+    setSceneRenderLock(scene.id,['QUEUED','RUNNING'].includes(job.status));host.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label','Video progress');host.append(progress);await showEditorialProgress(job.jobId,progress,gameId,'video');
   }catch{/* A bounded page that cannot be read is not evidence that no generation exists. */}
 }
 
 function openSceneVideoComposer(scene, epoch, onSceneSaved) {
-  renderEditorialComposer('video', epoch, scene, onSceneSaved);
+  const host=scene.host,gameId=state.gameId,inputs=scene.generationInputs||{characterIds:scene.characterIds||[],sourceKeys:[],contextKeys:[]};
+  if(!host)return;
+  const active=()=>routeEpoch===epoch&&state.gameId===gameId&&host.isConnected;
+  const cast=document.createElement('p');cast.className='scene-cast-summary';cast.hidden=true;host.append(cast);
+  if(inputs.characterIds?.length)void api('/characters',{gameId}).then(result=>{if(!active())return;const names=new Map((result.characters||[]).map(item=>[item.characterId||item.id,item.name]));cast.textContent=inputs.characterIds.map(id=>names.get(id)).filter(Boolean).join(' · ');cast.hidden=!cast.textContent;});
+  const keys=[...new Set([scene.mapAssetKey,...(inputs.sourceKeys||[]),...(inputs.contextKeys||[])].filter(Boolean))];
+  if(keys.length){const sources=document.createElement('div');sources.className='scene-source-summary';const caption=document.createElement('span');caption.textContent='Sources';sources.append(caption);host.append(sources);for(const key of keys)void api('/object-url',{key}).then(result=>{if(!active())return;const title=result.metadata?.title||result.metadata?.sessionName||'Source';const link=assetLink({key,metadata:{title}},title);sources.append(link);if(key===scene.mapAssetKey&&result.url&&result.contentType?.startsWith('image/')){const image=document.createElement('img');image.alt=title;image.className='scene-source-image';image.src=result.url;link.prepend(image);}});}
+  const form=document.createElement('form'),generate=document.createElement('button'),status=document.createElement('p');generate.type='submit';generate.className='primary-button';generate.textContent='Generate';status.setAttribute('role','status');form.className='scene-generation-actions';form.append(generate,status);host.append(form);
+  form.onsubmit=async event=>{event.preventDefault();if(generate.disabled)return;generate.disabled=true;const prompt=scene.description?.trim()||scene.name;const body={gameId,episodeId:scene.episodeId,sceneId:scene.id,revision:scene.revision,prompt,characterIds:[...(inputs.characterIds||[])],sourceKeys:[...(inputs.sourceKeys||[])],contextKeys:[...(inputs.contextKeys||[])],operationId:crypto.randomUUID().replaceAll('-','')};
+    try{if(config.development===true)await openLocalGeneration('Scene video','/scene-renders',body,async job=>{if(!active())return;let saved=await api('/scenes',{gameId,episodeId:scene.episodeId,id:scene.id});if(saved.record&&saved.record.revision===(job.sceneRef?.revision||scene.revision)&&(job.outputKey||job.assetKey)){const latest=saved.record;saved=await api('/scenes',{},{body:{gameId,id:latest.id,episodeId:latest.episodeId,name:latest.name,description:latest.description||'',type:latest.type||'general',mapAssetKey:latest.mapAssetKey||null,selectedOutputKey:job.outputKey||job.assetKey,expectedRevision:latest.revision,operationId:crypto.randomUUID().replaceAll('-','')}});}if(saved.record)onSceneSaved(saved.record);const assets=await api('/assets',{gameId,section:'videos'});if(active())document.getElementById('episode-workspace')?.updateOutputs?.(assets.assets||[]);});else {const job=await api('/editorial-jobs',{},{body:{gameId,creation:{schemaVersion:2,target:'video',brief:prompt,characterIds:body.characterIds,sourceKeys:body.sourceKeys,contextKeys:body.contextKeys,sceneRef:{episodeId:scene.episodeId,sceneId:scene.id,revision:scene.revision}}}});if(active()){setSceneRenderLock(scene.id,true);const work=document.getElementById('scene-work-progress');await showEditorialProgress(job.jobId,work,gameId,'video');}}
+    }catch(error){if(active())status.textContent=error.status===409?'This scene changed. Reopen it before generating.':error.message;}finally{if(active()&&generate.dataset.renderLocked!=='true')generate.disabled=false;}
+  };
 }
+
+const transcriptSourceLists=new WeakMap();
 function transcriptSourceChoice(asset,destination,selected,updateSubmit,gameId,current) {
-  const row=document.createElement('div');row.className='editorial-source-choice';
-  const label=document.createElement('label'),input=document.createElement('input'),copy=document.createElement('span'),title=document.createElement('strong'),meta=document.createElement('span'),summary=document.createElement('span');
-  let name='Session';input.type='checkbox';input.value=asset.key;input.setAttribute('aria-label',name);title.textContent=name;copy.className='editorial-source-copy';meta.className='editorial-source-meta';copy.append(title,meta,summary);label.append(input,copy);row.append(label);
-  input.onchange=()=>{input.checked?selected.add(asset.key):selected.delete(asset.key);updateSubmit();};
-  let record=null,reviewSummary=null,reviewCaption=null,review=null,observedSessionName=null,summaryError='';
-  const humanTitle=value=>typeof value==='string'&&value.trim()&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
+  let list=transcriptSourceLists.get(destination);
+  if(!list||!list.host.isConnected){const host=document.createElement('div');host.className='transcript-source-picker';destination.append(host);list={host,items:[]};transcriptSourceLists.set(destination,list);}
+  if(list.items.some(item=>item.key===asset.key))return;
+  const item={key:asset.key,name:'Session',meta:'',summary:''};list.items.push(item);
+  let record=null,summaryError='';
+  const draw=()=>window.PantherUI.mountTranscriptSources(list.host,{items:list.items,selected:[...selected],onSelect:(key,checked)=>{checked?selected.add(key):selected.delete(key);updateSubmit();draw();}});
+  const humanTitle=value=>typeof value==='string'&&value.trim()&&value.trim().length<=80&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
   const render=()=>{
     const recordedAt=record?.recordedAt||asset.metadata?.recordedAt,date=recordedAt||asset.lastModified,timestamp=date?new Date(date):null;
     const formatted=timestamp&&!Number.isNaN(timestamp.valueOf())?timestamp.toLocaleString():null;
-    name=humanTitle(record?.summary?.title)||humanTitle(observedSessionName)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
-    title.textContent=name;input.setAttribute('aria-label',name);review?.setAttribute('aria-label',`Review ${name}`);if(reviewCaption?.isConnected)reviewCaption.textContent=name;
+    item.name=humanTitle(record?.summary?.title)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
     const participants=record?.participants||asset.transcript?.participants||[],characters=record?.characters||[];
-    meta.textContent=[formatted?`${recordedAt?'Recorded':'Uploaded'} ${formatted}`:null,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
-    summary.textContent=record?.summary?.summary||summaryError||(['QUEUED','GENERATING'].includes(record?.status)?'Preparing summary…':record?.status==='ATTENTION'?'Summary needs attention':'');if(reviewSummary?.isConnected)reviewSummary.textContent=summary.textContent;
+    item.meta=[formatted,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    item.summary=record?.summary?.summary||summaryError||(['QUEUED','GENERATING'].includes(record?.status)?'Preparing summary…':record?.status==='ATTENTION'?'Summary unavailable':'');draw();
   };render();
-  review=document.createElement('button');review.type='button';review.className='quiet-button editorial-source-review';review.textContent='Review';review.setAttribute('aria-label',`Review ${name}`);row.append(review);destination.append(row);
-  const load=async()=>{if(!current()||!row.isConnected||row.closest('form')?.hidden)return;try{const result=await api('/transcript-summaries',{gameId,key:asset.key});if(!current()||!row.isConnected)return;record=result;summaryError='';render();if(result.status==='MISSING'){record=await api('/transcript-summaries',{},{body:{gameId,key:asset.key}});if(current())render();}if(['QUEUED','GENERATING'].includes(record?.status))window.setTimeout(load,4000);}catch{summaryError='Summary unavailable';render();}};void load();
-  review.onclick=async()=>{
-    const dialog=document.createElement('dialog');dialog.className='transcript-source-review';const heading=document.createElement('header'),caption=document.createElement('h2'),close=document.createElement('button'),description=document.createElement('p'),regenerate=document.createElement('button'),speech=document.createElement('div'),status=document.createElement('p');caption.textContent=name;reviewCaption=caption;close.type='button';close.className='quiet-button';close.textContent='Close';close.onclick=()=>dialog.close();heading.append(caption,close);description.textContent=record?.summary?.summary||'';reviewSummary=description;regenerate.type='button';regenerate.className='quiet-button';regenerate.textContent='Regenerate summary';speech.className='source-utterances';status.setAttribute('role','status');dialog.append(heading,description,regenerate,status,speech);document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.showModal();
-    let pendingRegeneration=null;
-    regenerate.onclick=async()=>{regenerate.disabled=true;pendingRegeneration||={gameId,key:asset.key,operationId:crypto.randomUUID().replaceAll('-','')};try{record=await api('/transcript-summaries',{},{body:pendingRegeneration});pendingRegeneration=null;regenerate.textContent='Regenerate summary';if(!current()||!dialog.isConnected)return;render();description.textContent=record.summary?.summary||'';status.textContent=record.status==='READY'?'':'Summary queued';if(['QUEUED','GENERATING'].includes(record.status))window.setTimeout(load,4000);}catch(error){if(error.status===400)pendingRegeneration=null;status.textContent=error.message;regenerate.textContent='Retry summary';}finally{regenerate.disabled=false;}};
-    try{const detail=await api('/asset-document',{gameId,key:asset.key});if(!current()||!dialog.isConnected){dialog.close();return;}const doc=detail.document,transcript=doc?.payload?.transcript||doc;observedSessionName=transcript?.sessionName||doc?.sessionName;render();const players=new Map((transcript?.players||[]).map(person=>[person.id,person.name]));for(const segment of transcript?.segments||[]){const p=document.createElement('p'),speaker=document.createElement('strong');speaker.textContent=players.get(segment.playerId)||segment.playerId||'';if(speaker.textContent)p.append(speaker,document.createTextNode(': '));p.append(document.createTextNode(segment.text||''));speech.append(p);}if(!speech.children.length)status.textContent='Transcript text unavailable';}catch(error){status.textContent=error.message;}
-  };
+  const load=async()=>{if(!current()||!list.host.isConnected||list.host.closest('form')?.hidden)return;try{const result=await api('/transcript-summaries',{gameId,key:asset.key});if(!current()||!list.host.isConnected)return;record=result;summaryError='';render();if(result.status==='MISSING'){record=await api('/transcript-summaries',{},{body:{gameId,key:asset.key}});if(current())render();}if(['QUEUED','GENERATING'].includes(record?.status))window.setTimeout(load,4000);}catch{summaryError='Summary unavailable';if(current()&&list.host.isConnected)render();}};void load();
 }
 
 function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () => {}) {
@@ -4542,17 +4518,23 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     if(existing)void showEditorialProgress(existing.jobId,existing.progress,gameId,target);
     return;
   }
-  if(target==='novel')parent.querySelector('.explorer-heading > button[data-generation-action]')?.remove();
+  if(target==='novel'){parent.querySelector('.novel-heading-actions')?.remove();for(const action of parent.querySelectorAll('.explorer-heading [data-generation-action],.explorer-heading [data-create-action]'))action.remove();}
   host.dataset.key=key;host.replaceChildren();
   const current=()=>state.gameId===gameId&&host.dataset.key===key&&host.isConnected;
-  const open=document.createElement('button');open.type='button';open.className='primary-button';open.dataset.generationAction='true';open.textContent=target==='novel'?'Generate chapter':'Generate video';host.append(open);if(target==='novel')parent.querySelector('.explorer-heading').append(open);
-  const panel=document.createElement('div');panel.className='editorial-creation-panel';panel.hidden=true;host.append(panel);
+  const open=document.createElement('button');open.type='button';open.className='primary-button';open.dataset.generationAction='true';open.textContent=target==='novel'?'Generate Chapter':'Generate video';host.append(open);if(target==='novel'){const create=document.createElement('button');create.type='button';create.className='quiet-button';create.dataset.createAction='true';create.dataset.buttonVariant='outline';create.textContent='Create Chapter';create.onclick=()=>manualChapterEditor();const actions=document.createElement('div');actions.className='novel-heading-actions';actions.append(create,open);parent.querySelector('.explorer-heading').append(actions);}
+  const panel=target==='novel'?window.PantherUI.createDialog():document.createElement('div');panel.className='editorial-creation-panel';panel.hidden=true;if(target==='novel'){panel.classList.add('novel-composer-dialog');panel.setAttribute('aria-label','Generate Chapter');panel.addEventListener('close',()=>{panel.hidden=true;open.hidden=false;syncNovelEmptyState();const focusTarget=open.hidden?document.querySelector('#novel-empty-state .primary-button'):open;if(focusTarget?.isConnected)focusTarget.focus({preventScroll:true});});}host.append(panel);
   const projects=document.createElement('div');projects.className='editorial-existing-projects';host.append(projects);
+  const showNovelJob=job=>{
+    if(projects.querySelector(`[data-job-id="${job.jobId}"]`))return;
+    const card=document.createElement('article');card.className='novel-job-card novel-job-background';card.dataset.jobId=job.jobId;
+    const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label','Chapter progress');card.append(progress);projects.append(card);syncNovelEmptyState();void showEditorialProgress(job.jobId,progress,gameId,target);
+  };
   const loadProjects=async(cursor)=>{
     try {const result=await api('/editorial-jobs',{gameId,cursor});if(!current())return;
       for(const job of result.jobs||[])if(!job.creation||job.creation.target===target){
+        if(target==='novel'){if(job.status!=='NOVEL_READY'||!job.chapterId)showNovelJob(job);continue;}
         const button=document.createElement('button');button.type='button';button.className='quiet-button';button.textContent=job.creation?.title||`Session ${job.sessionId||'adaptation'} · automatic`;
-        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});if(target==='novel')syncNovelEmptyState();void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
+        button.onclick=()=>{panel.hidden=false;panel.dataset.project='true';panel.replaceChildren();const progress=document.createElement('section');progress.className='editorial-project-progress';panel.append(progress);editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);};projects.append(button);
       }
       if(result.cursor){const more=document.createElement('button');more.type='button';more.className='text-link-button';more.textContent='More projects';more.onclick=()=>{more.remove();void loadProjects(result.cursor);};projects.append(more);}
     }catch{/* Creation remains available if the optional project list is unavailable. */}
@@ -4560,7 +4542,7 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
   if(target==='novel')void loadProjects();
   open.onclick=async()=>{
     if(panel.dataset.project==='true'){panel.replaceChildren();panel.dataset.project='false';panel.hidden=true;}
-    panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
+    if(target==='novel'){panel.hidden=false;if(!panel.open)panel.showModal();}else panel.hidden=!panel.hidden;open.setAttribute('aria-expanded',String(!panel.hidden));
     if(target==='novel'){open.hidden=!panel.hidden;syncNovelEmptyState();}
     if(panel.hidden||panel.childNodes.length)return;
     const form=document.createElement('form'), fields=document.createElement('div'), status=document.createElement('p');status.setAttribute('role','status');
@@ -4575,26 +4557,22 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
     castLegend.textContent='Characters';castOptions.className='editorial-cast-options';castPreview.className='editorial-cast-preview';castPreview.setAttribute('aria-live','polite');cast.append(castLegend,castOptions,castPreview);
     const sources=document.createElement('fieldset'), legend=document.createElement('legend');legend.textContent='Transcripts';sources.append(legend);
     const referenceContents=document.createElement('div'), contexts=document.createElement('div'), referenceStatus=document.createElement('p'); referenceStatus.setAttribute('role','status'); referenceContents.append(referenceStatus,isVideo?sources:contexts);
-    const referencePicker=optionalInfoDialog(isVideo?'Choose sources':'Add context', referenceContents);
+    const referencePicker=optionalInfoDialog(isVideo?'Choose sources':'Assets', referenceContents);
     const references=referencePicker.host;
-    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=isVideo?'Generate':'Generate chapter';submit.disabled=true;
-    const note=document.createElement('small');note.className='editorial-generation-note';note.textContent='Prepares prompts and a video plan. Rendering requires approval.';
+    const submit=document.createElement('button');submit.type='submit';submit.className='primary-button';submit.textContent=isVideo?'Generate':'Generate Chapter';submit.disabled=true;
+    const note=document.createElement('small');note.className='editorial-generation-note';note.textContent=config.development?'':'Prepares prompts and a video plan. Rendering requires approval.';note.hidden=Boolean(config.development);
     const map=isMap?sceneMapPicker(gameId,scene.mapAssetKey,current,()=>updateSubmit()):null;
     if(isMap)referenceContents.insertBefore(cast,sources);
-    if(isVideo){const actions=document.createElement('div');actions.className='scene-generation-actions';actions.append(references,submit);form.append(fields,...(map?[map.host]:[]),...(isMap?[]:[cast]),actions,note,status);}else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.hidden=true;open.hidden=false;open.setAttribute('aria-expanded','false');syncNovelEmptyState();};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(submit,cancel);form.append(fields,sources,references,actions,status);}
-    if (!isVideo) {
-      const write = document.createElement('button'); write.type = 'button'; write.className = 'text-link-button'; write.textContent = 'Write manually';
-      write.onclick = () => manualChapterEditor(); form.append(write);
-    }
-    panel.append(form);if(target==='novel')syncNovelEmptyState();
-    const updateSubmit=()=>{submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
+    if(isVideo){const actions=document.createElement('div');actions.className='scene-generation-actions';actions.append(references,submit);form.append(fields,...(map?[map.host]:[]),...(isMap?[]:[cast]),actions,note,status);}else {const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-button';cancel.textContent='Cancel';cancel.onclick=()=>{panel.close();open.hidden=false;open.setAttribute('aria-expanded','false');syncNovelEmptyState();};const actions=document.createElement('div');actions.className='editorial-form-actions';actions.append(cancel,submit);const caption=document.createElement('h2');caption.textContent='Generate Chapter';const hint=document.createElement('p');hint.className='novel-compose-hint';hint.textContent='Write the story you want. Add sessions for source material.';form.append(caption,hint,fields,sources,references,actions,status);}
+    panel.append(form);if(target==='novel'){syncNovelEmptyState();brief.focus();}
+    const updateSubmit=()=>{if(submit.dataset.renderLocked==='true'){submit.disabled=true;return;}submit.disabled=isVideo?!brief.value.trim()||Boolean(map&&!map.value()):!brief.value.trim();};brief.addEventListener('input',updateSubmit);if(map)map.start();
     const choices=(assets,destination,set)=>{for(const asset of assets){if(!isVideo&&destination===sources){transcriptSourceChoice(asset,destination,set,updateSubmit,gameId,current);continue;}const label=document.createElement('label'), input=document.createElement('input'), text=document.createElement('span');input.type='checkbox';input.value=asset.key;text.textContent=asset.metadata?.title||asset.name||asset.key.split('/').at(-1);input.onchange=()=>{input.checked?set.add(asset.key):set.delete(asset.key);updateSubmit();};label.className='editorial-source-choice';label.append(input,text);destination.append(label);}};
     const page=async(section,destination,set,predicate,cursor)=>{
       showLoading(status,'Loading sources…');if(referencePicker.dialog.open)showLoading(referenceStatus,'Loading sources…');
       try{const result=await api('/assets',{gameId,section,cursor});if(!current())return;
         choices(result.assets.filter(predicate),destination,set);status.textContent='';referenceStatus.textContent='';
         if(result.cursor){const more=document.createElement('button');more.type='button';more.className='quiet-button';more.textContent='Load more';more.onclick=()=>{more.remove();void page(section,destination,set,predicate,result.cursor);};destination.append(more);}
-        if(!destination.querySelector('label')){const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No context sources yet.';destination.append(empty);}
+        if(!destination.querySelector('label,[role=checkbox]')){if(target==='novel'&&section==='transcripts'){destination.hidden=true;}else{const empty=document.createElement('p');empty.textContent=section==='transcripts'?'No completed transcripts yet.':'No supporting documents yet.';destination.append(empty);}}
       }catch(error){if(current()){status.textContent=error.message;referenceStatus.textContent=error.message;}}
     };
     const loadCast=async(cursor)=>{
@@ -4624,8 +4602,14 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
           const saved=await api('/scenes',{},{body:pendingMap});if(!current())return;scene=saved.record;pendingMap=null;onSceneSaved(scene);
         }
         const creation=isVideo?{schemaVersion:2,target,brief:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision}}:{schemaVersion:3,target,brief:brief.value.trim(),sourceKeys:[...selected],contextKeys:[...selectedContext]};
+        if(isVideo&&config.development===true){
+          await openLocalGeneration('Scene video','/scene-renders',{gameId,episodeId:scene.episodeId,sceneId:scene.sceneId||scene.id,revision:scene.revision,prompt:brief.value.trim(),characterIds:[...selectedCharacters],sourceKeys:[...selected],contextKeys:[...selectedContext],operationId:crypto.randomUUID().replaceAll('-','')},async job=>{
+            if(!current())return;let saved=await api('/scenes',{gameId,episodeId:scene.episodeId,id:scene.id});if(saved.record&&saved.record.revision===(job.sceneRef?.revision||scene.revision)&&(job.outputKey||job.assetKey)){const latest=saved.record;saved=await api('/scenes',{},{body:{gameId,id:latest.id,episodeId:latest.episodeId,name:latest.name,description:latest.description||'',type:latest.type||'general',mapAssetKey:latest.mapAssetKey||null,selectedOutputKey:job.outputKey||job.assetKey,expectedRevision:latest.revision,operationId:crypto.randomUUID().replaceAll('-','')}});}if(saved.record){scene=saved.record;onSceneSaved(scene);}const assets=await api('/assets',{gameId,section:'videos'});document.getElementById('episode-workspace')?.updateOutputs?.(assets.assets||[]);
+          });
+          if(current()){for(const control of controls)control.disabled=false;status.textContent='';updateSubmit();}return;
+        }
         const job=await api('/editorial-jobs',{}, {body:{gameId,creation}});
-        if(!current())return;form.hidden=true;status.textContent='';panel.dataset.project='true';open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
+        if(!current())return;if(target==='novel'){panel.close();panel.replaceChildren();showNovelJob({...job,creation});return;}form.hidden=true;status.textContent='';panel.dataset.project='true';open.hidden=true;if(isVideo)document.getElementById('scene-work-progress')?.replaceChildren();
         const progress=document.createElement('section');progress.className='editorial-project-progress';progress.setAttribute('aria-label',isVideo?'Video progress':'Chapter progress');panel.append(progress);if(target==='novel')syncNovelEmptyState();
         editorialComposers.set(key,{jobId:job.jobId,progress});void showEditorialProgress(job.jobId,progress,gameId,target);
       }catch(error){if(current()){status.textContent=error.status===409?'This scene changed. Reopen it before generating.':error.message;if(error.status===400)pendingMap=null;for(const control of controls)control.disabled=false;if(map&&pendingMap)map.select.disabled=true;updateSubmit();if(error.status===409)submit.disabled=true;}}
@@ -4636,36 +4620,30 @@ function renderEditorialComposer(target, epoch, scene = null, onSceneSaved = () 
 
 async function showEditorialProgress(jobId, host, gameId, target) {
   clearTimeout(editorialPolls.get(host));
-  if(state.gameId!==gameId||host.closest('[hidden]')||!host.isConnected)return;
+  if(state.gameId!==gameId||(target!=='novel'&&host.closest('[hidden]'))||!host.isConnected)return;
   try {
-    const result=await api('/editorial-jobs',{jobId});if(state.gameId!==gameId||!host.isConnected)return;
+    const result=await api('/editorial-jobs',{gameId,jobId});if(state.gameId!==gameId||!host.isConnected)return;
     if(!result.job)throw new Error('The generation job could not be found.');
     if(target==='novel'){const create=document.querySelector('#novel .explorer-heading [data-generation-action]');if(create)create.hidden=false;}
-    const heading=document.createElement('h2'), copy=document.createElement('p'), stages=document.createElement('ol');
-    heading.textContent=result.job.creation?.title||(result.job.sessionId?`Session ${result.job.sessionId} · automatic`:(target==='video'?'Video':'Chapter'));
-    const tasks=result.tasks || [], failed=['FAILED','BLOCKED','ATTENTION','DEFERRED'].includes(result.job.status);
-    const terminal=failed||['NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status);
-    const running=tasks.some(task=>task.status==='RUNNING')||result.job.status==='RUNNING';
-    const finished=tasks.filter(task=>task.status==='DONE').length;
-    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':failed?(result.job.status==='FAILED'?'Generation failed':'Generation unavailable'):running?'Generating…':'Waiting for worker';
-    host.replaceChildren(heading,copy);if(target==='novel')syncNovelEmptyState();
-    if (failed) {
-      const error=document.createElement('p');error.className='error-text';error.setAttribute('role','alert');
-      error.textContent=result.job.message || result.job.error || tasks.find(task=>task.status==='FAILED')?.error || 'Generation stopped before completion.';host.append(error);
-      if(target==='novel' && config.development){const write=document.createElement('button');write.type='button';write.className='quiet-button';write.textContent='Write manually';write.onclick=()=>manualChapterEditor();host.append(write);}
-    } else if(!terminal && (tasks.length || running)) {
-      const progress=document.createElement('progress');progress.className='editorial-stage-progress';progress.setAttribute('aria-label','Generation stages');progress.max=1;
-      if(!running)progress.value=0;
-      host.append(progress);
-      const count=document.createElement('small');count.textContent=finished?`${finished} steps complete`:running?'Working on the current step':'Waiting for the next step';host.append(count);
-    } else if(!terminal) {
-      const waiting=document.createElement('p');waiting.className='muted';waiting.textContent='Generation starts when the processing worker is available.';host.append(waiting);
-    }
-    if(tasks.length){const activity=document.createElement('section'), heading=document.createElement('h3');heading.textContent='Stages';activity.dataset.section='stages';activity.append(heading,stages);host.append(activity);}
-    if(result.job.creation?.brief){const inputs=document.createElement('section'),label=document.createElement('h3'),prompt=document.createElement('p');label.textContent='Prompt';inputs.dataset.section='prompt';prompt.textContent=result.job.creation.brief;inputs.append(label,prompt);host.append(inputs);}
+    const copy=document.createElement('p'),tasks=result.tasks||[],failed=['FAILED','BLOCKED','ATTENTION','DEFERRED'].includes(result.job.status);
+    const terminal=failed||['NOVEL_READY','READY_FOR_VIDEO_DISCUSSION'].includes(result.job.status),running=tasks.some(task=>task.status==='RUNNING')||result.job.status==='RUNNING';if(target==='video'&&result.job.creation?.sceneRef)setSceneRenderLock(result.job.creation.sceneRef.sceneId,!terminal);
+    const finished=Number.isInteger(result.job.progress?.completedStages)?result.job.progress.completedStages:tasks.filter(task=>task.status==='DONE').length;
+    const total=Number.isInteger(result.job.progress?.totalStages)?result.job.progress.totalStages:tasks.length;
+    const stageName=stage=>stage.replace(/^(novel|video)-/,'').replaceAll('-',' ').replace(/^./,letter=>letter.toUpperCase());
+    copy.textContent=result.job.status==='NOVEL_READY'?'Chapter ready':result.job.status==='READY_FOR_VIDEO_DISCUSSION'?'Video plan ready':failed?(result.job.status==='FAILED'?'Generation failed':'Generation unavailable'):running?'Generating…':'Waiting to start';
+    copy.className='editorial-progress-state';host.replaceChildren();
+    if(target!=='video'&&result.job.creation?.brief){const prompt=document.createElement('p');prompt.dataset.section='prompt';prompt.className='editorial-progress-prompt';const italic=document.createElement('em');italic.textContent=result.job.creation.brief;prompt.append(italic);host.append(prompt);}
+    host.append(copy);if(host.jobStateLabel){host.jobStateLabel.textContent=copy.textContent;host.jobStateLabel.dataset.active=String(!terminal);}if(target==='novel')syncNovelEmptyState();
+    if(total>0&&total<=100&&finished>=0&&finished<=total){
+      const track=document.createElement('div');track.className='editorial-stage-track';track.setAttribute('role','progressbar');track.setAttribute('aria-label','Generation stages');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax',String(total));track.setAttribute('aria-valuenow',String(finished));
+      for(let i=0;i<total;i++){const segment=document.createElement('span');segment.dataset.state=i<finished?'done':i===finished&&running?'active':'pending';track.append(segment);}host.append(track);
+      const count=document.createElement('p');count.className='editorial-stage-caption';const currentStage=tasks.find(task=>task.status==='RUNNING')?.stage||result.job.currentStage;count.textContent=[currentStage?stageName(currentStage):null,`${finished} of ${total} steps complete`].filter(Boolean).join(' · ');host.append(count);
+    }else if(!terminal){const progress=document.createElement('progress');progress.className='editorial-stage-progress';progress.setAttribute('aria-label','Generation stages');host.append(progress);}
+    if(failed){const error=document.createElement('p');error.className='error-text';error.setAttribute('role','alert');error.textContent=`${target==='novel'?'Chapter':'Video'} generation could not finish. Your prompt and sources are saved.`;host.append(error);}
+    const outputs=tasks.filter(task=>task.status==='DONE'&&sameGameKey(task.output?.key));
+    if(outputs.length){const section=document.createElement('section'),label=document.createElement('h3'),list=document.createElement('div');section.dataset.section='outputs';label.textContent='Outputs';list.className='editorial-output-list';
+      for(const task of outputs){const button=document.createElement('button');button.type='button';button.className='quiet-button editorial-output-button';button.dataset.outputKey=task.output.key;button.setAttribute('aria-label',`View ${stageName(task.stage)}`);const icon=document.createElement('span');icon.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 2H6v20h12V6zM14 2v5h5M9 11h6M9 15h6"/></svg>';button.append(icon,document.createTextNode(stageName(task.stage)));button.onclick=()=>void previewFile({key:task.output.key,name:stageName(task.stage)},{preserveDialog:true,returnFocus:()=>[...host.querySelectorAll('[data-output-key]')].find(item=>item.dataset.outputKey===task.output.key)});list.append(button);}section.append(label,list);host.append(section);}
     if(target==='video'&&result.job.status==='READY_FOR_VIDEO_DISCUSSION'){const note=document.createElement('p');note.className='editorial-generation-note';note.textContent='Prompts prepared. Rendering requires approval.';host.append(note);}
-    for(const task of tasks){const item=document.createElement('li');item.textContent=task.stage.replace(/^(novel|video)-/,'').replaceAll('-',' ')+' · '+({DONE:'Ready',RUNNING:'Working',QUEUED:'Queued',FAILED:'Failed'}[task.status]||task.status);
-      if(task.status==='DONE'&&task.output?.key){const link=document.createElement('a');link.textContent='View';link.href=`/games/${gameId}/media?asset=${encodeURIComponent(task.output.key)}`;item.append(' ',link);}stages.append(item);}
     if(target==='video'&&result.tasks.some(t=>t.stage==='video-storyboards'&&t.status==='DONE')) {
       const task=result.tasks.find(t=>t.stage==='video-storyboards');
       const link=await api('/object-url',{key:task.output.key});const response=await fetch(link.url);if(!response.ok)throw new Error('Storyboard unavailable');
@@ -4681,6 +4659,7 @@ async function showEditorialProgress(jobId, host, gameId, target) {
       const grid=document.createElement('div');grid.className='editorial-storyboard-grid';
       for(const shot of artifact.payload?.shots||artifact.payload?.review?.shots||[]){const card=document.createElement('article'), title=document.createElement('h3'), description=document.createElement('p');title.textContent=shot.shotId;description.textContent=shot.description;card.append(title,description);grid.append(card);}host.append(grid);
     }
+    if(target==='novel'&&result.job.status==='NOVEL_READY'&&result.job.chapterId){const read=novelLink('Read chapter',result.job.chapterId);read.className='primary-button';read.addEventListener('click',()=>host.jobDialog?.close());host.append(read);if(!host.dataset.libraryUpdated){host.dataset.libraryUpdated='true';host.closest('.novel-job-card')?.remove();syncNovelEmptyState();await window.PantherUI.invalidate(apiScope(),['/novel','/novel-chapter','/dashboard-recent'],gameId);novel.list.replaceChildren();void loadNovel(null,routeEpoch);}}
     if(!terminal)editorialPolls.set(host,setTimeout(()=>void showEditorialProgress(jobId,host,gameId,target),5000));
   } catch(error) {if(host.isConnected&&state.gameId===gameId){host.textContent=error.message;editorialPolls.set(host,setTimeout(()=>void showEditorialProgress(jobId,host,gameId,target),15000));}}
 }
@@ -4693,7 +4672,6 @@ function closeAccountSettings() {
   accountSettingsEpoch += 1;
   document.getElementById("account-page").hidden = true;
   document.getElementById("account-settings-body").replaceChildren();
-  document.getElementById("account-section-nav").replaceChildren();
   document.getElementById("account-settings-button").removeAttribute("aria-current");
 }
 
@@ -4727,8 +4705,6 @@ function accountSection(host, title, description) {
   section.className="account-section";
   section.id="account-"+title.toLowerCase().replace(/[^a-z0-9]+/g,"-");
   heading.textContent=title; copy.textContent=description; section.append(heading,copy); host.append(section);
-  const link=document.createElement("a"); link.href="#"+section.id; link.textContent=title;
-  document.getElementById("account-section-nav").append(link);
   return section;
 }
 
@@ -4768,6 +4744,7 @@ async function openAccountSettings(recovery=false) {
   elements.primaryNav.hidden=true;
   elements.gameToolbar.hidden=true;
   panel.hidden=false;
+  elements.logout.hidden=recovery;
   document.getElementById("account-settings-title").textContent=recovery?"Password recovery":"Account";
   document.getElementById("account-page-subtitle").textContent=recovery?"Get back into your account.":"Manage your profile and security.";
   document.getElementById("account-settings-back").textContent=recovery?"Back to sign in":"Back to game";
@@ -4911,158 +4888,46 @@ document.getElementById("account-settings-back").addEventListener("click",leaveA
 // A single bounded projection feeds both overview and detail; no source-storage
 // enumeration or worker invocation happens while browsing the Workshop.
 const workshop = (() => {
-  const host=document.getElementById("workshop"), list=document.getElementById("workshop-list"), detail=document.getElementById("workshop-detail");
-  const health=document.getElementById("workshop-health"), more=document.getElementById("workshop-more"), filters=document.getElementById("workshop-filters");
-  const labels={"session-finalization":"Session finalization",editorial:"Story & screen planning",model:"3D modeling",playback:"Audio assembly",transcription:"Transcription","video-production":"Video finishing","video-generation":"Video generation"};
-  let timer=null, controller=null, rows=[], cursor=null, filter="all", epoch=0, game=null, busy=false, selected=null, loadedCursors=[], generation=0;
-  const groupOpen=new Map();let graphObserver=null;
-  function node(tag,text,className) {const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element;}
-  function observation(job,stage) {
-    const now=Date.now()/1000;
-    if(job.status==="failed") return {status:"failed",label:"Needs attention",live:false};
-    if(stage?.notBefore>now) return {status:"paused",label:`Deferred until ${new Date(stage.notBefore*1000).toLocaleString()}`,live:false};
-    if(stage?.status==="running" && stage.leaseUntil && stage.leaseUntil<=now) return {status:"paused",label:"Worker check-in overdue",live:false};
-    if(job.source==="local-worker" && job.status==="running" && now-job.reportedAt>180) return {status:"paused",label:"Local worker signal lost",live:false};
-    const state=stage?.status || job.status;
-    const live=state==="running" && (stage?.leaseUntil>now || now-(job.reportedAt || job.observedAt)<180);
-    return {status:state,label:({queued:"Waiting for a worker",pending:"Not started",running:live?"Working now":"Running · activity unconfirmed",done:"Complete",paused:"Paused",failed:"Needs attention",unknown:"Status uncertain"})[state] || "Status uncertain",live};
-  }
-  function lead(job) {return (job.activeStages || []).find(s=>s.status==="running") || (job.activeStages || [])[0];}
-  function worker(kind,live) {
-    const scene=node("div",undefined,`pixel-scene ${live?"is-working":"is-resting"}`);scene.setAttribute("aria-hidden","true");scene.dataset.kind=kind;
-    scene.append(node("span",undefined,"pixel-star"),node("span",undefined,"pixel-cat"),node("span",undefined,"pixel-tool"),node("span",undefined,"pixel-desk"));return scene;
-  }
-  function badge(view) {const span=node("span",view.label,"workshop-badge");span.dataset.state=view.status;return span;}
-  function meter(job) {
-    const block=node("div",undefined,"workshop-progress"), count=node("span",`${job.completedStages} of ${job.totalStages} stages complete`);
-    const progress=document.createElement("progress");progress.max=Math.max(1,job.totalStages);progress.value=job.completedStages;progress.setAttribute("aria-label",`${job.title}: completed stages`);block.append(progress,count);return block;
-  }
-  function matches(job) {const state=observation(job,lead(job)).status;return filter==="all" || (filter==="working"?state==="running":filter==="waiting"?["queued","paused","pending"].includes(state):filter==="done"?state==="done":["failed","unknown"].includes(state));}
-  function row(job) {
-    const stage=lead(job), view=observation(job,stage), link=node("a",undefined,"workshop-card");
-    link.href=gamePath("workflows")+"?workflow="+encodeURIComponent(job.id);
-    link.addEventListener("click",event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname+link.search);});
-    const text=node("div",undefined,"workshop-card-copy");text.append(node("p",`Run · ${new Date(job.createdAt*1000).toLocaleDateString()}`,"workshop-kind"),node("h3",job.title),badge(view),node("p",stage?.label || (job.status==="done"?"All reported stages finished":"Awaiting the first stage"),"workshop-current"),meter(job));
-    link.append(worker(job.kind,view.live),text,node("span","↗","workshop-go"));return link;
-  }
-  function drawList() {
-    list.replaceChildren();const visible=[...rows].sort((a,b)=>b.createdAt-a.createdAt).filter(matches);
-    for(const [kind,label] of Object.entries(labels)) {
-      const runs=visible.filter(job=>job.kind===kind), all=rows.filter(job=>job.kind===kind);
-      const group=node("section",undefined,"workshop-group");group.dataset.kind=kind;
-      const heading=node("header"), copy=node("div"), active=all.filter(job=>observation(job,lead(job)).live).length;
-      copy.append(node("h2",label),node("p",`${all.length} loaded run${all.length===1?"":"s"}${active?` · ${active} working now`:""}${cursor?" · history continues":""}`));
-      heading.append(worker(kind,active>0),copy);
-      const contents=node("div",undefined,"workshop-group-runs");
-      if(runs.length)contents.append(...runs.map(row));
-      else contents.append(node("p",all.length?"No loaded runs match this filter.":cursor?"No runs loaded for this type yet. Load more history below.":"No reported runs for this type yet.","workshop-group-empty"));
-      group.append(heading,contents);list.append(group);
-    }
-    const summary=document.getElementById("workshop-summary");summary.replaceChildren();
-    for(const [title,states] of [["Working",["running"]],["Waiting",["queued","pending","paused"]],["Finished",["done"]],["Needs attention",["failed","unknown"]]]) {
-      const panel=node("div");panel.append(node("strong",String(rows.filter(j=>states.includes(observation(j,lead(j)).status)).length)),node("span",title));summary.append(panel);
-    }
-    document.getElementById("workshop-intro").textContent=`Browse by workflow type, then choose a run. ${rows.length} loaded runs${cursor?" · more history available":""}.`;
-    more.hidden=!cursor;more.disabled=busy;
-  }
-  function drawDetail(job) {
-    const focusedStage=detail.contains(document.activeElement)?document.activeElement.closest("[data-stage]")?.dataset.stage:null;
-    document.getElementById("workshop-intro").textContent="Follow this workflow’s reported stages.";
-    detail.replaceChildren();const back=node("a","← All workflows","workshop-back");back.href=gamePath("workflows");back.addEventListener("click",event=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(back.pathname);});
-    const stage=lead(job), view=observation(job,stage), hero=node("div",undefined,"workshop-detail-hero");
-    const text=node("div");text.append(node("p",labels[job.kind],"workshop-kind"),node("h2",job.title),badge(view),meter(job),node("p",job.note,"workshop-note"));hero.append(worker(job.kind,view.live),text);
-    const facts=node("dl",undefined,"workshop-facts");
-    for(const [name,value] of [["Source",job.source==="local-worker"?"Local laptop worker":"Durable Panther job"],["Workflow version",job.workflowVersion || "Not reported"],["Session",job.sessionId || "Not reported"],["Last observed",new Date((job.reportedAt || job.observedAt)*1000).toLocaleString()],["Source status",job.sourceStatus || job.status]]) {facts.append(node("dt",name),node("dd",String(value)));}
-    graphObserver?.disconnect();
-    const chart=node("div",undefined,"workshop-flowchart");chart.setAttribute("aria-label","Workflow step flowchart");
-    const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("workshop-flow-lines");svg.setAttribute("aria-hidden","true");chart.append(svg);
-    const nodes=new Map(), topology=job.flow;
-    for(const [index,part] of job.stages.entries()) {
-      const state=part.status==="done"?{status:"done",label:"Complete",live:false}:part.status==="pending"?{status:"pending",label:"Not started",live:false}:observation(job,part);
-      const item=node("li");item.dataset.state=state.status;const copy=node("div");copy.append(node("h3",part.label),badge(state));
-      const parents=(topology?.edges || []).filter(edge=>edge.to===part.id).map(edge=>job.stages.find(s=>s.id===edge.from)?.label).filter(Boolean);
-      copy.append(node("span",parents.length?`Depends on: ${parents.join(", ")}.`:"No preceding step in this chart.","sr-only"));
-      if(part.attempts) copy.append(node("p",`Attempt ${part.attempts}`));
-      if(part.outputKey && sameGameKey(part.outputKey)) {const output=node("button","View stage artifact","quiet-button");output.type="button";output.addEventListener("click",()=>previewFile({key:part.outputKey,name:part.outputKey.split("/").at(-1)}));copy.append(output);}
-      item.append(node("span",part.status==="done"?"✓":String(index+1).padStart(2,"0"),"workshop-step-number"),copy);
-      if(state.live)item.append(worker(job.kind,true));item.dataset.stage=part.id;nodes.set(part.id,item);
-    }
-    if(!topology || topology.schemaVersion!==1 || !topology.lanes?.length) {
-      detail.append(back,hero,facts,node("p","Step topology unavailable. Check progress to retry.","workshop-note"));return;
-    }
-    chart.dataset.mode=topology.mode;
-    for(const lane of topology.lanes) {
-      const column=node("section",undefined,"workshop-flow-lane");column.dataset.lane=lane.id;
-      column.append(node("h3",lane.label,"workshop-lane-label"));const steps=node("ol",undefined,"workshop-stages");
-      for(const id of lane.stageIds)if(nodes.has(id))steps.append(nodes.get(id));column.append(steps);chart.append(column);
-    }
-    const legend=node("p","✓ Complete · animated worker: confirmed activity · muted node: not started","workshop-note");
-    detail.append(back,hero,node("h2","Step flowchart","workshop-trail-heading"),node("p",topology.note,"workshop-note"),legend,chart,facts,node("p",`Run ${job.id}`,"workshop-run-id"));
-    if(focusedStage)nodes.get(focusedStage)?.querySelector("button")?.focus({preventScroll:true});
-    function connectors() {
-      if(!chart.isConnected || host.hidden)return;
-      svg.replaceChildren();const bounds=chart.getBoundingClientRect();svg.setAttribute("viewBox",`0 0 ${bounds.width} ${bounds.height}`);
-      for(const edge of topology.edges) {
-        const from=nodes.get(edge.from), to=nodes.get(edge.to);if(!from || !to)continue;
-        const a=from.getBoundingClientRect(), b=to.getBoundingClientRect();
-        const x=a.left+a.width/2-bounds.left,y=a.bottom-bounds.top,xx=b.left+b.width/2-bounds.left,yy=b.top-bounds.top;
-        const line=document.createElementNS(svg.namespaceURI,"path"), arrow=document.createElementNS(svg.namespaceURI,"path");
-        if(topology.mode==="independent") {
-          const right=bounds.width-5, ay=a.top+a.height/2-bounds.top, by=b.top+b.height/2-bounds.top, end=b.right-bounds.left+7;
-          line.setAttribute("d",`M ${a.right-bounds.left} ${ay} H ${right} V ${by} H ${end}`);
-          arrow.setAttribute("d",`M ${end+5} ${by-4} L ${end} ${by} L ${end+5} ${by+4}`);
-        } else if(innerWidth<=600 && from.closest(".workshop-flow-lane")!==to.closest(".workshop-flow-lane")) {
-          line.setAttribute("d",`M ${a.left-bounds.left} ${a.top+a.height/2-bounds.top} H 5 V ${yy-20} H ${xx} V ${yy-7}`);
-          arrow.setAttribute("d",`M ${xx-4} ${yy-12} L ${xx} ${yy-7} L ${xx+4} ${yy-12}`);
-        } else {
-          const middle=y+(yy-y)/2;line.setAttribute("d",`M ${x} ${y} V ${middle} H ${xx} V ${yy-7}`);
-          arrow.setAttribute("d",`M ${xx-4} ${yy-12} L ${xx} ${yy-7} L ${xx+4} ${yy-12}`);
-        }
-        svg.append(line,arrow);
-      }
-    }
-    graphObserver=new ResizeObserver(connectors);graphObserver.observe(chart);requestAnimationFrame(connectors);
-  }
-  async function refresh(append=false) {
-    if(busy || document.hidden || host.hidden || epoch!==routeEpoch || state.gameId!==game)return;
-    busy=true;document.getElementById("workshop-refresh").disabled=true;more.disabled=true;
-    controller=new AbortController();const request=controller, version=generation;
-    const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]);
-    const focused=document.activeElement?.closest(".workshop-card")?.getAttribute("href");
-    try {
-      if(selected) {
-        const result=await api("/workflows",{gameId:game,id:selected},{signal});
-        if(version!==generation || epoch!==routeEpoch || host.hidden)return;drawDetail(result.workflow);
-      } else {
-        const starts=append?[cursor]:loadedCursors.length?loadedCursors:[null];const collected=append?[...rows]:[];
-        let next=null;
-        for(const start of starts) {
-          const result=await api("/workflows",{gameId:game,cursor:start},{signal});
-          if(version!==generation || epoch!==routeEpoch || host.hidden)return;
-          collected.push(...result.workflows);next=result.cursor;
-        }
-        if(append)loadedCursors.push(cursor);else if(!loadedCursors.length)loadedCursors=[null];
-        rows=[...new Map(collected.map(job=>[job.id,job])).values()];cursor=next;drawList();
-        if(focused)Array.from(list.querySelectorAll("a")).find(a=>a.getAttribute("href")===focused)?.focus({preventScroll:true});
-      }
-      health.textContent=`Checked ${new Date().toLocaleTimeString()} · checks every 15 seconds while this page is visible.`;
-      health.dataset.state="ok";
-    } catch(error) {
-      if(request.signal.aborted || version!==generation || epoch!==routeEpoch)return;
-      health.textContent=`Could not update progress: ${error.message}. Displayed information may be out of date. Use Check progress to retry.`;health.dataset.state="error";
-    } finally {if(version===generation){busy=false;document.getElementById("workshop-refresh").disabled=false;more.disabled=false;}}
-  }
-  for(const [id,label] of [["all","All"],["working","Working"],["waiting","Waiting"],["done","Finished"],["attention","Needs attention"]]) {
-    const button=node("button",label);button.type="button";button.dataset.filter=id;button.setAttribute("aria-pressed",String(id===filter));
-    button.addEventListener("click",()=>{filter=id;for(const b of filters.children)b.setAttribute("aria-pressed",String(b===button));drawList();});filters.append(button);
-  }
-  more.addEventListener("click",()=>refresh(true));document.getElementById("workshop-refresh").addEventListener("click",()=>refresh());
-  document.addEventListener("visibilitychange",()=>{if(!document.hidden)void refresh();});
+  const host = document.getElementById("workshop");
   return {
-    stop(){generation++;clearInterval(timer);controller?.abort();graphObserver?.disconnect();},
-    async open(route){epoch=route;game=state.gameId;selected=new URLSearchParams(location.search).get("workflow");rows=[];cursor=null;loadedCursors=[];busy=false;host.hidden=false;
-      list.replaceChildren();detail.replaceChildren();list.hidden=Boolean(selected);detail.hidden=!selected;filters.hidden=Boolean(selected);document.getElementById("workshop-summary").hidden=Boolean(selected);more.hidden=true;
-      health.textContent="Checking the workshop’s reported progress…";await refresh();if(epoch===routeEpoch)timer=setInterval(()=>void refresh(),15000);
+    stop() { window.PantherUI.unmountWorkflowBrowser?.(host); },
+    async open(epoch, type, encodedId) {
+      host.hidden = false;
+      let workflowId;
+      try { workflowId = encodedId ? decodeURIComponent(encodedId) : null; }
+      catch { host.textContent = "This workflow link is invalid."; return; }
+      const legacyId = new URLSearchParams(location.search).get("workflow");
+      if (legacyId && !type) {
+        try {
+          const result = await api("/workflows", {gameId: state.gameId, id: legacyId});
+          if (epoch !== routeEpoch) return;
+          const kind = result.workflow.kind;
+          if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(kind)) throw new Error("Invalid workflow type");
+          navigate(gamePath("workflows") + "/" + kind + "/" + encodeURIComponent(result.workflow.id));
+        } catch { if (epoch === routeEpoch) host.textContent = "This workflow could not be opened."; }
+        return;
+      }
+      const gameId = state.gameId;
+      window.PantherUI.mountWorkflowBrowser(host, {
+        gameId, scope: apiScope(), type: type || null, workflowId,
+        onLoadTypes: ({signal}) => api("/workflows", {gameId, view: "types"}, {signal}),
+        onLoadRuns: (kind, cursor, {signal}) => api("/workflows", {gameId, view: "runs", type: kind, cursor}, {signal}),
+        onLoadWorkflow: async (kind, id, {signal}) => {
+          const result = await api("/workflows", {gameId, id}, {signal});
+          if (result.workflow.kind !== kind) throw new Error("This run does not belong to this workflow type.");
+          return result;
+        },
+        onLoadOutput: async (key, {signal}) => {
+          if(!key.startsWith(`games/${gameId}/`))throw new Error('This output belongs to another game.');
+          const asset=await api('/object-url',{key},{signal});
+          const contentType=asset.contentType||'', title=asset.metadata?.title||'Generated asset';
+          if(contentType.startsWith('image/'))return {url:asset.url,kind:'image',title,contentType};
+          if(contentType.startsWith('video/')){const thumbnail=asset.thumbnailKey;if(thumbnail?.startsWith(`games/${gameId}/`)){const image=await api('/object-url',{key:thumbnail},{signal});return {url:image.url,kind:'video',title,contentType,thumbnail:true};}return {url:asset.url,kind:'video',title,contentType};}
+          return {kind:contentType.startsWith('audio/')?'audio':'document',title,contentType};
+        },
+        onNavigate: href => navigate(href),
+        onPreview: key => void previewFile({key, name: key.split("/").at(-1)}),
+      });
     },
   };
 })();

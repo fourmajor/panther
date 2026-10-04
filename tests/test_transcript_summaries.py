@@ -5,6 +5,7 @@ from pathlib import Path
 import uuid
 
 import boto3
+import click
 import pytest
 
 from panther_journal import transcript_summaries as worker
@@ -88,6 +89,7 @@ def complete(summaries, claimed, value=None):
     document = {
         "schemaVersion": 1,
         "entityType": "TranscriptSummary",
+        "summaryPolicyVersion": 2,
         "gameId": job["gameId"],
         "jobId": job["jobId"],
         "source": job["source"],
@@ -116,6 +118,7 @@ def test_summary_ensure_regenerate_preserves_raw_and_prior_versions(summaries):
     claimed = unpack(call(summaries, "POST /transcript-summaries/claim", username="example-worker"))
     ready = unpack(complete(summaries, claimed))
     assert ready["status"] == "READY" and ready["summary"] == summary()
+    assert ready["summaryPolicyVersion"] == 2
     again = unpack(call(summaries, body={**body, "operationId": uuid.uuid4().hex}))
     assert again["jobId"] != ready["jobId"] and again["status"] == "QUEUED"
     assert again["summary"] == ready["summary"] and again["assetKey"] == ready["assetKey"]
@@ -161,6 +164,9 @@ def test_summary_worker_independent_review_preserves_evidence(tmp_path, monkeypa
 
     def run(command, **kwargs):
         calls.append(command)
+        assert 'one to three short sentences' in kwargs['stdin']
+        assert 'This was a test.' in kwargs['stdin']
+        assert 'separate structured fields' in kwargs['stdin']
         path = Path(command[command.index("--output-last-message") + 1])
         candidate = summary()
         if path.name == "summary-result.json":
@@ -205,7 +211,7 @@ def test_summary_rebuild_is_repeatable_private_and_bounded(tmp_path, monkeypatch
                 "cursor": None,
             }
         if route == "/transcript-summaries":
-            return {"jobId": "a" * 64, "status": "QUEUED"}
+            return {"jobId": "a" * 64, "status": "READY" if method == "GET" else "QUEUED", "operationId": "initial"}
         raise AssertionError(route)
 
     monkeypatch.setattr(worker.cloud, "configuration", lambda: {})
@@ -266,3 +272,40 @@ def test_summary_worker_rejects_private_work_inside_git(tmp_path, monkeypatch):
     with pytest.raises(click.ClickException, match="outside a Git"):
         worker.run_worker(tmp_path / "private-source", True)
     assert not (tmp_path / "private-source").exists()
+
+
+def test_policy_rebuild_blocks_unknown_paid_requests_and_verifies_current_operation(tmp_path, monkeypatch):
+    posts = []
+    key = 'games/test-game/assets/raw/original/raw.json'
+    status, operation = 'ATTENTION', 'initial'
+    def api(config, method, route, **kwargs):
+        if route == '/games':
+            return {'games': [{'id': 'test-game'}]}
+        if route == '/assets':
+            return {'assets': [{'kind': 'raw-transcript', 'key': key}], 'cursor': None}
+        if route == '/transcript-summaries':
+            if method == 'POST':
+                posts.append(kwargs['json'])
+            return {'jobId': 'a' * 64, 'status': status, 'operationId': operation, **({'summaryPolicyVersion': 2} if operation == worker.summary_policy.rebuild_operation('test-game', key) else {})}
+        raise AssertionError(route)
+    monkeypatch.setattr(worker.cloud, 'configuration', lambda: {})
+    monkeypatch.setattr(worker.cloud, 'api', api)
+    with pytest.raises(click.ClickException, match='require attention'):
+        worker.rebuild(tmp_path / 'blocked.json', True)
+    assert posts == []
+    status = 'READY'
+    with pytest.raises(click.ClickException, match='require attention'):
+        worker.rebuild(tmp_path / 'old-policy.json', False, verify=True)
+    operation = worker.summary_policy.rebuild_operation('test-game', key)
+    worker.rebuild(tmp_path / 'current-policy.json', False, verify=True)
+    worker.rebuild(tmp_path / 'already-current.json', True)
+    assert posts == []
+
+
+def test_production_summary_completion_requires_concise_policy_bounds(summaries):
+    key, _ = source(summaries)
+    unpack(call(summaries, body={'gameId': 'test-game', 'key': key}))
+    claimed = unpack(call(summaries, 'POST /transcript-summaries/claim', username='example-worker'))
+    verbose = {**summary(), 'summary': 'x' * 601}
+    assert complete(summaries, claimed, verbose)['statusCode'] == 400
+    assert unpack(call(summaries, 'GET /transcript-summaries', gameId='test-game', key=key))['summary'] is None

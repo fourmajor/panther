@@ -1,0 +1,17 @@
+import React,{useEffect,useState} from 'react';
+import {useMutation,useQueryClient} from '@tanstack/react-query';
+import {CirclePlus,Pencil,Trash2} from 'lucide-react';
+import {Button} from './components/ui/button.jsx';
+import {Input} from './components/ui/input.jsx';
+import {Dialog,DialogContent,DialogTitle,DialogDescription} from './components/ui/dialog.jsx';
+
+export function TagManager({gameId,tags=[],onAdd,onRename,onDelete}) {
+  const client=useQueryClient(),[current,setCurrent]=useState(tags),[action,setAction]=useState(null);
+  useEffect(()=>{setCurrent(tags);setAction(null);},[gameId,tags]);
+  const mutation=useMutation({retry:false,mutationFn:request=>request.kind==='add'?onAdd(request.name):request.kind==='rename'?onRename(request.original,request.name,request.operationId):onDelete(request.original,request.operationId),onSuccess:result=>{const next=Array.isArray(result)?result:result.tags;setCurrent(next);client.setQueryData(['asset-filter-tags',gameId],{tags:next});setAction(null);},onError:error=>{console.error('Tag change failed',error);if(Number(error?.status)===400)setAction(previous=>({...previous,submitted:false,operationId:crypto.randomUUID().replaceAll('-','')}));}});
+  const open=(kind,name='')=>{mutation.reset();setAction({kind,original:name,name,operationId:crypto.randomUUID().replaceAll('-','')});};
+  const submit=event=>{event.preventDefault();const request={...action,name:action.name.trim(),submitted:true};setAction(request);mutation.mutate(request);};
+  return <div className="tag-manager"><div className="tag-manager-header"><h2>Tags</h2><Button className="ui-action-button" onClick={()=>open('add')}><CirclePlus size={16} aria-hidden="true"/>Add Tag</Button></div><ul className="tag-manager-list">{current.map(name=><li key={name}><span>{name}</span><div><Button variant="ghost" size="icon" aria-label={`Rename tag ${name}`} onClick={()=>open('rename',name)}><Pencil size={16} aria-hidden="true"/></Button><Button variant="ghost" size="icon" aria-label={`Delete tag ${name}`} onClick={()=>open('delete',name)}><Trash2 size={16} aria-hidden="true"/></Button></div></li>)}</ul>
+    {action&&<Dialog open onOpenChange={value=>{if(!value&&!mutation.isPending)setAction(null);}}><DialogContent className="tag-manager-dialog"><form onSubmit={submit}><DialogTitle>{action.kind==='delete'?'Delete Tag?':action.kind==='rename'?'Rename Tag':'Add Tag'}</DialogTitle><DialogDescription className={action.kind==='delete'?'':'sr-only'}>{action.kind==='delete'?`Remove “${action.original}” from this game and its assets?`:'Enter the tag name.'}</DialogDescription>{action.kind!=='delete'&&<label><span>Name</span><Input aria-label="Tag name" autoFocus value={action.name} maxLength={64} required disabled={mutation.isPending||action.submitted} onChange={event=>setAction({...action,name:event.target.value})}/></label>}{mutation.error&&<p role="alert">The tag could not be {action.kind==='delete'?'deleted':'saved'}. Try again.</p>}<div className="assets-form-actions"><Button variant="secondary" disabled={mutation.isPending} onClick={()=>setAction(null)}>Cancel</Button><Button type="submit" disabled={mutation.isPending||(action.kind!=='delete'&&!action.name.trim())}>{mutation.isPending?'Saving…':action.submitted?'Retry':action.kind==='delete'?'Delete':action.kind==='add'?'Add Tag':'Save'}</Button></div></form></DialogContent></Dialog>}
+  </div>;
+}

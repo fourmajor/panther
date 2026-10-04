@@ -156,35 +156,22 @@ def image_bytes():
     )
 
 
-def test_subscription_image_checkpoint_never_regenerates(tmp_path, monkeypatch):
-    root = tmp_path / "codex"
-    generated = root / "generated_images"
-    generated.mkdir(parents=True)
-    monkeypatch.setenv("CODEX_HOME", str(root))
-    output = generated / "new.png"
-    folder = tmp_path / "work"
-    folder.mkdir()
+def test_api_image_checkpoint_never_regenerates(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import base64
     calls = []
-    monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
-
-    def run(command, **kwargs):
-        calls.append(command)
-        assert "image_generation" in command
-        assert "OPENAI_API_KEY" not in kwargs["stdin"]
-        output.write_bytes(image_bytes())
-        Path(command[command.index("--output-last-message") + 1]).write_text(
-            json.dumps({"outputPath": str(output), "model": None})
-        )
-        return 0
-
-    monkeypatch.setattr(worker.local, "run_process", run)
-    job = {"jobId": "a" * 64, "type": "map", "name": "Harbor", "prompt": "A map"}
-    image = worker.generate(job, folder, lambda: None)
+    def generate(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(model_dump=lambda **_: {"data": [{"b64_json": base64.b64encode(image_bytes()).decode()}]}, _request_id="fictional-request")
+    client = SimpleNamespace(images=SimpleNamespace(generate=generate))
+    monkeypatch.setattr(worker.local, "run_process", lambda *a, **k: pytest.fail("Fresh image inference cannot use Codex"))
+    job = {"jobId": "a" * 64, "type": "map", "name": "Harbor", "prompt": "A map", "model": "gpt-image-1"}
+    image = worker.generate(job, tmp_path, lambda: None, client=client)
     assert image.read_bytes() == image_bytes()
-    assert worker.generate(job, folder, lambda: None) == image
+    assert worker.generate(job, tmp_path, lambda: None, client=client) == image
     assert len(calls) == 1
     image.unlink()
-    assert worker.generate(job, folder, lambda: None).read_bytes() == image_bytes()
+    assert worker.generate(job, tmp_path, lambda: None, client=client).read_bytes() == image_bytes()
     assert len(calls) == 1
 
 
@@ -249,6 +236,7 @@ def test_publication_verifies_uploaded_image_and_worker_only_resume(generation):
     key = f"games/test-game/assets/generated-{job['jobId'][:40]}/original/image.png"
     checksum = base64.b64encode(hashlib.sha256(image_bytes()).digest()).decode()
     metadata = {
+        "title": "Harbor road",
         "extra": {
             "assetGenerationJobId": job["jobId"],
             "assetType": "map",
@@ -257,7 +245,8 @@ def test_publication_verifies_uploaded_image_and_worker_only_resume(generation):
             "generation": {
                 "method": "ai",
                 "provider": "OpenAI",
-                "cost": {"status": "subscription"},
+                "model": "gpt-image-1",
+                "cost": {"status": "unknown"},
             },
         }
     }
@@ -437,7 +426,8 @@ def test_portrait_request_pins_registered_character_and_rejects_other_game(gener
     assert (
         call(generation, body=request(type="portrait", characterId="missing"))["statusCode"] == 400
     )
-    assert call(generation, body=request(characterId="hero"))["statusCode"] == 400
+    assert call(generation, body=request(characterId="hero"))["statusCode"] == 200
+    assert call(generation, body=request(characterId="hero", selectAsPortrait=True))["statusCode"] == 400
 
 
 def test_asset_worker_rejects_git_and_home_before_authentication(tmp_path, monkeypatch):
@@ -453,3 +443,38 @@ def test_asset_worker_rejects_git_and_home_before_authentication(tmp_path, monke
         with pytest.raises(click.ClickException, match="outside a Git checkout"):
             worker.run_worker(root, True)
     assert not (checkout / "private-jobs").exists()
+
+
+def test_generation_submission_registers_active_source_guard(generation):
+    job = unpack(call(generation, body=request()))
+    import asset_archive
+    row = asset_archive.db().get_item(Key={'pk': 'asset-references-v1#test-game', 'sk': 'asset-generation:' + job['jobId']})['Item']
+    assert row['keys'] == []
+    assert row['active'] == {'table': generation.table().name, 'pk': 'JOBS', 'sk': job['jobId']}
+
+
+def test_generation_options_and_prompt_only_contract(generation):
+    options = unpack(call(generation, "GET /asset-generation", gameId="test-game", view="options"))
+    kinds = {item["id"]: item for item in options["generationTypes"]}
+    assert set(kinds) == {"image", "map", "blueprint", "location", "portrait"}
+    assert {model["id"] for model in kinds["image"]["models"]} == generation.MODELS
+    assert {style["id"] for style in kinds["image"]["styles"]} == generation.STYLES
+    body = request(type="image", model="gpt-image-1-mini", style="watercolor")
+    del body["name"]
+    job = unpack(call(generation, body=body))
+    assert "name" not in job and job["schemaVersion"] == 2
+    assert job["model"] == "gpt-image-1-mini" and job["visualStyle"] == "watercolor"
+    assert unpack(call(generation, body=body))["jobId"] == job["jobId"]
+    assert call(generation, body={**body, "model":"gpt-image-1"})["statusCode"] == 400
+    assert call(generation, body={**body, "model":"made-up-model"})["statusCode"] == 400
+    assert call(generation, body={**body, "type":"video"})["statusCode"] == 400
+    assert call(generation, "GET /asset-generation", gameId="missing-game", view="options")["statusCode"] == 400
+
+
+def test_historical_operation_receipt_is_reused_without_resubmission(generation):
+    body = request()
+    job = unpack(call(generation, body=body))
+    generation.table().update_item(Key={"pk":"JOBS","sk":job["jobId"]}, UpdateExpression="SET schemaVersion=:old", ExpressionAttributeValues={":old":1})
+    reused = unpack(call(generation, body=body))
+    assert reused["jobId"] == job["jobId"] and reused["schemaVersion"] == 1
+    assert call(generation, body={**body,"prompt":"Changed"})["statusCode"] == 400

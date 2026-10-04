@@ -1,9 +1,9 @@
 const {test, expect} = require('@playwright/test');
 const fs = require('node:fs');
 const path = require('node:path');
+const designs=['studio','chronicle','cinema','mission','poster','field'];
 const {MODEL_VIEWER_BUNDLE_PATH} = require('../dist/lib/panther-media-explorer-stack');
 
-const designs = ['studio','chronicle','cinema','mission','poster','field'];
 async function fixture(page) {
   await page.addInitScript(() => sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-member'}))+'.test'})));
   const reads=[];
@@ -150,10 +150,10 @@ test('storyboard approval doorway is game-scoped and does not generate or approv
   const reads=await fixture(page);
   await page.goto('https://panther.place/games/synthetic-game/dashboard');
   const entry=page.locator('#storyboard-entry');
-  await expect(entry).toHaveAttribute('href','/games/synthetic-game/videos?review=1');
+  await expect(entry).toHaveAttribute('href','/games/synthetic-game/episodes?review=1');
   await entry.click();
   await expect(page.locator('#video-approval-inbox')).toContainText('Last session storyboard');
-  await expect(page.locator('#video-approval-inbox .approval-card a')).toHaveAttribute('href',/videos\?project=games%2Fsynthetic-game/);
+  await expect(page.locator('#video-approval-inbox .approval-card a')).toHaveAttribute('href',/episodes\?project=games%2Fsynthetic-game/);
   expect(reads.every(path=>!path.includes('generate')&&!path.includes('submit'))).toBe(true);
 });
 
