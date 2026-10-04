@@ -1125,7 +1125,9 @@ class Store:
             history = self.get('scene-history', body['gameId'] + ':' + body['episodeId'] + ':' + body['sceneId'] + ':' + str(ref.get('revision')))
             if not history:
                 raise ValueError('Selected take has no exact scene history')
-            storyboard_videos.select(scene, {k: clip[k] for k in ('storyboardRevision', 'shotId', 'assetKey', 'startSeconds')}, metadata, history['record'] if history else None)
+            verified_cuts = storyboard_videos.select(scene, {k: clip[k] for k in ('storyboardRevision', 'shotId', 'assetKey', 'startSeconds')}, metadata, history['record'] if history else None)
+            if verified_cuts[clip['shotId']] != clip:
+                raise ValueError('Selected cut differs from its verified source duration')
             composition['scenes'].append({**clip, 'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)})
         composition['sourceKeys'] = list(dict.fromkeys(clip['assetKey'] for clip in composition['clips']))
         composition['compositionHash'] = hashlib.sha256(json.dumps(composition, sort_keys=True).encode()).hexdigest()
@@ -1146,10 +1148,8 @@ class Store:
         import storyboard_videos
         single = (scene.get('storyboard') or {}).get('shots', [])
         board, shot = storyboard_videos.shot(scene, body.get('shotId') or (single[0]['shotId'] if len(single) == 1 else None))
-        if shot['durationSeconds'] > 8:
-            raise ValueError('This model generates eight-second takes. Split this storyboard item into shorter shots before generating')
         prompt = body.get("prompt") or scene["name"]
-        if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 4000:
+        if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Describe the video you want.")
         characters = body.get("characterIds", [])
         if not isinstance(characters, list) or len(characters) > 12 or len(set(characters)) != len(characters):
@@ -1198,6 +1198,10 @@ class Store:
         game_record = game_view['game']
         scene_context = {"name": scene["name"], "direction": scene.get("description", ""), "shots": [shot], "game": {field: game_record.get(field) for field in ("name", "ruleset", "visualStyle")}}
         job = {"gameId": game, "sceneRef": {"episodeId": episode, "sceneId": identity, "revision": scene["revision"]}, "prompt": prompt.strip(), "sceneType": scene["type"], "sourceKeys": [ref["key"] for ref in refs], "inputRefs": refs, "mapPin": map_pin, "characterIds": characters, "characterContext": character_context, "sceneContext": scene_context, "transcriptKeys": source_keys, "contextKeys": context_keys}
+        from panther_journal.video import generation_duration, scene_model
+        job['storyboardFramePin'] = frame_pin
+        job['model'] = scene_model(job)
+        job['generationDurationSeconds'] = generation_duration(job['model'], shot['durationSeconds'])
         job['videoPromptPolicy'] = 2
         job['sceneContext']['background'] = game_view.get('gameSettings', {}).get('description', '')
         job['storyboardShotRef'] = {'revision': board['revision'], 'shotId': shot['shotId']}

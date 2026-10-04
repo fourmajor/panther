@@ -805,6 +805,10 @@ def test_shot_requests_and_cut_selection_pin_only_current_storyboard(tmp_path):
     longer = [{**shots[0], 'durationSeconds': 18}]
     revised = store.save_story_entity('scene', {**body, 'storyboardShots': longer, 'expectedRevision': scene['revision'], 'operationId': uuid.uuid4().hex})['record']
     assert revised['shotTakes'] == {} and revised['selectedOutputKey'] is None
-    with pytest.raises(ValueError, match='eight-second'):
+    with pytest.raises(ValueError, match='supports up to 8s'):
         store.submit_scene_render({**render, 'revision': revised['revision'], 'shotId': 'arrival', 'operationId': uuid.uuid4().hex})
     assert len(store.list('scene-render')) == 1
+    dialogue = store.save_story_entity('scene', {**body, 'type': 'dialogue', 'storyboardShots': longer, 'expectedRevision': revised['revision'], 'operationId': uuid.uuid4().hex})['record']
+    accepted = store.submit_scene_render({**render, 'revision': dialogue['revision'], 'shotId': 'arrival', 'prompt': 'Direction ' * 1000, 'operationId': uuid.uuid4().hex})
+    assert accepted['model'] == 'h3-max' and accepted['generationDurationSeconds'] == 15
+    assert accepted['prompt'] == ('Direction ' * 1000).strip()

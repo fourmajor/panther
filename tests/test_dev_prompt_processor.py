@@ -67,11 +67,14 @@ def test_video_handoff_keeps_exact_appearance_when_composer_omits_it(tmp_path):
     assert json.loads(response.calls[0]['input'])['scene'] == scene
 
 
-def test_overlarge_continuity_fails_before_video_request(tmp_path):
+def test_overlarge_continuity_is_fitted_without_losing_original(tmp_path):
     store = Store(tmp_path / 'private.sqlite')
     response = Responses({'renderPrompt': 'Example', 'visibleCharacterIds': ['example'], 'sourceFacts': [], 'uncertainties': []})
-    with pytest.raises(ValueError, match='continuity exceeds'):
-        video_prompt(store, {'gameId': 'fictional', 'prompt': 'Example', 'characterContext': [{'id': 'example', 'name': 'Example', 'details': {'overview': 'x' * 4000}}]}, tmp_path, verified, SimpleNamespace(responses=response))
+    value, _ = video_prompt(store, {'gameId': 'fictional', 'prompt': 'Example', 'characterContext': [{'id': 'example', 'name': 'Example', 'details': {'overview': 'x' * 4000}}]}, tmp_path, verified, SimpleNamespace(responses=response))
+    assert len(value['renderPrompt']) <= 2300
+    assert 'Action: Example' in value['renderPrompt']
+    assert value['promptFitting']['truncated']
+    assert json.loads(response.calls[0]['input'])['characters'][0]['details']['overview'] == 'x' * 4000
     assert len(response.calls) == 1
 
 

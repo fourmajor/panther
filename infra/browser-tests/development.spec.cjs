@@ -58,7 +58,7 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await page.locator('form').filter({has:page.getByLabel('Scene title',{exact:true})}).getByRole('button',{name:'Create Scene',exact:true}).click();
   await expect(page.getByRole('button',{name:'Generate shot 1',exact:true})).toBeVisible();
   const videoComposer=page.locator('#scene-video-composer');
-  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.locator('#scene-header-actions').getByRole('button',{name:'Edit',exact:true}).click();
   const sceneEditor=page.getByRole('form',{name:'Scene editor'});
   await sceneEditor.getByRole('combobox',{name:'Characters',exact:true}).click();
   await page.getByRole('option',{name:'Ash Meadow',exact:true}).click();
@@ -84,7 +84,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   expect(reject.status,reject.stderr).toBe(0);await page.reload();
   await expect(page.getByRole('region',{name:'Scene storyboard'}).getByRole('status')).toHaveText('Prepare a matching starting frame before generating: The frame has the wrong costume.');
   await expect(page.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
-  await expect(page.getByRole('button',{name:'Edit',exact:true})).toBeEnabled();
+  await expect(page.locator('#scene-header-actions').getByRole('button',{name:'Edit',exact:true})).toBeEnabled();
   await page.screenshot({path:testInfo.outputPath(`shot-preflight-recovery-${width}.png`),fullPage:true});
   await page.goto(origin+'/games/preview-campaign/dashboard');
   for(const section of ['novel','videos','assets'])await expect(page.locator(`#dashboard-sections [data-section="${section}"]`).getByRole('link',{name:'The northern gate',exact:true})).toBeVisible();

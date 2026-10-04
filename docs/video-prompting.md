@@ -1,8 +1,9 @@
 # Shot prompt preparation
 
 A storyboard item is one independently rendered shot and one editable cut, not an
-entire scene. New planning stages split complex action into items of at most eight
-seconds, preserving consequential source events. The cut duration controls when
+entire scene. New planning stages use the selected model duration: Veo remains eight seconds;
+H3 Max and Kling 3 Pro support takes up to fifteen seconds. An item may describe a
+clearly timed sequence such as `[shot 1, 0-4s]`, with achievable actions in each beat. The cut duration controls when
 the action must finish; extra source-take time holds the ending rather than delaying
 an event beyond the cut.
 
@@ -20,7 +21,7 @@ in exact input lineage; they are not relabeled as on-screen appearances.
 
 Use observable performance instead of abstract emotion, explicit actor/prop
 ownership instead of ambiguous pronouns, one clear camera move, and one achievable
-physical beat with a start and end. The selected game style is attached as canonical
+physical beat with a start and end, or an explicit chronological sequence. The selected game style is attached as canonical
 prose independently of portrait style. The exact approved action and camera remain
 constraints; a composer cannot silently replace them with a simpler invented event.
 An incompatible starting frame or an over-complex item fails before video submission
@@ -64,3 +65,18 @@ resubmitted. Old provider responses retain the policy actually used. This is a p
 producer policy, not a storage/asset-contract migration. Cloud planning receives the
 same shot discipline; executable visual conditioning described here is in the local
 scene worker. Cloud render/assembly rollout remains a separate requirement.
+
+
+## Timing and prompt fitting
+
+A take may be up to 20% shorter than the planned item: fifteen seconds can serve an
+eighteen-second item. Selection and assembly store the real available cut duration,
+never pad or stretch footage to imply missing action. Longer takes are trimmed.
+
+Prompt length alone does not fail local generation. Preparation budgets approved
+action, camera, style, visible identities and direction separately; excess context
+is shortened at word boundaries. Final provider prose is bounded to 2500 characters,
+with identity bindings first. Original inputs, composition responses, fitting details
+and the exact submitted request remain retained. Fitting performs no paid retry and
+does not rewrite the approved storyboard. Shortening can omit detail, so footage
+still needs review against the source.

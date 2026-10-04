@@ -186,11 +186,11 @@ BRIEFS["video-generation-packets"] += (
 # without changing previously approved storyboards or authorizing inference.
 for _stage in ('video-shot-list', 'video-storyboards', 'video-generation-packets'):
     BRIEFS[_stage] += (
-        " Plan independently renderable shots of at most eight seconds each. Split complex sequences"
-        " into separate items rather than asking a single take to change locations, cut cameras or"
-        " perform several simultaneous interactions. Keep every consequential source action across"
+        " Plan independently renderable items of at most fifteen seconds each; eight seconds is the Veo limit. Use timed shot sequences where supported. Split overlong sequences"
+        " into separate items while permitting explicit timed cuts within an item; avoid asking a take to"
+        " perform several unclear simultaneous interactions. Keep every consequential source action across"
         " those items. Each item must state only its visible cast, relative size and screen positions,"
-        " one primary physical action with a clear start and end, exact prop ownership, setting/time,"
+        " one clear physical action per timed beat with a start and end, exact prop ownership, setting/time,"
         " consistent lighting/palette and mood. Express emotion as observable gaze, posture or movement."
         " Bind character appearance to pinned portraits but apply the same game visual-style guidance"
         " across all items; identity-reference rendering style does not override it. Include relevant"

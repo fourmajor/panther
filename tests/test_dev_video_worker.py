@@ -225,3 +225,22 @@ def test_reference_render_keeps_actual_endpoint_on_resume_and_selected_cast(tmp_
     request = json.loads((root / identity / 'request.json').read_text())
     assert len(request['payload']['reference_image_urls']) == 1
     assert 'Absent' not in request['payload']['prompt']
+
+
+def test_long_prompt_is_submitted_once_and_original_is_retained(tmp_path):
+    import json
+    store, identity = queued(tmp_path)
+    job = store.get('scene-render', identity)
+    job['prompt'] = 'Travel through the city. ' + 'Architectural detail. ' * 400
+    original = job['prompt']
+    store.put('scene-render', identity, job, 'fictional')
+    client = Fal()
+    assert worker.process(store, identity, worker.private_root(tmp_path / 'work'), client,
+                          downloader=fake_download, media_probe=fake_probe)
+    posts = [call for call in client.calls if call[0] == 'POST']
+    assert len(posts) == 1 and len(posts[0][2]['json']['prompt']) <= 2500
+    completed = store.get('scene-render', identity)
+    assert completed['prompt'] == original and completed['promptFitting']['truncated']
+    response = json.loads(store.object(completed['responseKey'])[1])
+    assert response['promptFitting']['originalPrompt'] == original
+    assert response['request']['payload']['prompt'] == posts[0][2]['json']['prompt']

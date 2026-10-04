@@ -581,29 +581,69 @@ def validate_manifest(value):
                 or not re.fullmatch(r"[a-f0-9]{64}", ref["sha256"])
             ):
                 fail("Invalid image path or checksum.")
-        if not isinstance(shot["prompt"], str) or not 1 <= len(shot["prompt"].strip()) <= 2500:
-            fail("Prompts must contain 1–2500 characters.")
+        if not isinstance(shot["prompt"], str) or not shot["prompt"].strip():
+            fail("Prompts must contain text.")
         if type(shot["maxAttempts"]) is not int or not 1 <= shot["maxAttempts"] <= 3:
             fail("Each shot allows at most three attempts, all charged to the same budget.")
     return value
 
 
-def payload(shot):
-    body = {"prompt": shot["prompt"], "aspect_ratio": "16:9", "generate_audio": True}
+def fit_prompt(text, limit=2500):
+    """Bound provider prose without changing the preserved source request."""
+    if len(text) <= limit:
+        return text
+    prefix = text[:limit]
+    # Prefer a word boundary, but do not discard long unbroken strings entirely.
+    boundary = max(prefix.rfind(' '), prefix.rfind('\n'))
+    return prefix[:boundary].rstrip() if boundary >= limit * .9 else prefix.rstrip()
+
+
+def scene_model(job):
+    kind = job.get('sceneType', job.get('type', 'general'))
+    if kind == 'map':
+        if not job.get('mapPin'):
+            raise ValueError('Choose a map asset for this scene')
+        return 'veo-3.1-fast-image-silent'
+    model = 'kling-3-pro' if kind == 'action' else 'h3-max' if kind == 'dialogue' else 'veo-3.1-fast'
+    return model + '-image' if job.get('storyboardFramePin') else model
+
+
+def generation_duration(model, planned):
+    """Duration capability of the chosen model; the comparison CLI remains fixed at 8s."""
+    import math
+    if type(planned) not in (int, float) or not math.isfinite(planned) or planned <= 0:
+        raise ValueError('Choose a positive finite video duration')
+    if model.startswith('veo-3.1-fast'):
+        duration = 8
+    elif model.startswith('h3-max'):
+        duration = min(15, max(1, planned))
+    elif model.startswith('kling-3-pro'):
+        duration = min(15, max(3, math.ceil(planned)))
+    else:
+        raise ValueError('Unsupported scene video model')
+    if duration + .001 < planned * .8:
+        raise ValueError(f'{model} supports up to {duration}s here; this {planned}s item needs a shorter cut or separate items')
+    return duration
+
+
+def payload(shot, *, duration_seconds=8):
+    if not shot['model'].startswith('seedance') and duration_seconds != generation_duration(shot['model'], duration_seconds):
+        raise ValueError('Requested duration exceeds the selected model capability')
+    body = {"prompt": fit_prompt(shot["prompt"]), "aspect_ratio": "16:9", "generate_audio": True}
     model = shot["model"].removesuffix("-silent")
     if shot["model"].endswith("-silent"):
         body["generate_audio"] = False
     if model in {"veo-3.1-fast", "veo-3.1-fast-image"}:
-        body.update(duration="8s", resolution="720p", auto_fix=False)
+        body.update(duration=f"{duration_seconds}s", resolution="720p", auto_fix=False)
     elif model in {"kling-3-pro", "kling-3-pro-image"}:
-        body.update(duration="8", shot_type="customize")
+        body.update(duration=str(duration_seconds), shot_type="customize")
         if model.endswith("-image"):
             body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.
     elif shot["model"] in {"seedance-2.0", "seedance-2.0-image"}:
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
     elif shot["model"] in {"h3-max", "h3-max-image"}:
         # Native audio is integral; canvas follows the pinned image. No prompt rewrite.
-        body = {"prompt": shot["prompt"], "duration": 8, "resolution": "768P",
+        body = {"prompt": fit_prompt(shot["prompt"]), "duration": duration_seconds, "resolution": "768P",
                 "prompt_expansion_mode": "disabled", "enable_safety_checker": True,
                 "sync_mode": False}
         if shot["model"] == "h3-max":
