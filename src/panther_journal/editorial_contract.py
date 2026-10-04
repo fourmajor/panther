@@ -160,3 +160,10 @@ BRIEFS["video-generation-packets"] += (
 )
 
 BRIEFS["video-generation-packets"] += " For a scene-directed request (creation.sceneRef), emit exactly one scene using creation.sceneRef.sceneId; preserve that existing owner rather than creating a second episode or extra scenes."
+
+BRIEFS["video-generation-packets"] += (
+    " For an Episode destination, return shots as an empty array; the application copies the exact validated storyboard panels."
+    " Reference those existing panels only through episode.scenes[].shotIds and partition every shot exactly once in its locked order."
+    " Use only the characterIds and referenceKeys allowed by the output schema; narrative NPC names remain prose unless they have a pinned catalog identity."
+    " Do not turn proposed prop labels, names or future assets into stored references."
+)

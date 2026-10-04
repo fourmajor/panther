@@ -111,6 +111,18 @@ def stage_schema(stage, inputs):
         from panther_journal.episode_adaptation import SCHEMA as EPISODE_SCHEMA
         schema["properties"]["episode"] = copy.deepcopy(EPISODE_SCHEMA)
         schema["required"].append("episode")
+        # These are inputs, not fresh creative output. Materialize the exact locked
+        # panels after validating the provider response rather than regenerating them.
+        schema["properties"]["shots"] = {"type": "array", "items": copy.deepcopy(SHOT), "maxItems": 0}
+        scene = schema["properties"]["episode"]["properties"]["scenes"]["items"]["properties"]
+        catalog = inputs["context"]["catalog"]
+        choices = {
+            "characterIds": [c.get("characterId", c.get("id")) for c in catalog.get("characters", [])],
+            "referenceKeys": inputs.get("productionSourceKeys", []),
+            "shotIds": [shot["shotId"] for shot in inputs["priorStages"]["video-storyboards"]["shots"]],
+        }
+        for field, values in choices.items():
+            scene[field] = array({"type": "string", "enum": sorted(set(values))}) if values else {"type": "array", "items": copy.deepcopy(TEXT), "maxItems": 0}
     if stage == "video-source-brief":
         schema["properties"]["sourceFacts"] = array(
             obj(
@@ -303,8 +315,9 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
             if role == "video-generation-packets" and data.get("episodeDestination"):
                 from panther_journal.episode_adaptation import validate
                 expected = data["priorStages"]["video-storyboards"]["shots"]
-                if value["shots"] != expected:
-                    raise ValueError("Episode destination must preserve the locked storyboard shots")
+                value = copy.deepcopy(value)
+                value["shots"] = copy.deepcopy(expected)
+                entry["materializedShotsFrom"] = "video-storyboards"
                 catalog = data["context"]["catalog"]
                 validate(value["episode"], game=catalog["game"]["id"],
                          shot_ids=[shot["shotId"] for shot in expected],

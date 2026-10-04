@@ -1608,3 +1608,30 @@ def test_storyboard_generation_schema_matches_renderer_palette_and_blocking():
     for change in ({'color':'cold blues'},{'durationSeconds':0},{'durationSeconds':121},{'subjects':[{'label':'Guide','x':1.1,'y':0.5}]}):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({**shot,**change},worker.SHOT)
+
+
+def test_episode_handoff_materializes_locked_panels_and_bounds_pinned_references(tmp_path,monkeypatch):
+    from test_episode_destination import source
+    _,packet,_=source()
+    shots=packet['payload']['shots']
+    episode=packet['payload']['episode']
+    inputs={'episodeDestination':True,'context':{'catalog':{'game':{'id':packet['gameId']},'characters':[]}},'priorStages':{'video-storyboards':{'shots':shots}},'productionSourceKeys':packet['sourceKeys']}
+    schema=worker.stage_schema('video-generation-packets',inputs)
+    assert schema['properties']['shots']['maxItems']==0
+    fields=schema['properties']['episode']['properties']['scenes']['items']['properties']
+    assert fields['characterIds']['maxItems']==0
+    assert fields['referenceKeys']['maxItems']==0
+    episode=copy.deepcopy(episode)
+    for scene in episode['scenes']:
+        scene['characterIds']=[]
+    response=report(evidenceIds=['catalog'],shots=[],episode=episode)
+    original=copy.deepcopy(response)
+    monkeypatch.setattr(worker,'agent',lambda *args:response)
+    result,_,history,_=worker.autonomous_stage(tmp_path,'video-generation-packets',inputs,lambda:None)
+    assert result['shots']==shots and response==original
+    assert history[0]['materializedShotsFrom']=='video-storyboards'
+    episode['scenes'][0]['referenceKeys']=['imaginary-prop']
+    other=tmp_path/'foreign'
+    other.mkdir()
+    with pytest.raises(worker.local.Deferred):
+        worker.autonomous_stage(other,'video-generation-packets',inputs,lambda:None)

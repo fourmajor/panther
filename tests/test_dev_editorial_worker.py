@@ -267,6 +267,7 @@ def test_chapter_runs_existing_screen_stages_and_atomically_publishes_owned_epis
             if 'sourceFacts' in properties:
                 value['sourceFacts'] = []
             if 'episode' in properties:
+                value['shots'] = []
                 value['episode'] = {'schemaVersion': 1, 'title': 'The crossing', 'synopsis': 'The travelers arrive.', 'scenes': [
                     {'id': 'arrival', 'title': 'Arrival', 'type': 'general', 'prompt': 'The gates open at dusk.',
                      'narration': 'At dusk, the travelers arrived.', 'characterIds': [], 'referenceKeys': [], 'shotIds': ['SC01_SH01']}]}
