@@ -1,4 +1,4 @@
-import React from 'react';
+import React,{useEffect} from 'react';
 import {AssetThumbnail} from './assets-library.jsx';
 import {Users,Mic,BookOpen,Clapperboard,Folder,ChevronRight} from 'lucide-react';
 
@@ -11,7 +11,8 @@ const sections = [
 ];
 const plainClick = event => !(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 
-export function DashboardCards({gameId,data,onNavigate,onPreview,request}) {
+export function DashboardCards({gameId,data,onNavigate,onPreview,request,onRendered}) {
+  useEffect(()=>{onRendered?.();},[gameId,data,onRendered]);
   async function thumbnail(asset) {
     if(asset.contentType?.startsWith('image/'))return (await request('/image-links',{}, {body:{gameId,keys:[asset.key]}})).images?.[asset.key]?.url||'';
     if(asset.contentType?.startsWith('video/')&&asset.thumbnailKey?.startsWith(`games/${gameId}/`))return (await request('/object-url',{key:asset.thumbnailKey})).url||'';

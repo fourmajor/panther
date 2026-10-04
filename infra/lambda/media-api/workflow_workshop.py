@@ -210,6 +210,11 @@ def flow(item):
             edges = [{"from": name, "to": ids[-1]} for name in independent]
         mode = "independent"
         note = "Tasks have no dependency on one another. This does not imply simultaneous execution or permission to generate."
+        if item["kind"] == "video-generation" and "storyboard-approval" in ids:
+            shots = [name for name in ids if name != "storyboard-approval"]
+            lanes = [{"id": "approval", "label": "Owner approval", "stageIds": ["storyboard-approval"]}] + [{"id": name, "label": "Independent shot", "stageIds": [name]} for name in shots]
+            edges = [{"from": "storyboard-approval", "to": name} for name in shots]
+            note = "Owner storyboard approval gates generation; shots are independent after that checkpoint."
     else:
         lanes = [{"id": "sequence", "label": "Reported steps", "stageIds": ids}]
         edges = [{"from": a, "to": b} for a, b in zip(ids, ids[1:])]

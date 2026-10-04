@@ -194,7 +194,7 @@ test('recording remains stoppable on the Account page and processes directly bel
   await expect.poll(()=>page.locator('#room-level').evaluate(element=>element.value)).toBeGreaterThan(0);
   await expect(page.locator('#game-create-button')).toBeDisabled();
   await page.getByRole('button',{name:'Close recording',exact:true}).click();
-  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   await page.locator('#room-recording-indicator').click();
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.locator('#account-page')).toBeVisible();

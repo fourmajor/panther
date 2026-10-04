@@ -36,6 +36,7 @@ async function fixture(context, { remembered = true, username = 'test' } = {}) {
       expect(route.request().method()).toBe('POST');
       expect(headers.origin).toBe('https://panther.place');
       expect(headers['content-type']).toBe('application/json');
+      if (pathname === '/auth/account') return route.fulfill({json:{username,name:'Example Member',picture:''}});
       const expiredCookie = `${COOKIE}=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Strict`;
       if (pathname === '/auth/logout') {
         state.revocations += 1;
@@ -133,7 +134,7 @@ for (const width of [1280, 390]) {
     const page = await context.newPage();
     await page.goto('https://panther.place/media');
     await expect(page.locator('#account')).toBeVisible();
-    await expect.poll(() => state.apiPaths.filter(p => p !== '/recordings/live').length).toBe(4);
+    await expect.poll(() => state.apiPaths.filter(p => !['/recordings/live','/notifications'].includes(p)).length).toBe(4);
     expect(state.apiPaths.filter(p => p === '/games')).toHaveLength(2); // Exactly one retry.
     expect(state.refreshes).toBe(2);
     expect(state.apiTokens.every(value => value?.startsWith('Bearer test.'))).toBe(true);
@@ -163,7 +164,7 @@ test('logout revokes remembered sign-in and signs out other tabs', async ({ cont
   await page.goto('https://panther.place/media');
   await other.goto('https://panther.place/media');
   await expect(other.locator('#account')).toBeVisible();
-  if(!new URL(page.url()).pathname.startsWith('/account'))await page.getByRole('button',{name:'Account',exact:true}).click();
+  if(!new URL(page.url()).pathname.startsWith('/account')){await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();}
   await page.locator('#logout-button').click();
   await expect(page).toHaveURL(/test.amazoncognito.com\/logout/);
   await expect(other.locator('#welcome')).toBeVisible();
@@ -179,7 +180,7 @@ test('failed logout stays locally signed out and can retry revocation', async ({
   await page.goto('https://panther.place/media');
   await expect(page.locator('#account')).toBeVisible();
   state.failure = 503;
-  if(!new URL(page.url()).pathname.startsWith('/account'))await page.getByRole('button',{name:'Account',exact:true}).click();
+  if(!new URL(page.url()).pathname.startsWith('/account')){await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();}
   await page.locator('#logout-button').click();
   await expect(page.locator('#auth-error')).toContainText('Could not revoke');
   expect(await page.evaluate(() => sessionStorage.getItem('panther.tokens'))).toBeNull();
@@ -187,7 +188,7 @@ test('failed logout stays locally signed out and can retry revocation', async ({
   await other.goto('https://panther.place/media');
   await expect(other.locator('#welcome')).toBeVisible();
   state.failure = 0;
-  if(!new URL(page.url()).pathname.startsWith('/account'))await page.getByRole('button',{name:'Account',exact:true}).click();
+  if(!new URL(page.url()).pathname.startsWith('/account')){await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();}
   await page.locator('#logout-button').click();
   await expect(page).toHaveURL(/test.amazoncognito.com\/logout/);
   expect((await context.cookies()).some(c => c.name === COOKIE)).toBe(false);
@@ -212,7 +213,10 @@ for(const width of [1280,390]) test(`React game Select works under the productio
   await page.addInitScript(()=>{window.cspViolations=[];document.addEventListener('securitypolicyviolation',event=>window.cspViolations.push({directive:event.violatedDirective,blocked:event.blockedURI}));});
   await page.goto('https://panther.place/media');
   const select=page.getByRole('combobox',{name:'Current game'});
-  await expect(select).toBeVisible();await select.click();
+  await expect(select).toBeVisible();
+  const selectBox=await select.boundingBox(),createBox=await page.locator('#game-create-button').boundingBox();
+  expect(selectBox.x+selectBox.width).toBeLessThanOrEqual(createBox.x);
+  await select.click();
   const option=page.getByRole('option',{name:'Test Game',exact:true});await expect(option).toBeInViewport();
   await option.click();await expect(select).toContainText('Test Game');
   violations.push(...await page.evaluate(()=>window.cspViolations));

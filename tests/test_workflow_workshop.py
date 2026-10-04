@@ -161,6 +161,15 @@ def test_local_reporter_records_only_real_stage_events(tmp_path, monkeypatch):
     assert w.CURRENT.get() is None
 
 
+def test_video_flow_exposes_explicit_owner_review(workshop):
+    m = workshop
+    graph = m.flow({"kind": "video-generation", "stages": [
+        {"id": "storyboard-approval", "label": "Owner storyboard approval", "status": "paused"},
+        {"id": "shot-1", "label": "Shot 1", "status": "queued"},
+    ]})
+    assert {"from": "storyboard-approval", "to": "shot-1"} in graph["edges"]
+
+
 def test_flow_preserves_parallel_branches_and_independent_tasks(workshop):
     m = workshop
     stages = [{"id": name, "status": "pending"} for name in ("context", "corrected-transcript", "novel-draft", "novel-proof", "video-screenplay", "video-preflight")]

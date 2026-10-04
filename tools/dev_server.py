@@ -69,7 +69,45 @@ class Store:
         self.migrate_episode_composition()
         self.migrate_browser_playback()
         self.migrate_authored_chapter_series()
+        self.migrate_notifications()
         self.path.chmod(0o600)
+
+    def notification_for_job(self, kind, payload, game):
+        if kind not in {"editorial", "playback", "transcription", "scene-render", "episode-render", "narration", "asset-generation", "transcript-summary"} or not payload.get("jobId"):
+            return None
+        from notifications import event_for
+        return event_for({"gameId": game or payload.get("gameId", ""), "kind": kind,
+                          "id": kind + "~" + payload["jobId"], "status": "failed" if payload.get("status") in {"FAILED", "ATTENTION"} else "unknown",
+                          "sourceStatus": payload.get("status"), "title": payload.get("title") or payload.get("creation", {}).get("title") or kind.replace("-", " ").capitalize()})
+
+    def migrate_notifications(self):
+        """Repeatable local backfill; reads never scan jobs to manufacture a feed."""
+        with self.connect() as db:
+            for kind, game, raw in db.execute("SELECT kind,game,payload FROM records").fetchall():
+                notice = self.notification_for_job(kind, json.loads(raw), game)
+                if notice:
+                    db.execute("INSERT OR IGNORE INTO records VALUES ('notification',?,?,?)", (notice["id"], notice["gameId"], json.dumps({**notice, "readAt": None})))
+
+    def notifications(self, view="all", cursor=None):
+        if view not in {"all", "unread"}:
+            raise ValueError("Unknown notification view")
+        rows = sorted(self.list("notification"), key=lambda item: (item["createdAt"], item["id"]), reverse=True)
+        if view == "unread":
+            rows = [row for row in rows if not row.get("readAt")]
+        offset, limit = int(cursor or "0"), 10 if view == "unread" else 30
+        if offset < 0 or offset > len(rows):
+            raise ValueError("Invalid notification cursor")
+        return {"notifications": rows[offset:offset + limit], "cursor": str(offset + limit) if len(rows) > offset + limit else None, "schemaVersion": 1}
+
+    def read_notification(self, identity):
+        with self.connect() as db:
+            row = db.execute("SELECT payload FROM records WHERE kind='notification' AND id=?", (identity,)).fetchone()
+            if not row:
+                raise LookupError("Notification not found")
+            notice = json.loads(row[0])
+            notice["readAt"] = notice.get("readAt") or int(time.time())
+            db.execute("UPDATE records SET payload=? WHERE kind='notification' AND id=?", (json.dumps(notice), identity))
+        return {"read": True, "id": identity}
 
     def migrate_authored_chapter_series(self):
         """Project exact authored series/version facts; retain records and original bytes."""
@@ -175,6 +213,9 @@ class Store:
     def put(self, kind, identity, payload, game=""):
         with self.connect() as db:
             db.execute("INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload,game=excluded.game", (kind, identity, game, json.dumps(payload)))
+            notice = self.notification_for_job(kind, payload, game)
+            if notice:
+                db.execute("INSERT OR IGNORE INTO records VALUES ('notification',?,?,?)", (notice["id"], notice["gameId"], json.dumps({**notice, "readAt": None})))
         return payload
 
     def seed(self):
@@ -1114,6 +1155,8 @@ class Handler(BaseHTTPRequestHandler):
             game = q.get("gameId", "")
             if path == "/games":
                 result = {"games": [self.server.store.game(g["id"])["game"] for g in store.list("game")]}
+            elif path == "/notifications":
+                result = store.notifications(q.get("view", "all"), q.get("cursor"))
             elif path == "/game":
                 result = store.game(game)
             elif path == "/dashboard-recent":
@@ -1293,6 +1336,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def post(self, path, body):
         store = self.server.store
+        if path == "/notifications/read":
+            return self.send(store.read_notification(body["id"]))
         if path == "/image-links":
             return self.send(store.image_links(body["gameId"], body["keys"], self.origin))
         if path == "/games":
