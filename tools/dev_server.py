@@ -1587,7 +1587,7 @@ class Handler(BaseHTTPRequestHandler):
             identity = hashlib.sha256(json.dumps(identity_body, sort_keys=True).encode()).hexdigest()
             job = store.get("editorial", identity)
             if not job:
-                job = store.prepare_editorial_job({"jobId": identity, "gameId": game, "creation": creation, "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "episodeDestination": True, **({"selectedMap": selected_map} if selected_map else {})} if video else {})})
+                job = store.prepare_editorial_job({"jobId": identity, "gameId": game, "creation": creation, "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "episodeDestination": not bool(creation.get("storyboardShotRef")), **({"selectedMap": selected_map} if selected_map else {})} if video else {})})
             store.put("editorial", identity, job, game)
             return self.send(job)
         if path == "/tags":

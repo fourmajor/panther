@@ -451,7 +451,7 @@ def submit(body):
             selectedScene=selected_scene,
             selectedMap=selected_map,
         )
-    if selected_scene:
+    if selected_scene and not creation.get("storyboardShotRef"):
         job["episodeDestination"] = True
     destination = None
     if chapter_source or not creation:

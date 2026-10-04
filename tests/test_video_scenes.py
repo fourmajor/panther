@@ -170,6 +170,11 @@ def test_generation_uses_real_immutable_episode_owned_scene(scenes, editorial): 
     }
     job = editorial.submit({"gameId": "test-game", "creation": creation})
     assert job["selectedScene"] == scene
+    shot_request = {**creation, 'storyboardShotRef': {'revision': scene['storyboard']['revision'], 'shotId': scene['storyboard']['shots'][0]['shotId']}}
+    shot_job = editorial.submit({'gameId': 'test-game', 'creation': shot_request})
+    assert not shot_job.get('episodeDestination')
+    assert shot_job['creation']['storyboardShotRef'] == shot_request['storyboardShotRef']
+    assert shot_job['selectedScene'] == scene
     assert job["creation"]["brief"] == scene["name"]
     assert job["raw"] is None and job["rawSources"] == []
     assert job["sessionId"] is None
