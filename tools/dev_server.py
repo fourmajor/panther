@@ -252,8 +252,8 @@ class Store:
                 raise ValueError("Enter a name of up to 120 characters.")
         if body["purpose"] not in {"campaign", "test"} or body.get("visualStyle", "photorealistic") not in STYLES or any(not isinstance(body[field], list) for field in ("players", "characters", "memberships")):
             raise ValueError("Invalid game details.")
-        if any(body[field] for field in ("players", "characters", "memberships")):
-            raise ValueError("Add people and characters after creating the game.")
+        from panther_journal.domain import GameSetup
+        setup = GameSetup.model_validate({**body, "ruleset": body.get("ruleset") or "Unspecified"}).model_dump()
         identity = body["id"]
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
         record = {"id": identity, "name": body["name"], "purpose": body["purpose"], "ruleset": body.get("ruleset"), "visualStyle": body.get("visualStyle", "photorealistic"), "description": "", "descriptionRevision": uuid.uuid4().hex, "fingerprint": fingerprint, "createdAt": int(time.time())}
@@ -264,6 +264,16 @@ class Store:
                 raise FileExistsError("A game with this identity already exists.")
             if not row:
                 db.execute("INSERT INTO records VALUES ('game',?,?,?)", (identity, None, json.dumps(record)))
+                for player in setup["players"]:
+                    db.execute("INSERT INTO records VALUES ('player',?,?,?)", (identity + ":" + player["id"], identity, json.dumps(player)))
+                for membership in setup["memberships"]:
+                    db.execute("INSERT INTO records VALUES ('membership',?,?,?)", (identity + ":" + membership["playerId"], identity, json.dumps(membership)))
+                for character in setup["characters"]:
+                    value = {"schemaVersion": 2, "gameId": identity, "id": character["id"], "characterId": character["id"], "name": character["name"], "revision": uuid.uuid4().hex, "details": details(), "updatedAt": int(time.time())}
+                    key = identity + ":" + character["id"]
+                    db.execute("INSERT INTO records VALUES ('character',?,?,?)", (key, identity, json.dumps(value)))
+                    history = {"revision": value["revision"], "previousRevision": None, "recordedAt": datetime.now(timezone.utc).isoformat(), "reason": "Created character", "name": value["name"], "details": value["details"]}
+                    db.execute("INSERT INTO records VALUES ('history',?,?,?)", (key + ":" + value["revision"], key, json.dumps(history)))
         return self.game(identity)
 
     def create_character(self, body):
@@ -764,7 +774,7 @@ class Store:
         if not 0 < len(raw) <= 512 * 1024:
             raise ValueError("Chapter exceeds the adaptation input limit")
         source = {"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)}
-        normalized = {**creation, "title": chapter["title"], "brief": "Adapt the supplied novel chapter into an episode, preserving its story outcomes.", "sourceKeys": [], "contextKeys": [], "characterIds": []}
+        normalized = {**creation, "title": chapter["title"], "brief": "Adapt the supplied novel chapter into an episode, preserving its story outcomes.", "sourceKeys": [], "contextKeys": [], "characterIds": sorted(character["id"] for character in self.list("character", game))}
         from panther_journal.editorial_contract import PLAN
         identity = hashlib.sha256(json.dumps([game, normalized, source, PLAN["version"]], sort_keys=True).encode()).hexdigest()
         from episode_destination import placeholder

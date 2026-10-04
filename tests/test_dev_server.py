@@ -720,3 +720,16 @@ def test_image_links_resolve_only_active_same_game_images(tmp_path):
         store.image_links('preview-campaign', [key] * 61, 'http://127.0.0.1:8766')
     store.put('asset-deletion', key, {'gameId': 'preview-campaign'})
     assert store.image_links('preview-campaign', [key], 'http://127.0.0.1:8766')['images'][key]['error'] == 'Image unavailable'
+
+
+def test_game_roster_creation_is_atomic_typed_and_idempotent(tmp_path):
+    from test_game_catalog import setup
+    store = dev.Store(tmp_path / "roster.sqlite")
+    manifest = setup("synthetic-campaign")
+    first = store.create_game(manifest)
+    assert first["players"] == list(reversed(manifest["players"]))
+    assert len(first["characters"]) == 1 and len(first["memberships"]) == 2
+    assert store.create_game(manifest) == first
+    with pytest.raises(ValueError):
+        store.create_game({**manifest,"id":"invalid-campaign","memberships":[]})
+    assert store.get("game","invalid-campaign") is None

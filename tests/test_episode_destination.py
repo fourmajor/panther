@@ -150,6 +150,7 @@ def test_local_chapter_submission_pins_bytes_and_persists_episode_placeholder(tm
         == __import__("base64").b64encode(hashlib.sha256(raw).digest()).decode()
     )
     assert first["rawSources"] == [] and first["videoGenerationAuthorized"] is False
+    assert {person["characterId"] for person in first["selectedCharacters"]} == {person["id"] for person in store.list("character",game)}
     episode = store.get("episode", game + ":" + first["episodeRef"]["episodeId"])
     assert episode["production"]["state"] == "planning" and episode["sceneIds"] == []
     assert (

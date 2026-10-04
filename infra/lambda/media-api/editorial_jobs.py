@@ -272,7 +272,10 @@ def submit(body):
             if not chapter or chapter.get("gameId") != body["gameId"]:
                 raise ValueError("Chapter is not ready for adaptation")
             chapter_source, _ = asset(chapter["details"]["artifact"]["key"], body["gameId"], maximum=512 * 1024)
-            creation = {**creation, "title": chapter["title"], "brief": "Adapt the supplied novel chapter into an episode, preserving its story outcomes.", "sourceKeys": [], "contextKeys": [], "characterIds": []}
+            roster = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"]).query(KeyConditionExpression=Key("pk").eq(f"GAME#{body['gameId']}") & Key("sk").begins_with("CHARACTER#"), Limit=21, ConsistentRead=True)
+            if roster.get("LastEvaluatedKey") or len(roster.get("Items", [])) > 20:
+                raise ValueError("Episode adaptation requires a bounded character roster")
+            creation = {**creation, "title": chapter["title"], "brief": "Adapt the supplied novel chapter into an episode, preserving its story outcomes.", "sourceKeys": [], "contextKeys": [], "characterIds": sorted(character["id"] for character in roster.get("Items", []))}
             fields.update({"chapterId", "characterIds"})
         if version == 3:
             required = {"schemaVersion", "target", "brief", "sourceKeys", "contextKeys"}
@@ -384,7 +387,7 @@ def submit(body):
         contexts.append({**ref, "kind": stored.get("kind", ""), "metadata": details})
     cast = (
         pin_cast(body["gameId"], creation["characterIds"])
-        if creation and creation["schemaVersion"] == 2
+        if creation and creation["schemaVersion"] in {2, 4}
         else []
     )
     game_context = pin_game(body["gameId"]) if creation and creation["schemaVersion"] in {2, 4} else None

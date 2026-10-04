@@ -1518,6 +1518,9 @@ def test_cloud_chapter_adaptation_pins_canonical_bytes_and_creates_one_episode(e
     import organization_records
     m = editorial
     __import__('boto3').resource('dynamodb').Table('test-job-catalog').put_item(Item={'pk':'GAMES','sk':'test-game','id':'test-game','name':'Fictional campaign'})
+    catalog_db = __import__('boto3').resource('dynamodb').Table('test-job-catalog')
+    catalog_db.put_item(Item={'pk':'GAME#test-game','sk':'CHARACTER#fictional-hero','id':'fictional-hero'})
+    monkeypatch.setattr(m,'pin_cast',lambda game, ids:[{'characterId':identity,'name':'Fictional hero','details':{},'appearanceAssets':[]} for identity in ids])
     identity = 'c' * 64
     key = 'games/test-game/assets/chapter-source/original/chapter.json'
     original = json.dumps({'gameId': 'test-game', 'markdown': 'The travelers arrive at dusk.'}).encode()
@@ -1530,6 +1533,7 @@ def test_cloud_chapter_adaptation_pins_canonical_bytes_and_creates_one_episode(e
     assert unpack(request(m, 'POST /editorial-jobs', body))['jobId'] == job['jobId']
     assert job['chapterSource']['sha256'] == __import__('base64').b64encode(hashlib.sha256(original).digest()).decode()
     assert job['rawSources'] == [] and job['videoGenerationAuthorized'] is False
+    assert [person['characterId'] for person in job['selectedCharacters']] == ['fictional-hero']
     pointer = organization_records.pointer('episode-scenes-v1', 'test-game', 'episode', job['episodeRef']['episodeId'])
     episode = organization_records.decode(browse_index.table().get_item(Key=pointer)['Item'])
     assert episode['production']['state'] == 'planning' and episode['sceneIds'] == []
