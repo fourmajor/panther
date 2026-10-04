@@ -109,6 +109,60 @@ def test_refresh_changes_all_memberships_and_preserves_lineage(index, monkeypatc
     assert index.page("example", "all")["assets"] == [current]
 
 
+def test_archive_page_uses_one_consistent_batch_and_filters_tombstones(index, monkeypatch):
+    archive = importlib.import_module("asset_archive")
+    library = importlib.import_module("asset_library")
+    for i in range(100):
+        current = asset(i)
+        monkeypatch.setattr(library, "describe", lambda *_, value=current: value)
+        index.refresh(None, current["key"])
+    index.table().put_item(Item=archive.archive_key("example", asset(4)["key"]))
+    table = index.table()
+    original = table.meta.client.batch_get_item
+    calls = []
+    def batch(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(table.meta.client, "batch_get_item", batch)
+    monkeypatch.setattr(archive, "db", lambda: table)
+    monkeypatch.setattr(archive, "archived", lambda *_: pytest.fail("Per-asset archive reads"))
+    page = index.page("example", "videos")
+    assert len(page["assets"]) == 99
+    assert asset(4)["key"] not in {a["key"] for a in page["assets"]}
+    assert len(calls) == 1
+    request = calls[0]["RequestItems"][table.name]
+    assert request["ConsistentRead"] is True
+    assert len(request["Keys"]) == 100
+
+
+def test_archive_batch_retries_only_unprocessed_keys_and_fails_closed(index, monkeypatch):
+    archive = importlib.import_module("asset_archive")
+    table = index.table()
+    pending = {table.name: {"Keys": [archive.archive_key("example", asset()["key"])], "ConsistentRead": True}}
+    calls = []
+    responses = iter([{"Responses": {}, "UnprocessedKeys": pending},
+                      {"Responses": {table.name: [{"sk": asset()["key"]}]}}])
+    def batch(**kwargs):
+        calls.append(kwargs)
+        return next(responses)
+    monkeypatch.setattr(table.meta.client, "batch_get_item", batch)
+    monkeypatch.setattr(archive, "db", lambda: table)
+    monkeypatch.setattr(archive.time, "sleep", lambda _: None)
+    assert archive.archived_keys("example", [asset()["key"], asset(2)["key"]]) == {asset()["key"]}
+    assert calls[1]["RequestItems"] == pending
+    calls.clear()
+    def unavailable(**kwargs):
+        calls.append(kwargs)
+        return {"UnprocessedKeys": pending}
+    monkeypatch.setattr(table.meta.client, "batch_get_item", unavailable)
+    with pytest.raises(RuntimeError, match="incomplete"):
+        archive.archived_keys("example", [asset()["key"]])
+    assert len(calls) == 4
+    assert archive.archived_keys("example", []) == set()
+    with pytest.raises(ValueError, match="catalog page"):
+        archive.archived_keys("example", [asset(i)["key"] for i in range(101)])
+
+
 def test_event_uses_current_asset_and_ignores_unrelated_objects(index, monkeypatch):
     import sys
     calls = []

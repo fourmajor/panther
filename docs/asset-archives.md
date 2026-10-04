@@ -4,6 +4,10 @@ Deleting an asset archives its immutable reference. Original bytes, locators, me
 semantic versions and historical inputs remain intact. Current Assets and file-browser
 listings exclude archived files. An exact historical link remains readable.
 
+Catalog pages check up to 100 tombstones in one strongly consistent DynamoDB batch,
+not a separate remote read per asset. Unprocessed keys receive bounded retries; an
+incomplete archive check fails closed rather than showing potentially archived media.
+
 A current portrait, active appearance, scene map or selected scene output must be deselected
 before archival. Editorial, model and image processing pins also block archival. The v1 archive API refuses
 recording, audio and transcript deletion until playback/transcription/summary producers join
