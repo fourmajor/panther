@@ -45,11 +45,11 @@ SHOT = obj(
     {
         "sceneId": TEXT,
         "shotId": TEXT,
-        "durationSeconds": {"type": "number"},
+        "durationSeconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 120},
         "description": TEXT,
         "camera": TEXT,
-        "color": TEXT,
-        "subjects": array(obj({"label": TEXT, "x": {"type": "number"}, "y": {"type": "number"}})),
+        "color": {"type": "string", "pattern": r"^#[0-9a-fA-F]{6}$"},
+        "subjects": array(obj({"label": TEXT, "x": {"type": "number", "minimum": 0, "maximum": 1}, "y": {"type": "number", "minimum": 0, "maximum": 1}})),
     }
 )
 SCHEMA = obj(

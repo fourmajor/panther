@@ -1599,3 +1599,12 @@ def test_generation_schema_constrains_all_citations_to_pinned_evidence():
     assert 'enum' not in worker.SCHEMA['properties']['evidenceIds']['items']
     assert "enum" not in schema["properties"]["title"]
     assert "enum" not in schema["properties"]["uncertainties"]["items"]
+
+
+def test_storyboard_generation_schema_matches_renderer_palette_and_blocking():
+    import jsonschema
+    shot={'sceneId':'arrival','shotId':'dock','durationSeconds':8,'description':'Wet wharf','camera':'Wide','color':'#182838','subjects':[{'label':'Guide','x':0.5,'y':0.5}]}
+    jsonschema.validate(shot,worker.SHOT)
+    for change in ({'color':'cold blues'},{'durationSeconds':0},{'durationSeconds':121},{'subjects':[{'label':'Guide','x':1.1,'y':0.5}]}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**shot,**change},worker.SHOT)
