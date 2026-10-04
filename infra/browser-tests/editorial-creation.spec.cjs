@@ -330,3 +330,17 @@ for (const width of [1280,390]) test(`Manual and generated chapters have separat
  await expect(assets.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
  await assets.getByRole('button',{name:'Close',exact:true}).click();
 });
+
+for(const width of [1280,390])test(`Markdown outline uses the themed reader at ${width}px`,async({page,context},testInfo)=>{
+ await page.setViewportSize({width,height:900});await fixture(context);
+ const output='games/test-game/assets/outline/original/novel-outline.md';
+ await page.route('**/objects?*',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{objects:[{key:output,name:'novel-outline.md',size:140,lastModified:'2026-01-02T18:30:00Z'}],prefixes:[],cursor:null}}));
+ await page.route('**/object-url?*',route=>new URL(route.request().url()).searchParams.get('key')===output?route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{key:output,filename:'novel-outline.md',contentType:'text/markdown',size:140,url:'https://files.example/outline.md',metadata:{title:'Novel outline'}}}):route.fallback());
+ await page.route('https://files.example/outline.md',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},contentType:'text/markdown',body:'## The crossing\n\nThe companions approach the river at dusk.\n\n<script>window.outlineExecuted=true</script>'}));
+ await page.goto('https://panther.place/games/test-game/media?folder='+encodeURIComponent('games/test-game/assets/outline/original/'));
+ await page.getByRole('button',{name:'novel-outline.md',exact:true}).click();
+ const reader=page.locator('#preview-body article');await expect(reader.getByRole('heading',{name:'The crossing',exact:true})).toBeVisible();await expect(reader).toContainText('The companions approach the river at dusk.');await expect(page.locator('#preview-body iframe')).toHaveCount(0);
+ const contrast=await reader.evaluate(el=>{const s=getComputedStyle(el);const rgb=x=>x.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});const luminance=x=>{const c=rgb(x);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};const a=luminance(s.color),b=luminance(s.backgroundColor);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);});expect(contrast).toBeGreaterThanOrEqual(4.5);expect(await page.evaluate(()=>window.outlineExecuted)).toBeUndefined();expect(await reader.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+ await expect.poll(()=>page.locator('#preview-dialog').evaluate(el=>getComputedStyle(el.closest('[role=dialog]')).opacity)).toBe('1');
+ await page.screenshot({path:testInfo.outputPath(`markdown-outline-${width}.png`)});
+});
