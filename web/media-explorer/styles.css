@@ -1539,7 +1539,7 @@ body { padding-bottom:6rem; }
 [data-interface=chronicle] .primary-nav a[aria-current] { border-left:3px solid var(--panther-accent); padding-left:.65rem; }
 [data-interface=chronicle] .masthead .account { margin-top:auto; flex-wrap:wrap; }
 @media(min-width:801px) {
-  [data-interface=chronicle] .header-account-controls { position:fixed;top:1rem;right:1.5rem;z-index:45; }
+  :is([data-interface=chronicle],[data-interface=field]) .header-account-controls { position:fixed;top:1rem;right:1.5rem;z-index:45; }
 }
 [data-interface=chronicle] main { width:calc(100% - 320px); max-width:1050px; margin:0 48px 0 272px; padding-top:3rem; }
 [data-interface=chronicle] .dashboard-hero { display:block; border-bottom:3px double var(--line); }
