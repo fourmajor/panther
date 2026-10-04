@@ -52,6 +52,8 @@ for(const width of [1440,390]) for(const design of designs) {
     const themeInk=await page.locator('html').evaluate(el=>getComputedStyle(el).color);
     await expect(page.locator('#dashboard-name')).toHaveCSS('color',themeInk);
     await expect(page.locator('#approval-inbox h2')).toHaveCSS('color',themeInk);
+    const accentInk=await page.evaluate(()=>{const sample=document.createElement('span');sample.style.color='var(--accent-dark)';document.body.append(sample);const color=getComputedStyle(sample).color;sample.remove();return color;});
+    await expect(page.locator('#design-keep')).toHaveCSS('color',accentInk);
     await accessible(page.locator('#design-open'),width);
     for(const link of await page.locator('#primary-nav a').all()) await accessible(link,width);
     const contrast=await page.locator('#primary-nav a[aria-current]').evaluate(el=>{
