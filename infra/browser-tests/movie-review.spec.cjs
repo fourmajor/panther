@@ -56,6 +56,8 @@ async function fixture(page,{blocked=false,conflict=false,campaign=false,crowded
 async function open(page) {await page.goto(`${origin}/games/test-game/episodes?project=${encodeURIComponent(key)}`);await expect(page.getByRole('heading',{name:'The House Beneath the Tide',exact:true})).toBeVisible();}
 for(const width of [1440,390]) test(`professional review layout, screenplay and explicit approval at ${width}`,async({page})=>{
   await page.setViewportSize({width,height:1000}); const writes=await fixture(page); const errors=[]; page.on('pageerror',e=>errors.push(e.message)); await open(page);
+  await expect(page.locator('#episode-workspace')).toBeHidden();
+  await expect(page.locator('#editorial-video-composer')).toBeHidden();
   await expect(page.locator('.movie-frame img')).toHaveCount(2);
   await expect(page.locator('.movie-budget')).toContainText('$1.12');
   await expect(page.getByRole('button',{name:'Review approval…'})).toBeDisabled();

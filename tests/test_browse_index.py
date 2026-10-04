@@ -35,6 +35,47 @@ def asset(i=1, kind="video-comparison", mime="video/mp4"):
             "sourceKeys": [], "lastModified": "2026-01-01", "size": 1}
 
 
+def test_maintenance_conflict_rereads_and_is_bounded(index, monkeypatch):
+    calls = []
+    monkeypatch.setattr(index.time, 'sleep', lambda _: None)
+    newest = asset(2)
+    def fresh_read(media, reference, *, write):
+        calls.append((media, reference, write))
+        if len(calls) < 3:
+            raise index.ConcurrentIndexUpdate('changed')
+        return newest
+    monkeypatch.setattr(index, 'refresh', fresh_read)
+    assert index.refresh_for_maintenance(None, newest['key'], write=True) is newest
+    assert len(calls) == 3
+    calls.clear()
+    def conflicting(*args, **kwargs):
+        calls.append(1)
+        raise index.ConcurrentIndexUpdate('still changing')
+    monkeypatch.setattr(index, 'refresh', conflicting)
+    with pytest.raises(index.ConcurrentIndexUpdate):
+        index.refresh_for_maintenance(None, newest['key'], write=True)
+    assert len(calls) == 4
+
+
+def test_maintenance_does_not_retry_other_errors_or_read_only_conflicts(index, monkeypatch):
+    calls = []
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise ValueError('invalid source')
+    monkeypatch.setattr(index, 'refresh', fail)
+    with pytest.raises(ValueError, match='invalid source'):
+        index.refresh_for_maintenance(None, asset()['key'], write=True)
+    assert len(calls) == 1
+    calls.clear()
+    def conflict(*args, **kwargs):
+        calls.append(1)
+        raise index.ConcurrentIndexUpdate('conflict')
+    monkeypatch.setattr(index, 'refresh', conflict)
+    with pytest.raises(index.ConcurrentIndexUpdate):
+        index.refresh_for_maintenance(None, asset()['key'], write=False)
+    assert len(calls) == 1
+
+
 def test_indexed_query_has_no_source_reads_and_scoped_pages(index, monkeypatch):
     library = importlib.import_module("asset_library")
     current = asset()

@@ -1,4 +1,4 @@
-import { App } from "aws-cdk-lib";
+import { App, NestedStack } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 
-function mediaExplorerTemplate(context = {}): Template {
+function mediaExplorerTemplate(context = {}, notifications = false): Template {
   const app = new App({context});
   const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
     identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
@@ -22,8 +22,18 @@ function mediaExplorerTemplate(context = {}): Template {
     domainName: "panther.place",
     hostedZoneId: "Z1234567890",
   });
-  return Template.fromStack(stack);
+  return Template.fromStack(notifications ? stack.node.findChild("WorkflowWorkshop").node.findChild("Notifications") as NestedStack : stack);
 }
+
+test("notifications retain per-account history with authenticated bounded reads and owned event processing",()=>{
+ const template=mediaExplorerTemplate({},true);
+ for(const route of ["GET /notifications","POST /notifications/read","POST /notifications/rebuild"])template.hasResourceProperties("AWS::ApiGatewayV2::Route",{RouteKey:route,AuthorizationType:"JWT"});
+ template.hasResourceProperties("AWS::Lambda::Function",{Handler:"notifications.handler"});
+ template.hasResourceProperties("AWS::Lambda::Function",{Handler:"notifications.project_handler"});
+ const table=Object.values(template.findResources("AWS::DynamoDB::Table"))[0];assert.equal(table.DeletionPolicy,"Retain");assert.equal(table.Properties.BillingMode,"PAY_PER_REQUEST");
+ template.hasResourceProperties("AWS::Lambda::EventSourceMapping",{FunctionResponseTypes:["ReportBatchItemFailures"],StartingPosition:"TRIM_HORIZON"});
+ const permissions=JSON.stringify(template.findResources("AWS::IAM::Policy"));assert.ok(!permissions.includes("s3:"));assert.ok(!permissions.includes("states:"));assert.ok(!permissions.includes("cognito-idp:"));
+});
 
 test("Workshop projection is bounded, JWT protected and cannot run workflows",()=>{
   const template=mediaExplorerTemplate();

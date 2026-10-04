@@ -1,5 +1,93 @@
 const config = window.PANTHER_CONFIG;
 
+// Alternate shells share the exact same live DOM and data layer. Never remount
+// editors, media, recording controls or the model viewer just to compare a look.
+(() => {
+  const designs = [
+    {id:"studio", name:"Studio", label:"The original", description:"Quiet dark surfaces, familiar tabs, balanced cards. The original interface remains the default."},
+    {id:"chronicle", name:"Chronicle", label:"Turn the campaign’s pages", description:"A two-page campaign book. Choose a chapter from the table of contents, then read its recent entries on the facing page."},
+    {id:"cinema", name:"Cinema", label:"Browse a streaming library", description:"A screening-room home with a featured screening, horizontal media shelves and a production doorway."},
+    {id:"mission", name:"Production Board", label:"Follow the assembly line", description:"Three working lanes: source material, stories in production, and finished media. Reviews sit above the board."},
+    {id:"poster", name:"Pinboard", label:"Explore a wall of evidence", description:"Numbered, oversized notes arranged around a central campaign hub. Follow the connections to your cast and stories."},
+    {id:"field", name:"Explorer", label:"Search, select, inspect", description:"A searchable directory and inspector. Pick a collection on the left; inspect its recent contents on the right."},
+  ];
+  const key = "panther.interface.v1";
+  const valid = id => designs.some(design => design.id === id);
+  let saved = "studio";
+  try { const value = localStorage.getItem(key); if (valid(value)) saved = value; } catch { /* Optional preference storage. */ }
+  const requested = new URL(location.href).searchParams.get("ui");
+  let candidate = valid(requested) ? requested : saved;
+  let comparing = false;
+  const root = document.documentElement;
+  const dialog = document.getElementById("design-atlas");
+  const open = document.getElementById("design-open");
+  const tools = document.getElementById("design-preview-tools");
+  const feedback = document.getElementById("design-feedback");
+  const compare = document.getElementById("design-compare");
+  const options = document.getElementById("design-options");
+  function render() {
+    const showing = comparing ? saved : candidate;
+    root.dataset.interface = showing;
+    root.dataset.interfacePreview = String(candidate !== saved);
+    document.dispatchEvent(new CustomEvent("panther-interface-changed"));
+    document.getElementById("design-current").textContent = designs.find(item => item.id === showing).name;
+    tools.hidden = candidate === saved;
+    compare.setAttribute("aria-pressed", String(comparing));
+    compare.textContent = comparing ? "Back to preview" : "Compare saved";
+    for (const button of options.querySelectorAll("button")) {
+      button.setAttribute("aria-pressed", String(button.dataset.design === candidate));
+      button.querySelector(".atlas-saved").hidden = button.dataset.design !== saved;
+    }
+  }
+  function announce(message) { feedback.textContent = message; }
+  function preview(id) {
+    candidate = id; comparing = false; render();
+    announce(`Previewing ${designs.find(item => item.id === id).name}. Nothing has been saved.`);
+  }
+  for (const [index, design] of designs.entries()) {
+    const button = document.createElement("button");
+    button.type = "button"; button.dataset.design = design.id;
+    button.className = "atlas-option";
+    const sketch = document.createElement("span");
+    sketch.className = "atlas-sketch"; sketch.setAttribute("aria-hidden", "true");
+    sketch.innerHTML = '<span class="sketch-nav"></span><span class="sketch-title"></span><span class="sketch-tile"></span><span class="sketch-tile"></span><span class="sketch-tile"></span>';
+    const number = document.createElement("span"); number.className = "atlas-number"; number.textContent = String(index + 1).padStart(2,"0");
+    const title = document.createElement("strong"); title.textContent = design.name;
+    const label = document.createElement("span"); label.className = "atlas-label"; label.textContent = design.label;
+    const description = document.createElement("span"); description.className = "atlas-description"; description.textContent = design.description;
+    const badge = document.createElement("span"); badge.className = "atlas-saved"; badge.textContent = "Saved look";
+    button.append(sketch, number, title, label, description, badge);
+    button.addEventListener("click", () => { preview(design.id); dialog.close(); });
+    options.append(button);
+  }
+  open.addEventListener("click", () => { render(); dialog.showModal(); });
+  document.getElementById("design-close").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => open.focus({preventScroll:true}));
+  document.getElementById("design-previous").addEventListener("click", () => preview(designs[(designs.findIndex(item => item.id === candidate) + 5) % 6].id));
+  document.getElementById("design-next").addEventListener("click", () => preview(designs[(designs.findIndex(item => item.id === candidate) + 1) % 6].id));
+  compare.addEventListener("click", () => { comparing = !comparing; render(); announce(comparing ? "Showing your saved interface for comparison." : "Back to the preview."); });
+  function cancel() { candidate = saved; comparing = false; render(); open.focus({preventScroll:true}); announce("Preview canceled. Your saved interface is restored."); }
+  document.getElementById("design-cancel").addEventListener("click", cancel);
+  document.getElementById("design-keep").addEventListener("click", () => {
+    saved = candidate; comparing = false;
+    let stored = true;
+    try { localStorage.setItem(key, saved); } catch { stored = false; }
+    const url = new URL(location.href);
+    if (url.searchParams.has("ui")) { url.searchParams.delete("ui"); history.replaceState(history.state,"",url); }
+    render(); open.focus({preventScroll:true});
+    announce(stored ? "Interface saved for this browser." : "Interface selected for this visit. Your browser prevented saving the preference.");
+  });
+  document.addEventListener("keydown", event => {
+    if (event.defaultPrevented || event.repeat) return;
+    if (event.key === "Escape" && !dialog.open && candidate !== saved && !document.querySelector("dialog[open]")) { cancel(); return; }
+    const editing = event.target.closest?.("input,textarea,select,[contenteditable=true],[role=textbox],[role=combobox]");
+    if (!editing && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "d") {
+      event.preventDefault(); if (!dialog.open && !document.querySelector("dialog[open]")) dialog.showModal();
+    }
+  });
+  render();
+})();
+
 // One loading treatment everywhere. Counts come from responses, never simulated percentages.
 const loadingStates = new WeakMap();
 function showLoading(host, message) {
@@ -194,6 +282,8 @@ function storeTokens(tokens) {
 }
 
 function clearSession() {
+  headerProfile=null;headerProfileScope=null;
+  window.PantherUI.unmountAccountControls(document.getElementById('header-account-controls'));
   roomCapture?.interrupt();
   assetUploads.clear();assetGenerationJobs.clear();assetListing={gameId:null,assets:[],cursor:null,loading:false,error:'',pages:0};
   window.PantherUI.clear();
@@ -352,7 +442,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
+  const sensitive = /(?:notifications|live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -428,6 +518,9 @@ document.addEventListener("visibilitychange", () => {if (document.visibilityStat
 document.addEventListener("input", event => {const form = event.target.closest?.("form");if (form) form.dataset.dirty = "true";}, true);
 
 function showWelcome(message = "") {
+  window.PantherUI.unmountAccountControls(document.getElementById('header-account-controls'));
+  window.PantherUI.unmountNotificationsPage(document.getElementById('notifications-page'));
+  document.getElementById('notifications-page').hidden=true;
   closeAccountSettings();
   document.getElementById("page-loading").hidden = true;
   clearLibrary();
@@ -453,9 +546,25 @@ function showApplicationChrome() {
   elements.welcome.hidden = true;
   elements.account.hidden = false;
   elements.primaryNav.hidden = false;
+  syncAccountControls();
+}
+
+let headerProfile=null,headerProfileScope=null;
+function openNotification(notice){
+  const target=notice.target;
+  if(target?.type!=='workflow'||!/^\w[\w-]*$/.test(target.gameId)||!/^[-a-z]+$/.test(target.kind)||!/^[-a-z]+~[a-z0-9-]+$/.test(target.id))return;
+  navigate(`/games/${encodeURIComponent(target.gameId)}/workflows/${encodeURIComponent(target.kind)}/${encodeURIComponent(target.id)}`);
+}
+function notificationProps(){return {scope:apiScope(),onLoad:async parameters=>{const result=await api('/notifications',parameters);if(!Array.isArray(result.notifications))throw new Error('Notification response unavailable');return result;},onRead:id=>api('/notifications/read',{},{body:{id}}),onOpen:openNotification};}
+function syncAccountControls(){
+  const scope=apiScope(),claims=decodeToken(state.tokens.id_token);
+  const render=()=>window.PantherUI.mountAccountControls(document.getElementById('header-account-controls'),{...notificationProps(),profile:headerProfile||{username:claims['cognito:username']||claims.username},onSettings:()=>visitAccount(),onSignOut:()=>void logout(),onHistory:()=>navigate('/notifications')});
+  if(headerProfileScope!==scope){headerProfileScope=scope;headerProfile=null;void accountRequest('get').then(profile=>{if(state.tokens&&apiScope()===scope){headerProfile=profile;render();}}).catch(()=>{/* Initials remain usable if profile lookup fails. */});}
+  render();
 }
 
 function setActiveNavigation(section) {
+  document.getElementById('storyboard-entry').hidden=!['dashboard','videos','workflows','sessions'].includes(section);
   for (const link of elements.primaryNav.querySelectorAll("a")) {
     const part = link.dataset.section || link.getAttribute("href").split("/").at(-1);
     link.dataset.section = part;
@@ -570,6 +679,9 @@ async function selectGame(requested, epoch) {
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
   elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
+  const reviewEntry = document.getElementById("storyboard-entry");
+  reviewEntry.href = `${gamePath("videos")}?review=1`;
+  reviewEntry.onclick = event => {if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();navigate(reviewEntry.href);};
   renderGameStyle();
   if (liveGame !== selected) { liveGame = selected; void refreshLive(); }
   return true;
@@ -597,6 +709,102 @@ function renderDashboard() {
     document.querySelector(selector)?.setAttribute('hidden','');
   }
   drawDashboardCards(null);
+  renderWorkspaceHome();
+  void loadApprovalInbox(document.getElementById("approval-inbox"), routeEpoch);
+}
+
+// Each workspace has its own information architecture; shared editors remain mounted.
+// These home projections copy navigation links, not media players or mutable forms.
+function renderWorkspaceHome() {
+  const host=document.getElementById('workspace-home');if(!host)return;
+  const design=document.documentElement.dataset.interface;
+  const source=document.getElementById('dashboard-sections');host.replaceChildren();
+  source.hidden=design!=='studio';host.hidden=design==='studio';if(host.hidden)return;
+  host.dataset.layout=design;
+  const collections=[['characters','The cast'],['sessions','Session records'],['novel','The novel'],['videos','Screening room'],['assets','The archive']];
+  const copyLinks=(section,destination)=>{
+    const links=source.querySelector(`[data-section="${section}"] ul`);
+    const list=document.createElement('ul');list.className='workspace-recent';
+    for(const row of links?.children||[]){const original=row.querySelector('a');if(!original)continue;const li=document.createElement('li'),a=document.createElement('a');a.href=original.href;a.textContent=original.textContent;a.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();original.click();};li.append(a);list.append(li);}
+    if(!list.children.length)list.append(movieNode('li','No recent entries. Open the collection to browse.'));
+    destination.append(list);
+  };
+  const collection=(section,title,index)=>{
+    const card=movieNode('article',undefined,'workspace-collection');card.dataset.collection=section;
+    card.append(movieNode('span',String(index+1).padStart(2,'0'),'workspace-number'),movieNode('h3',title));copyLinks(section,card);
+    const link=movieNode('a',`Open ${title.toLowerCase()} →`);gameLink(link,section);card.append(link);return card;
+  };
+  if(design==='field'){
+    host.append(movieNode('h2','Explore your world'));
+    const search=movieNode('input');search.type='search';search.placeholder='Search recent entries and collections';search.setAttribute('aria-label','Find a collection');
+    const explorer=movieNode('div',undefined,'workspace-explorer'),directory=movieNode('section',undefined,'workspace-directory'),inspector=movieNode('aside',undefined,'workspace-inspector');inspector.setAttribute('aria-label','Entry inspector');
+    const table=movieNode('table'),head=movieNode('thead'),heading=movieNode('tr');for(const title of ['Collection','Recent entry'])heading.append(movieNode('th',title));head.append(heading);const body=movieNode('tbody');table.append(head,body);directory.append(search,table);
+    for(const [number,[section,title]]of collections.entries()){
+      const originals=[...source.querySelectorAll(`[data-section="${section}"] ul a`)];
+      for(const original of originals.length?originals:[null]){
+        const row=movieNode('tr'),name=original?.textContent||'Browse collection',button=movieButton(name,()=>{for(const item of body.querySelectorAll('button'))item.setAttribute('aria-pressed',String(item===button));inspector.replaceChildren(movieNode('p','SELECTED ENTRY','eyebrow'),movieNode('h3',name),movieNode('p',title));const open=movieNode('a','Open selected entry →','primary-button');if(original){open.href=original.href;open.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();original.click();};}else gameLink(open,section);inspector.append(open);});
+        button.dataset.collection=section;const cell=movieNode('td');cell.append(button);row.append(movieNode('td',title),cell);row.dataset.search=`${title} ${name}`.toLowerCase();body.append(row);
+      }
+    }
+    search.oninput=()=>{for(const row of body.children)row.hidden=!row.dataset.search.includes(search.value.toLowerCase());};explorer.append(directory,inspector);host.append(explorer);body.querySelector('button')?.click();
+  }else if(design==='chronicle'){
+    const book=movieNode('div',undefined,'workspace-split'),index=movieNode('nav',undefined,'workspace-index'),page=movieNode('article',undefined,'workspace-page');index.setAttribute('aria-label',design==='chronicle'?'Book contents':'Collection directory');
+    const search=movieNode('input');search.type='search';search.placeholder='Find a collection';search.setAttribute('aria-label','Find a collection');if(design==='field')index.append(search);
+    function select(section,title,number){for(const button of index.querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.collection===section));page.replaceChildren(movieNode('p',design==='chronicle'?`CHAPTER ${number+1}`:'COLLECTION','eyebrow'),collection(section,title,number));}
+    for(const [number,[section,title]]of collections.entries()){const button=movieButton(`${number+1}. ${title}`,()=>select(section,title,number));button.dataset.collection=section;index.append(button);}
+    search.oninput=()=>{for(const button of index.querySelectorAll('button'))button.hidden=!button.textContent.toLowerCase().includes(search.value.toLowerCase());};
+    book.append(index,page);host.append(movieNode('h2',design==='chronicle'?'Your campaign, bound together':'Explore your world'),book);select(...collections[design==='chronicle'?2:0],design==='chronicle'?2:0);
+  }else if(design==='mission'){
+    host.append(movieNode('h2','From the table to the screen'));
+    const board=movieNode('div',undefined,'workspace-kanban');
+    for(const [name,sections]of [['01 / SOURCE',['sessions','characters']],['02 / MAKE',['novel','workflows']],['03 / WATCH',['videos','assets']]]){const lane=movieNode('section',undefined,'workspace-lane');lane.append(movieNode('h3',name));for(const section of sections){const title=collections.find(c=>c[0]===section)?.[1]||'Workflow progress';lane.append(collection(section,title,collections.findIndex(c=>c[0]===section)));}board.append(lane);}host.append(board);
+  }else if(design==='cinema'){
+    const feature=movieNode('section',undefined,'workspace-feature');feature.append(movieNode('p','YOUR PRIVATE PREMIERE','eyebrow'),movieNode('h2','Stories worth pressing play for.'),movieNode('p','Watch finished episodes, or step behind the screen to review the next one.'));const link=movieNode('a','Enter the screening room →','primary-button');gameLink(link,'videos');feature.append(link);host.append(feature);
+    for(const [number,[section,title]]of [...collections.entries()].sort((a,b)=>(a[1][0]==='videos'?-1:b[1][0]==='videos'?1:0))){const shelf=collection(section,title,number);shelf.classList.add('workspace-shelf');host.append(shelf);}
+  }else{
+    host.append(movieNode('h2','A world of connected stories'));
+    const board=movieNode('div',undefined,'workspace-pinboard');for(const [number,[section,title]]of collections.entries())board.append(collection(section,title,number));host.append(board);
+  }
+}
+document.addEventListener('panther-interface-changed',()=>renderWorkspaceHome());
+
+async function loadApprovalInbox(host,epoch,cursor=null,append=false) {
+  const gameId=state.gameId,current=()=>epoch===routeEpoch&&gameId===state.gameId&&host.isConnected;
+  if(!append){host.replaceChildren(movieNode('h2','Review & approve storyboards'),movieNode('p','Choose a session below. Review the shots and script, then approve its exact plan and budget. Approval never silently starts a paid request.'));}
+  const status=movieNode('p','Finding prepared storyboards…');status.setAttribute('role','status');host.append(status);
+  if(!append){
+    const preparation=movieNode('section',undefined,'approval-preparation');preparation.setAttribute('aria-label','Session preparation');host.append(preparation);
+    void api('/workflows',{gameId}).then(result=>{
+      if(!current()||!preparation.isConnected)return;
+      if(!Array.isArray(result.workflows))throw new Error('Workflow status unavailable');
+      const jobs=result.workflows.filter(job=>['editorial','session-finalization'].includes(job.kind)&&typeof job.id==='string'&&typeof job.sessionId==='string'&&job.sessionId&&job.gameId===gameId&&job.status!=='done')
+        .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0)).slice(0,3);
+      for(const job of jobs){const row=movieNode('article',undefined,'approval-preparation-row');row.dataset.state=job.status;
+        const progress=Number.isInteger(job.completedStages)&&Number.isInteger(job.totalStages)&&job.totalStages>0?`${job.completedStages} of ${job.totalStages} preparation stages complete`:'Preparation progress not reported';
+        row.append(movieNode('strong',`Session ${job.sessionId}`),movieNode('p',job.status==='failed'?'Preparation failed — open its workflow to see what needs fixing. This is not a ready-to-approve storyboard.':`${progress} · ${job.sourceStatus||job.status}. This workflow status is not a storyboard approval.`));
+        const link=movieNode('a','View session preparation →');link.href=`${gamePath('workflows')}/${encodeURIComponent(job.kind)}/${encodeURIComponent(job.id)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};row.append(link);preparation.append(row);
+      }
+      if(result.cursor)preparation.append(movieNode('p','Recent preparation runs shown. Open Workflows for more runs.','movie-small'));
+    }).catch(()=>{if(current()&&preparation.isConnected)preparation.append(movieNode('p','Session preparation status is unavailable. Check Workflows; no readiness has been assumed.'));});
+  }
+  try{
+    const result=await api('/assets',{gameId,section:'videos',cursor});if(!current())return;
+    if(!Array.isArray(result.assets))throw new Error('Storyboard catalog unavailable');
+    let count=0;const checks=[];
+    for(const asset of result.assets.filter(a=>a.kind==='movie-review-plan'&&sameGameKey(a.key)).sort((a,b)=>String(b.lastModified||'').localeCompare(String(a.lastModified||'')))){count++;const card=movieNode('article',undefined,'approval-card');card.append(movieNode('p',asset.metadata?.sessionId?`SESSION / ${asset.metadata.sessionId}`:'PREPARED MOVIE PLAN','eyebrow'),movieNode('h3',asset.metadata?.title||asset.name));
+      const link=movieNode('a','Review storyboard & approve →','primary-button');link.href=`${gamePath('videos')}?project=${encodeURIComponent(asset.key)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};
+      const readiness=movieNode('p','Checking this plan’s review status…','approval-readiness');readiness.setAttribute('role','status');card.append(link,readiness);host.append(card);
+      checks.push(async()=>{try{const data=await api('/movie-review',{gameId,key:asset.key});if(!current()||!card.isConnected)return;
+        readiness.textContent=data.review?.action==='approved'?'This revision is already approved.':data.readiness?.ready?'Ready for your shot-by-shot review and approval.':Array.isArray(data.readiness?.blockers)&&data.readiness.blockers.length?`Preparation needs attention: ${data.readiness.blockers[0]}`:'Open this plan to check its preparation and approval requirements.';
+        if(data.review?.action==='approved')link.textContent='View approved storyboard →';
+      }catch{if(current()&&card.isConnected)readiness.textContent='Review status unavailable. Open the plan to retry; no approval has been assumed.';}});
+    }
+    status.textContent=count?'Approval is available inside each plan after every shot is reviewed and its checks pass.':result.cursor?'No prepared storyboards on this catalog page. More entries are available below.':'No prepared storyboards on this page. If your session is still being prepared, check its workflow.';
+    if(result.cursor){const more=movieButton('Find more storyboards',()=>{more.remove();void loadApprovalInbox(host,epoch,result.cursor,true);});host.append(more);}
+    if(!append){const workflow=movieNode('a','Check session preparation in Workflows →');gameLink(workflow,'workflows');host.append(workflow);}
+    // Bound detail reads; never fan out an entire game or scan source storage.
+    await Promise.all(Array.from({length:Math.min(4,checks.length)},async()=>{while(checks.length&&current())await checks.shift()();}));
+  }catch(error){if(current()){status.textContent=`Could not load storyboard reviews: ${error.message}`;host.append(movieButton('Retry storyboard list',()=>void loadApprovalInbox(host,epoch)));}}
 }
 
 function drawDashboardCards(data) {
@@ -604,6 +812,7 @@ function drawDashboardCards(data) {
   window.PantherUI.mountDashboardCards(document.getElementById('dashboard-sections'),{
     gameId,data,request:api,onNavigate:navigate,
     onPreview:item=>void previewFile({key:item.key,name:item.title||item.metadata?.title||item.name,size:item.size}),
+    onRendered:renderWorkspaceHome,
   });
 }
 
@@ -1611,6 +1820,8 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  window.PantherUI.unmountNotificationsPage(document.getElementById('notifications-page'));
+  document.getElementById('notifications-page').hidden=true;
   closeOptionalInfoDialogs();
   const legacyEpisodeRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/videos((?:\/[^?#]*)?)$/);
   if(legacyEpisodeRoute){navigate(`${legacyEpisodeRoute[1]||''}/episodes${legacyEpisodeRoute[2]}${location.search}${location.hash}`,{replace:true});return;}
@@ -1647,6 +1858,10 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
+  if(location.pathname==='/notifications'){
+    elements.characters.hidden=true;elements.explorer.hidden=true;document.getElementById('game-context').hidden=true;pageLoading.hidden=true;
+    setActiveNavigation('notifications');const host=document.getElementById('notifications-page');host.hidden=false;window.PantherUI.mountNotificationsPage(host,notificationProps());await roomCapture?.render('notifications',epoch);return;
+  }
   const workflowRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/([^/]+))?\/?$/);
   const gameRoute = workflowRoute || window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|episodes|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
@@ -3083,6 +3298,9 @@ function renderLiveSessionEntries(){
 }
 
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
+  const inbox=document.getElementById('video-approval-inbox');
+  inbox.hidden=section!=='videos'||new URLSearchParams(location.search).has('project')||episodeRouteParams().has('episode');
+  if(!inbox.hidden&&!cursor)void loadApprovalInbox(inbox,epoch);
   document.getElementById("session-library").dataset.paged = String(previousAssets.length > 0 || Boolean(cursor));
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
@@ -3453,7 +3671,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
       }
   }
   function renderAside() {
-    aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));
+    aside.replaceChildren(movieNode("p", "STORYBOARD APPROVAL", "eyebrow"), movieNode("h3", "Review before you spend"));
     const cost = movieNode("div", undefined, "movie-cost");
     cost.append(movieNode("strong", data.readiness.costComplete ? movieMoney(data.readiness.knownCostUsd) : "Unquoted"),
       movieNode("span", "estimated generation cost", "movie-muted")); aside.append(cost);
@@ -4511,7 +4729,7 @@ function closeAccountSettings() {
   document.getElementById("account-page").hidden = true;
   document.getElementById("account-settings-body").replaceChildren();
   document.getElementById("account-settings-button").removeAttribute("aria-current");
-  document.getElementById("account-settings-button").hidden=false;
+  document.getElementById("account-settings-button").hidden=true;
   document.getElementById("account-game-back").hidden=true;
 }
 
@@ -4589,7 +4807,7 @@ async function openAccountSettings(recovery=false) {
   document.getElementById("account-page-subtitle").textContent=recovery?"Get back into your account.":"Manage your profile and security.";
   document.getElementById("account-settings-back").textContent="Back to sign in";
   document.getElementById("account-settings-back").hidden=!recovery;
-  document.getElementById("account-settings-button").hidden=!recovery;
+  document.getElementById("account-settings-button").hidden=true;
   const gameBack=document.getElementById("account-game-back");gameBack.hidden=recovery;gameBack.href=accountReturnPath;
   document.getElementById("account-settings-title").tabIndex=-1;
   document.getElementById("account-settings-title").focus({preventScroll:true});
@@ -4598,6 +4816,7 @@ async function openAccountSettings(recovery=false) {
     try {await ensureSession();} catch(error) {if(epoch===accountSettingsEpoch)showWelcome(error.message);return;}
     if(epoch!==accountSettingsEpoch)return;
     elements.account.hidden=false;
+    syncAccountControls();
   }
   if (recovery) {
     const section=accountSection(host,"Recover your account","Enter your username. Recovery requires a previously verified email address. We do not disclose whether an account exists.");
@@ -4632,7 +4851,8 @@ async function openAccountSettings(recovery=false) {
   let displayName,avatar;
   const profileForm=accountForm(identity,"Save profile",async()=>{
     const selected=["","panther","moon","star"].some(name=>avatar.value===(name?`${window.location.origin}/avatars/${name}.svg`:""));
-    await accountRequest("profile",{name:displayName.value.trim(),picture:selected?avatar.value:null}); return "Profile saved.";
+    await accountRequest("profile",{name:displayName.value.trim(),picture:selected?avatar.value:null});
+    headerProfile={...profile,name:displayName.value.trim(),picture:selected?avatar.value:profile.picture};syncAccountControls();return "Profile saved.";
   });
   displayName=accountField(profileForm,"Display name","text",profile.name); displayName.maxLength=120;
   const avatarLabel=document.createElement("label"), avatarTitle=document.createElement("span"), avatarPreview=document.createElement("img");

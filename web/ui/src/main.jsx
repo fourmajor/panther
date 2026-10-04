@@ -2,6 +2,7 @@ import {DashboardCards} from './dashboard-cards.jsx';
 export {LiveTranscription} from './live-transcription.js';
 export {renderProseMarkdown} from './prose-markdown.js';
 import {ChapterEditor} from './chapter-editor.jsx';
+import {AccountControls,NotificationsPage} from './account-notifications.jsx';
 import {TagManager} from './tag-manager.jsx';
 import {SessionSummary,SessionDownload} from './session-summary.jsx';
 import {AssetCreateForm} from './asset-create-form.jsx';
@@ -164,6 +165,11 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 const workflowRoots=new WeakMap();
+const accountRoots=new WeakMap(),notificationRoots=new WeakMap();
+export function mountAccountControls(host,props){if(!accountRoots.has(host))accountRoots.set(host,createRoot(host));accountRoots.get(host).render(<QueryClientProvider client={client}><AccountControls key={props.scope} {...props}/></QueryClientProvider>);}
+export function unmountAccountControls(host){accountRoots.get(host)?.unmount();accountRoots.delete(host);}
+export function mountNotificationsPage(host,props){if(!notificationRoots.has(host))notificationRoots.set(host,createRoot(host));notificationRoots.get(host).render(<QueryClientProvider client={client}><NotificationsPage key={props.scope} {...props}/></QueryClientProvider>);}
+export function unmountNotificationsPage(host){notificationRoots.get(host)?.unmount();notificationRoots.delete(host);}
 export function mountWorkflowBrowser(host,props){
  if(!workflowRoots.has(host))workflowRoots.set(host,createRoot(host));
  workflowRoots.get(host).render(<QueryClientProvider client={client}><WorkflowBrowser {...props}/></QueryClientProvider>);

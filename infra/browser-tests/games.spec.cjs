@@ -91,8 +91,9 @@ async function fixture(page, canEditGame = false, development = false) {
       styles.set(id, posted.visualStyle);
     }
     let body = {};
+    if (url.pathname === '/assets') body = {assets:[],cursor:null};
     if (url.pathname === '/recordings/live') body = {recordings:[]};
-    if (url.pathname === '/workflows') body = {types:[]};
+    if (url.pathname === '/workflows') body = {types:[],workflows:[],cursor:null};
     if (url.pathname === '/games') body = { games: currentGames };
     if (url.pathname === '/dashboard-recent') {
       const characters=id==='test-b'?[{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}]:[];
@@ -500,15 +501,15 @@ for(const width of [1280,390])test(`Create game searches rules editions and pers
  await page.getByRole('link',{name:'Settings',exact:true}).click();await expect(page.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');
 });
 
-for(const width of [1280,390])test(`Account header uses an accessible borderless icon at ${width}px`,async({page})=>{
+for(const width of [1280,390])test(`Account avatar is round and keyboard accessible at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});await fixture(page);await page.goto('https://panther.place/games/campaign-a/dashboard');
  const account=page.getByRole('button',{name:'Account',exact:true});await expect(account).toBeVisible();await expect(account).toBeInViewport();
- expect(await account.innerText()).toBe('');await expect(account.locator('svg')).toBeVisible();
- const appearance=await account.evaluate(el=>{const style=getComputedStyle(el),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return{border:style.borderTopWidth,shadow:style.boxShadow,hit:el===hit||el.contains(hit),width:r.width,height:r.height};});
- expect(appearance.border).toBe('0px');expect(appearance.shadow).toBe('none');expect(appearance.hit).toBe(true);expect(appearance.width).toBeGreaterThanOrEqual(36);expect(appearance.height).toBeGreaterThanOrEqual(36);
- await account.hover();expect(await account.evaluate(el=>getComputedStyle(el).borderTopWidth)).toBe('0px');
- await account.focus();await expect(account).toBeFocused();expect(await account.evaluate(el=>getComputedStyle(el).boxShadow)).not.toBe('none');
- await account.press('Enter');await expect(page).toHaveURL('https://panther.place/account');
+ await expect(account).toHaveClass(/account-avatar/);await expect(account).toHaveCSS('border-radius','50%');
+ const appearance=await account.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return{hit:el===hit||el.contains(hit),width:r.width,height:r.height};});
+ expect(appearance.hit).toBe(true);expect(appearance.width).toBeGreaterThanOrEqual(36);expect(appearance.height).toBeGreaterThanOrEqual(36);
+ await account.focus();await expect(account).toBeFocused();await account.press('Enter');
+ await expect(page.getByRole('button',{name:'Sign out',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Account settings',exact:true}).click();await expect(page).toHaveURL('https://panther.place/account');
 });
 
 for(const width of [1280,390,320])test(`header Create Game stays beside the selector and reuses its dialog at ${width}px`,async({page})=>{
@@ -529,7 +530,7 @@ for(const width of [1280,390,320])test(`header Create Game stays beside the sele
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(create).toBeFocused();
   await create.press('Enter');dialog=page.getByRole('dialog',{name:'Create Game',exact:true});await expect(dialog).toBeVisible();await expect(dialog.getByLabel('Name',{exact:true})).toBeFocused();
   await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(create).toBeFocused();
-  await page.getByRole('button',{name:'Account',exact:true}).click();await expect(create).toBeHidden();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();await expect(create).toBeHidden();
 });
 
 for(const width of [1280,390]) {
@@ -548,6 +549,7 @@ for(const width of [1280,390]) {
     await selectGame(page,'test-b');
     for(const label of ['10 Characters','5 Sessions','2 Episodes','4 Chapters','9 Assets'])await expect(page.getByRole('link',{name:label,exact:true})).toBeVisible();
     const card=page.locator('#dashboard-sections [data-section="assets"]');
+    await card.scrollIntoViewIfNeeded();
     await expect(card.locator('img')).toHaveCount(6);
     await expect(card.getByRole('link',{name:'and 3 more',exact:true})).toBeVisible();
     const boxes=await card.locator('img').evaluateAll(images=>images.map(img=>{const r=img.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));

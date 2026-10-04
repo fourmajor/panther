@@ -58,7 +58,7 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
  expect(dialogGeometry.x).toBeGreaterThanOrEqual(0);expect(dialogGeometry.y).toBeGreaterThanOrEqual(0);
  expect(dialogGeometry.x+dialogGeometry.width).toBeLessThanOrEqual(width);
  expect(dialogGeometry.y+dialogGeometry.height).toBeLessThanOrEqual(900);
- await expect(page.locator('dialog')).toHaveCount(0);
+ await expect(page.locator('dialog[open]')).toHaveCount(0);
  await expect(page.getByLabel('Title',{exact:true})).toHaveCount(0);
  await expect(page.getByLabel('Direction',{exact:true})).toHaveCount(0);
  await page.getByLabel('Prompt',{exact:true}).fill('Follow the companions across the river.');

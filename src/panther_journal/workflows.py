@@ -156,6 +156,7 @@ def report_video(plan_id):
     report.stages = [{"id": shot["id"], "label": f"Render {shot['id']} · {shot['model']}", "status": states.get(latest[shot["id"]]["state"], "unknown") if shot["id"] in latest else "pending"} for shot in manifest["shots"]]
     values = {stage["status"] for stage in report.stages}
     report.state = "done" if values == {"done"} else "unknown" if "unknown" in values else "failed" if "failed" in values else "running" if "running" in values else "queued" if approved else "paused"
+    report.stages.insert(0, {"id": "storyboard-approval", "label": "Owner storyboard approval", "status": "done" if approved else "paused"})
     report.send()
 
 

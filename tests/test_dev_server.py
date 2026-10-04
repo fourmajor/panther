@@ -9,6 +9,21 @@ dev = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dev)
 
 
+def test_notifications_survive_restart_and_do_not_resurrect_unread(tmp_path):
+    store = dev.Store(tmp_path / "notifications.sqlite")
+    job = {"jobId": "example-run", "gameId": "fictional-game", "status": "FAILED", "title": "Fictional workflow"}
+    store.put("editorial", job["jobId"], job, "fictional-game")
+    notice = store.notifications("unread")["notifications"][0]
+    store.read_notification(notice["id"])
+    store.put("editorial", job["jobId"], job, "fictional-game")
+    reopened = dev.Store(store.path)
+    assert reopened.notifications("unread")["notifications"] == []
+    assert len(reopened.notifications()["notifications"]) == 1
+    assert reopened.notifications()["notifications"][0]["readAt"] > 0
+    with pytest.raises(LookupError):
+        reopened.read_notification("a" * 64)
+
+
 def test_empty_database_stays_empty_until_explicit_seed(tmp_path):
     store = dev.Store(tmp_path / "development.sqlite")
     assert store.list("game") == []

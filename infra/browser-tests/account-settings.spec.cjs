@@ -34,8 +34,7 @@ async function fixture(context,{signedIn=true,mfa=false}={}) {
 async function visibleControl(locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeInViewport();
-  const box=await locator.boundingBox();
-  expect(await locator.evaluate((node,p)=>node.contains(document.elementFromPoint(p.x,p.y)),{x:box.x+box.width/2,y:box.y+box.height/2})).toBe(true);
+  await expect.poll(()=>locator.evaluate(node=>{const box=node.getBoundingClientRect();return node.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));})).toBe(true);
 }
 
 for(const width of [1280,390]) {
@@ -43,7 +42,7 @@ for(const width of [1280,390]) {
     await page.setViewportSize({width,height:900}); const {calls,profile}=await fixture(context);
     await page.goto('https://panther.place/media');
     await visibleControl(page.getByRole('button',{name:'Account',exact:true}));
-    await page.getByRole('button',{name:'Account',exact:true}).click();
+    await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
     await expect(page).toHaveURL('https://panther.place/account');
     const dialog=page.locator('#account-page');
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -96,7 +95,7 @@ for(const width of [1280,390]) {
 
 test('authenticator removal and global sign-out require explicit acknowledgement',async({page,context})=>{
   const {calls}=await fixture(context,{mfa:true}); await page.goto('https://panther.place/media');
-  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   const dialog=page.locator('#account-page');
   await dialog.getByRole('button',{name:'Disable authenticator',exact:true}).click();
   await expect(dialog).toContainText('Confirm that you want to remove');
@@ -167,7 +166,7 @@ test('closing account setup discards a delayed authenticator secret',async({page
     if(route.request().postDataJSON().action!=='mfa-start')return route.fallback();
     requested(); await held; return route.fulfill({json:{secretCode:'DELAYED-SYNTHETIC-SECRET'}});
   });
-  await page.goto('https://panther.place/media'); await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.goto('https://panther.place/media'); await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click(); await seen;
   await page.getByRole('link',{name:'Back to game'}).click();
   const completed=page.waitForResponse(response=>response.url().endsWith('/auth/account'));
@@ -181,9 +180,11 @@ test('Account supports direct URLs and browser back while discarding enrollment 
   await page.goto('https://panther.place/account');
   await expect(page.getByRole('heading',{name:'Account',exact:true})).toBeVisible();
   await expect(page.getByLabel('Display name')).toHaveValue('Example Member');
+  // One header profile lookup plus the account page's own fresh read.
+  await expect.poll(()=>calls.filter(call=>call.action==='get').length).toBe(2);
   await page.getByRole('link',{name:'Back to game'}).click();
   await expect(page.locator('#dashboard')).toBeVisible();
-  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click();
   await expect(page.getByLabel('Authenticator setup key')).toBeVisible();
   await page.goBack();
@@ -191,7 +192,7 @@ test('Account supports direct URLs and browser back while discarding enrollment 
   await page.goForward();
   await expect(page.getByLabel('Display name')).toBeVisible();
   await expect(page.getByLabel('Authenticator setup key')).toHaveCount(0);
-  expect(calls.filter(call=>call.action==='get')).toHaveLength(3);
+  expect(calls.filter(call=>call.action==='get')).toHaveLength(4);
 });
 
 test('Password recovery supports a direct signed-out URL',async({page,context})=>{
@@ -206,11 +207,11 @@ for(const width of [1280,390])test(`Account header return and independent sectio
   await page.setViewportSize({width,height:900});await fixture(context);
   await page.goto('https://panther.place/games/test-game/characters');
   const account=page.getByRole('button',{name:'Account',exact:true});
-  await expect(account).toHaveAttribute('title','Account');await expect(account).toHaveText('');
-  await expect(account.locator('svg')).toBeVisible();
-  await account.click();const panel=page.locator('#account-page');
+  await expect(account).toHaveClass(/account-avatar/);await expect(account).toHaveText('EM');
+  await expect(account).toHaveCSS('border-radius','50%');
+  await account.click();await page.getByRole('button',{name:'Account settings',exact:true}).click();const panel=page.locator('#account-page');
   await expect(panel.locator('.account-section')).toHaveCount(5);
-  await expect(account).toBeHidden();
+  await expect(account).toBeVisible();
   const back=page.locator('.masthead').getByRole('link',{name:'Back to game',exact:true});
   await expect(back).toHaveAttribute('href','/games/test-game/characters');
   await expect(back).toHaveAttribute('title','Back to game');await expect(back).toHaveText('');
@@ -230,6 +231,6 @@ for(const width of [1280,390])test(`Account header return and independent sectio
   await page.screenshot({path:testInfo.outputPath(`account-stacks-${width}.png`),fullPage:true});
   await back.focus();await page.keyboard.press('Enter');await expect(page).toHaveURL('https://panther.place/games/test-game/characters');
   await expect(account).toBeVisible();await expect(back).toBeHidden();
-  await account.click();await panel.getByRole('button',{name:'Sign out',exact:true}).click();
+  await account.click();await page.getByRole('button',{name:'Account settings',exact:true}).click();await panel.getByRole('button',{name:'Sign out',exact:true}).click();
   await expect(page).toHaveURL(/^https:\/\/test.amazoncognito.com\/logout\?/);
 });
