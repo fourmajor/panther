@@ -66,7 +66,7 @@ def video_prompt(store, job, folder, verifier, client=None):
     if limit < 500:
         raise ValueError('Selected scene and character continuity exceeds the video prompt capacity; simplify the scene before generating')
     schema = {'type': 'object', 'additionalProperties': False, 'required': ['renderPrompt', 'sourceFacts', 'uncertainties'],
-        'properties': {'renderPrompt': {'type': 'string'}, 'sourceFacts': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+        'properties': {'renderPrompt': {'type': 'string', 'minLength': 1, 'maxLength': limit}, 'sourceFacts': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
             'required': ['sourceKey', 'segmentIndex', 'fact'], 'properties': {'sourceKey': {'type': 'string'}, 'segmentIndex': {'type': 'integer'}, 'fact': {'type': 'string'}}}},
             'uncertainties': {'type': 'array', 'items': {'type': 'string'}}}}
     value, evidence = request(folder, 'video_prompt',
