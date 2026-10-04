@@ -35,8 +35,8 @@ export function SceneStoryboard({scene, scope, onSave, onLoadFrames, onOpenFrame
       <h4 className="text-base font-semibold">Storyboard</h4>
       <div role="group" aria-label="Storyboard actions" className="flex flex-wrap items-center gap-2">
         {needsReview&&<span className="text-sm text-muted-foreground">{board.decision?.action==='changes-requested'?'Changes requested':'Needs approval'}</span>}
-        <Button variant="outline" onClick={edit} disabled={busy}><Pencil/> {board?'Edit':'Create storyboard'}</Button>
-        {onAssemble&&board&&<Button disabled={busy||needsReview||board.shots.some(shot=>!scene.shotTakes?.[shot.shotId])} onClick={()=>void assemble()}><Hammer/>Assemble</Button>}
+        <Button variant="outline" className="ui-action-button" onClick={edit} disabled={busy}><Pencil/> {board?'Edit':'Create storyboard'}</Button>
+        {onAssemble&&board&&<Button className="ui-action-button" disabled={busy||needsReview||board.shots.some(shot=>!scene.shotTakes?.[shot.shotId])} onClick={()=>void assemble()}><Hammer/>Assemble</Button>}
         {needsReview&&<><Button variant="outline" size="sm" disabled={busy} onClick={()=>save({storyboardDecision:{revision:board.revision,action:'changes-requested'}})}><ThumbsDown/>Request changes</Button><Button size="sm" disabled={busy} onClick={()=>save({storyboardDecision:{revision:board.revision,action:'approved'}})}><ThumbsUp/>Approve</Button></>}
       </div>
     </div>
