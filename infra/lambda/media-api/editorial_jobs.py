@@ -298,7 +298,7 @@ def submit(body):
                 "sourceKeys",
                 "contextKeys",
             }
-            if not required <= set(creation) or not set(creation) <= required | {"title", "brief"}:
+            if not required <= set(creation) or not set(creation) <= required | {"title", "brief", "storyboardShotRef"}:
                 raise ValueError("Expected a scene-owned video creation request")
             ref = creation["sceneRef"]
             if (
@@ -315,6 +315,15 @@ def submit(body):
             selected_scene = video_scenes.pin_scene(body["gameId"], ref)
             import episode_storyboards
             episode_storyboards.require_ready(selected_scene)
+            if creation.get('storyboardShotRef'):
+                import storyboard_videos
+                reference = creation['storyboardShotRef']
+                if not isinstance(reference, dict) or set(reference) != {'revision', 'shotId'}:
+                    raise ValueError('Choose an exact storyboard shot revision')
+                board, selected_shot = storyboard_videos.shot(selected_scene, reference['shotId'])
+                if board['revision'] != reference['revision']:
+                    raise ValueError('The storyboard changed; choose its current shot')
+                fields.add('storyboardShotRef')
             prompt = creation.get("brief", "")
             if not isinstance(prompt, str):
                 raise ValueError("Expected a scene prompt")

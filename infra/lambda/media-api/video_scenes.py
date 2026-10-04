@@ -239,7 +239,7 @@ def pin_episode(game, reference):
 def save(media, body, claims, kind):
     common = {"gameId", "id", "name", "description", "expectedRevision", "operationId"}
     allowed = common | (
-        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardDecision"}
+        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardDecision", "shotSelection"}
         if kind == "scene"
         else {"sceneIds"}
     )
@@ -288,6 +288,9 @@ def save(media, body, claims, kind):
         if "storyboardDecision" in body and not authorized(claims, "MODEL_WORKERS"):
             return media._response(403, {"error": "Only an owner can approve an AI storyboard"})
         episode_storyboards.apply(record, previous, body, actor=claims["sub"])
+        if previous is None and not record.get('storyboard'):
+            record['storyboard'] = episode_storyboards.create([{'shotId': 'shot-1', 'description': record['description'] or record['name'], 'camera': '', 'durationSeconds': 8, 'frameKey': None, 'narration': ''}], game, origin='human', actor=claims['sub'])
+            record.update(planningState='ready', shotTakes={})
         for shot in (record.get("storyboard") or {}).get("shots", []):
             if shot["frameKey"]:
                 _, frame_guard = map_asset(media, game, shot["frameKey"])
@@ -306,10 +309,26 @@ def save(media, body, claims, kind):
             episodeId=episode,
             type=scene_type,
             selectedOutputKey=body.get(
-                "selectedOutputKey", (previous or {}).get("selectedOutputKey")
+                "selectedOutputKey", (previous or {}).get("selectedOutputKey") if (record.get("storyboard") or {}).get("revision") == ((previous or {}).get("storyboard") or {}).get("revision") else None
             ),
             selectedOutputSceneRevision=None,
         )
+        if "shotSelection" in body:
+            import storyboard_videos
+            selection = body['shotSelection']
+            if not isinstance(selection, dict):
+                raise ValueError('Invalid storyboard take selection')
+            metadata, historical = {}, None
+            if selection.get('assetKey'):
+                _, output_guard = selected_output(media, game, episode, identity, selection['assetKey'])
+                pointer = {'pk': browse_index.partition(game, 'all'), 'sk': selection['assetKey']}
+                asset = records.decode(db.get_item(Key=pointer, ConsistentRead=True).get('Item'))
+                metadata = asset.get('metadata', {})
+                ref = metadata.get('extra', {}).get('sceneRef')
+                historical = pin_scene(game, ref)
+                guards.append(output_guard)
+            record['shotTakes'] = storyboard_videos.select(record, selection, metadata, historical)
+            record.update(selectedOutputKey=None, selectedOutputSceneRevision=None)
         inputs = scene_inputs.normalize(body.get("generationInputs", (previous or {}).get("generationInputs")), game)
         for character_id in inputs["characterIds"]:
             character = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"]).get_item(
@@ -333,6 +352,9 @@ def save(media, body, claims, kind):
             guards.append(map_guard)
             record["mapAssetKey"] = map_key
         if record["selectedOutputKey"] is not None:
+            import storyboard_videos
+            asset = records.decode(db.get_item(Key={"pk": browse_index.partition(game, "all"), "sk": record["selectedOutputKey"]}, ConsistentRead=True).get("Item"))
+            storyboard_videos.validate_output(record, asset.get("metadata", {}) if asset else {})
             output_revision, output_guard = selected_output(
                 media, game, episode, identity, record["selectedOutputKey"]
             )

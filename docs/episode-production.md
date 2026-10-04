@@ -83,5 +83,31 @@ immutable outputs. A pending/rejected AI storyboard blocks footage generation in
 the UI, submission API and worker. Provider/model/input/cost facts remain recorded
 by the respective generation worker.
 
-This is a prototype contract cutover. There is no legacy-plan migration or read-time
-fallback. Existing source artifacts are retained without rewriting their bytes.
+## Shot footage and scene assembly
+
+Each storyboard item owns its takes through asset `extra.storyboardShotRef`
+(`revision`, `shotId`) and the existing `sceneRef`. The Scene stores explicit
+`shotTakes[shotId]` selections: immutable asset, board revision, generation scene
+revision, trim start and storyboard duration. Original takes stay unchanged.
+Changing the storyboard clears current cuts and scene output; history retains them.
+
+Generation targets one approved shot with its action, camera, cast and source
+context. A prepared frame is pinned as the image-to-video input. Current local
+profiles generate eight-second takes; longer storyboard items require shorter
+approved shot plans. Short footage is never stretched, looped or called complete.
+Multi-shot provider requests can be added explicitly without changing ownership.
+
+The local assembler validates real probed durations, trims each selected take,
+and concatenates every cut in storyboard order. Finished output records exact
+`extra.sceneAssembly` clips/revision and immutable `sourceKeys`. Only an assembly
+matching every current selection completes a planned scene for Episode assembly.
+Cloud planning and selections share this contract; cloud browser dispatch of scene
+assembly is not yet available.
+
+Run the authenticated all-game cutover with `panther videos migrate-workspace
+--storyboard-cuts`, then `--apply --inventory-hash HASH`. Review private dry-run
+output and verify a fresh complete inventory reports every scene already migrated.
+Exact current history is required; guarded updates preserve original records and
+selections in immutable history/audit. Old scene-level takes are not guessed into
+shot slots. SQLite startup performs the equivalent atomic all-game migration.
+This does not change AI authorship/approval or authorize new paid requests.

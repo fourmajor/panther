@@ -166,3 +166,20 @@ def test_unknown_with_verified_queue_identity_resumes_without_post(tmp_path):
     assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
     assert len([call for call in client.calls if call[0] == 'POST']) == 1
     assert store.get('scene-render', identity)['status'] == 'DONE'
+
+
+def test_completed_input_rejection_stops_polling_without_another_submission(tmp_path):
+    store, identity = queued(tmp_path)
+    client = Fal(pending=True)
+    root = worker.private_root(tmp_path / 'work')
+    worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    class Rejected:
+        def request(self, method, url, **kwargs):
+            assert method == 'GET'
+            if kwargs.get('completed_result'):
+                raise worker.v.TerminalInputRejection('The provider rejected the video prompt because it exceeds its length limit.')
+            return {'status': 'COMPLETED', 'request_id': 'request-example'}
+    worker.process(store, identity, root, Rejected())
+    assert store.get('scene-render', identity)['status'] == 'FAILED'
+    assert not worker.process(store, identity, root, Rejected())
+    assert len([call for call in client.calls if call[0] == 'POST']) == 1

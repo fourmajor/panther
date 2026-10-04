@@ -1235,3 +1235,15 @@ def test_recover_incomplete_download_verifies_provider_bytes_without_overwrite(
         with pytest.raises(click.ClickException, match="already finished"):
             v.download(a["attemptId"], recover_existing=True)
     assert len(setup.posts) == 1
+
+
+def test_completed_prompt_length_rejection_is_typed_without_echoing_input():
+    from types import SimpleNamespace
+    fal = object.__new__(v.Fal)
+    fal.session = SimpleNamespace(request=lambda *a, **kw: SimpleNamespace(status_code=422, json=lambda: {'detail': [{'type': 'string_too_long', 'loc': ['body', 'prompt'], 'input': 'SYNTHETIC-PRIVATE-PROMPT', 'msg': 'PRIVATE'}]}))
+    with pytest.raises(v.TerminalInputRejection) as rejected:
+        fal.request('GET', v.QUEUE + '/minimax/h3-max/image-to-video', completed_result=True)
+    assert 'PRIVATE' not in str(rejected.value)
+    assert 'length limit' in str(rejected.value)
+    with pytest.raises(click.ClickException):
+        fal.request('POST', v.QUEUE + '/minimax/h3-max/image-to-video', completed_result=True)

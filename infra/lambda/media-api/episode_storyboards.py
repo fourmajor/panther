@@ -113,7 +113,7 @@ def state(board):
 
 def apply(record, previous, body, *, actor):
     """Preserve production facts across unrelated scene edits and take selections."""
-    for field in ("storyboard", "narration", "productionSource"):
+    for field in ("storyboard", "narration", "productionSource", "shotTakes"):
         if field in (previous or {}):
             record[field] = copy.deepcopy(previous[field])
     if "narration" in body:
@@ -128,6 +128,9 @@ def apply(record, previous, body, *, actor):
         if "storyboardShots" in body:
             raise ValueError("Save the storyboard before reviewing its exact revision")
         record["storyboard"] = decide(record.get("storyboard"), body["storyboardDecision"], actor)
+    if (record.get('storyboard') or {}).get('revision') != ((previous or {}).get('storyboard') or {}).get('revision'):
+        record['shotTakes'] = {}
+    record['storyboardVideoVersion'] = 1
     record["planningState"] = state(record.get("storyboard"))
 
 

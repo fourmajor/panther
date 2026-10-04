@@ -126,7 +126,10 @@ def test_episode_order_selection_and_atomic_scene_append(tmp_path):
     assert not missing["ready"] and missing["missingSceneIds"] == ["river", "gate"]
     for scene, body in zip(scenes, scene_bodies):
         key = f"games/preview-campaign/assets/{scene['id']}/original/take.webm"
-        meta = {"kind": "video", "contentType": "video/webm", "extra": {"relationshipRole": "finished", "sceneRef": {"episodeId": "arrival", "sceneId": scene["id"], "revision": scene["revision"]}}}
+        board = scene['storyboard']
+        scene['shotTakes'] = {shot['shotId']: {'storyboardRevision': board['revision'], 'shotId': shot['shotId'], 'assetKey': 'games/preview-campaign/assets/raw/original/take.webm', 'startSeconds': 0, 'durationSeconds': shot['durationSeconds'], 'generationSceneRevision': scene['revision']} for shot in board['shots']}
+        store.put('scene', 'preview-campaign:arrival:' + scene['id'], scene, 'preview-campaign')
+        meta = {"kind": "video", "contentType": "video/webm", "extra": {"relationshipRole": "finished", "sceneAssembly": {"storyboardRevision": board['revision'], "clips": list(scene['shotTakes'].values())}, "sceneRef": {"episodeId": "arrival", "sceneId": scene["id"], "revision": scene["revision"]}}}
         with store.connect() as db:
             db.execute("INSERT INTO objects VALUES (?,?,?,?,?)", (key, "preview-campaign", json.dumps(meta), b"synthetic video", "2026-10-01T00:00:00Z"))
         store.save_story_entity("scene", {**body, "selectedOutputKey": key, "expectedRevision": scene["revision"], "operationId": uuid.uuid4().hex})
@@ -751,3 +754,56 @@ def test_game_roster_creation_is_atomic_typed_and_idempotent(tmp_path):
     with pytest.raises(ValueError):
         store.create_game({**manifest,"id":"invalid-campaign","memberships":[]})
     assert store.get("game","invalid-campaign") is None
+
+
+def test_local_storyboard_cutover_retains_old_selection_and_is_repeatable(tmp_path):
+    store = dev.Store(tmp_path / 'cuts.sqlite')
+    for game in ('fictional-one', 'fictional-two'):
+        identity = game + ':episode:scene'
+        old = {'id': 'scene', 'episodeId': 'episode', 'gameId': game, 'revision': 'a' * 32, 'selectedOutputKey': 'old-take', 'storyboard': {'revision': 'b' * 64, 'origin': 'ai', 'decision': {'action': 'approved', 'revision': 'b' * 64}, 'shots': [{'shotId': 'one', 'durationSeconds': 18}]}}
+        store.put('scene', identity, old, game)
+    store.migrate_storyboard_videos()
+    for game in ('fictional-one', 'fictional-two'):
+        current = store.get('scene', game + ':episode:scene')
+        assert current['selectedOutputKey'] is None and current['shotTakes'] == {}
+        assert current['storyboard']['decision']['action'] == 'approved'
+        audit = store.get('development-migration', 'storyboard-video-v1:' + game + ':episode:scene')
+        assert __import__('json').loads(audit['sourcePayload'])['selectedOutputKey'] == 'old-take'
+    assert len(store.list('scene-history')) == 2
+    store.migrate_storyboard_videos()
+    assert len(store.list('scene-history')) == 2
+
+
+def test_shot_requests_and_cut_selection_pin_only_current_storyboard(tmp_path):
+    import json
+    import uuid
+    store = dev.Store(tmp_path / 'shots.sqlite')
+    store.seed()
+    game = 'preview-campaign'
+    store.save_story_entity('episode', {'gameId': game, 'id': 'pilot', 'name': 'Pilot', 'expectedRevision': None, 'operationId': uuid.uuid4().hex})
+    shots = [{'shotId': name, 'description': name.title(), 'durationSeconds': seconds, 'camera': 'Wide', 'frameKey': None, 'narration': ''} for name, seconds in [('arrival', 4), ('reaction', 3)]]
+    body = {'gameId': game, 'episodeId': 'pilot', 'id': 'gate', 'name': 'Gate', 'description': '', 'expectedRevision': None, 'operationId': uuid.uuid4().hex, 'storyboardShots': shots}
+    scene = store.save_story_entity('scene', body)['record']
+    render = {'gameId': game, 'episodeId': 'pilot', 'sceneId': 'gate', 'revision': scene['revision'], 'shotId': 'reaction', 'prompt': 'A reaction.', 'operationId': uuid.uuid4().hex}
+    job = store.submit_scene_render(render)
+    assert job['sceneContext']['shots'] == [shots[1]]
+    assert job['storyboardShotRef'] == {'revision': scene['storyboard']['revision'], 'shotId': 'reaction'}
+    for shot in shots:
+        key = f"games/{game}/assets/{shot['shotId']}/original/take.mp4"
+        metadata = {'contentType': 'video/mp4', 'extra': {'relationshipRole': 'finished', 'sceneRef': job['sceneRef'], 'storyboardShotRef': {'revision': scene['storyboard']['revision'], 'shotId': shot['shotId']}, 'mediaProbe': {'format': {'duration': '8'}}}}
+        with store.connect() as db:
+            db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (key, game, json.dumps(metadata), b'synthetic fixture bytes', '2026-01-01'))
+        selection = {'storyboardRevision': scene['storyboard']['revision'], 'shotId': shot['shotId'], 'assetKey': key, 'startSeconds': 1}
+        scene = store.save_story_entity('scene', {**body, 'storyboardShots': shots, 'expectedRevision': scene['revision'], 'operationId': uuid.uuid4().hex, 'shotSelection': selection})['record']
+    assembly = store.submit_scene_assembly({'gameId': game, 'episodeId': 'pilot', 'sceneId': 'gate', 'revision': scene['revision']})
+    assert [clip['shotId'] for clip in assembly['composition']['scenes']] == ['arrival', 'reaction']
+    assert [clip['durationSeconds'] for clip in assembly['composition']['scenes']] == [4, 3]
+    assert all(clip['startSeconds'] == 1 and clip['sha256'] for clip in assembly['composition']['scenes'])
+    with pytest.raises(ValueError, match='assemble'):
+        store.save_story_entity('scene', {**body, 'expectedRevision': scene['revision'], 'operationId': uuid.uuid4().hex, 'selectedOutputKey': selection['assetKey']})
+    longer = [{**shots[0], 'durationSeconds': 18}]
+    revised = store.save_story_entity('scene', {**body, 'storyboardShots': longer, 'expectedRevision': scene['revision'], 'operationId': uuid.uuid4().hex})['record']
+    assert revised['shotTakes'] == {} and revised['selectedOutputKey'] is None
+    with pytest.raises(ValueError, match='eight-second'):
+        store.submit_scene_render({**render, 'revision': revised['revision'], 'shotId': 'arrival', 'operationId': uuid.uuid4().hex})
+    assert len(store.list('scene-render')) == 1

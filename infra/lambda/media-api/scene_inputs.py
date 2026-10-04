@@ -30,4 +30,4 @@ def normalize(value, game):
 
 def asset_keys(record):
     inputs = record.get("generationInputs") or {}
-    return [*inputs.get("sourceKeys", []), *inputs.get("contextKeys", [])]
+    return [*inputs.get("sourceKeys", []), *inputs.get("contextKeys", []), *[take["assetKey"] for take in record.get("shotTakes", {}).values()]]

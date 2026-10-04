@@ -132,3 +132,40 @@ def test_conflicting_exact_source_guard_never_overwrites(migration, monkeypatch)
     response = module.migrate(media, {"schemaVersion": 1, "apply": True, "expectedInventoryHash": preview["inventoryHash"]}, {"sub": "fictional-migrator"})
     assert response["statusCode"] == 409
     assert "Item" not in db.get_item(Key=module.records.pointer(module.PREFIX, "other-game", "episode", "arrival"))
+
+
+def test_storyboard_video_cutover_all_games_preserves_exact_scene_sources(migration):
+    module, media, db = migration
+    import storyboard_video_migration as cuts
+    originals = {}
+    for game in ('test-game', 'other-game'):
+        episode = {'id': 'pilot', 'gameId': game, 'entityType': 'Episode'}
+        db.put_item(Item={**module.records.pointer(module.PREFIX, game, 'episode', 'pilot'), 'payload': json.dumps(episode)})
+        scene = {'schemaVersion': 1, 'entityType': 'Scene', 'gameId': game, 'episodeId': 'pilot', 'id': 'gate', 'revision': 'b' * 32, 'selectedOutputKey': f'games/{game}/assets/old/original/video.mp4'}
+        raw = json.dumps(scene)
+        key = module.records.pointer(module.PREFIX, game, 'scene#pilot', 'gate')
+        db.put_item(Item={**key, 'revision': scene['revision'], 'payload': raw})
+        db.put_item(Item={'pk': f'{module.PREFIX}-history#scene#pilot#{game}#gate', 'sk': scene['revision'], 'payload': raw})
+        originals[game] = raw
+    preview = json.loads(cuts.migrate(media, {'schemaVersion': 2, 'apply': False}, {})['body'])
+    assert len(preview['scenes']) == 2
+    assert cuts.migrate(media, {'schemaVersion': 2, 'apply': True, 'expectedInventoryHash': '0' * 64}, {})['statusCode'] == 409
+    result = cuts.migrate(media, {'schemaVersion': 2, 'apply': True, 'expectedInventoryHash': preview['inventoryHash']}, {'sub': 'fictional-migrator'})
+    assert json.loads(result['body'])['appliedCount'] == 2
+    for game, raw in originals.items():
+        current = module.records.decode(db.get_item(Key=module.records.pointer(module.PREFIX, game, 'scene#pilot', 'gate'))['Item'])
+        assert current['shotTakes'] == {} and current['selectedOutputKey'] is None
+        assert db.get_item(Key={'pk': f'{module.PREFIX}-history#scene#pilot#{game}#gate', 'sk': 'b' * 32})['Item']['payload'] == raw
+        assert db.get_item(Key={'pk': f'{cuts.AUDIT}#{game}', 'sk': 'pilot#gate'})['Item']['sourcePayload'] == raw
+    fresh = json.loads(cuts.migrate(media, {'schemaVersion': 2, 'apply': False}, {})['body'])
+    assert all(row['status'] == 'already-migrated' for row in fresh['scenes'])
+    assert json.loads(cuts.migrate(media, {'schemaVersion': 2, 'apply': True, 'expectedInventoryHash': fresh['inventoryHash']}, {'sub': 'fictional-migrator'})['body'])['appliedCount'] == 0
+
+
+def test_storyboard_migration_cli_uses_authenticated_versioned_operation(monkeypatch):
+    from panther_journal import video_library
+    api = Mock(return_value={'scenes': []})
+    monkeypatch.setattr(video_library.cloud, 'api', api)
+    monkeypatch.setattr(video_library.cloud, 'configuration', lambda: {})
+    assert CliRunner().invoke(video_library.videos, ['migrate-workspace', '--storyboard-cuts']).exit_code == 0
+    assert api.call_args.kwargs['json'] == {'schemaVersion': 2, 'apply': False}

@@ -85,7 +85,7 @@ def test_unrelated_edits_preserve_storyboard_and_exact_decision():
     }
     record = {"gameId": "fictional-game"}
     boards.apply(record, previous, {"name": "New scene title"}, actor="fictional-editor")
-    assert record == {"gameId": "fictional-game", **previous, "planningState": "ready"}
+    assert record == {"gameId": "fictional-game", **previous, "planningState": "ready", "storyboardVideoVersion": 1}
     assert record["storyboard"] is not previous["storyboard"]
 
 

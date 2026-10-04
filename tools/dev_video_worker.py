@@ -51,7 +51,8 @@ def model_for(job):
         if not job.get('mapPin'):
             raise ValueError('Choose a map asset for this scene')
         return 'veo-3.1-fast-image-silent'
-    return 'kling-3-pro' if kind == 'action' else 'h3-max' if kind == 'dialogue' else 'veo-3.1-fast'
+    model = 'kling-3-pro' if kind == 'action' else 'h3-max' if kind == 'dialogue' else 'veo-3.1-fast'
+    return model + '-image' if job.get('storyboardFramePin') else model
 
 
 def verified(store, ref, game):
@@ -110,8 +111,13 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                 raise ValueError('Pinned scene revision was not found')
             import episode_storyboards
             episode_storyboards.require_ready(scene['record'])
+            if job.get('storyboardShotRef'):
+                import storyboard_videos
+                board, shot = storyboard_videos.shot(scene['record'], job['storyboardShotRef']['shotId'])
+                if job['storyboardShotRef']['revision'] != board['revision'] or shot['durationSeconds'] > 8 or job.get('sceneContext', {}).get('shots') != [shot]:
+                    raise ValueError('The pinned storyboard shot differs from this generation request')
         model = job.get('model') or model_for(job)
-        allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro'}
+        allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if standalone:
             allowed = {'veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if model not in allowed:
@@ -165,11 +171,20 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                             raise ValueError('The selected starting image must have a 16:9 canvas')
                         picture.verify()
                     body[v.PROFILES[model]['imageField']] = 'data:' + image_pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
+            if job.get('storyboardFramePin') and not job.get('mapPin'):
+                pin = job['storyboardFramePin']
+                image = verified(store, pin, job['gameId'])
+                field = v.PROFILES[model].get('imageField')
+                if not field:
+                    raise ValueError('A storyboard frame requires its image-to-video profile')
+                body[field] = 'data:' + pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
             if job.get('mapPin'):
                 pin = job['mapPin']
                 image = verified(store, pin, job['gameId'])
                 body[v.PROFILES[model]['imageField']] = 'data:' + pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
                 body['prompt'] = 'Treat the input image as a map. Preserve its geography, labels and visual style. Follow the requested camera movement and action. ' + prompt
+            if len(body['prompt']) > 2500:
+                raise ValueError('The video prompt exceeds the provider limit; shorten the shot before generating')
             retain(folder / 'request.json', json.dumps({'endpoint': endpoint, 'payload': body, 'sceneRef': ref}, ensure_ascii=False).encode())
             job.update(status='RUNNING', dispatchStarted=now(), model=model, endpoint=endpoint, message=None)
             store.put(record_kind, identity, job, job['gameId'])
@@ -216,6 +231,8 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             generation['model'] = {'veo-3.1-fast': 'Veo 3.1 Fast', 'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model.removesuffix('-image')]
         title = job['name'] if standalone else scene['record']['name']
         association = {} if standalone else {'sceneRef': ref, 'episodeId': ref['episodeId'], 'sceneId': ref['sceneId']}
+        if job.get('storyboardShotRef'):
+            association['storyboardShotRef'] = job['storyboardShotRef']
         if standalone and job.get('imagePin'):
             lineage = list(dict.fromkeys(lineage + [job['imagePin']['key']]))
         metadata = asset_metadata.defaults('video', {'kind': 'video', 'title': title, 'contentType': 'video/mp4', 'sourceKeys': lineage + [response_key],
@@ -259,7 +276,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN'} or any(current.get(field) != job.get(field) for field in ('prompt', 'model', 'sourceKeys', 'inputRefs', 'imagePin', 'sceneRef'))):
             return False  # Preserve concurrent cancellation or a changed immutable request.
         # A failed GET/download can resume the known queue request without another POST.
-        if job.get('requestId') and job.get('urls') and not isinstance(exc, (ValueError, v.TerminalModelRejection)):
+        if job.get('requestId') and job.get('urls') and not isinstance(exc, (ValueError, v.TerminalModelRejection, v.TerminalInputRejection)):
             job.update(status='SUBMITTED', message='Video status or delivery is unavailable. The known request will be checked again; no new generation was submitted.', updatedAt=time.time())
         else:
             job.update(status='UNKNOWN' if isinstance(exc, RuntimeError) or job.get('outcomeUnknown') else 'FAILED', message=str(exc)[:800], updatedAt=time.time())

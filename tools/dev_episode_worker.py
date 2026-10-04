@@ -40,9 +40,13 @@ def process(store, job, root):
         result = episode_rendering.assemble(manifest, paths, folder)
         outputs = []
         for file, kind, mime in [(folder / result['output'], 'episode-video', 'video/mp4')]:
-            key = f"games/{game}/assets/episode-{identity[:32]}-{folder.name[:12]}/original/{file.name}"
+            scene_assembly = manifest.get('entityType') == 'SceneComposition'
+            key = f"games/{game}/assets/{'scene' if scene_assembly else 'episode'}-{identity[:32]}-{folder.name[:12]}/original/{file.name}"
             raw = file.read_bytes()
-            meta = asset_metadata.defaults(kind, {'title': manifest['episode']['name'], 'kind': kind, 'contentType': mime, 'sourceKeys': manifest['sourceKeys'], 'extra': {'episodeId': job['episodeId'], 'compositionHash': manifest['compositionHash'], 'relationshipRole': 'finished', 'generation': generation_metadata.local('FFmpeg'), 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'assembly': result}}, file.name, mime, key)
+            if scene_assembly:
+                kind = 'video'
+            association = {'sceneRef': manifest['sceneRef'], 'sceneAssembly': {'storyboardRevision': manifest['storyboardRevision'], 'clips': manifest['clips']}} if scene_assembly else {}
+            meta = asset_metadata.defaults(kind, {'title': manifest['name'] if scene_assembly else manifest['episode']['name'], 'kind': kind, 'contentType': mime, 'sourceKeys': manifest['sourceKeys'], 'extra': {'episodeId': job['episodeId'], **association, 'compositionHash': manifest['compositionHash'], 'relationshipRole': 'finished', 'generation': generation_metadata.local('FFmpeg'), 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'assembly': result}}, file.name, mime, key)
             storage_layout.location(key, kind, meta)
             outputs.append((key, raw, meta))
         with store.connect() as db:

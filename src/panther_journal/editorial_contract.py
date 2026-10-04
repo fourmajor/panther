@@ -167,3 +167,17 @@ BRIEFS["video-generation-packets"] += (
     " Use only the characterIds and referenceKeys allowed by the output schema; narrative NPC names remain prose unless they have a pinned catalog identity."
     " Do not turn proposed prop labels, names or future assets into stored references."
 )
+
+
+BRIEFS["video-source-brief"] += (
+    " A request with creation.storyboardShotRef targets exactly that existing storyboard shot."
+    " The pinned scene supplies context only: do not render other shots or rewrite its approved direction."
+)
+BRIEFS["video-storyboards"] += (
+    " For creation.storyboardShotRef, plan only the exact pinned shot in the scene catalog."
+    " Preserve its shotId, action, camera, narration and duration; do not expand into a whole scene."
+)
+BRIEFS["video-generation-packets"] += (
+    " For creation.storyboardShotRef, emit footage instructions only for that exact shot."
+    " Longer raw takes will be trimmed to the storyboard duration; never claim a short take satisfies a longer item."
+)

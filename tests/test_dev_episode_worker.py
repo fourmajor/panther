@@ -59,3 +59,23 @@ def test_changed_immutable_scene_fails_without_publishing(tmp_path):
     assert result['status'] == 'FAILED' and 'changed' in result['message']
     assert 'outputKey' not in result
     assert len(store.objects('fictional')) == 2
+
+
+@pytest.mark.skipif(not shutil.which('ffmpeg') or not shutil.which('ffprobe'), reason='Requires real FFmpeg tools')
+def test_storyboard_scene_assembly_trims_each_owned_take(tmp_path):
+    store, job = queued(tmp_path)
+    ref = {'episodeId': 'journey', 'sceneId': 'arrival', 'revision': 'b' * 32}
+    cuts = job['composition']['scenes']
+    for i, cut in enumerate(cuts):
+        cut.update(startSeconds=.08, durationSeconds=.2, shotId=f'shot-{i+1}')
+    job['composition'].update(entityType='SceneComposition', name='Arrival', sceneRef=ref, storyboardRevision='c' * 64, clips=cuts)
+    assert worker.process(store, job, worker.private_root(tmp_path / 'work'))
+    result = store.get('episode-render', job['jobId'])
+    meta, raw = store.object(result['outputKey'])
+    output = tmp_path / 'assembled-scene.mp4'
+    output.write_bytes(raw)
+    info = json.loads(subprocess.check_output(['ffprobe','-v','error','-show_format','-of','json',str(output)]))
+    assert .35 <= float(info['format']['duration']) <= .5
+    assert meta['extra']['sceneRef'] == ref
+    assert meta['extra']['sceneAssembly']['storyboardRevision'] == 'c' * 64
+    assert meta['sourceKeys'] == job['composition']['sourceKeys']

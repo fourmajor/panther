@@ -278,6 +278,13 @@ key/checksum/size and retain exact input provenance. Planning/approval does not 
 paid media or retries. Existing immutable movie-review artifacts retain their evidence and
 budget decisions; they are not a second application library.
 
+Video takes belong to exact storyboard shots through `extra.storyboardShotRef`
+and `sceneRef`. Select explicit trims in `shotTakes`; scene assembly requires every
+current shot, in order. Keep originals immutable. Short takes cannot satisfy long
+shots. Upgrade all games with `panther videos migrate-workspace --storyboard-cuts`
+using the authenticated dry-run/apply/verify procedure in `docs/episode-production.md`.
+Never infer old take ownership or automatically retry paid requests.
+
 For shot preparation and actual editing, use `panther video production --help` and the trusted
 `docs/video-production.md`. Pin selected character appearances, prepared full-frame starting images
 and optional verified Kling ending images before generation. Preparation reviews existing plates;

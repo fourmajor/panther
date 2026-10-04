@@ -145,6 +145,8 @@ def records(job, envelope, source):
                 "sourceKeys": [],
                 "contextKeys": [],
             },
+            "storyboardVideoVersion": 1,
+            "shotTakes": {},
             "selectedOutputKey": None,
             "selectedOutputSceneRevision": None,
             "revision": revision([source, identity]),

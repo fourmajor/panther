@@ -3,16 +3,18 @@ const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{human=false,conflict=false,planning=false}={}) {
+async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false}={}) {
   const writes=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   const chapter='c'.repeat(64),jobId='d'.repeat(64),frame='games/test-game/assets/frame/original/frame.png';
   let episode={schemaVersion:1,entityType:'Episode',gameId:'test-game',id:'pilot',name:'The crossing',description:'At the gates',revision:'a'.repeat(32),sceneIds:planning?[]:['arrival'],...(planning?{production:{state:'planning',jobId}}:{})};
   let scene={schemaVersion:1,entityType:'Scene',gameId:'test-game',episodeId:'pilot',id:'arrival',name:'Arrival',description:'The gates open.',type:'general',revision:'b'.repeat(32),selectedOutputKey:null,planningState:human?'ready':'needs-approval',storyboard:{schemaVersion:1,origin:human?'human':'ai',revision:'e'.repeat(64),decision:null,shots:[{shotId:'gate',description:'The party arrives at dusk.',camera:'Wide, slow push-in',durationSeconds:8,narration:'At dusk, they arrived.',frameKey:frame}]}};
   let published=!planning;
+  if(multi){scene.storyboard.shots[0].durationSeconds=4;scene.storyboard.shots.push({shotId:'reaction',description:'The travelers react.',camera:'Close',durationSeconds:3,frameKey:null,narration:''});}
+  const takes=multi?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.mp4`,contentType:'video/mp4',metadata:{title:`Take ${i+1}`,contentType:'video/mp4',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:'8'}}}}})):[];
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-editor'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
     const p=new URL(route.request().url()).pathname;
-    if(p==='/config.js')return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
+    if(p==='/config.js')return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',development:${local},clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
     const file=p==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(p)?p.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
@@ -23,12 +25,15 @@ async function fixture(page,{human=false,conflict=false,planning=false}={}) {
     const game={id:'test-game',name:'A fictional campaign',purpose:'campaign'};let body={};
     if(u.pathname==='/games')body={games:[game]};
     if(u.pathname==='/game')body={game,players:[],characters:[],memberships:[]};
-    if(u.pathname==='/assets')body={assets:[],cursor:null};
+    if(u.pathname==='/assets')body={assets:takes,cursor:null};
+    if(u.pathname==='/scene-renders'){if(post){writes.push(route.request().postDataJSON());body={jobId:'f'.repeat(64),status:'QUEUED'};}else body={jobs:[]};}
+    if(u.pathname==='/object-url'){const take=takes.find(item=>item.key===u.searchParams.get('key'));body={url:'https://videos.example/take.mp4',contentType:'video/mp4',metadata:take?.metadata};}
     if(u.pathname==='/characters')body={characters:[],cursor:null};
     if(u.pathname==='/episodes')body=u.searchParams.has('id')?{record:episode}:{records:[episode],cursor:null};
     if(u.pathname==='/scenes'){
       if(post){const request=route.request().postDataJSON();writes.push(request);if(conflict)return route.fulfill({status:409,headers,json:{error:'This scene changed. Reopen it before saving.'}});
         if(request.storyboardDecision){scene={...scene,planningState:request.storyboardDecision.action==='approved'?'ready':'changes-requested',storyboard:{...scene.storyboard,decision:request.storyboardDecision}};}
+        if(request.shotSelection){const selection=request.shotSelection,shot=scene.storyboard.shots.find(item=>item.shotId===selection.shotId);scene={...scene,shotTakes:{...scene.shotTakes,[shot.shotId]:{...selection,durationSeconds:shot.durationSeconds}}};}
         if(request.storyboardShots){const changed=JSON.stringify(request.storyboardShots)!==JSON.stringify(scene.storyboard.shots);scene={...scene,planningState:changed?'ready':scene.planningState,storyboard:{...scene.storyboard,origin:changed?'human':scene.storyboard.origin,shots:request.storyboardShots,decision:changed?null:scene.storyboard.decision}};}
         body={record:scene};
       }else body={records:published?[scene]:[],cursor:null};
@@ -47,6 +52,27 @@ async function fixture(page,{human=false,conflict=false,planning=false}={}) {
   return {writes,errors,chapter,publish(){published=true;episode={...episode,sceneIds:['arrival'],production:{state:'planned',jobId}};}};
 }
 for(const width of [1280,390]) {
+ test(`each storyboard shot owns generation and its selected cut at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});const {writes}=await fixture(page,{human:true,multi:true,local:true});
+   await page.route('https://videos.example/**',route=>route.fulfill({contentType:'video/mp4',body:fs.readFileSync(path.join(__dirname,'fixtures/storyboard-take.mp4'))}));
+   await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+   const board=page.getByRole('region',{name:'Scene storyboard'});
+   await board.getByRole('button',{name:'Generate shot 2',exact:true}).click();
+   expect(writes[0].shotId).toBe('reaction');expect(writes[0].prompt).toContain('The travelers react.');
+   await board.getByRole('combobox',{name:'Take for shot 1'}).click();await page.getByRole('option',{name:'Take 1 · 8.0s'}).click();
+   expect(writes[1].shotSelection).toEqual({storyboardRevision:'e'.repeat(64),shotId:'gate',assetKey:'games/test-game/assets/take-0/original/video.mp4',startSeconds:0});
+   const video=board.locator('video[aria-label="Shot 1 video"]');
+   await expect(video).toBeVisible();
+   await expect.poll(()=>video.evaluate(el=>el.readyState)).toBeGreaterThan(0);
+   expect(await video.evaluate(el=>el.duration)).toBeCloseTo(8,1);
+   await video.evaluate(el=>{el.currentTime=4;el.dispatchEvent(new Event('timeupdate'));});
+   expect(await video.evaluate(el=>el.currentTime)).toBeCloseTo(0,1);
+   await expect(board.locator('video[aria-label="Shot 2 video"]')).toHaveCount(0);
+   await expect(board.getByLabel('Trim start (seconds)')).toBeVisible();
+   await expect(board.getByRole('button',{name:'Assemble scene'})).toBeDisabled();
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+   await page.screenshot({path:test.info().outputPath(`shot-takes-${width}.png`),fullPage:true});
+ });
  test(`AI storyboard approval belongs to its scene at ${width}px`,async({page})=>{
    await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page);
    await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);

@@ -200,6 +200,15 @@ def test_generation_uses_real_immutable_episode_owned_scene(scenes, editorial): 
 
 def output(scenes, scene, **changes):
     key = "games/test-game/assets/take-one/original/clip.mp4"
+    board = scene['storyboard']
+    if not scene.get('shotTakes'):
+        scene['shotTakes'] = {shot['shotId']: {'storyboardRevision': board['revision'], 'shotId': shot['shotId'], 'assetKey': 'games/test-game/assets/raw-take/original/take.mp4', 'startSeconds': 0, 'durationSeconds': shot['durationSeconds'], 'generationSceneRevision': scene['revision']} for shot in board['shots']}
+        db = scenes.browse_index.table()
+        pointer = scenes.records.pointer(scenes.PREFIX, scene['gameId'], 'scene#' + scene['episodeId'], scene['id'])
+        row = db.get_item(Key=pointer)['Item']
+        row['payload'] = json.dumps(scene)
+        db.put_item(Item=row)
+        db.put_item(Item={'pk': f"{scenes.PREFIX}-history#scene#{scene['episodeId']}#{scene['gameId']}#{scene['id']}", 'sk': scene['revision'], 'payload': json.dumps(scene)})
     asset = {
         "key": key,
         "contentType": "video/mp4",
@@ -207,6 +216,7 @@ def output(scenes, scene, **changes):
         "metadata": {
             "extra": {
                 "relationshipRole": "finished",
+                "sceneAssembly": {"storyboardRevision": board['revision'], "clips": list(scene['shotTakes'].values())},
                 "sceneRef": {
                     "episodeId": scene["episodeId"],
                     "sceneId": scene["id"],

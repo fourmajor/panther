@@ -478,6 +478,8 @@ def upload(config, file, job, kind, category, source_keys, run_suffix):
         if scene_ref
         else {}
     )
+    if (job.get('creation') or {}).get('storyboardShotRef'):
+        scene_metadata['storyboardShotRef'] = job['creation']['storyboardShotRef']
     write_json(
         meta,
         {
