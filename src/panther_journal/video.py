@@ -114,6 +114,10 @@ class TerminalModelRejection(Exception):
 class TerminalInputRejection(Exception):
     """Typed input rejection from a verified completed result; billing stays unknown."""
 
+    def __init__(self, message, response=None):
+        super().__init__(message)
+        self.response = response
+
 
 class UnavailableResult(Exception):
     """HTTP 404 only on a verified completed result GET; not proof of success or failure."""
@@ -431,7 +435,7 @@ class Fal:
                 body = response.json()
                 details = body.get("detail") if isinstance(body, dict) else None
                 if isinstance(details, list) and len(details) == 1 and isinstance(details[0], dict) and details[0].get('type') == 'string_too_long' and details[0].get('loc') == ['body', 'prompt']:
-                    raise TerminalInputRejection('The provider rejected the video prompt because it exceeds its length limit. Shorten the shot before generating again.')
+                    raise TerminalInputRejection('The provider rejected the video prompt because it exceeds its length limit. Shorten the shot before generating again.', body)
                 # Never parse prose, echo inputs, accept an unknown error, or interpret a
                 # failed POST as safely rejected. The caller has verified COMPLETED and URL.
                 if (

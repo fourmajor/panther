@@ -275,6 +275,8 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         current = store.get(record_kind, identity)
         if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN'} or any(current.get(field) != job.get(field) for field in ('prompt', 'model', 'sourceKeys', 'inputRefs', 'imagePin', 'sceneRef'))):
             return False  # Preserve concurrent cancellation or a changed immutable request.
+        if isinstance(exc, v.TerminalInputRejection) and exc.response is not None:
+            retain(root / identity / 'provider-rejection.json', json.dumps(exc.response).encode())
         # A failed GET/download can resume the known queue request without another POST.
         if job.get('requestId') and job.get('urls') and not isinstance(exc, (ValueError, v.TerminalModelRejection, v.TerminalInputRejection)):
             job.update(status='SUBMITTED', message='Video status or delivery is unavailable. The known request will be checked again; no new generation was submitted.', updatedAt=time.time())

@@ -177,9 +177,10 @@ def test_completed_input_rejection_stops_polling_without_another_submission(tmp_
         def request(self, method, url, **kwargs):
             assert method == 'GET'
             if kwargs.get('completed_result'):
-                raise worker.v.TerminalInputRejection('The provider rejected the video prompt because it exceeds its length limit.')
+                raise worker.v.TerminalInputRejection('The provider rejected the video prompt because it exceeds its length limit.', {'detail': [{'type': 'string_too_long', 'input': 'synthetic-private-input'}]})
             return {'status': 'COMPLETED', 'request_id': 'request-example'}
     worker.process(store, identity, root, Rejected())
     assert store.get('scene-render', identity)['status'] == 'FAILED'
+    assert b'synthetic-private-input' in (root / identity / 'provider-rejection.json').read_bytes()
     assert not worker.process(store, identity, root, Rejected())
     assert len([call for call in client.calls if call[0] == 'POST']) == 1
