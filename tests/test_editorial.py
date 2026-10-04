@@ -261,7 +261,7 @@ def test_voice_proposals_separate_people_and_characters_without_inferred_consent
 def test_context_schema_cannot_select_catalog_paths_or_invent_asset_keys():
     import jsonschema
 
-    empty = worker.stage_schema("context", {"candidates": []})["properties"]["selectedKeys"]
+    empty = worker.stage_schema("context", {"candidates": [], "raw": {}})["properties"]["selectedKeys"]
     jsonschema.validate([], empty)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(["catalog.players"], empty)
@@ -589,7 +589,7 @@ def test_invalid_output_defers_automatically_instead_of_accepting(tmp_path, monk
 def test_context_schema_does_not_constrain_other_string_fields():
     import jsonschema
 
-    schema = worker.stage_schema("context", {"candidates": []})
+    schema = worker.stage_schema("context", {"candidates": [], "raw": {}})
     jsonschema.validate(
         report(evidenceIds=["raw", "catalog"], uncertainties=["Ambiguous name"]), schema
     )
@@ -1364,7 +1364,7 @@ def test_map_agent_attaches_verified_image_to_codex(tmp_path, monkeypatch):
 
     monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
     monkeypatch.setattr(worker.local, "run_process", run)
-    inputs = {"context": {}, "creation": {}, "mapInput": {"contentType": "image/png"}}
+    inputs = {"context": {}, "creation": {}, "mapInput": {"key":"games/test-game/assets/map/original/map.png", "contentType": "image/png"}}
     worker.agent(attempt, "video-treatment", inputs, lambda: None)
     assert commands[0][commands[0].index("--image") + 1] == str(image)
     image.unlink()
@@ -1587,3 +1587,15 @@ def test_pinned_chapter_input_alias_is_valid_evidence_without_allowing_foreign_s
     foreign.mkdir()
     with pytest.raises(worker.local.Deferred,match='No structurally valid'):
         worker.autonomous_stage(foreign,'context',inputs,lambda:None)
+
+
+def test_generation_schema_constrains_all_citations_to_pinned_evidence():
+    inputs={"catalog":{},"candidates":[],"sourceChapter":{"key":"games/test-game/assets/chapter/original/chapter.json"}}
+    schema=worker.stage_schema('video-source-brief',inputs)
+    allowed={'catalog','sourceChapter',inputs['sourceChapter']['key']}
+    assert set(schema['properties']['evidenceIds']['items']['enum'])==allowed
+    for field in ('decisions','edits'):
+        assert set(schema['properties'][field]['items']['properties']['evidenceIds']['items']['enum'])==allowed
+    assert 'enum' not in worker.SCHEMA['properties']['evidenceIds']['items']
+    assert "enum" not in schema["properties"]["title"]
+    assert "enum" not in schema["properties"]["uncertainties"]["items"]

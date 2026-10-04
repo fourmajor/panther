@@ -79,8 +79,34 @@ SCHEMA = obj(
 )
 
 
+def evidence_ids(stage, inputs):
+    """The same finite citation vocabulary governs generation and validation."""
+    evidence = inputs.get("context", {})
+    allowed = {"catalog", *evidence, *inputs.get("priorStages", {})}
+    if inputs.get("raw") is not None or inputs.get("sourceTranscripts"):
+        allowed.add("raw")
+    if inputs.get("creation"):
+        allowed.add("creation")
+    if inputs.get("candidate") is not None:
+        allowed.add("candidate")
+    allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
+    if inputs.get("mapInput"):
+        allowed.add(inputs["mapInput"]["key"])
+    if inputs.get("sourceChapter"):
+        allowed.update({"sourceChapter", inputs["sourceChapter"]["key"]})
+    if stage == "context":
+        allowed.update(c["key"] for c in inputs["candidates"])
+
+    return allowed
+
+
 def stage_schema(stage, inputs):
     schema = copy.deepcopy(SCHEMA)
+    citations = sorted(evidence_ids(stage, inputs))
+    citation_field = array({"type": "string", "enum": citations})
+    schema["properties"]["evidenceIds"] = copy.deepcopy(citation_field)
+    for field in ("decisions", "edits"):
+        schema["properties"][field]["items"]["properties"]["evidenceIds"] = copy.deepcopy(citation_field)
     if stage == "video-generation-packets" and inputs.get("episodeDestination"):
         from panther_journal.episode_adaptation import SCHEMA as EPISODE_SCHEMA
         schema["properties"]["episode"] = copy.deepcopy(EPISODE_SCHEMA)
@@ -227,20 +253,7 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
     valid = None
     candidate = inputs.get("candidate")
     evidence = inputs.get("context", {})
-    allowed = {"catalog", *evidence, *inputs.get("priorStages", {})}
-    if inputs.get("raw") is not None or inputs.get("sourceTranscripts"):
-        allowed.add("raw")
-    if inputs.get("creation"):
-        allowed.add("creation")
-    if inputs.get("candidate") is not None:
-        allowed.add("candidate")
-    allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
-    if inputs.get("mapInput"):
-        allowed.add(inputs["mapInput"]["key"])
-    if inputs.get("sourceChapter"):
-        allowed.update({"sourceChapter", inputs["sourceChapter"]["key"]})
-    if stage == "context":
-        allowed.update(c["key"] for c in inputs["candidates"])
+    allowed = evidence_ids(stage, inputs)
 
     def call(role, data):
         nonlocal calls
