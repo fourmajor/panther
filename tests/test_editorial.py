@@ -680,6 +680,8 @@ def test_creation_pins_multiple_sources_and_context_idempotently(editorial):
         request(m, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
     )
     assert revised["jobId"] != first["jobId"]
+    m.table.put_item(Item={"pk": "TASKS", "sk": first["jobId"] + ":novel-chapter",
+                           "jobId": first["jobId"], "stage": "novel-chapter", "status": "DONE"})
     m.internal({"operation": "finish", "jobId": first["jobId"]})
     assert m.read("RUNS", first["jobId"])["status"] == "NOVEL_READY"
 
@@ -832,7 +834,7 @@ def test_prompt_only_video_pins_scene_without_inventing_transcript(editorial, mo
     assert first["selectedScene"] == scene
     assert first["videoGenerationAuthorized"] is False
     assert first["gameContext"]["visualStyles"][0]["id"] == "anime"
-    assert first["workflowVersion"] == 4
+    assert first["workflowVersion"] == PLAN["version"]
     creation["brief"] = "Cross at dusk, in a tense silence."
     revised = unpack(
         request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
@@ -1467,3 +1469,47 @@ def test_prompt_projection_keeps_multisource_timing_identity_and_prompt_only_inp
     assert bundle == before
     prompt_only = {"raw": None, "creation": {"brief": "A river crossing."}}
     assert worker.prompt_projection(prompt_only) == prompt_only
+
+
+def test_recovery_preserves_history_pins_cutoff_and_never_approves_generation(editorial):
+    m = editorial
+    _, parent = submitted(m)
+    m.internal({"operation": "fail", "jobId": parent["jobId"]})
+    before = copy.deepcopy(m.read("RUNS", parent["jobId"]))
+    request_body = {"jobId": parent["jobId"], "target": "video"}
+    recovered = unpack(request(m, "POST /editorial-jobs", {"recovery": request_body}))
+    assert recovered["jobId"] != parent["jobId"]
+    assert recovered["workflowVersion"] == PLAN["version"]
+    assert recovered["raw"] == parent["raw"]
+    assert recovered["contextCutoff"] == parent["contextCutoff"]
+    assert recovered["target"] == "video"
+    assert recovered["videoGenerationAuthorized"] is False
+    assert recovered["recovery"]["parentJobId"] == parent["jobId"]
+    assert recovered["recovery"]["mode"] == "replay-pinned-inputs"
+    assert "actor" not in recovered
+    assert m.read("RUNS", parent["jobId"]) == before
+    assert unpack(request(m, "POST /editorial-jobs", {"recovery": request_body}))["jobId"] == recovered["jobId"]
+    assert request(m, "POST /editorial-jobs", {"recovery": {"jobId": recovered["jobId"], "target": "video"}})["statusCode"] == 400
+    assert request(m, "POST /editorial-jobs", {"recovery": request_body}, username="example-reader")["statusCode"] == 403
+    assert request(m, "POST /editorial-jobs", {"recovery": {**request_body, "approve": True}})["statusCode"] == 400
+    put(m, parent["raw"]["key"], b"changed source", "application/json")
+    assert request(m, "POST /editorial-jobs", {"recovery": request_body})["statusCode"] == 400
+
+
+def test_branch_failure_does_not_cancel_video_and_finish_requires_real_outputs(editorial):
+    m = editorial
+    _, job = submitted(m)
+    m.internal({"operation": "branch-fail", "branch": "novel", "jobId": job["jobId"]})
+    assert m.read("RUNS", job["jobId"])["status"] == "SUBMITTED"
+    assert m.read("RUNS", job["jobId"])["novelFailed"] is True
+    m.table.put_item(Item={"pk": "TASKS", "sk": job["jobId"] + ":video-preflight",
+                           "jobId": job["jobId"], "stage": "video-preflight", "status": "DONE"})
+    m.internal({"operation": "finish", "jobId": job["jobId"]})
+    assert m.read("RUNS", job["jobId"])["status"] == "READY_FOR_VIDEO_DISCUSSION"
+    assert m.read("RUNS", job["jobId"])["videoGenerationAuthorized"] is False
+
+
+def test_finish_without_a_real_preflight_cannot_claim_ready(editorial):
+    _, job = submitted(editorial)
+    editorial.internal({"operation": "finish", "jobId": job["jobId"]})
+    assert editorial.read("RUNS", job["jobId"])["status"] == "FAILED"

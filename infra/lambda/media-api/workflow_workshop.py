@@ -78,8 +78,9 @@ def source_view(kind, key):
         if page.get("LastEvaluatedKey"):
             raise ValueError("Editorial stage inventory exceeds supported bound")
         tasks = {t["stage"]: t for t in page.get("Items", [])}
-        target = job.get("creation", {}).get("target")
-        names = PLAN["correction"] + (PLAN["novel"] if target != "video" else []) + (PLAN["video"] if target != "novel" else [])
+        target = job.get("target", job.get("creation", {}).get("target"))
+        video = [name for name in PLAN["video"] if name != "video-source-brief" or job.get("workflowVersion", 1) >= 4]
+        names = PLAN["correction"] + (PLAN["novel"] if target != "video" else []) + (video if target != "novel" else [])
         stages = [phase(name, status(tasks[name]["status"]) if name in tasks else "pending", tasks.get(name)) for name in names]
         title = job.get("creation", {}).get("title") or "Transcript → story & screen planning"
         note = "Screen planning ends before paid video generation. Approval of the exact script/storyboard is required; completed planning never authorizes spending." if target != "novel" else "Novel adaptation; raw evidence remains unchanged."

@@ -485,6 +485,91 @@ def context_page(game, cursor, cutoff):
     return {"items": items, "cursor": result["cursor"]}
 
 
+def recover(body, actor):
+    """An explicit, idempotent replay; never mutate a failed execution or its artifacts."""
+    if set(body) != {"jobId", "target"} or body["target"] not in {"novel", "video", "both"}:
+        raise ValueError("Expected failed jobId and target")
+    if not isinstance(body["jobId"], str) or not re.fullmatch(r"[a-f0-9]{64}", body["jobId"]):
+        raise ValueError("Invalid job")
+    parent = read("RUNS", body["jobId"])
+    if not parent or parent["status"] != "FAILED":
+        raise ValueError("Only failed runs can be recovered")
+    if parent.get("creation") and parent["creation"]["target"] != body["target"]:
+        raise ValueError("Recovery must preserve the creation target")
+    refs = parent.get("rawSources", [parent["raw"]] if parent.get("raw") else [])
+    pins = [*refs, *parent.get("selectedContext", [])]
+    if parent.get("selectedMap"):
+        pins.append(parent["selectedMap"])
+    for character in parent.get("selectedCharacters", []):
+        pins.extend(character.get("appearanceAssets", []))
+    for pin in pins:
+        current, _ = asset(pin["key"], parent["gameId"], maximum=16 * 1024**2)
+        if any(current[field] != pin[field] for field in ("key", "sha256", "size")):
+            raise ValueError("Pinned recovery input changed")
+    for pin in refs:
+        validate_raw(document(pin), parent["gameId"])
+    identity = ["editorial-recovery-v1", parent["jobId"], body["target"], PLAN["version"]]
+    job_id = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+    existing = read("RUNS", job_id)
+    if existing:
+        return public(existing)
+    now = int(time.time())
+    job = {
+        **parent,
+        "sk": job_id,
+        "jobId": job_id,
+        "workflowVersion": PLAN["version"],
+        "status": "SUBMITTED",
+        "createdAt": now,
+        "target": body["target"],
+        "videoGenerationAuthorized": False,
+        "recovery": {
+            "schemaVersion": 1,
+            "parentJobId": parent["jobId"],
+            "parentWorkflowVersion": parent["workflowVersion"],
+            "requestedAt": now,
+            "mode": "replay-pinned-inputs",
+        },
+        "actor": actor,
+    }
+    for field in ("novelFailed", "videoFailed", "completedAt", "failure"):
+        job.pop(field, None)
+    import asset_archive
+    from boto3.dynamodb.types import TypeSerializer
+
+    serializer = TypeSerializer()
+    boto3.client("dynamodb").transact_write_items(
+        TransactItems=[
+            {
+                "ConditionCheck": {
+                    "TableName": table.name,
+                    "Key": {"pk": {"S": "RUNS"}, "sk": {"S": parent["jobId"]}},
+                    "ConditionExpression": "#s = :failed AND workflowVersion = :version",
+                    "ExpressionAttributeNames": {"#s": "status"},
+                    "ExpressionAttributeValues": {
+                        ":failed": {"S": "FAILED"},
+                        ":version": serializer.serialize(parent["workflowVersion"]),
+                    },
+                }
+            },
+            {
+                "Put": {
+                    "TableName": table.name,
+                    "Item": {k: serializer.serialize(v) for k, v in job.items()},
+                    "ConditionExpression": "attribute_not_exists(pk)",
+                }
+            },
+            *asset_archive.reference_writes(
+                parent["gameId"],
+                "editorial:" + job_id,
+                [pin["key"] for pin in pins],
+                {"table": table.name, "pk": "RUNS", "sk": job_id},
+            ),
+        ]
+    )
+    return public(job)
+
+
 def claim(actor, version=1):
     if type(version) is not int or version < 1:
         raise ValueError("Invalid worker version")
@@ -505,13 +590,17 @@ def claim(actor, version=1):
         if task.get("attempts", 0) >= 3:
             table.update_item(
                 Key={"pk": "TASKS", "sk": task["sk"]},
-                UpdateExpression="SET #s = :failed",
+                UpdateExpression="SET #s = :failed, failure = :failure, completedAt = :now",
                 ConditionExpression="#s = :old AND leaseUntil <= :now",
                 ExpressionAttributeNames={"#s": "status"},
                 ExpressionAttributeValues={
                     ":failed": "FAILED",
                     ":old": task["status"],
                     ":now": now,
+                    ":failure": {
+                        "code": "attempts-exhausted",
+                        "message": "Three worker attempts ended without a completed artifact.",
+                    },
                 },
             )
             continue
@@ -650,21 +739,35 @@ def internal(event):
                 raise
             if read("TASKS", task["sk"])["taskToken"] != event["taskToken"]:
                 raise ValueError("Refusing mismatched stage token")
+    elif event["operation"] == "branch-fail":
+        branch = event["branch"]
+        if branch not in {"novel", "video"}:
+            raise ValueError("Invalid branch")
+        table.update_item(
+            Key={"pk": "RUNS", "sk": job_id},
+            UpdateExpression=f"SET {branch}Failed = :failed",
+            ExpressionAttributeValues={":failed": True},
+        )
     else:
+        target = job.get("target", job.get("creation", {}).get("target", "both"))
+        video_done = (read("TASKS", f"{job_id}:video-preflight") or {}).get("status") == "DONE"
+        novel_done = (read("TASKS", f"{job_id}:novel-chapter") or {}).get("status") == "DONE"
         status = (
             (
-                "NOVEL_READY"
-                if job.get("creation", {}).get("target") == "novel"
-                else "READY_FOR_VIDEO_DISCUSSION"
+                "READY_FOR_VIDEO_DISCUSSION"
+                if target != "novel" and video_done
+                else "NOVEL_READY"
+                if target == "novel" and novel_done
+                else "FAILED"
             )
             if event["operation"] == "finish"
             else "FAILED"
         )
         table.update_item(
             Key={"pk": "RUNS", "sk": job_id},
-            UpdateExpression="SET #s = :status",
+            UpdateExpression="SET #s = :status, completedAt = :now",
             ExpressionAttributeNames={"#s": "status"},
-            ExpressionAttributeValues={":status": status},
+            ExpressionAttributeValues={":status": status, ":now": int(time.time())},
         )
     return {}
 
@@ -739,6 +842,8 @@ def handler(event, _context):
             raise ValueError("Request too large")
         body = json.loads(base64.b64decode(raw) if event.get("isBase64Encoded") else raw)
         if route == "POST /editorial-jobs":
+            if set(body) == {"recovery"}:
+                return response(200, recover(body["recovery"], claims["sub"]))
             return response(200, submit(body))
         if not authorized(claims, "MODEL_WORKERS"):
             return response(403, {"error": "Only the owner's laptop can process stages"})
@@ -780,7 +885,9 @@ def stream(event, _context):
                         input=json.dumps(
                             {
                                 "jobId": new["jobId"],
-                                "target": new.get("creation", {}).get("target", "both"),
+                                "target": new.get(
+                                    "target", new.get("creation", {}).get("target", "both")
+                                ),
                                 "sourceMode": new.get("sourceMode", "transcript"),
                             }
                         ),
