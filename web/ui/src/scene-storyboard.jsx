@@ -56,7 +56,6 @@ export function SceneStoryboard({scene, scope, onSave, onLoadFrames, onOpenFrame
     </li>;})}</ol>}
     {takes.hasNextPage&&<Button variant="outline" disabled={takes.isFetchingNextPage} onClick={()=>void takes.fetchNextPage()}>More takes</Button>}
     {takes.isError&&<p role="alert" className="text-sm text-destructive">Takes could not be loaded.</p>}
-    
     {!editing&&error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
     <Dialog open={editing} onOpenChange={value=>{if(!busy)setEditing(value);}}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>{board?'Edit storyboard':'Create storyboard'}</DialogTitle></DialogHeader>
       <form className="flex min-h-0 flex-col gap-6" onSubmit={event=>{event.preventDefault();void save({storyboardShots:draft});}}>
