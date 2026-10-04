@@ -29,9 +29,9 @@ def listing(game, identity, cursor):
 
 @workflows.command("rebuild")
 def rebuild():
-    """Backfill all four durable job sources, in bounded resumable pages. No source writes."""
+    """Backfill durable sources and exact workflow-type totals; never change sources."""
     config = cloud.configuration()
-    for kind in ("editorial", "model", "playback", "transcription"):
+    for kind in ("editorial", "model", "playback", "transcription", "hierarchy"):
         cursor = None
         while True:
             result = cloud.api(config, "POST", "/workflows/rebuild", json={"kind": kind, "cursor": cursor})

@@ -12,7 +12,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as secrets from "aws-cdk-lib/aws-secretsmanager";
 
-/** Optional, explicitly configured API transcription; no key or provider token reaches browsers. */
+/** Optional, explicitly configured API transcription; the long-lived key stays server-side; browsers receive bounded ephemeral credentials. */
 export class BrowserRecordings extends Construct {
   readonly table: dynamodb.Table;
   constructor(scope: Construct, id: string, props: {
@@ -45,10 +45,12 @@ export class BrowserRecordings extends Construct {
     const worker=create("Worker","browser_transcription.work",300,512);
     table.grantReadWriteData(worker); props.bucket.grantRead(worker,"games/*");
     worker.addToRolePolicy(new iam.PolicyStatement({actions:["s3:PutObject"],resources:[props.bucket.arnForObjects("games/*/catalog/assets/browser-asr-*/*"),props.bucket.arnForObjects("games/*/content/*/browser-asr-*/*")],conditions:{Null:{"s3:if-none-match":"false"}}}));
-    if(props.secretArn) secrets.Secret.fromSecretCompleteArn(this,"OpenAI",props.secretArn).grantRead(worker);
+    if(props.secretArn) { const secret = secrets.Secret.fromSecretCompleteArn(this,"OpenAI",props.secretArn); secret.grantRead(worker); secret.grantRead(broker); }
     worker.addEventSource(new sources.SqsEventSource(queue,{batchSize:1,reportBatchItemFailures:true,maxConcurrency:2}));
     const integration=new integrations.HttpLambdaIntegration("BrowserRecordingIntegration",broker);
     props.api.addRoutes({path:"/browser-recording/capabilities",methods:[api.HttpMethod.GET],integration,authorizer:props.authorizer});
+    props.api.addRoutes({path:"/browser-recording/live-session",methods:[api.HttpMethod.POST],integration,authorizer:props.authorizer});
+    props.api.addRoutes({path:"/browser-recording/live-events",methods:[api.HttpMethod.POST],integration,authorizer:props.authorizer});
     props.api.addRoutes({path:"/browser-recording/complete",methods:[api.HttpMethod.POST],integration,authorizer:props.authorizer});
     props.api.addRoutes({path:"/browser-transcriptions",methods:[api.HttpMethod.GET,api.HttpMethod.POST],integration,authorizer:props.authorizer});
   }

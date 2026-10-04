@@ -523,6 +523,9 @@ def register(group):
 
     group.add_command(model)
     group.add_command(share)
+    from panther_journal.asset_archive import archive, archive_migrate
+    assets.add_command(archive)
+    assets.add_command(archive_migrate)
     group.add_command(assets)
     group.add_command(game)
     group.add_command(player)

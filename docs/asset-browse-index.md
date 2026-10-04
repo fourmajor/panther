@@ -1,4 +1,4 @@
-# Indexed asset browsing (v3)
+# Indexed asset browsing (v4)
 
 S3 stores immutable files and their location records. DynamoDB stores a regenerable browsing
 projection: titles, type, metadata, explicit source links, recording/playback summaries and warnings.
@@ -11,6 +11,12 @@ without manuscript text. `/novel` queries this bounded catalog and batch-checks 
 workflow outputs. It does not open every manuscript or scan all workflow runs. Reading an individual
 chapter still validates its source checksum and envelope. Source AI review acceptance is not an
 owner-approved book selection or a declaration of canon.
+Version 4 adds explicit recording names, capture dates and summed source-part audio duration.
+Missing part durations remain unknown. Sessions combines recording/playback and transcript assets
+with the same explicit session identity or source lineage into one card; generated speech/music
+remain in Assets. Audio controls point to an actual listening derivative, never a fabricated file.
+Short summary excerpts load through the existing source-pinned summary API and expand inline; reading does not generate summaries. Previously published source bytes,
+metadata, capture warnings and original parts remain unchanged.
 Reading `/assets` never lists S3 or opens source documents. `/asset-document` still reads a single
 selected source; metadata and JSON reads use the same S3 version when available.
 
@@ -23,7 +29,7 @@ The new API uses retained, pay-per-request DynamoDB partitions for each game and
 Sessions/Videos render one page and load more only on request. Video plans are included
 in Videos. Sessions is a logical union of audio and transcript assets from the existing
 `all` partition: each request remains bounded, its cursor is scoped to Sessions, and a sparse
-filtered page can offer Load more. It requires no new partition or inventory rebuild.
+filtered page can offer Load more. The v4 all-game rebuild enriches immutable recording facts and updates Sessions membership; it creates no separate Sessions partition.
 Standard lossless recording chunks and listening derivatives stay in the complete
 catalog and recording reader, not as separate Sessions cards. Matching transcript Markdown exports
 are suppressed using a bounded indexed lookup, including across page boundaries.
@@ -45,13 +51,16 @@ An optimistic revision condition rejects concurrent stale commits; retries rerea
 Source bytes, locators, identity, provenance and source version history are never modified.
 Index records above 350 KB fail explicitly; no links are silently truncated.
 
-Updates are eventually visible after event processing; refresh after uploading. EventBridge target
+Updates are eventually visible after event processing; the application invalidates its cached queries after uploads. EventBridge target
 delivery and asynchronous Lambda failures go to the CDK-created 14-day failure queue. Inspect
 failures/logs after migration and when an upload fails to appear; use the authenticated rebuild
 command to reconcile. This queue is not a notification subscription or an automatic replay worker.
-No user-facing deletion exists; future deletion support must explicitly update this projection.
+Logical asset removal retains original bytes and history, and excludes archived assets from browse pages.
 
 ## Rollout and all-game verification
+
+Catalog v4 uses separate partitions and fails closed until this all-game rebuild is verified and activated.
+No v3 fallback is used by readers; preserve the old projection until cutover verification succeeds.
 
 1. Run local checks and the self-hosted Playwright gate. Review/merge the PR.
 2. Inspect the CDK diffs for Foundation and MediaExplorer in the established account/us-west-2,
@@ -109,3 +118,28 @@ and full character details are omitted from dashboard summaries. This read-time 
 needs no asset rewrite or historical-date migration. A future indexed recency projection
 would require its own versioned all-game rebuild and verification before replacing this
 complete metadata traversal.
+
+## User tag vocabulary and chapter reviews
+
+The `tags-v1#<game>` projection stores the user tag vocabulary separately from asset rows.
+Tag names are case-insensitive identities, with the first stored spelling retained; existing
+asset tags remain unchanged. Source indexing transactionally adds each asset's observed tags
+alongside section updates. A tag remains available when no current asset uses it. `GET /tags`
+reads this bounded complete vocabulary; `POST /tags` creates a user tag without rewriting assets.
+Neither operation scans S3. A vocabulary above 1,000 names reports unavailable rather than
+silently returning a partial selector.
+
+Deploy this projection with the scoped metadata Lambda, then repeat the authenticated all-game
+`panther assets rebuild-index` dry-run, apply, verify and activate sequence above. Verification
+checks every existing asset tag against the vocabulary and writes a per-game `tags-v1#verified`
+marker only after the complete game passes. Activation requires both asset and tag verification
+for every discovered game before setting `tags-v1#catalog/ready`. Until activation, the new tag
+API returns an explicit migration-unavailable response. This migration preserves source bytes,
+original metadata and historical tag spellings; no source-content migration or inference occurs.
+
+`GET/POST /novel-review` stores the user's Approved/Rejected decision independently of the
+immutable manuscript and AI review evidence. Writes require the publisher capability, a guarded
+expected review revision and an idempotent operation identity. A transaction checks the completed
+source chapter record/output and retains each prior review with the exact chapter reference.
+This metadata Lambda cannot change manuscripts or jobs, dispatch generation, or access S3.
+The novel reader's existing read-only permissions remain unchanged.

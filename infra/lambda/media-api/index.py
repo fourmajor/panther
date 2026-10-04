@@ -200,8 +200,17 @@ def _list_objects(event):
         raise
 
     objects = []
+    import asset_archive
+
     for item in result.get("Contents", []):
         if item["Key"] == prefix:
+            continue
+        reference = s3.reference_for(item["Key"])
+        if (
+            reference.startswith("games/")
+            and "/assets/" in reference
+            and asset_archive.archived(reference.split("/")[1], reference)
+        ):
             continue
         objects.append(
             {
@@ -406,7 +415,18 @@ def _upload(event):
         if (
             not isinstance(values, list)
             or len(values) > 20
-            or not all(_valid_slug(value) and len(value) <= 96 for value in values)
+            or not all(
+                (
+                    (_valid_slug(value) and len(value) <= 96)
+                    if field == "characterIds"
+                    else (
+                        isinstance(value, str)
+                        and 1 <= len(value.strip()) <= 96
+                        and not any(ord(c) < 32 for c in value)
+                    )
+                )
+                for value in values
+            )
         ):
             return _response(400, {"error": f"Invalid metadata {field}"})
     if "sessionId" in metadata and (

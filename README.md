@@ -13,18 +13,28 @@ Choose the current game in the header. Its sections are:
 
 - **Dashboard:** links to each section and recent characters, transcripts, chapters, videos and assets.
 - **Characters:** editable profiles, reference media, selected appearances, with revisions retained in the background.
-- **Sessions:** browser recording, continuous playback and transcript browsing in one section.
+- **Sessions:** browser recording and one card per recorded session, with the actual date, continuous playback and download, one transcript link and a short expandable summary. Standalone generated narration remains in Assets.
+  Record opens a dialog with live transcription, a timer and Pause/Resume/Stop. Closing it keeps
+  capture running; its header indicator reopens the controls. Live transcription is required for new recordings.
   Previous Audio and Transcripts routes lead here. Transcript details open separately from the list.
-- **Novel:** generate a chapter from a prompt with optional transcript/context inputs, or write and
-  edit chapters manually. Source reviews preserve raw speech separately from summaries/adaptations.
-- **Videos:** searchable multi-tag and multi-character filters use removable selections. Episodes own ordered scenes. A scene can start with a title, use characters and optional
+- **Novel:** generate a chapter from a prompt with optional transcripts and reference assets, or write
+  and edit Markdown with the Tiptap editor. References use a searchable lookup. Compact transcript
+  selections expand one concise summary at a time; raw speech remains separate from adaptations.
+  Reading keeps Edit and Download together; chapter details open in a dialog, while Approve and Reject
+  remain together below the manuscript.
+- **Episodes:** `/games/:gameId/episodes` searches episodes only. Episodes own ordered scenes. A scene can
+  start with a title, use characters and optional
   sources, and specify a scene type. Episode/scene forms open in dialogs; a focused editor keeps
   ordered scenes beside the selected scene’s prompt, cast and output choices. Playback opens in its
   own dialog. Map scenes select an actual map asset. An episode's playback
   follows its selected rendered scene outputs in order; drafting or planning does not imply footage
   has been generated.
-- **Assets:** browse and search game assets, filter by type, identify file formats, upload files and request image generation. Jobs show activity or an explicit worker/configuration problem.
-- **Workflows:** inspect reported server/laptop job stages, dependencies and output links. Progress
+- **Assets:** browse individual videos, portraits and other game assets; search and filter by type, tags and
+  characters with selections contained inside the controls. Identify file formats, upload files and request
+  image, video, speech and text generation with supported model/style/input choices.
+  Generated titles are automatic and editable; jobs show activity or an explicit worker/configuration problem.
+- **Workflows:** browse workflow types with exact run totals, open paged histories, and inspect
+  individual server/laptop stages and output links. Progress
   updates automatically; queued work is distinct from a running worker or completed output.
 - **Settings:** edit the game's name, description, system and visual defaults. Account settings have
   their own page.
@@ -40,42 +50,49 @@ creative adaptations do not become evidence for subsequent transcript correction
 
 ## Local development
 
-Install Python and frontend dependencies, build the React components, then start the local server:
+Install Python/frontend dependencies and FFmpeg, then start the complete stack:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 npm ci --prefix web/ui
-npm run build --prefix web/ui
-.venv/bin/python tools/dev_server.py
+cp .env.example .env
+chmod 600 .env
+# Fill OPENAI_API_KEY, FAL_API_KEY and ELEVENLABS_API_KEY in .env.
+.venv/bin/python tools/dev.py
 ```
 
-Open [127.0.0.1:8765](http://127.0.0.1:8765). The SQLite database defaults to
-`~/.local/state/panther/development.sqlite`; `--database` selects another private file outside Git.
-Application reads use persistent database state, not static preview fixtures. An empty database
-stays empty until you create data or explicitly use Development → Regenerate demo data (`--seed`
-at startup). Demo regeneration preserves user-created content and uploads.
+Open [127.0.0.1:8766](http://127.0.0.1:8766). The launcher builds React, checks local
+requirements, starts the API and nine processors, and waits for fresh processor
+heartbeats before exposing the app. Logs/checkpoints and SQLite data live outside Git.
+See [local setup](docs/local-development.md) for individual workers, model settings and recovery.
 
-For real continuous playback of browser recordings, install FFmpeg (`ffmpeg` and `ffprobe`) and
-start the separate local worker in another terminal:
+Local creation uses direct provider APIs: OpenAI for chapters, summaries, transcription,
+images, generated asset titles and prompt composition; fal for images, scene and standalone videos;
+ElevenLabs v3 for narration.
+Episodes assemble the selected scene videos locally with FFmpeg. Generation records
+actual outputs, immutable inputs, provider responses and honest failures. Unknown paid
+outcomes are never automatically submitted again. There is no AI CLI harness or dummy
+successful output in this local stack.
 
-```sh
-.venv/bin/python tools/dev_playback_worker.py \
-  --database ~/.local/state/panther/development.sqlite \
-  --work-dir ~/.local/state/panther/playback
-```
+The database defaults to `~/.local/state/panther/development.sqlite`; application reads
+use persisted data. Development → Regenerate demo data explicitly writes fictional
+records while preserving user-created content. Local identity/data remain separate
+from production. Cloud workers retain their existing transport until explicitly migrated.
 
-The worker verifies explicitly completed WAV sets, preserves originals, creates a continuous MP3,
-and publishes its source-linked manifest into the same database. `--once` drains current queued
-work and exits. Queue failures retain the source audio and a reason; existing bytes are never
-replaced. Its heartbeat lets the app distinguish a waiting job from available processing.
-
-Local development does not configure OpenAI transcription, image generation, transcript-summary
-inference or editorial workers. Requests can be persisted or report that generation is unavailable;
-they never return invented transcripts, images or completed manuscripts. The local identity and
-SQLite data are separate from hosted authentication and game data. Production generation runs
-through authenticated, subscription-backed laptop workflows. Browser transcription requires an
-explicit server-side OpenAI secret; paid video/narration needs separate approval.
+The React UI uses standard shadcn/ui registry components (Radix, Command and shared
+buttons/inputs) with Tailwind CSS 4 and TanStack Query. Keep application-specific forms
+and data handling in compositions of those components; widget focus, keyboard behavior
+and popup positioning belong to the underlying libraries.
+Radix DismissableLayer 1.1.19 receives a minimal, reproducible event-time Escape guard
+from [upstream fix #4147](https://github.com/radix-ui/primitives/pull/4147) for
+[nested-dialog regression #4143](https://github.com/radix-ui/primitives/issues/4143).
+`npm ci --prefix web/ui` applies the version-specific patch only after verifying
+both upstream file checksums, and fails if the version or sources have changed.
+The build repeats this verification for existing installations. Remove the patch
+after upgrading to a stable upstream fix, and rerun the
+nested-dialog registration, keyboard/focus and body-portal Select regressions on
+desktop and mobile.
 
 ## Verification and operations
 

@@ -31,7 +31,7 @@ for (const width of [1440, 390]) test(`cached release updates without losing the
   await new Promise(resolve => server.listen(0, '0.0.0.0', resolve));
   try {
     await page.setViewportSize({ width, height: 900 });
-    const url = `http://localhost:${server.address().port}/games/example/videos?project=example#shot-3`;
+    const url = `http://localhost:${server.address().port}/games/example/episodes?project=example#shot-3`;
     await page.goto(url);
     await expect(page.locator('h1')).toHaveText('Old release');
     await page.locator('#notes').fill('Unsaved feedback');

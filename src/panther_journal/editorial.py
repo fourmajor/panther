@@ -228,6 +228,8 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
         allowed.add("raw")
     if inputs.get("creation"):
         allowed.add("creation")
+    if inputs.get("candidate") is not None:
+        allowed.add("candidate")
     allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
     if inputs.get("mapInput"):
         allowed.add(inputs["mapInput"]["key"])
@@ -826,6 +828,8 @@ def process(config, root, claim):
             allowed.add("raw")
         if job.get("creation"):
             allowed.add("creation")
+        if candidate is not None:
+            allowed.add("candidate")
         if not set(report["evidenceIds"]) <= allowed:
             raise ValueError("Unknown evidence citation")
         payload = report

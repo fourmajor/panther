@@ -67,3 +67,35 @@ does not fetch provider billing APIs from the browser. No secrets enter metadata
 New video downloads attempt a read-only billing lookup and preserve unknown cost if unavailable
 or delayed. Later reconciliation uses this same migration; it never rewrites the downloaded video.
 Upgrade pinned local workers from the reviewed merged release to adopt the new producer metadata.
+
+## Public-rate estimates v1
+
+A separate `extra.costEstimate` records an estimate without replacing actual
+`extra.generation.cost` or its billing evidence. USD estimates have `schemaVersion: 1`,
+`status: "estimated"`, decimal-string `amount`, `currency`, `scope`, `rateAsOf`,
+`evidence` with pricing URL and exact usage/settings, and explicit assumptions.
+ElevenLabs receipts report consumed `credits` instead of an invented USD allocation.
+Rates alone do not establish actual charges. An image-output-only estimate explicitly
+excludes missing input usage and title generation; upstream media are not counted twice.
+Unsupported models or missing settings receive no invented estimate.
+
+New direct API workers calculate estimates from retained Responses/Images usage,
+exact fal model settings and read-only pricing receipts, or ElevenLabs character-cost
+headers. Price reads do not submit media, authorize retries or release budget reservations.
+
+Existing local database assets use an explicit repeatable projection migration:
+
+```sh
+.venv/bin/python tools/dev_cost_estimates.py --database PRIVATE_DB
+.venv/bin/python tools/dev_cost_estimates.py --database PRIVATE_DB --apply
+```
+
+An optional `--pricing-file PRIVATE_JSON` supplies complete retained read-only fal
+pricing receipts keyed by exact supported model profile. Keep these receipts private.
+The migration covers all local games, stores `asset-cost-estimate` records, pins original
+metadata and SHA-256, and retains prior projections as `asset-cost-estimate-history`.
+It never rewrites source bytes, original metadata, requests or provider responses.
+The read-time overlay applies only when both immutable pins still match. Current dated
+public prices applied to older requests are explicitly estimates, not historical invoices.
+Hosted historical assets continue through the authenticated migration above; browsing
+must never scan S3 or invoke paid inference to obtain an estimate.

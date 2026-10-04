@@ -140,7 +140,20 @@ def save(media, body, actor):
             raise ValueError("Invalid earlier chapter")
         previous = record(game, previous_id)
         if previous is None:
-            raise ValueError("Earlier authored chapter not found")
+            import novel
+
+            job = novel.jobs.read("RUNS", previous_id)
+            generated = novel.chapter(job) if job and job.get("gameId") == game else None
+            if not generated:
+                raise ValueError("Earlier chapter not found")
+            # A generated edition is an exact input, not evidence of a prior human
+            # version family. Start a new authored family and retain its real lineage.
+            previous = {"assetKey": generated["details"]["artifact"]["key"], "generated": True}
+    derived_sources = list(sources)
+    if previous and previous["assetKey"] not in derived_sources:
+        derived_sources.append(previous["assetKey"])
+    if len(derived_sources) > 20:
+        raise ValueError("Too many chapter references")
     identity = hashlib.sha256((game + ":" + operation).encode()).hexdigest()
     fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
     pointer = key(game, identity)
@@ -157,9 +170,11 @@ def save(media, body, actor):
             "gameId": game,
             "title": title,
             "markdown": manuscript,
-            "sourceKeys": sources,
-            "seriesId": previous["seriesId"] if previous else identity,
-            "version": previous["version"] + 1 if previous else 1,
+            "sourceKeys": derived_sources,
+            "seriesId": previous["seriesId"]
+            if previous and not previous.get("generated")
+            else identity,
+            "version": previous["version"] + 1 if previous and not previous.get("generated") else 1,
             "previousChapterId": previous_id,
         }
         validate_document(doc, game)
@@ -194,13 +209,13 @@ def save(media, body, actor):
         doc = json.loads(item["document"])
         raw = item["document"].encode()
         version = {"schemaVersion": 1, "seriesId": doc["seriesId"], "number": doc["version"]}
-        if previous:
+        if previous and not previous.get("generated"):
             version["previousKey"] = previous["assetKey"]
         metadata = asset_metadata.defaults(
             "novel-chapter",
             {
                 "title": title,
-                "sourceKeys": sources,
+                "sourceKeys": doc["sourceKeys"],
                 "category": "authored-chapter",
                 "extra": {
                     "generation": {

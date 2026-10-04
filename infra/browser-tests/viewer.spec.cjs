@@ -109,7 +109,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     });
     await page.addInitScript(() => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'test'}))+'.test'})));
     await page.goto('https://panther.place/characters/test-game/test-character');
-    await expect(page.locator('#character-appearance-panel')).toBeVisible();
+    await expect(page.locator('#character-appearance-panel')).toBeHidden();await expect(page.locator('#character-assets')).toBeVisible();
     const portrait = page.locator('#character-portrait-only');
     await expect(portrait).toBeVisible();
     await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);
@@ -123,7 +123,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await page.screenshot({path:screenshot,fullPage:true});
     await testInfo.attach('portrait-only-page',{path:screenshot,contentType:'image/png'});
     portraitVersion = 2;
-    await page.reload();await openAppearances(page);
+    await page.reload();
     await expect(portrait).toBeVisible();
     await expect(portrait).toHaveAttribute('src', /v=2$/);
     await expect.poll(() => portrait.evaluate(el => el.naturalWidth)).toBe(1024);

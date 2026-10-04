@@ -164,6 +164,48 @@ def create(game, recording, mode, refs, actor, recording_ref=None):
     return public(item)
 
 
+def live_request(event, actor):
+    import live_transcription as live
+    raw = event.get("body") or "{}"
+    if len(raw) > 150000:
+        raise ValueError("Request too large")
+    body = json.loads(base64.b64decode(raw) if event.get("isBase64Encoded") else raw)
+    pk, sk = live.identity(body)
+    if event["routeKey"].endswith("live-events"):
+        record = read(pk, sk)
+        if not record or record["actor"] != actor:
+            return reply(403, {"error": "Live session access denied"})
+        receipt = live.events(body, record)
+        batch_key = sk + "#EVENT#" + body["batchId"]
+        try:
+            TABLE.put_item(Item=json.loads(json.dumps({"pk": pk, "sk": batch_key, **receipt}), parse_float=Decimal), ConditionExpression="attribute_not_exists(pk)")
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            if read(pk, batch_key).get("sha256") != receipt["sha256"]:
+                return reply(409, {"error": "Live event batch changed"})
+        return reply(200, {"saved": True})
+    if not SECRET:
+        return reply(503, {"error": "Live transcription is unavailable"})
+    secret = boto3.client("secretsmanager").get_secret_value(SecretId=SECRET)["SecretString"]
+    if secret.startswith("{"):
+        secret = json.loads(secret)["OPENAI_API_KEY"]
+    record = {"pk": pk, "sk": sk, **live.intent(body, actor)}
+    try:
+        TABLE.put_item(Item=record, ConditionExpression="attribute_not_exists(pk)")
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        return reply(409, {"error": "Live connection already requested; it will not be repeated"})
+    try:
+        response = live.mint(secret, record)
+    except Exception as exc:
+        TABLE.put_item(Item=live.failure(record, exc))
+        return reply(503, {"error": "Live transcription could not connect. Audio is retained."})
+    TABLE.put_item(Item=json.loads(json.dumps(record), parse_float=Decimal))
+    return reply(200, response)
+
+
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     if not access_policy.authorized(claims, "CATALOG_READERS"):
@@ -179,12 +221,16 @@ def handler(event, _context):
                     "transcriptionAvailable": bool(SECRET) and can_record,
                     "transcriptionUnavailableReason": None if SECRET else "Server transcription is not configured.",
                     "model": MODEL,
+                    "liveModel": "gpt-live-transcribe",
+                    "liveTransport": "realtime",
                     "chunkSeconds": 15,
                     "maxParts": 1000,
                 },
             )
         if not can_record:
             return reply(403, {"error": "Publishing access is required to record"})
+        if route in {"POST /browser-recording/live-session", "POST /browser-recording/live-events"}:
+            return live_request(event, claims["sub"])
         if route == "GET /browser-transcriptions":
             query = event.get("queryStringParameters") or {}
             pk = identity(query.get("gameId"), query.get("recordingId"))
@@ -402,7 +448,7 @@ def transcribe(wav):
     if not isinstance(secret, str) or not secret.strip() or any(c in secret for c in "\r\n"):
         raise ValueError("Invalid credential")
     boundary = "panther-" + uuid.uuid4().hex
-    fields = {"model": MODEL, "response_format": "json", "chunking_strategy": "auto"}
+    fields = {"model": MODEL, "response_format": "json", "languages[]": "en"}
     body = b"".join(
         f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
         for key, value in fields.items()

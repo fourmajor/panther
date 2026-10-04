@@ -34,3 +34,23 @@ test('file format stays distinct from semantic type and display title',()=>{
  assert.equal(assetFileFormat({kind:'map',name:'Coast'}),'File');
  assert.equal(assetFileFormat({filename:'room.WAV',contentType:'audio/wav'}),'WAV');
 });
+
+
+import {assetIsImage} from '../src/assets-library-data.js';
+test('real image keys support thumbnails when result projections omit MIME',()=>{
+ assert.equal(assetIsImage({key:'games/demo/assets/map/original/route.png'}),true);
+ assert.equal(assetIsImage({key:'games/demo/assets/map/original/route.webp',contentType:'application/octet-stream'}),true);
+ assert.equal(assetIsImage({key:'games/demo/assets/map/original/file',contentType:'image/png'}),true);
+ assert.equal(assetIsImage({key:'games/demo/assets/map/original/route.png',contentType:'application/json'}),false);
+ assert.equal(assetIsImage({key:'games/demo/assets/map/original/notes.json',kind:'map'}),false);
+});
+
+
+import {assetTypeLabel,ordinaryLibraryAsset} from '../src/assets-library-data.js';
+test('all-library semantic types remain open and finished media keeps its kind',()=>{
+ for(const kind of ['portrait','video','audio','document','model-3d','battle-map'])assert.equal(assetLibraryType({kind}),kind);
+ assert.equal(assetLibraryType({kind:'image'}),'artwork');assert.equal(assetTypeLabel('battle-map'),'Battle map');
+ assert.equal(ordinaryLibraryAsset({kind:'generation-provenance'}),false);
+ assert.equal(ordinaryLibraryAsset({kind:'video',metadata:{extra:{relationshipRole:'processing'}}}),false);
+ assert.equal(ordinaryLibraryAsset({kind:'portrait',metadata:{extra:{relationshipRole:'finished'}}}),true);
+});
