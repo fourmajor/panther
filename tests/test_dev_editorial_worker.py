@@ -242,3 +242,50 @@ def test_offline_revalidation_publishes_original_review_after_guard_fix_without_
     assert envelope['apiResponse']['revalidation']['mode'] == 'offline-original-response-revalidation'
     assert envelope['payload']['chapter'] == 'A complete fictional chapter.'
     assert envelope['payload']['review']['passed'] is True
+
+
+def test_chapter_runs_existing_screen_stages_and_atomically_publishes_owned_episode(tmp_path, monkeypatch):
+    """Exercise the entire real stage graph with a synthetic provider response."""
+    store, unused = queued(tmp_path)
+    with store.connect() as db:
+        db.execute("DELETE FROM records WHERE kind='editorial'")
+    chapter_id = 'c' * 64
+    key = 'games/fictional/assets/chapter-source/original/chapter.json'
+    manuscript = {'gameId': 'fictional', 'title': 'The crossing', 'markdown': 'The travelers reach the gates at dusk.'}
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (key, 'fictional', json.dumps({'kind': 'novel-chapter', 'contentType': 'application/json'}), json.dumps(manuscript).encode(), 'now'))
+    store.put('chapter', chapter_id, {'id': chapter_id, 'gameId': 'fictional', 'title': manuscript['title'], 'assetKey': key}, 'fictional')
+    job = store.submit_episode_adaptation('fictional', {'schemaVersion': 4, 'target': 'video', 'chapterId': chapter_id})
+
+    class ScreenResponses(Responses):
+        def create(self, **request):
+            response = super().create(**request)
+            value = json.loads(response.output_text)
+            value['shots'] = [{'sceneId': 'SC01', 'shotId': 'SC01_SH01', 'durationSeconds': 8,
+                              'description': 'The gates open at dusk.', 'camera': 'Wide', 'color': '#223344', 'subjects': []}]
+            properties = request['text']['format']['schema']['properties']
+            if 'sourceFacts' in properties:
+                value['sourceFacts'] = []
+            if 'episode' in properties:
+                value['episode'] = {'schemaVersion': 1, 'title': 'The crossing', 'synopsis': 'The travelers arrive.', 'scenes': [
+                    {'id': 'arrival', 'title': 'Arrival', 'type': 'general', 'prompt': 'The gates open at dusk.',
+                     'narration': 'At dusk, the travelers arrived.', 'characterIds': [], 'referenceKeys': [], 'shotIds': ['SC01_SH01']}]}
+            response.output_text = json.dumps(value)
+            return response
+
+    responses = ScreenResponses()
+    monkeypatch.setattr(worker.editorial.local, 'run_process', lambda *args, **kwargs: pytest.fail('No parallel CLI pipeline'))
+    assert worker.process(store, job['jobId'], worker.private_root(tmp_path / 'screen-work'), SimpleNamespace(responses=responses), 'test-model')
+    completed = store.get('editorial', job['jobId'])
+    assert completed['status'] == 'READY_FOR_VIDEO_DISCUSSION'
+    assert len(responses.calls) == len(worker.stages_for(job))
+    assert all(request['store'] is False for request in responses.calls)
+    assert manuscript['markdown'] in json.dumps(responses.calls[0]['input'])
+    episode = store.get('episode', 'fictional:' + job['episodeRef']['episodeId'])
+    assert episode['production']['state'] == 'planned' and episode['sceneIds'] == ['arrival']
+    scene = store.get('scene', 'fictional:' + episode['id'] + ':arrival')
+    assert scene['narration'] == 'At dusk, the travelers arrived.'
+    assert scene['planningState'] == 'needs-approval' and scene['storyboard']['origin'] == 'ai'
+    assert scene['selectedOutputKey'] is None
+    assert store.get('scene-history', 'fictional:' + episode['id'] + ':arrival:' + scene['revision'])['record'] == scene
+    assert not store.list('scene-render') and not store.list('narration')

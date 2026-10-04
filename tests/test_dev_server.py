@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from panther_journal.editorial_contract import PLAN
 
 spec = importlib.util.spec_from_file_location("panther_development", Path(__file__).parents[1] / "tools/dev_server.py")
 dev = importlib.util.module_from_spec(spec)
@@ -95,7 +96,7 @@ def test_prompt_led_scene_generation_pins_history_without_inventing_transcripts(
     job = handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation})
     assert job["creation"]["title"] == scene["name"] and job["creation"]["brief"] == scene["name"]
     assert job["selectedScene"] == scene and job["sourceMode"] == "prompt"
-    assert job["videoGenerationAuthorized"] is False and job["workflowVersion"] == 4
+    assert job["videoGenerationAuthorized"] is False and job["workflowVersion"] == PLAN["version"]
     assert "rawKey" not in job and job["creation"]["sourceKeys"] == []
     assert handler.post("/editorial-jobs", {"gameId": "preview-campaign", "creation": creation}) == job
     with pytest.raises(ValueError, match="Scene revision"):

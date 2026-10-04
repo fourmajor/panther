@@ -10,7 +10,7 @@ function Scene({scene,index,selected,disabled,onSelect}) {
  return <div ref={setNodeRef} className="scene-order-row cursor-pointer" onClick={event=>{if(!isDragging&&!event.target.closest('button'))onSelect(scene);}} data-dragging={isDragging?'true':undefined} style={{transform:CSS.Transform.toString(transform),transition}}>
   <Button variant="ghost" size="icon" ref={setActivatorNodeRef} type="button" className="scene-drag-handle" aria-label={`Reorder ${scene.name}`} title="Drag to reorder" disabled={disabled} {...attributes} {...listeners}><GripVertical size={16} aria-hidden="true"/></Button>
   <Button variant="ghost" type="button" className="scene-card" aria-label={scene.name} aria-pressed={selected} data-order={`${index+1}.`} onClick={()=>onSelect(scene)}>{scene.name}</Button>
-  <small>{scene.selectedOutputKey?'Ready':scene.type&&scene.type!=='general'?scene.type[0].toUpperCase()+scene.type.slice(1):'Not rendered'}</small>
+  <small>{scene.planningState==='needs-approval'?'Needs approval':scene.planningState==='changes-requested'?'Changes requested':scene.selectedOutputKey?'Ready':scene.type&&scene.type!=='general'?scene.type[0].toUpperCase()+scene.type.slice(1):'Not rendered'}</small>
  </div>;
 }
 export function SortableScenes({items,selectedId,disabled,onSelect,onReorder}) {

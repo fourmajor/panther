@@ -108,6 +108,8 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             scene = store.get('scene-history', job['gameId'] + ':' + ref['episodeId'] + ':' + ref['sceneId'] + ':' + ref['revision'])
             if not scene or scene['record']['revision'] != ref['revision']:
                 raise ValueError('Pinned scene revision was not found')
+            import episode_storyboards
+            episode_storyboards.require_ready(scene['record'])
         model = job.get('model') or model_for(job)
         allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro'}
         if standalone:

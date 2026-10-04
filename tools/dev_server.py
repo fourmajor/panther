@@ -297,8 +297,8 @@ class Store:
     def save_story_entity(self, kind, body):
         game, identity, operation = body["gameId"], body["id"], body["operationId"]
         self.game(game)
-        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs"} if kind == "scene" else {"sceneIds"})
-        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "sceneIds"}
+        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardDecision"} if kind == "scene" else {"sceneIds"})
+        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "sceneIds", "narration", "storyboardShots", "storyboardDecision"}
         if not required_fields <= set(body) <= expected_fields:
             raise ValueError("Invalid episode or scene edit")
         if kind not in ("episode", "scene") or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity) or not re.fullmatch(r"[a-f0-9]{32}", operation):
@@ -324,6 +324,8 @@ class Store:
             record = {"schemaVersion": 1, "entityType": "Episode" if kind == "episode" else "Scene", "gameId": game, "id": identity, "name": body["name"].strip(), "description": body.get("description", "").strip(), "revision": uuid.uuid4().hex, "updatedAt": datetime.now(timezone.utc).isoformat()}
             record["createdAt"] = previous["createdAt"] if previous else record["updatedAt"]
             if kind == "episode":
+                if previous and "production" in previous:
+                    record["production"] = previous["production"]
                 record["position"] = previous["position"] if previous else int(time.time() * 1000)
                 ids = body.get("sceneIds", previous["sceneIds"] if previous else [])
                 owned = [json.loads(row[0])["id"] for row in db.execute("SELECT payload FROM records WHERE kind='scene' AND game=? AND json_extract(payload,'$.episodeId')=?", (game, identity)).fetchall()]
@@ -331,6 +333,11 @@ class Store:
                     raise ValueError("Scene order must include every same-episode scene exactly once")
                 record["sceneIds"] = ids
             if kind == "scene":
+                import episode_storyboards
+                episode_storyboards.apply(record, previous, body, actor="local-developer")
+                for shot in (record.get("storyboard") or {}).get("shots", []):
+                    if shot["frameKey"]:
+                        self.map_asset(game, shot["frameKey"], db)
                 count = db.execute("SELECT count(*) FROM records WHERE kind='scene' AND game=? AND json_extract(payload,'$.episodeId')=?", (game, episode_id)).fetchone()[0]
                 if not previous and count >= 50:
                     raise ValueError("Episode supports at most 50 scenes")
@@ -739,7 +746,41 @@ class Store:
             if not character:
                 raise ValueError("Choose same-game characters")
             cast.append({"characterId": identity, "name": character["name"], "details": character.get("details", {}), "appearance": None, "appearanceAssets": []})
-        return {**job, "workflowVersion": 4, "sessionId": "creation-" + job["jobId"][:24], "rawSources": references, "selectedContext": contexts, "catalog": catalog, "gameContext": catalog, "selectedCharacters": cast, "contextCutoff": int(time.time()), "sourceMode": "transcript" if references else "prompt", "status": "QUEUED", "message": None, "localWorkerVersion": 1}
+        from panther_journal.editorial_contract import PLAN
+        return {**job, "workflowVersion": PLAN["version"], "sessionId": "creation-" + job["jobId"][:24], "rawSources": references, "selectedContext": contexts, "catalog": catalog, "gameContext": catalog, "selectedCharacters": cast, "contextCutoff": int(time.time()), "sourceMode": "transcript" if references else "prompt", "status": "QUEUED", "message": None, "localWorkerVersion": 1}
+
+    def submit_episode_adaptation(self, game, creation):
+        """Pin the canonical manuscript and create its owned Episode before planning."""
+        if not isinstance(creation, dict) or set(creation) != {"schemaVersion", "target", "chapterId"} or creation["schemaVersion"] != 4 or creation["target"] != "video":
+            raise ValueError("Choose a novel chapter to adapt")
+        self.game(game)
+        chapter = self.get("chapter", creation["chapterId"])
+        if not chapter or chapter.get("gameId") != game:
+            raise ValueError("Choose a chapter from this game")
+        key = chapter.get("assetKey") or chapter.get("details", {}).get("artifact", {}).get("key")
+        if not isinstance(key, str) or not key.startswith(f"games/{game}/assets/"):
+            raise ValueError("Chapter has no immutable manuscript source")
+        _, raw = self.object(key)
+        if not 0 < len(raw) <= 512 * 1024:
+            raise ValueError("Chapter exceeds the adaptation input limit")
+        source = {"key": key, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)}
+        normalized = {**creation, "title": chapter["title"], "brief": "Adapt the supplied novel chapter into an episode, preserving its story outcomes.", "sourceKeys": [], "contextKeys": [], "characterIds": []}
+        from panther_journal.editorial_contract import PLAN
+        identity = hashlib.sha256(json.dumps([game, normalized, source, PLAN["version"]], sort_keys=True).encode()).hexdigest()
+        from episode_destination import placeholder
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute("SELECT payload FROM records WHERE kind='editorial' AND id=?", (identity,)).fetchone()
+            if previous:
+                return json.loads(previous[0])
+            job = self.prepare_editorial_job({"jobId": identity, "gameId": game, "creation": normalized,
+                "chapterSource": source, "episodeDestination": True, "createdAt": int(time.time()), "videoGenerationAuthorized": False})
+            episode = placeholder(job)
+            job["episodeRef"] = {"episodeId": episode["id"], "revision": episode["revision"]}
+            history = {"record": episode, "previousRecord": None, "recordedAt": episode["updatedAt"]}
+            for kind, record_id, value in [("editorial", identity, job), ("episode", game + ":" + episode["id"], episode), ("episode-history", game + ":" + episode["id"] + ":" + episode["revision"], history)]:
+                db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind, record_id, game, json.dumps(value)))
+            return job
 
     def editorial_view(self, job):
         if job and job.get("status") in {"FAILED", "BLOCKED", "ATTENTION", "DEFERRED"}:
@@ -996,6 +1037,8 @@ class Store:
         scene = self.get("scene", game + ":" + episode + ":" + identity)
         if not scene or scene.get("revision") != body["revision"]:
             raise ValueError("The scene changed. Reopen it before generating.")
+        import episode_storyboards
+        episode_storyboards.require_ready(scene)
         prompt = body.get("prompt") or scene["name"]
         if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 4000:
             raise ValueError("Describe the video you want.")
@@ -1383,6 +1426,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/editorial-jobs":
             game, creation = body["gameId"], body["creation"]
             store.game(game)
+            if creation.get("schemaVersion") == 4:
+                return self.send(store.submit_episode_adaptation(game, creation))
             video = creation.get("schemaVersion") == 2 and creation.get("target") == "video"
             prompt_novel = creation.get("schemaVersion") == 3 and creation.get("target") == "novel"
             if prompt_novel:
@@ -1405,6 +1450,8 @@ class Handler(BaseHTTPRequestHandler):
                 scene = history.get("record") if history else None
                 if not store.get("episode", game + ":" + str(reference["episodeId"])) or not scene or scene["gameId"] != game or scene["episodeId"] != reference["episodeId"] or scene["id"] != reference["sceneId"]:
                     raise ValueError("Scene revision not found")
+                import episode_storyboards
+                episode_storyboards.require_ready(scene)
                 creation = dict(creation, title=creation.get("title") or scene["name"], brief=creation.get("brief") or scene["name"])
             for key in creation["sourceKeys"] + creation["contextKeys"]:
                 if not key.startswith(f"games/{game}/assets/"):
@@ -1415,7 +1462,7 @@ class Handler(BaseHTTPRequestHandler):
             identity = hashlib.sha256(json.dumps(identity_body, sort_keys=True).encode()).hexdigest()
             job = store.get("editorial", identity)
             if not job:
-                job = store.prepare_editorial_job({"jobId": identity, "gameId": game, "creation": creation, "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, **({"selectedMap": selected_map} if selected_map else {})} if video else {})})
+                job = store.prepare_editorial_job({"jobId": identity, "gameId": game, "creation": creation, "createdAt": int(time.time()), "videoGenerationAuthorized": False, **({"selectedScene": scene, "episodeDestination": True, **({"selectedMap": selected_map} if selected_map else {})} if video else {})})
             store.put("editorial", identity, job, game)
             return self.send(job)
         if path == "/tags":

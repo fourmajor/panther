@@ -14,6 +14,7 @@ import browse_index
 import asset_library
 import asset_metadata
 import scene_inputs
+import episode_storyboards
 import organization_records as records
 from novel_library import slug, text
 
@@ -238,7 +239,7 @@ def pin_episode(game, reference):
 def save(media, body, claims, kind):
     common = {"gameId", "id", "name", "description", "expectedRevision", "operationId"}
     allowed = common | (
-        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs"}
+        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardDecision"}
         if kind == "scene"
         else {"sceneIds"}
     )
@@ -281,7 +282,17 @@ def save(media, body, claims, kind):
             Key=records.pointer(PREFIX, game, storage_kind, identity), ConsistentRead=True
         ).get("Item")
     )
+    if kind == "episode" and previous and "production" in previous:
+        record["production"] = previous["production"]
     if kind == "scene":
+        if "storyboardDecision" in body and not authorized(claims, "MODEL_WORKERS"):
+            return media._response(403, {"error": "Only an owner can approve an AI storyboard"})
+        episode_storyboards.apply(record, previous, body, actor=claims["sub"])
+        for shot in (record.get("storyboard") or {}).get("shots", []):
+            if shot["frameKey"]:
+                _, frame_guard = map_asset(media, game, shot["frameKey"])
+                if frame_guard not in guards:
+                    guards.append(frame_guard)
         episode = slug(media, body["episodeId"])
         scene_type = body.get("type", (previous or {}).get("type", "general"))
         if scene_type not in TYPES:
@@ -415,7 +426,8 @@ def save(media, body, claims, kind):
             asset_archive.reference_writes(
                 game,
                 "scene:{}:{}".format(record["episodeId"], identity),
-                [record.get("mapAssetKey"), record.get("selectedOutputKey"), *scene_inputs.asset_keys(record)],
+                [record.get("mapAssetKey"), record.get("selectedOutputKey"), *scene_inputs.asset_keys(record),
+                 *[shot["frameKey"] for shot in (record.get("storyboard") or {}).get("shots", [])]],
             )
         )
     response = records.commit(db, PREFIX, kind, record, guarded, claims, fingerprint, guards, media)

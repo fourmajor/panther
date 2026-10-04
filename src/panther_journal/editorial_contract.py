@@ -123,6 +123,10 @@ BRIEFS["video-generation-packets"] += (
     " Travel/map shots must cite actual map and location references, not invented geography."
     " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
 )
+BRIEFS["video-source-brief"] += (
+    " When sourceChapter is present, use it as the exact creative source of the episode adaptation."
+    " Cite its key, preserve consequential story outcomes, and keep sourceFacts empty unless actual sourceTranscripts supply the cited utterances."
+)
 
 BRIEFS["video-source-brief"] += (
     " A map scene has mapInput: an exact checksummed image, first-frame role, and route-animation instructions."
@@ -143,3 +147,16 @@ BRIEFS["novel-brief"] += (
     " Choose a concise original chapter title from the actual user direction and source-backed chapter content."
     " Optional absent transcripts stay absent; never invent source speech or factual session history."
 )
+
+# The same screen stages can publish an owned Episode. Manuscripts are creative
+# source material, never raw testimony or factual context for corrections.
+BRIEFS["video-generation-packets"] += (
+    " When episodeDestination is true, also return episode with schemaVersion 1, title, synopsis and ordered scenes."
+    " Each scene needs a unique slug id, concise title, type (general/opener/travel/map/action/dialogue),"
+    " complete render prompt, exact narration words (empty when none), characterIds, referenceKeys and shotIds."
+    " Copy the exact locked video-storyboards shots into the shots field. Partition every prior shot into exactly one scene, preserving shot order. Follow the locked shooting script,"
+    " voice casting and continuity plans. Do not claim audio or footage exists. sourceChapter is a creative"
+    " adaptation source; preserve its consequential story outcomes and disclose inventions separately."
+)
+
+BRIEFS["video-generation-packets"] += " For a scene-directed request (creation.sceneRef), emit exactly one scene using creation.sceneRef.sceneId; preserve that existing owner rather than creating a second episode or extra scenes."

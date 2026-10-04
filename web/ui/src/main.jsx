@@ -1,4 +1,8 @@
+import {ChapterReview} from './chapter-review.jsx';
 import {DashboardCards} from './dashboard-cards.jsx';
+import {SceneStoryboard} from './scene-storyboard.jsx';
+import {EpisodeCreateActions} from './episode-create-actions.jsx';
+import {EpisodePlanningStatus} from './episode-planning-status.jsx';
 export {LiveTranscription} from './live-transcription.js';
 export {renderProseMarkdown} from './prose-markdown.js';
 import {ChapterEditor} from './chapter-editor.jsx';
@@ -27,6 +31,18 @@ import { buttonVariants } from "./components/ui/button.jsx";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion.jsx";
 import { ThumbsUp, ThumbsDown, Pencil, Download, Users, Mic, BookOpen, Clapperboard, Folder, ChevronRight, Upload, Sparkles, Search, CirclePlus } from "lucide-react";
 import "./styles.css";
+
+const chapterReviewRoots=new WeakMap();
+export function mountChapterReview(host,props){host.className="sticky top-4 z-20 mb-4 flex justify-end";let root=chapterReviewRoots.get(host);if(!root){root=createRoot(host);chapterReviewRoots.set(host,root);}root.render(<QueryClientProvider client={client}><ChapterReview key={props.gameId+props.chapterId} {...props}/></QueryClientProvider>);}
+const storyboardRoots=new WeakMap();
+export function mountSceneStoryboard(host,props){let root=storyboardRoots.get(host);if(!root){root=createRoot(host);storyboardRoots.set(host,root);}root.render(<QueryClientProvider client={client}><SceneStoryboard {...props}/></QueryClientProvider>);}
+export function unmountSceneStoryboard(host){storyboardRoots.get(host)?.unmount();storyboardRoots.delete(host);}
+const episodeCreateRoots=new WeakMap();
+export function mountEpisodeCreateActions(host,props){let root=episodeCreateRoots.get(host);if(!root){root=createRoot(host);episodeCreateRoots.set(host,root);}root.render(<QueryClientProvider client={client}><EpisodeCreateActions {...props}/></QueryClientProvider>);}
+export function unmountEpisodeCreateActions(host){episodeCreateRoots.get(host)?.unmount();episodeCreateRoots.delete(host);}
+const episodePlanningRoots=new WeakMap();
+export function mountEpisodePlanningStatus(host,props){let root=episodePlanningRoots.get(host);if(!root){root=createRoot(host);episodePlanningRoots.set(host,root);}root.render(<QueryClientProvider client={client}><EpisodePlanningStatus {...props}/></QueryClientProvider>);}
+export function unmountEpisodePlanningStatus(host){episodePlanningRoots.get(host)?.unmount();episodePlanningRoots.delete(host);}
 
 export function enhanceDialog(node,{onDismiss}={}){
   if(node.dataset.pantherDialog)return node;

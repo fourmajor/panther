@@ -51,7 +51,7 @@ for(const width of [1440,390]) for(const design of designs) {
     await expect(page.locator('#dashboard-name')).toHaveText('The Lantern Expedition');
     const themeInk=await page.locator('html').evaluate(el=>getComputedStyle(el).color);
     await expect(page.locator('#dashboard-name')).toHaveCSS('color',themeInk);
-    await expect(page.locator('#approval-inbox h2')).toHaveCSS('color',themeInk);
+    await expect(page.locator('#approval-inbox')).toHaveCount(0);
     const accentInk=await page.evaluate(()=>{const sample=document.createElement('span');sample.style.color='var(--accent-dark)';document.body.append(sample);const color=getComputedStyle(sample).color;sample.remove();return color;});
     await expect(page.locator('#design-keep')).toHaveCSS('color',accentInk);
     const avatar=page.getByRole('button',{name:'Account',exact:true});
@@ -71,8 +71,7 @@ for(const width of [1440,390]) for(const design of designs) {
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-    await accessible(page.locator('#storyboard-entry'),width);
-    await expect(page.locator('#approval-inbox')).toContainText('Last session storyboard');
+    await expect(page.locator('#storyboard-entry')).toHaveCount(0);
     if(design==='studio')await expect(page.locator('#workspace-home')).toBeHidden();
     else {
       await expect(page.locator('#dashboard-sections')).toBeHidden();
@@ -156,24 +155,11 @@ test('Atlas keyboard, invalid preference, cancellation and blocked storage',asyn
   await expect(page.locator('html')).toHaveAttribute('data-interface','cinema');
 });
 
-test('storyboard approval doorway is game-scoped and does not generate or approve anything',async({page})=>{
+test('storyboard review is part of episodes instead of a separate dashboard doorway',async({page})=>{
   const reads=await fixture(page);
   await page.goto('https://panther.place/games/synthetic-game/dashboard');
-  const entry=page.locator('#storyboard-entry');
-  await expect(entry).toHaveAttribute('href','/games/synthetic-game/episodes?review=1');
-  await entry.click();
-  await expect(page.locator('#video-approval-inbox')).toContainText('Last session storyboard');
-  await expect(page.locator('#video-approval-inbox .approval-card a')).toHaveAttribute('href',/episodes\?project=games%2Fsynthetic-game/);
-  expect(reads.every(path=>!path.includes('generate')&&!path.includes('submit'))).toBe(true);
-});
-
-test('failed session preparation is clearly distinct from an approvable storyboard',async({page})=>{
-  await fixture(page);
-  await page.route('https://test.execute-api.us-west-2.amazonaws.com/workflows**',route=>route.fulfill({json:{workflows:[{id:'editorial~synthetic-run',kind:'editorial',gameId:'synthetic-game',sessionId:'latest-session',status:'failed',createdAt:100}],cursor:null},headers:{'access-control-allow-origin':'https://panther.place'}}));
-  await page.goto('https://panther.place/games/synthetic-game/dashboard');
-  const row=page.locator('.approval-preparation-row');
-  await expect(row).toContainText('Session latest-session');
-  await expect(row).toContainText('Preparation failed');
-  await expect(row).toContainText('not a ready-to-approve storyboard');
-  await expect(row.getByRole('link')).toHaveAttribute('href','/games/synthetic-game/workflows/editorial/editorial~synthetic-run');
+  await expect(page.locator('#storyboard-entry,#approval-inbox')).toHaveCount(0);
+  await page.getByRole('link',{name:'Episodes',exact:true}).click();
+  await expect(page.locator('#video-approval-inbox')).toHaveCount(0);
+  expect(reads.every(path=>!path.includes('generate')&&!path.includes('submit')&&!path.includes('movie-review'))).toBe(true);
 });

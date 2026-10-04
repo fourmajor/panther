@@ -832,7 +832,7 @@ def test_prompt_only_video_pins_scene_without_inventing_transcript(editorial, mo
     assert first["selectedScene"] == scene
     assert first["videoGenerationAuthorized"] is False
     assert first["gameContext"]["visualStyles"][0]["id"] == "anime"
-    assert first["workflowVersion"] == 4
+    assert first["workflowVersion"] == PLAN["version"]
     creation["brief"] = "Cross at dusk, in a tense silence."
     revised = unpack(
         request(editorial, "POST /editorial-jobs", {"gameId": "test-game", "creation": creation})
@@ -1467,3 +1467,107 @@ def test_prompt_projection_keeps_multisource_timing_identity_and_prompt_only_inp
     assert bundle == before
     prompt_only = {"raw": None, "creation": {"brief": "A river crossing."}}
     assert worker.prompt_projection(prompt_only) == prompt_only
+
+
+def test_cloud_publication_uses_canonical_episode_store_and_live_lease(editorial):
+    import time
+    import organization_records
+    import browse_index
+    from botocore.exceptions import ClientError
+    m = editorial
+    _, job = submitted(m)
+    assert job['episodeDestination'] and job['episodeRef']
+    stage = 'video-generation-packets'
+    task = {'pk': 'TASKS', 'sk': job['jobId'] + ':' + stage, 'jobId': job['jobId'], 'gameId': job['gameId'],
+            'stage': stage, 'status': 'RUNNING', 'lease': 'exact-lease', 'leaseUntil': int(time.time()) + 600, 'actor': 'fictional-worker'}
+    m.table.put_item(Item=task)
+    packet = {'gameId': job['gameId'], 'jobId': job['jobId'], 'stage': stage, 'workflowVersion': PLAN['version'],
+              'passed': True, 'structuralValidation': 'passed', 'publicationStatus': 'accepted', 'videoGenerationAuthorized': False,
+              'sourceKeys': [job['raw']['key']], 'payload': {
+                'shots': [{'shotId': 'SC01_SH01', 'sceneId': 'SC01', 'durationSeconds': 8, 'description': 'The gates open.', 'camera': 'Wide', 'color': '#223344', 'subjects': []}],
+                'episode': {'schemaVersion': 1, 'title': 'Arrival', 'synopsis': 'The party reaches the gate.', 'scenes': [
+                    {'id': 'arrival', 'title': 'Arrival', 'type': 'general', 'prompt': 'The gates open.', 'narration': 'At dusk, they arrived.',
+                     'characterIds': [], 'referenceKeys': [job['raw']['key']], 'shotIds': ['SC01_SH01']}]}}}
+    key = f"games/test-game/assets/editorial-{job['jobId'][:32]}-packet/original/packet.json"
+    put(m, key, json.dumps(packet).encode(), 'application/json')
+    body = {'jobId': job['jobId'], 'stage': stage, 'lease': task['lease'], 'outputKey': key}
+    expired = {**task, 'leaseUntil': 0}
+    m.table.put_item(Item=expired)
+    with pytest.raises(ClientError):
+        m.update(task, body, 'complete')
+    db = browse_index.table()
+    target = organization_records.pointer('episode-scenes-v1', job['gameId'], 'episode', job['episodeRef']['episodeId'])
+    assert organization_records.decode(db.get_item(Key=target)['Item'])['sceneIds'] == []
+    m.table.put_item(Item=task)
+    assert m.update(task, body, 'complete') == {'ok': True}
+    episode = organization_records.decode(db.get_item(Key=target)['Item'])
+    assert episode['sceneIds'] == ['arrival']
+    scene = organization_records.decode(db.get_item(Key=organization_records.pointer('episode-scenes-v1', job['gameId'], 'scene#' + episode['id'], 'arrival'))['Item'])
+    assert scene['planningState'] == 'needs-approval' and scene['selectedOutputKey'] is None
+    # A replay between publication and task completion must preserve later edits.
+    m.table.put_item(Item=task)
+    changed = {**episode, 'name': 'Human edited title', 'revision': 'f' * 32}
+    db.put_item(Item={**target, 'revision': changed['revision'], 'payload': json.dumps(changed)})
+    assert m.update(task, body, 'complete') == {'ok': True}
+    assert organization_records.decode(db.get_item(Key=target)['Item'])['name'] == 'Human edited title'
+
+
+def test_cloud_chapter_adaptation_pins_canonical_bytes_and_creates_one_episode(editorial, monkeypatch):
+    import manual_chapters
+    import browse_index
+    import organization_records
+    m = editorial
+    __import__('boto3').resource('dynamodb').Table('test-job-catalog').put_item(Item={'pk':'GAMES','sk':'test-game','id':'test-game','name':'Fictional campaign'})
+    identity = 'c' * 64
+    key = 'games/test-game/assets/chapter-source/original/chapter.json'
+    original = json.dumps({'gameId': 'test-game', 'markdown': 'The travelers arrive at dusk.'}).encode()
+    put(m, key, original, 'application/json')
+    monkeypatch.setattr(manual_chapters, 'read', lambda game, chapter, media: {'id': identity, 'gameId': 'test-game', 'title': 'At dusk', 'details': {'artifact': {'key': key}}})
+    body = {'gameId': 'test-game', 'creation': {'schemaVersion': 4, 'target': 'video', 'chapterId': identity}}
+    result = request(m, 'POST /editorial-jobs', body)
+    assert result['statusCode'] == 200
+    job = unpack(result)
+    assert unpack(request(m, 'POST /editorial-jobs', body))['jobId'] == job['jobId']
+    assert job['chapterSource']['sha256'] == __import__('base64').b64encode(hashlib.sha256(original).digest()).decode()
+    assert job['rawSources'] == [] and job['videoGenerationAuthorized'] is False
+    pointer = organization_records.pointer('episode-scenes-v1', 'test-game', 'episode', job['episodeRef']['episodeId'])
+    episode = organization_records.decode(browse_index.table().get_item(Key=pointer)['Item'])
+    assert episode['production']['state'] == 'planning' and episode['sceneIds'] == []
+    assert request(m, 'POST /editorial-jobs', {**body, 'gameId': 'another-game'})['statusCode'] == 400
+    assert request(m, 'POST /editorial-jobs', {'gameId': 'test-game', 'creation': {**body['creation'], 'markdown': 'Unpinned text'}})['statusCode'] == 400
+
+
+def test_scene_pipeline_publishes_only_its_owned_scene_and_replay_preserves_edits(editorial):
+    import time
+    import browse_index
+    import organization_records
+    from test_episode_destination import source
+    m = editorial
+    _, job = submitted(m)
+    previous = {'entityType':'Scene','schemaVersion':1,'gameId':job['gameId'], 'episodeId':'existing-episode', 'id':'arrival', 'revision':'b'*32, 'name':'Human title', 'selectedOutputKey':'retained-footage', 'generationInputs':{'durationSeconds':7.5}}
+    job.update(selectedScene=previous, episodeDestination=True)
+    from decimal import Decimal
+    stored = json.loads(json.dumps({**job,'pk':'RUNS','sk':job['jobId']}), parse_float=Decimal)
+    m.table.put_item(Item=stored)
+    pointer = organization_records.pointer('episode-scenes-v1', job['gameId'], 'scene#existing-episode', 'arrival')
+    db = browse_index.table()
+    db.put_item(Item={**pointer,'revision':previous['revision'],'payload':json.dumps(previous)})
+    _, packet, _ = source()
+    packet.update(gameId=job['gameId'],jobId=job['jobId'],workflowVersion=PLAN['version'],passed=True,sourceKeys=[job['raw']['key']])
+    packet['payload']['episode']['scenes'][0]['referenceKeys']=[job['raw']['key']]
+    stage='video-generation-packets'
+    task={'pk':'TASKS','sk':job['jobId']+':'+stage,'jobId':job['jobId'],'gameId':job['gameId'],'stage':stage,'status':'RUNNING','lease':'owned-scene-lease','leaseUntil':int(time.time())+600,'actor':'fictional-worker'}
+    m.table.put_item(Item=task)
+    key=f"games/test-game/assets/editorial-{job['jobId'][:32]}-scene-packet/original/packet.json"
+    put(m,key,json.dumps(packet).encode(),'application/json')
+    body={'jobId':job['jobId'],'stage':stage,'lease':task['lease'],'outputKey':key}
+    assert m.update(task,body,'complete')=={'ok':True}
+    scene=organization_records.decode(db.get_item(Key=pointer)['Item'])
+    assert scene['name']=='Human title' and scene['episodeId']=='existing-episode'
+    assert scene['generationInputs']['durationSeconds']==7.5 and scene['selectedOutputKey']=='retained-footage'
+    assert scene['storyboard']['origin']=='ai' and scene['planningState']=='needs-approval'
+    changed={**scene,'name':'Later edit','revision':'f'*32}
+    db.put_item(Item={**pointer,'revision':changed['revision'],'payload':json.dumps(changed)})
+    m.table.put_item(Item=task)
+    assert m.update(task,body,'complete')=={'ok':True}
+    assert organization_records.decode(db.get_item(Key=pointer)['Item'])['name']=='Later edit'

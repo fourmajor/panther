@@ -230,20 +230,13 @@ for(const width of [1280,390])test(`Empty Novel explains its purpose and offers 
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
-for(const width of [1280,390])test(`Automatic session plans remain reviewable before spending at ${width}px`,async({page,context},testInfo)=>{
+for(const width of [1280,390])test(`Automatic session planning stays inside its owned episode at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});const{submissions}=await fixture(context,{automatic:true});
- await page.goto('https://panther.place/games/test-game/videos');
- const composer=page.locator('#session-video-plans');
- const project=composer.getByRole('button',{name:'Session test-session · automatic',exact:true});
- await expect(project).toBeVisible();const box=await project.boundingBox();if(box.y+box.height>900)await page.mouse.wheel(0,box.y-450);await expect(project).toBeInViewport();await project.click();
- const progress=page.getByRole('dialog',{name:'Session test-session · automatic',exact:true});await expect(progress).toContainText('Video plan ready');await expect(progress).toContainText('Rendering requires approval');
- await expect(progress.locator('details,summary')).toHaveCount(0);
- const screenplay=progress.getByRole('button',{name:'View Screenplay',exact:true});
- await expect(screenplay).toBeVisible();
- await expect(screenplay).toHaveAttribute('data-output-key','games/test-game/assets/plan/original/screenplay.json');
+ await page.goto('https://panther.place/games/test-game/episodes');
+ await expect(page.locator('#session-video-plans,#video-approval-inbox')).toHaveCount(0);
+ await expect(page.locator('#episode-workspace').getByRole('button',{name:'First episode',exact:true})).toBeVisible();
  expect(submissions).toHaveLength(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- await page.screenshot({path:testInfo.outputPath(`automatic-session-${width}.png`)});
 });
 
 for(const width of [1280,390])test(`Completed chapter replaces its job without a reload at ${width}px`,async({page,context})=>{

@@ -81,6 +81,10 @@ SCHEMA = obj(
 
 def stage_schema(stage, inputs):
     schema = copy.deepcopy(SCHEMA)
+    if stage == "video-generation-packets" and inputs.get("episodeDestination"):
+        from panther_journal.episode_adaptation import SCHEMA as EPISODE_SCHEMA
+        schema["properties"]["episode"] = copy.deepcopy(EPISODE_SCHEMA)
+        schema["required"].append("episode")
     if stage == "video-source-brief":
         schema["properties"]["sourceFacts"] = array(
             obj(
@@ -233,6 +237,8 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
     allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
     if inputs.get("mapInput"):
         allowed.add(inputs["mapInput"]["key"])
+    if inputs.get("sourceChapter"):
+        allowed.add(inputs["sourceChapter"]["key"])
     if stage == "context":
         allowed.update(c["key"] for c in inputs["candidates"])
 
@@ -281,6 +287,16 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
 
                 if identity(value["shots"]) != identity(expected):
                     raise ValueError("Storyboard must preserve the locked shot sequence")
+            if role == "video-generation-packets" and data.get("episodeDestination"):
+                from panther_journal.episode_adaptation import validate
+                expected = data["priorStages"]["video-storyboards"]["shots"]
+                if value["shots"] != expected:
+                    raise ValueError("Episode destination must preserve the locked storyboard shots")
+                catalog = data["context"]["catalog"]
+                validate(value["episode"], game=catalog["game"]["id"],
+                         shot_ids=[shot["shotId"] for shot in expected],
+                         source_keys=data.get("productionSourceKeys", []),
+                         character_ids=[character.get("characterId", character.get("id")) for character in catalog.get("characters", [])])
         except (ValueError, jsonschema.ValidationError) as exc:
             entry["validationError"] = str(exc)[:2000]
             raise ValueError(entry["validationError"]) from exc
@@ -695,7 +711,16 @@ def process(config, root, claim):
             selected_map["contentType"]
         ]
         local.download(config, selected_map, folder / ("map-first-frame" + extension))
-    sources = [ref["key"] for ref in raw_references]
+    chapter_source = job.get("chapterSource")
+    chapter = fetch(config, chapter_source, folder, "source-chapter.json") if chapter_source else None
+    if chapter_source:
+        if not isinstance(chapter, dict) or chapter.get("gameId") != job["gameId"]:
+            raise ValueError("Pinned chapter belongs to another game")
+        manuscript = chapter.get("markdown") or chapter.get("payload", {}).get("chapter")
+        if not isinstance(manuscript, str) or not manuscript.strip():
+            raise ValueError("Pinned chapter has no manuscript")
+        chapter = {"key": chapter_source["key"], "markdown": manuscript, "role": "creative-adaptation-source"}
+    sources = [ref["key"] for ref in raw_references] + ([chapter_source["key"]] if chapter_source else [])
     if selected_map:
         sources.append(selected_map["key"])
     sources.extend(
@@ -704,7 +729,7 @@ def process(config, root, claim):
         for ref in character.get("appearanceAssets", [])
     )
     if stage == "context":
-        if (job.get("creation") or {}).get("schemaVersion") == 2:
+        if (job.get("creation") or {}).get("schemaVersion") in {2, 4}:
             catalog = pinned_cast(job)
         else:
             catalog = cloud.api(config, "GET", "/game", params={"gameId": job["gameId"]})
@@ -758,10 +783,11 @@ def process(config, root, claim):
             {
                 "raw": raw,
                 "catalog": creative_content(catalog)
-                if (job.get("creation") or {}).get("schemaVersion") == 2
+                if (job.get("creation") or {}).get("schemaVersion") in {2, 4}
                 else catalog,
                 "candidates": candidates,
                 "creation": job.get("creation"),
+                "sourceChapter": chapter,
             },
             heartbeat,
         )
@@ -817,6 +843,9 @@ def process(config, root, claim):
             "candidate": candidate,
             "creation": job.get("creation"),
             "mapInput": selected_map,
+            "sourceChapter": chapter,
+            "episodeDestination": bool(job.get("episodeDestination")),
+            "productionSourceKeys": list(dict.fromkeys(sources)),
         }
         if stage not in PLAN["video"]:
             inputs["raw"] = raw

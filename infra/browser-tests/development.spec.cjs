@@ -65,8 +65,8 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await sceneEditor.getByRole('button',{name:'Save changes',exact:true}).click();
   await expect(page.locator('.selected-scene').getByRole('heading',{name:'Ash Meadow watches the northern gate',exact:true})).toBeVisible();
   await expect(videoComposer.locator('textarea')).toHaveCount(0);
-  await videoComposer.locator('form').getByRole('button',{name:'Generate',exact:true}).click();
-  await expect(page.locator('#scene-video-composer form')).toBeHidden();
+  await page.locator('[data-scene-generate]').click();
+  await expect(page.locator('[data-scene-generate]')).toBeHidden();
   await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');
   await expect(page.locator('#scene-work-progress').getByRole('progressbar',{name:'Video generation stages'})).toBeVisible();
   const queued=await page.request.get(origin+'/scene-renders?gameId=preview-campaign',{headers:{Authorization:'Bearer isolated-development-test'}});
