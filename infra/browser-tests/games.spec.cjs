@@ -549,6 +549,7 @@ for(const width of [1280,390]) {
     await selectGame(page,'test-b');
     for(const label of ['10 Characters','5 Sessions','2 Episodes','4 Chapters','9 Assets'])await expect(page.getByRole('link',{name:label,exact:true})).toBeVisible();
     const card=page.locator('#dashboard-sections [data-section="assets"]');
+    await card.scrollIntoViewIfNeeded();
     await expect(card.locator('img')).toHaveCount(6);
     await expect(card.getByRole('link',{name:'and 3 more',exact:true})).toBeVisible();
     const boxes=await card.locator('img').evaluateAll(images=>images.map(img=>{const r=img.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));

@@ -213,7 +213,10 @@ for(const width of [1280,390]) test(`React game Select works under the productio
   await page.addInitScript(()=>{window.cspViolations=[];document.addEventListener('securitypolicyviolation',event=>window.cspViolations.push({directive:event.violatedDirective,blocked:event.blockedURI}));});
   await page.goto('https://panther.place/media');
   const select=page.getByRole('combobox',{name:'Current game'});
-  await expect(select).toBeVisible();await select.click();
+  await expect(select).toBeVisible();
+  const selectBox=await select.boundingBox(),createBox=await page.locator('#game-create-button').boundingBox();
+  expect(selectBox.x+selectBox.width).toBeLessThanOrEqual(createBox.x);
+  await select.click();
   const option=page.getByRole('option',{name:'Test Game',exact:true});await expect(option).toBeInViewport();
   await option.click();await expect(select).toContainText('Test Game');
   violations.push(...await page.evaluate(()=>window.cspViolations));
