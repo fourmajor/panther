@@ -165,7 +165,7 @@ test('a failed earlier scene request explains why no shot take exists',async({pa
  await fixture(page,{human:true,local:true,failed:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
  const board=page.getByRole('region',{name:'Scene storyboard'});
  await expect(board.getByRole('status')).toContainText('exceeds its length limit');
- await expect(board).toContainText('No take generated for this shot.');
+ await expect(board).toContainText('No take available for this shot.');
  await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
 });
 
