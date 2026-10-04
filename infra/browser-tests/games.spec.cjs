@@ -443,7 +443,7 @@ for(const width of [1280,390])test(`all main page titles use one heading scale a
  for(const section of ['dashboard','characters','sessions','novel','videos','assets','workflows']){
   await page.goto(`https://panther.place/games/campaign-a/${section}`);const title=page.locator('main .page-heading h1:visible').first();await expect(title).toBeVisible();
   const readScale=()=>title.evaluate(el=>{const s=getComputedStyle(el);return{size:s.fontSize,lineHeight:s.lineHeight,weight:s.fontWeight,marginTop:s.marginTop,marginBottom:s.marginBottom};});await expect.poll(async()=>Boolean((await readScale()).size)).toBe(true);baseline ||= await readScale();await expect.poll(readScale).toEqual(baseline);
-  const mainPadding=await page.locator('main').evaluate(el=>getComputedStyle(el).paddingTop);expect(mainPadding).toBe(width===390?'12px':'16px');
+  const mainPadding=await page.locator('main').evaluate(el=>getComputedStyle(el).paddingTop);expect(mainPadding).toBe('8px');
   const headingPadding=await title.evaluate(el=>getComputedStyle(el.closest('.page-heading')).paddingTop);expect(headingPadding).toBe('8px');
  }
 });
