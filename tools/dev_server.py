@@ -1083,7 +1083,7 @@ class Store:
         if job.get("status") in {"FAILED", "ATTENTION", "UNKNOWN"}:
             name = {"scene-render": "Video generation", "episode-render": "Episode assembly", "narration": "Narration"}[kind]
             result["message"] = name + (" could not be confirmed. Check its status before trying again." if job.get("status") == "UNKNOWN" or job.get("outcomeUnknown") else " failed. Your inputs are saved; you can try again.")
-            if kind == 'scene-render' and job.get('status') == 'FAILED' and 'length limit' in job.get('message', ''):
+            if kind == 'scene-render' and job.get('status') == 'FAILED' and any(reason in job.get('message', '') for reason in ('length limit', 'before generating', 'split this', 'Split this', 'prompt capacity', 'prompt limit')):
                 result['message'] = job['message']
             result.pop("error", None)
         return result
@@ -1159,11 +1159,15 @@ class Store:
             record = self.get("character", game + ":" + character)
             if not record:
                 raise ValueError("Choose characters from this game.")
-            character_context.append({"id": character, "name": record["name"], "details": record.get("details", {})})
+            character_context.append({"id": character, "revision": record.get("revision"), "name": record["name"], "details": record.get("details", {})})
             thumbnail = record.get("details", {}).get("thumbnailAssetKey")
             if thumbnail:
-                _, raw = self.object(thumbnail)
-                refs.append({"key": thumbnail, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw)})
+                metadata, raw = self.object(thumbnail)
+                if not thumbnail.startswith(f"games/{game}/assets/") or character not in metadata.get('characterIds', []):
+                    raise ValueError('Official portrait must explicitly identify this same-game character')
+                portrait_pin = {"key": thumbnail, "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode(), "size": len(raw), "contentType": metadata.get('contentType')}
+                character_context[-1]['portraitPin'] = portrait_pin
+                refs.append(portrait_pin)
         source_keys, context_keys = body.get("sourceKeys", []), body.get("contextKeys", [])
         for keys in (source_keys, context_keys):
             if not isinstance(keys, list) or len(keys) > 20 or any(not isinstance(key, str) for key in keys) or len(set(keys)) != len(keys):
@@ -1190,9 +1194,12 @@ class Store:
             metadata, raw = self.object(shot['frameKey'])
             frame_pin = {'key': shot['frameKey'], 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'size': len(raw), 'contentType': metadata['contentType']}
             refs.append(frame_pin)
-        game_record = self.game(game)['game']
+        game_view = self.game(game)
+        game_record = game_view['game']
         scene_context = {"name": scene["name"], "direction": scene.get("description", ""), "shots": [shot], "game": {field: game_record.get(field) for field in ("name", "ruleset", "visualStyle")}}
         job = {"gameId": game, "sceneRef": {"episodeId": episode, "sceneId": identity, "revision": scene["revision"]}, "prompt": prompt.strip(), "sceneType": scene["type"], "sourceKeys": [ref["key"] for ref in refs], "inputRefs": refs, "mapPin": map_pin, "characterIds": characters, "characterContext": character_context, "sceneContext": scene_context, "transcriptKeys": source_keys, "contextKeys": context_keys}
+        job['videoPromptPolicy'] = 2
+        job['sceneContext']['background'] = game_view.get('gameSettings', {}).get('description', '')
         job['storyboardShotRef'] = {'revision': board['revision'], 'shotId': shot['shotId']}
         job['storyboardFramePin'] = frame_pin
         operation = body["operationId"]

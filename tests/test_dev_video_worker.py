@@ -184,3 +184,44 @@ def test_completed_input_rejection_stops_polling_without_another_submission(tmp_
     assert b'synthetic-private-input' in (root / identity / 'provider-rejection.json').read_bytes()
     assert not worker.process(store, identity, root, Rejected())
     assert len([call for call in client.calls if call[0] == 'POST']) == 1
+
+
+def test_reference_render_keeps_actual_endpoint_on_resume_and_selected_cast(tmp_path):
+    import json
+    from test_dev_video_conditioning import fixture
+    store, identity = queued(tmp_path)
+    reference_store, references = fixture(tmp_path / 'references')
+    with reference_store.connect() as source, store.connect() as target:
+        for row in source.execute('SELECT * FROM objects'):
+            target.execute('INSERT INTO objects VALUES (?,?,?,?,?)', row)
+    job = store.get('scene-render', identity)
+    job.update(sceneType='dialogue', videoPromptPolicy=2,
+        characterIds=['hero', 'absent'], characterContext=references['characterContext'],
+        inputRefs=[c['portraitPin'] for c in references['characterContext']],
+        preparedPrompt='Hero closes the door.', promptComposition={'schemaVersion': 2, 'visibleCharacterIds': ['hero']})
+    store.put('scene-render', identity, job, 'fictional')
+
+    class ReferenceFal(Fal):
+        def request(self, method, url, **kwargs):
+            if method == 'POST':
+                self.calls.append((method, url, kwargs))
+                prefix = 'https://queue.fal.run/minimax/h3-max/requests/request-example'
+                return {'request_id': 'request-example', 'status_url': prefix + '/status', 'response_url': prefix}
+            return super().request(method, url, **kwargs)
+
+    client = ReferenceFal(pending=True)
+    root = worker.private_root(tmp_path / 'work')
+    assert not worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    assert store.get('scene-render', identity)['endpoint'] == 'minimax/h3-max/reference-to-video'
+    client.pending = False
+    assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    assert len([call for call in client.calls if call[0] == 'POST']) == 1
+    finished = store.get('scene-render', identity)
+    metadata, _ = store.object(finished['outputKey'])
+    assert metadata['characterIds'] == ['hero']
+    assert metadata['extra']['generation']['model'] == 'MiniMax H3 Max (post-trained by fal)'
+    assert metadata['extra']['generation']['cost']['status'] == 'unknown'
+    assert 'costEstimate' not in metadata['extra']  # Never reuse a different endpoint's price.
+    request = json.loads((root / identity / 'request.json').read_text())
+    assert len(request['payload']['reference_image_urls']) == 1
+    assert 'Absent' not in request['payload']['prompt']

@@ -1,5 +1,5 @@
 const {test,expect}=require('@playwright/test');
-const {spawn}=require('node:child_process');
+const {spawn,spawnSync}=require('node:child_process');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
@@ -70,10 +70,22 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.getByRole('region',{name:'Scene storyboard'})).toContainText('Generating…');
   await expect(page.getByRole('region',{name:'Scene storyboard'}).getByRole('status')).toHaveText('Generating…');
   const queued=await page.request.get(origin+'/scene-renders?gameId=preview-campaign',{headers:{Authorization:'Bearer isolated-development-test'}});
-  expect(queued.ok()).toBe(true);const jobs=(await queued.json()).jobs;expect(jobs).toHaveLength(1);expect(jobs[0]).toMatchObject({status:'QUEUED',prompt:'Ash Meadow watches the northern gate'});expect(jobs[0].outputKey).toBeUndefined();
+  expect(queued.ok()).toBe(true);const jobs=(await queued.json()).jobs;expect(jobs).toHaveLength(1);expect(jobs[0]).toMatchObject({status:'QUEUED',videoPromptPolicy:2,prompt:'Ash Meadow watches the northern gate',sceneContext:{game:{visualStyle:'illustrated-fantasy'}}});expect(jobs[0].characterContext).toHaveLength(1);expect(jobs[0].characterContext[0]).toMatchObject({name:'Ash Meadow',revision:expect.any(String)});expect(jobs[0].outputKey).toBeUndefined();
   await page.reload();
   await expect(page.getByText('The northern gate',{exact:true}).filter({visible:true}).first()).toBeVisible();
   await expect(page.getByRole('region',{name:'Scene storyboard'})).toContainText('Generating…');
+  // Exercise the real API projection of a prompt-preflight failure, without
+  // model inference or private assets. Recovery must remain visible and usable.
+  const reject=spawnSync('python3',['-c',`import sqlite3,json,sys
+with sqlite3.connect(sys.argv[1]) as db:
+ row=db.execute("SELECT payload FROM records WHERE kind='scene-render' AND id=?",(sys.argv[2],)).fetchone()
+ job=json.loads(row[0]);job.update(status='FAILED',message='Prepare a matching starting frame before generating: The frame has the wrong costume.')
+ db.execute("UPDATE records SET payload=? WHERE kind='scene-render' AND id=?",(json.dumps(job),sys.argv[2]))`,path.join(directory,'development.sqlite'),jobs[0].jobId],{encoding:'utf8'});
+  expect(reject.status,reject.stderr).toBe(0);await page.reload();
+  await expect(page.getByRole('region',{name:'Scene storyboard'}).getByRole('status')).toHaveText('Prepare a matching starting frame before generating: The frame has the wrong costume.');
+  await expect(page.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Edit',exact:true})).toBeEnabled();
+  await page.screenshot({path:testInfo.outputPath(`shot-preflight-recovery-${width}.png`),fullPage:true});
   await page.goto(origin+'/games/preview-campaign/dashboard');
   for(const section of ['novel','videos','assets'])await expect(page.locator(`#dashboard-sections [data-section="${section}"]`).getByRole('link',{name:'The northern gate',exact:true})).toBeVisible();
   await expect(page.locator('#dashboard-sections [data-section="characters"]').getByRole('link',{name:'Ash Meadow',exact:true})).toBeVisible();

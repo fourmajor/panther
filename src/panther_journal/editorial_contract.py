@@ -181,3 +181,20 @@ BRIEFS["video-generation-packets"] += (
     " For creation.storyboardShotRef, emit footage instructions only for that exact shot."
     " Longer raw takes will be trimmed to the storyboard duration; never claim a short take satisfies a longer item."
 )
+
+# Provider-neutral production discipline: these constraints improve new plans,
+# without changing previously approved storyboards or authorizing inference.
+for _stage in ('video-shot-list', 'video-storyboards', 'video-generation-packets'):
+    BRIEFS[_stage] += (
+        " Plan independently renderable shots of at most eight seconds each. Split complex sequences"
+        " into separate items rather than asking a single take to change locations, cut cameras or"
+        " perform several simultaneous interactions. Keep every consequential source action across"
+        " those items. Each item must state only its visible cast, relative size and screen positions,"
+        " one primary physical action with a clear start and end, exact prop ownership, setting/time,"
+        " consistent lighting/palette and mood. Express emotion as observable gaze, posture or movement."
+        " Bind character appearance to pinned portraits but apply the same game visual-style guidance"
+        " across all items; identity-reference rendering style does not override it. Include relevant"
+        " setting/story continuity, not the whole cast or unrelated plot. Separate narration from"
+        " on-screen speech. Starting frames depict the composed shot, never a portrait contact sheet."
+        " Specify acceptance checks for visible cast, costume, hands, props, geography and source outcomes."
+    )
