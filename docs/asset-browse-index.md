@@ -99,6 +99,10 @@ References: [S3 EventBridge events](https://docs.aws.amazon.com/AmazonS3/latest/
 
 ## Dashboard recent summaries
 
+Session grouping resolves each immutable lineage node once per request using an
+iterative graph walk. Shared derivations must not cause repeated recursive expansion.
+Cycles are explicit data errors, not invented session identities or partial totals.
+
 `GET /dashboard-recent?gameId=...` is a catalog-reader operation. It returns five recent
 characters, transcripts, finished videos and chapter editions plus complete category counts
 in one browser request. Paired transcript Markdown/JSON exports count once. Every category
