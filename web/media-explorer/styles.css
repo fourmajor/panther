@@ -152,6 +152,7 @@ main:has(.movie-hero) { padding-top:2rem; }
 body {
   min-height: 100vh;
   margin: 0;
+  color: var(--ink);
   background:
     radial-gradient(circle at 80% 0%, rgb(230 183 92 / 10%), transparent 36rem),
     var(--paper);

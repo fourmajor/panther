@@ -49,6 +49,9 @@ for(const width of [1440,390]) for(const design of designs) {
     await page.goto(`https://panther.place/games/synthetic-game/dashboard?ui=${design}`);
     await expect(page.locator('html')).toHaveAttribute('data-interface',design);
     await expect(page.locator('#dashboard-name')).toHaveText('The Lantern Expedition');
+    const themeInk=await page.locator('html').evaluate(el=>getComputedStyle(el).color);
+    await expect(page.locator('#dashboard-name')).toHaveCSS('color',themeInk);
+    await expect(page.locator('#approval-inbox h2')).toHaveCSS('color',themeInk);
     await accessible(page.locator('#design-open'),width);
     for(const link of await page.locator('#primary-nav a').all()) await accessible(link,width);
     const contrast=await page.locator('#primary-nav a[aria-current]').evaluate(el=>{
