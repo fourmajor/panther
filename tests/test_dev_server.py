@@ -680,3 +680,26 @@ def test_authored_chapter_versions_use_original_series_and_preserve_lineage(tmp_
     assert dev.Store(store.path).get('chapter', previous) == record
     for key, source in originals.items():
         assert migrated.object(key)[1] == source
+
+
+def test_image_links_resolve_only_active_same_game_images(tmp_path):
+    from urllib.parse import parse_qs, urlparse
+    store = dev.Store(tmp_path / 'development.sqlite')
+    store.seed()
+    key = 'games/preview-campaign/assets/portrait/original/hero #1.png'
+    missing = 'games/preview-campaign/assets/missing/original/image.png'
+    audio = 'games/preview-campaign/assets/audio/original/source.wav'
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (key, 'preview-campaign', '{"contentType":"image/png"}', b'image', 'now'))
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (audio, 'preview-campaign', '{"contentType":"audio/wav"}', b'audio', 'now'))
+    result = store.image_links('preview-campaign', [key, key, missing, audio], 'http://127.0.0.1:8766')
+    assert len(result['images']) == 3
+    assert parse_qs(urlparse(result['images'][key]['url']).query)['key'] == [key]
+    assert result['images'][missing]['retryable'] is False
+    assert result['images'][audio]['error'] == 'Image unavailable'
+    with pytest.raises(ValueError, match='same-game'):
+        store.image_links('preview-sandbox', [key], 'http://127.0.0.1:8766')
+    with pytest.raises(ValueError, match='60'):
+        store.image_links('preview-campaign', [key] * 61, 'http://127.0.0.1:8766')
+    store.put('asset-deletion', key, {'gameId': 'preview-campaign'})
+    assert store.image_links('preview-campaign', [key], 'http://127.0.0.1:8766')['images'][key]['error'] == 'Image unavailable'

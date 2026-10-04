@@ -13,7 +13,7 @@ import re
 import sqlite3
 import sys
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -657,6 +657,23 @@ class Store:
             result["lineageWarning"] = "Large document: only compact metadata links are indexed."
         return result
 
+    def image_links(self, game, keys, origin):
+        """Resolve a bounded set of exact, active same-game image identities."""
+        self.game(game)
+        if not isinstance(keys, list) or not 1 <= len(keys) <= 60:
+            raise ValueError("Choose between 1 and 60 images")
+        if any(not isinstance(key, str) or not key.startswith(f"games/{game}/assets/") or ".." in key.split("/") for key in keys):
+            raise ValueError("Choose same-game image assets")
+        images = {}
+        with self.connect() as db:
+            for key in dict.fromkeys(keys):
+                row = db.execute("SELECT metadata FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (key, game)).fetchone()
+                if not row or not json.loads(row[0]).get("contentType", "").startswith("image/"):
+                    images[key] = {"error": "Image unavailable", "retryable": False}
+                else:
+                    images[key] = {"url": origin + "/development/object?" + urlencode({"key": key})}
+        return {"images": images, "expiresIn": None}
+
     def object(self, key):
         with self.connect() as db:
             row = db.execute("SELECT metadata,data FROM objects WHERE key=?", (key,)).fetchone()
@@ -1273,6 +1290,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def post(self, path, body):
         store = self.server.store
+        if path == "/image-links":
+            return self.send(store.image_links(body["gameId"], body["keys"], self.origin))
         if path == "/games":
             return self.send(store.create_game(body))
         if path == "/development/seed":

@@ -6,28 +6,34 @@ import re
 import time
 
 IMAGE_MODELS = ('gpt-image-1', 'gpt-image-1.5', 'gpt-image-1-mini')
+CURATED_FAL_IMAGES = (('fal-ai/flux-pro/v1.1', 'FLUX 1.1 Pro'), ('fal-ai/flux/schnell', 'FLUX 1 Schnell'))
+CURATED_OPENAI_IMAGES = (('gpt-image-1.5', 'GPT Image 1.5'), ('gpt-image-1-mini', 'GPT Image Mini'))
 IMAGE_TYPES = {'image', 'map', 'blueprint', 'location', 'portrait'}
+CURATED_VIDEO_MODELS = ('h3-max', 'veo-3.1-fast', 'kling-3-pro')
 VIDEO_MODELS = ('veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image')
 
 
 def options(store, game):
     settings = store.game(game)
     live = store.generation_capabilities()
-    image_model = (store.get('service', 'images') or {}).get('model', 'gpt-image-1')
     text_model = (store.get('service', 'editorial') or {}).get('model', 'gpt-5-mini')
     styles = [{'id': item['id'], 'name': item['label']} for item in settings['visualStyles']]
-    from dev_fal_image_catalog import available
+    from dev_fal_image_catalog import available, VIDEO_PRICE_ID
     from panther_journal import cost_estimates, video
     image_models = []
-    for model in dict.fromkeys((image_model, *IMAGE_MODELS)):
+    for model, label in CURATED_OPENAI_IMAGES:
         estimate = cost_estimates.openai(model, request={'size': '1024x1024', 'quality': 'medium'})
         if estimate:
             estimate.update(unit='image', scope='Medium 1024×1024 image output; input tokens and title generation excluded')
-        image_models.append({'id': model, 'name': model, 'provider': 'OpenAI', 'inputs': {}, 'priceEstimate': estimate})
+        image_models.append({'id': model, 'name': label, 'provider': 'OpenAI', 'inputs': {}, 'priceEstimate': estimate})
     if (store.get('service', 'images') or {}).get('falAvailable') is True:
-        image_models.extend({'id': item['endpoint'], 'name': item['name'], 'provider': 'fal', 'inputs': {}, 'priceEstimate': item.get('priceEstimate')} for item in available(store))
+        cached = {item['endpoint']: item for item in available(store)}
+        image_models = [{'id': endpoint, 'name': label, 'provider': 'fal', 'inputs': {}, 'priceEstimate': cached[endpoint].get('priceEstimate')}
+                        for endpoint, label in CURATED_FAL_IMAGES if endpoint in cached] + image_models
+    image_model = image_models[0]['id']
     types = [{'id': kind, 'name': kind.title(), 'available': live['images'], 'models': image_models, 'defaultModel': image_model, 'styles': styles, 'defaultStyle': settings['game'].get('visualStyle')} for kind in ('image', 'map', 'blueprint', 'location', 'portrait')]
-    types.append({'id': 'video', 'name': 'Video', 'available': live['video'], 'models': [{'id': model, 'name': {'veo-3.1-fast': 'Veo 3.1 Fast', 'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model.removesuffix('-image')] + (' · Image to video' if model.endswith('-image') else ''), 'inputs': {'requiresInitialImage': model.endswith('-image'), 'duration': 8, 'aspectRatio': '16:9'}, 'provider': 'fal', 'priceEstimate': cost_estimates.fal(model, video.payload({'model': model, 'prompt': 'Price estimate only'}))} for model in VIDEO_MODELS], 'defaultModel': VIDEO_MODELS[0], 'styles': styles, 'defaultStyle': settings['game'].get('visualStyle')})
+    video_prices = (store.get('model-pricing', VIDEO_PRICE_ID) or {}).get('prices', {})
+    types.append({'id': 'video', 'name': 'Video', 'available': live['video'], 'models': [{'id': model, 'name': {'veo-3.1-fast': 'Veo 3.1 Fast', 'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model], 'inputs': {'optionalInitialImage': True, 'duration': 8, 'aspectRatio': '16:9'}, 'provider': 'fal', 'providerBasePrice': video_prices.get(video.PROFILES[model]['endpoint']), 'providerImageBasePrice': video_prices.get(video.PROFILES[model + '-image']['endpoint']), 'priceEstimate': cost_estimates.fal(model, video.payload({'model': model, 'prompt': 'Price estimate only'}))} for model in CURATED_VIDEO_MODELS], 'defaultModel': CURATED_VIDEO_MODELS[0], 'styles': styles, 'defaultStyle': settings['game'].get('visualStyle')})
     try:
         voices = store.narration_voices()['voices'] if live['narration'] else []
     except Exception:
@@ -91,6 +97,10 @@ def submit(store, body):
             if 'request' in existing or any(existing.get(field) != value for field, value in body.items()):
                 raise ValueError('Operation reused with a different generation request')
         return store.asset_generation_view(existing)
+    # A deliberately selected starting image pins this family's executable image endpoint.
+    # Existing explicit variants and all historical immutable requests remain valid.
+    if media == 'video' and inputs.get('initialImageKey') and model in CURATED_VIDEO_MODELS:
+        model += '-image'
     job = {**body, 'schemaVersion': 2, 'request': request, 'mediaType': media, 'model': model, 'visualStyle': style if media in {'video', 'image'} else None, 'jobId': identity, 'status': 'QUEUED', 'message': None, 'createdAt': int(time.time()), 'assetKey': None, 'generationAuthorized': True, 'inputRefs': [], 'sourceKeys': []}
     if fal_contract:
         if (store.get('service', 'images') or {}).get('falAvailable') is not True:

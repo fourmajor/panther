@@ -42,7 +42,7 @@ async function fixture(page) {
     const file=pathname==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(pathname)?pathname.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
-  return {posted,created,requests,history,conflict:()=>{fail=true;}};
+  return {posted,created,requests,history,conflict:()=>{fail=true;},selectPortrait:key=>{record={...record,revision:'d'.repeat(32),details:{...record.details,thumbnailAssetKey:key}};}};
 }
 for(const width of [1280,390]) test(`structured character editing and catalog pagination at ${width}px`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:900}); const control=await fixture(page);
@@ -143,11 +143,11 @@ for(const width of [1280,390]) test(`portrait generation continues inline after 
  const headers={'access-control-allow-origin':'https://panther.place'};let job=null;
  await page.route('**/asset-generation**',route=>{const url=new URL(route.request().url());if(url.searchParams.get('view')==='options')return route.fallback();if(route.request().method()==='POST'){posts.push(route.request().postDataJSON());job={...posts[0],jobId:'a'.repeat(64),name:'River scout',status:'QUEUED'};return route.fulfill({headers,json:job});}return route.fulfill({headers,json:url.searchParams.get('jobId')?job:{jobs:job?[job]:[],cursor:null}});});
  await page.goto(`https://panther.place/games/${gameId}/characters/${characterId}`);await page.locator('#character-portrait-generate').click();const dialog=page.getByRole('dialog',{name:'Generate asset',exact:true});await expect(dialog).toBeInViewport();await dialog.getByLabel('Prompt',{exact:true}).fill('A scout beside the river');const submit=dialog.getByRole('button',{name:'Generate asset',exact:true});await expect(submit).toBeInViewport();expect(await submit.evaluate(el=>{const b=el.getBoundingClientRect();return el.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})).toBe(true);await submit.click();await expect(dialog).toHaveCount(0);
- await expect(page.locator('#character-portrait-progress')).toContainText('Queued');expect(posts[0].characterId).toBe(characterId);expect(posts[0].selectAsPortrait).toBe(true);expect(posts[0].name).toBeUndefined();expect(control.posted).toHaveLength(0);
- await page.reload();await expect(page.locator('#character-portrait-progress')).toContainText('Queued');expect(posts).toHaveLength(1);
+ await expect(page.locator('#character-portrait-progress')).toContainText('Queued');await expect(page.locator('.character-avatar')).toHaveAttribute('aria-busy','true');await expect(page.locator('.character-portrait-actions')).toBeHidden();await expect(page.locator('#character-portrait-empty')).toBeHidden();await expect(page.locator('#character-portrait-only')).toBeHidden();await expect(page.locator('#character-portrait-progress')).toBeInViewport();expect(posts[0].characterId).toBe(characterId);expect(posts[0].selectAsPortrait).toBe(true);expect(posts[0].name).toBeUndefined();expect(control.posted).toHaveLength(0);
+ await page.reload();await expect(page.locator('#character-portrait-progress')).toContainText('Queued');await expect(page.locator('.character-portrait-actions')).toBeHidden();expect(posts).toHaveLength(1);
  await expect(page.getByRole('heading',{name:'Assets',exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:'Artwork',exact:true})).toHaveCount(0);await expect(page.getByRole('heading',{name:'References',exact:true})).toHaveCount(0);
  const name=await page.locator('#character-name').boundingBox(),role=await page.locator('#character-title').boundingBox();expect(role.y).toBeGreaterThanOrEqual(name.y+name.height);
- await page.screenshot({path:testInfo.outputPath(`character-background-generation-${width}.png`),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:testInfo.outputPath(`character-background-generation-${width}.png`),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);job={...job,status:'FAILED',error:'Synthetic generation failure'};await expect(page.locator('.character-avatar')).toHaveAttribute('aria-busy','false',{timeout:10000});await expect(page.locator('.character-portrait-actions')).toBeVisible();await expect(page.locator('#character-portrait-generate')).toBeEnabled();expect(posts).toHaveLength(1);
 });
 
 for(const width of [1280,390]) test(`uploaded profile portrait survives reload without replacing official artwork at ${width}px`,async({page})=>{
@@ -242,4 +242,18 @@ for(const width of [1280,390])test(`Empty portrait Generate remains readable on 
  const contrast=await generate.evaluate(el=>{const context=document.createElement('canvas').getContext('2d');context.canvas.width=context.canvas.height=1;const rgb=color=>{context.clearRect(0,0,1,1);context.fillStyle=color;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data].slice(0,3);};const luminance=values=>values.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);const css=getComputedStyle(el),a=luminance(rgb(css.color)),b=luminance(rgb(css.backgroundColor));return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);});
  expect(contrast).toBeGreaterThanOrEqual(4.5);const rectangle=await generate.boundingBox();expect(rectangle.x+rectangle.width).toBeLessThanOrEqual(width);expect(await generate.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await page.screenshot({path:test.info().outputPath(`portrait-generate-hover-${width}.png`),fullPage:true});
+});
+
+for(const width of [1280,390])test(`published portrait replaces the generation placeholder and persists at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});const control=await fixture(page),headers={'access-control-allow-origin':'https://panther.place'};
+ const key='games/example-game/assets/generated-portrait/original/portrait.png',url='https://test.s3.amazonaws.com/generated.svg';
+ let job={jobId:'f'.repeat(64),gameId,characterId,type:'portrait',selectAsPortrait:true,name:'New portrait',status:'QUEUED'};
+ await page.route('**/asset-generation**',route=>new URL(route.request().url()).searchParams.get('view')==='options'?route.fallback():route.fulfill({headers,json:new URL(route.request().url()).searchParams.get('jobId')?job:{jobs:[job],cursor:null}}));
+ await page.route('**/image-links',route=>route.fulfill({headers,json:{images:{[portrait]:{url:'https://test.s3.amazonaws.com/portrait.svg'},[key]:{url}},expiresIn:300}}));
+ await page.goto(`https://panther.place/games/${gameId}/characters/${characterId}`);
+ await expect(page.locator('.character-avatar')).toHaveAttribute('aria-busy','true');await expect(page.locator('.character-portrait-actions')).toBeHidden();
+ control.selectPortrait(key);job={...job,status:'PUBLISHED',portraitAssigned:true,assetKey:key};
+ await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',url,{timeout:10000});await expect(page.locator('#character-portrait-only')).toBeVisible();await expect(page.locator('#character-portrait-empty')).toBeHidden();await expect(page.locator('.character-avatar')).toHaveAttribute('aria-busy','false');
+ await page.locator('.character-avatar').hover();await expect(page.locator('#character-portrait-upload')).toBeEnabled();await expect(page.locator('#character-portrait-generate')).toBeEnabled();await expect(page.locator('.character-portrait-actions')).toHaveCSS('opacity','1');
+ await page.reload();await expect(page.locator('#character-portrait-only')).toHaveAttribute('src',url);await expect(page.locator('#character-portrait-only')).toBeVisible();expect(control.posted).toHaveLength(0);
 });

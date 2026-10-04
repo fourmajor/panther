@@ -155,7 +155,8 @@ Hosted availability may differ from the local stack.
 
 Images support the configured default and explicit `gpt-image-1`, `gpt-image-1.5`
 and `gpt-image-1-mini` choices, without model fallback. With `FAL_API_KEY`, the image
-worker also caches the complete active executable fal text-to-image catalog, pins
+worker also caches the complete active executable fal text-to-image catalog; the UI exposes
+only the curated FLUX 1.1 Pro, FLUX 1 Schnell, GPT Image 1.5 and GPT Image Mini choices. It pins
 selected OpenAPI contracts and polls durable provider queue identities. The shared
 Generate Asset form searches these models and displays provider price estimates;
 unsupported required-input contracts are omitted honestly. Standalone video uses the

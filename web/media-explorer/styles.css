@@ -903,7 +903,7 @@ model-viewer,
   .primary-nav {
     order: 3;
     width: 100%;
-    border-top: 1px solid var(--line);
+    border-top: 0;
     padding: 0.4rem 0;
   }
 
@@ -1045,7 +1045,7 @@ body { font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 
 .masthead .account { grid-column:3; grid-row:1; gap:.65rem; font-size:.85rem; }
 .account #username { max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .account svg { display:none; width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.6; }
-.masthead .primary-nav { grid-column:1/-1; grid-row:2; display:flex; flex-wrap:nowrap; gap:1.3rem; border-top:1px solid var(--line); width:100%; padding:0; }
+.masthead .primary-nav { grid-column:1/-1; grid-row:2; display:flex; flex-wrap:nowrap; gap:1.3rem; border-top:0; width:100%; padding:0; }
 .primary-nav a { display:flex; align-items:center; justify-content:center; min-height:46px; padding:0 .3rem; border-radius:0; border-bottom:2px solid transparent; font-size:.9rem; }
 .primary-nav a:hover, .primary-nav a:focus-visible { color:var(--ink); background:transparent; }
 .primary-nav a[aria-current] { color:var(--panther-accent); background:transparent; border-bottom-color:var(--panther-accent); }
@@ -1521,6 +1521,11 @@ body { padding-bottom:0; }
 .style-preview-dialog h2 {font:400 1.8rem/1.2 Georgia,serif;}
 .style-preview-dialog img {display:block;width:100%;max-height:70vh;object-fit:contain;}
 .character-avatar {position:relative;}
+.character-avatar:has(#character-portrait-only:not([hidden])) .character-portrait-actions {position:absolute;top:calc(15rem - 92px);left:.5rem;right:.5rem;display:grid;box-sizing:border-box;min-width:0;margin:0;padding:4px;gap:4px;background:rgb(0 0 0 / .7);border-radius:.5rem;opacity:0;transition:opacity .15s;}
+.character-avatar:has(#character-portrait-only:not([hidden])) .character-portrait-actions button {width:100%;min-width:0;}
+.character-avatar:has(#character-portrait-only:not([hidden])):is(:hover,:focus-within) .character-portrait-actions {opacity:1;}
+@media(hover:none){.character-avatar:has(#character-portrait-only:not([hidden])) .character-portrait-actions {opacity:1;}}
+@media(max-width:600px){.character-avatar:has(#character-portrait-only:not([hidden])) .character-portrait-actions {top:calc(9rem - 92px);}}
 .character-avatar:has(#character-portrait-empty:not([hidden])) .character-portrait-actions {position:absolute;top:3rem;left:.5rem;right:.5rem;display:grid;justify-items:stretch;margin:0;gap:.5rem;}
 .character-avatar:has(#character-portrait-empty:not([hidden])) .character-portrait-actions button {min-height:44px;}
 @media(max-width:600px){.character-avatar:has(#character-portrait-empty:not([hidden])) .character-portrait-actions {top:1rem;}}
@@ -1954,3 +1959,15 @@ html[data-booting] .masthead .brand strong {display:none}
 @media(max-width:480px){.novel-review-heading{flex-wrap:wrap;}.novel-review-heading .novel-review-actions{margin-left:auto;}}
 @media(max-width:600px){html[data-booting] .masthead #primary-nav[hidden]{display:grid!important}}
 .novel-prose ul{list-style:disc;padding-left:1.5rem;margin:1rem 0}.novel-prose ol{list-style:decimal;padding-left:1.5rem;margin:1rem 0}.novel-prose li p{margin:.4rem 0}.novel-prose pre{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:1rem;font-size:.85em;line-height:1.5}.novel-prose code{font-family:monospace;font-size:.9em}.novel-table{max-width:100%;overflow:auto}.novel-prose table{border-collapse:collapse;width:100%;font-size:.9em}.novel-prose th,.novel-prose td{border:1px solid var(--line);padding:.5rem .75rem;text-align:left}
+
+/* Active portrait generation owns the portrait slot, replacing creation controls. */
+.character-avatar[data-generating=true] :is(.character-portrait-only,.character-portrait-empty,.character-portrait-actions) {display:none;}
+.character-avatar[data-generating=true] #character-portrait-progress .assets-generation-job {box-sizing:border-box;min-height:15rem;align-content:center;}
+@media(max-width:600px){.character-avatar[data-generating=true] #character-portrait-progress .assets-generation-job {min-height:9rem;}}
+
+/* Account columns stack independently; document order stays profile then security. */
+.account-column {display:flex;flex-direction:column;gap:24px;min-width:0;}
+.account-page .account-column>.account-section {margin:0;}
+#account-game-back {width:44px;height:44px;min-width:44px;padding:0;display:inline-flex;align-items:center;justify-content:center;}
+#account-game-back svg {display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;}
+@media(max-width:700px) {.account-column {gap:16px;}}
