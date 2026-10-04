@@ -76,13 +76,20 @@ for(const width of [1280,871,390]) {
    expect(await video.evaluate(el=>el.currentTime)).toBeCloseTo(0,1);
    await expect(board.locator('video[aria-label="Shot 2 video"]')).toHaveCount(0);
    await expect(board.getByLabel('Trim start (seconds)')).toBeVisible();
-   await expect(board.getByRole('button',{name:'Assemble scene'})).toBeDisabled();
+   await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeDisabled();
+   const actions=board.getByRole('group',{name:'Storyboard actions'});
+   const edit=actions.getByRole('button',{name:'Edit',exact:true}),assembly=actions.getByRole('button',{name:'Assemble',exact:true});
+   await expect(edit).toBeVisible();await expect(assembly).toBeVisible();
+   await expect(assembly.locator('svg.lucide-hammer')).toHaveCount(1);
+   const editBox=await edit.boundingBox(),assemblyBox=await assembly.boundingBox();
+   expect(Math.abs(editBox.y-assemblyBox.y)).toBeLessThanOrEqual(1);
+   expect(assemblyBox.x).toBeGreaterThan(editBox.x+editBox.width);
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
    await expect(page.getByText(/Finished videos unavailable/)).toHaveCount(0);expect(errors).toEqual([]);
    await page.screenshot({path:test.info().outputPath(`shot-takes-${width}.png`),fullPage:true});
    await board.getByRole('combobox',{name:'Take for shot 2'}).click();await page.getByRole('option',{name:'Take 1 · 8.0s'}).click();
-   await expect(board.getByRole('button',{name:'Assemble scene'})).toBeEnabled();
-   await board.getByRole('button',{name:'Assemble scene'}).click();
+   await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeEnabled();
+   await board.getByRole('button',{name:'Assemble',exact:true}).click();
    await expect.poll(()=>writes.some(item=>item.sceneId==='arrival'&&!item.shotId&&!item.shotSelection)).toBe(true);
  });
  test(`AI storyboard approval belongs to its scene at ${width}px`,async({page})=>{
@@ -116,7 +123,7 @@ for(const width of [1280,871,390]) {
  test(`human storyboards save through the scene without approval at ${width}px`,async({page})=>{
    await page.setViewportSize({width,height:1000});const {writes}=await fixture(page,{human:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
    const board=page.getByRole('region',{name:'Scene storyboard'});await expect(board.getByRole('button',{name:'Approve',exact:true})).toHaveCount(0);
-   await board.getByRole('button',{name:'Edit storyboard'}).click();const dialog=page.getByRole('dialog',{name:'Edit storyboard'});
+   await board.getByRole('group',{name:'Storyboard actions'}).getByRole('button',{name:'Edit',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Edit storyboard'});
    await dialog.getByLabel('Action and composition').fill('The gates close behind the travelers.');
    await dialog.getByRole('button',{name:'Save storyboard'}).click();await expect(dialog).toHaveCount(0);
    expect(writes[0].storyboardShots[0].description).toBe('The gates close behind the travelers.');expect(writes[0].origin).toBeUndefined();await expect(board).toContainText('The gates close behind the travelers.');

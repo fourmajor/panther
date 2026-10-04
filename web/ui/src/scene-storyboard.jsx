@@ -1,6 +1,6 @@
 import React, {useId, useState, useEffect} from 'react';
 import {createPortal} from 'react-dom';
-import {Pencil, Plus, ThumbsUp, ThumbsDown, Sparkles, ChevronDown} from 'lucide-react';
+import {Pencil, Plus, ThumbsUp, ThumbsDown, Sparkles, ChevronDown, Hammer} from 'lucide-react';
 import {Button} from './components/ui/button.jsx';
 import {Input} from './components/ui/input.jsx';
 import {Textarea} from './components/ui/textarea.jsx';
@@ -34,9 +34,10 @@ export function SceneStoryboard({scene, scope, onSave, onLoadFrames, onOpenFrame
     {board&&actionHost&&onGenerateShot&&createPortal(<DropdownMenu><DropdownMenuTrigger asChild><Button disabled={busy||needsReview||!board}><Sparkles/>Generate<ChevronDown/></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{board?.shots.map((shot,index)=><DropdownMenuItem key={shot.shotId} disabled={shot.durationSeconds>8} onSelect={()=>void generate(shot)}>Shot {index+1} · {shot.durationSeconds}s{shot.durationSeconds>8?' — split into shorter shots':''}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>,actionHost)}
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h4 className="text-base font-semibold">Storyboard</h4>
-      <div className="flex flex-wrap items-center gap-2">
+      <div role="group" aria-label="Storyboard actions" className="flex flex-wrap items-center gap-2">
         {needsReview&&<span className="text-sm text-muted-foreground">{board.decision?.action==='changes-requested'?'Changes requested':'Needs approval'}</span>}
-        <Button variant="outline" size="sm" onClick={edit} disabled={busy}><Pencil/> {board?'Edit storyboard':'Create storyboard'}</Button>
+        <Button variant="outline" size="sm" onClick={edit} disabled={busy}><Pencil/> {board?'Edit':'Create storyboard'}</Button>
+        {onAssemble&&board&&<Button size="sm" disabled={busy||needsReview||board.shots.some(shot=>!scene.shotTakes?.[shot.shotId])} onClick={()=>void assemble()}><Hammer/>Assemble</Button>}
         {needsReview&&<><Button variant="outline" size="sm" disabled={busy} onClick={()=>save({storyboardDecision:{revision:board.revision,action:'changes-requested'}})}><ThumbsDown/>Request changes</Button><Button size="sm" disabled={busy} onClick={()=>save({storyboardDecision:{revision:board.revision,action:'approved'}})}><ThumbsUp/>Approve</Button></>}
       </div>
     </div>
@@ -55,7 +56,7 @@ export function SceneStoryboard({scene, scope, onSave, onLoadFrames, onOpenFrame
     </li>;})}</ol>}
     {takes.hasNextPage&&<Button variant="outline" disabled={takes.isFetchingNextPage} onClick={()=>void takes.fetchNextPage()}>More takes</Button>}
     {takes.isError&&<p role="alert" className="text-sm text-destructive">Takes could not be loaded.</p>}
-    {onAssemble&&board&&<Button className="self-end" disabled={busy||needsReview||board.shots.some(shot=>!scene.shotTakes?.[shot.shotId])} onClick={()=>void assemble()}>Assemble scene</Button>}
+    
     {!editing&&error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
     <Dialog open={editing} onOpenChange={value=>{if(!busy)setEditing(value);}}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>{board?'Edit storyboard':'Create storyboard'}</DialogTitle></DialogHeader>
       <form className="flex min-h-0 flex-col gap-6" onSubmit={event=>{event.preventDefault();void save({storyboardShots:draft});}}>
