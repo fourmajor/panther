@@ -143,14 +143,33 @@ def finished_asset(asset):
 def session_entries(assets):
     """Group explicit session metadata and exact input links, preserving unknown identities."""
     by_key = {asset["key"]: asset for asset in assets}
-    def identity(asset, seen):
-        if asset.get("metadata", {}).get("sessionId"):
-            return asset["metadata"]["sessionId"]
-        if asset["key"] in seen:
-            return None
-        sources = [by_key[key] for key in asset.get("sourceKeys", asset.get("metadata", {}).get("sourceKeys", [])) if key in by_key]
-        linked = {identity(source, seen | {asset["key"]}) or source["key"] for source in sources}
-        return next(iter(linked)) if len(linked) == 1 else None
+    links = {key: tuple(source for source in asset.get("sourceKeys", asset.get("metadata", {}).get("sourceKeys", [])) if source in by_key)
+             for key, asset in by_key.items()}
+    resolved = {}
+
+    def identity(asset):
+        # Shared derivation DAGs must be resolved once, not exponentially re-walked
+        # for each transcript/listening copy. Explicit frames avoid recursion limits.
+        stack, visiting = [(asset["key"], False)], set()
+        while stack:
+            key, expanded = stack.pop()
+            if key in resolved:
+                continue
+            session = by_key[key].get("metadata", {}).get("sessionId")
+            if session:
+                resolved[key] = session
+                continue
+            if expanded:
+                linked = {resolved[source] or source for source in links[key]}
+                resolved[key] = next(iter(linked)) if len(linked) == 1 else None
+                visiting.remove(key)
+                continue
+            if key in visiting:
+                raise RuntimeError("Dashboard session lineage contains a cycle; repair its recorded inputs")
+            visiting.add(key)
+            stack.append((key, True))
+            stack.extend((source, False) for source in reversed(links[key]) if source not in resolved)
+        return resolved[asset["key"]]
     sessions = {}
     for asset in sorted(assets, key=lambda a: observed_time(a.get("lastModified")) or 0, reverse=True):
         kind, key = asset.get("kind", ""), asset["key"]
@@ -160,7 +179,7 @@ def session_entries(assets):
             continue
         if key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind:
             continue
-        sessions.setdefault(identity(asset, set()) or key, asset)
+        sessions.setdefault(identity(asset) or key, asset)
     return list(sessions.values())
 
 

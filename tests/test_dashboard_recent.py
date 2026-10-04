@@ -4,7 +4,29 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
+import pytest
+
 from test_game_catalog import catalog, request, setup  # noqa: F401
+
+
+def test_session_identity_resolves_shared_deep_lineage_without_recursive_expansion(catalog):
+    import dashboard_recent
+    root = {"key": "root", "kind": "raw-transcript", "metadata": {"sessionId": "known-session"}}
+    assets, previous = [root], ["root"]
+    for level in range(1200):
+        layer = [{"key": f"level-{level}-{side}", "kind": "corrected-transcript", "sourceKeys": previous}
+                 for side in range(2)]
+        assets.extend(layer)
+        previous = [item["key"] for item in layer]
+    assert len(dashboard_recent.session_entries(assets)) == 1
+
+
+def test_cyclic_session_lineage_fails_explicitly_instead_of_inventing_group(catalog):
+    import dashboard_recent
+    assets = [{"key": "first", "kind": "raw-transcript", "sourceKeys": ["second"]},
+              {"key": "second", "kind": "corrected-transcript", "sourceKeys": ["first"]}]
+    with pytest.raises(RuntimeError, match="lineage contains a cycle"):
+        dashboard_recent.session_entries(assets)
 
 
 def prepare(catalog):
