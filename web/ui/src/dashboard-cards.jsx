@@ -32,19 +32,21 @@ export function DashboardCards({gameId,data,onNavigate,onPreview,request}) {
     const visible=items.slice(0,section.id==='assets'?6:5);
     const count=data?.counts?.[key];
     return <section key={section.id} className="dashboard-card" data-section={section.id}>
-      <span className="dashboard-section-icon" aria-hidden="true"><Icon size={22}/></span>
-      <span className="dashboard-card-arrow" aria-hidden="true"><ChevronRight size={22}/></span>
-      <h2><a className="dashboard-card-link" href={`${base}/${section.id==='videos'?'episodes':section.id}`} onClick={navigate}>{count>0?`${count} ${section.id==='novel'?(count===1?'Chapter':'Chapters'):(count===1?section.unit:section.label)}`:section.label}</a></h2>
+      <h2><a className="dashboard-card-link flex items-center gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" href={`${base}/${section.id==='videos'?'episodes':section.id}`} onClick={navigate}>
+        <Icon className="shrink-0 text-primary" size={22} aria-hidden="true"/>
+        <span>{count>0?`${count} ${section.id==='novel'?(count===1?'Chapter':'Chapters'):(count===1?section.unit:section.label)}`:section.label}</span>
+        <ChevronRight className="ml-auto shrink-0 text-muted-foreground" size={22} aria-hidden="true"/>
+      </a></h2>
       {!data?<div className="h-16 animate-pulse rounded bg-muted/30" aria-label="Loading recent records"/>:count===0?<p>{section.empty}</p>:<>
         <ul className={`dashboard-recent-links ${section.id==='assets'?'grid grid-cols-3 gap-2':''}`} aria-label={`Recent ${section.label.toLowerCase()}`}>
           {visible.map(item=>{
             const title=item.title||item.metadata?.title||item.name;
-            return <li key={item.id||item.key}><a href={itemHref(section,item)} onClick={event=>{if(!plainClick(event))return;event.preventDefault();if(item.key)onPreview(item);else onNavigate(itemHref(section,item));}} aria-label={title} title={title}>
+            return <li key={item.id||item.key}><a className={section.id==='assets'?'block rounded-md outline outline-2 outline-transparent outline-offset-2 hover:outline-primary focus-visible:outline-primary':undefined} href={itemHref(section,item)} onClick={event=>{if(!plainClick(event))return;event.preventDefault();if(item.key)onPreview(item);else onNavigate(itemHref(section,item));}} aria-label={title} title={title}>
               {section.id==='assets'?<AssetThumbnail asset={item} gameId={gameId} onThumbnail={thumbnail} className="dashboard-asset-thumbnail"/>:title}
             </a></li>;
           })}
         </ul>
-        {count>visible.length&&<a className="dashboard-more relative z-[2] mt-2 block text-sm text-muted-foreground hover:text-primary" href={`${base}/${section.id==='videos'?'episodes':section.id}`} onClick={navigate}>and {count-visible.length} more</a>}
+        {count>visible.length&&<a className="dashboard-more mt-2 block text-sm text-muted-foreground hover:text-primary" href={`${base}/${section.id==='videos'?'episodes':section.id}`} onClick={navigate}>and {count-visible.length} more</a>}
       </>}
     </section>;
   });

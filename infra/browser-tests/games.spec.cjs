@@ -215,7 +215,7 @@ for (const width of [1280,390]) {
     const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     await page.goto('https://panther.place/');
     await expect(page.locator('#dashboard-name')).toHaveText('Campaign A');
-    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');await expect(page.locator('.dashboard-card-arrow svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-arrow svg.lucide-arrow-up-right')).toHaveCount(0);
+    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');await expect(page.locator('.dashboard-card-link svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-link svg.lucide-arrow-up-right')).toHaveCount(0);
     await expect(page.locator('header #game-select-trigger')).toBeVisible();
     const selectorBox=await page.locator('#game-select-trigger').boundingBox();
     expect(selectorBox.y).toBeLessThan(100); expect(selectorBox.x).toBeLessThan(width/2);
@@ -226,7 +226,7 @@ for (const width of [1280,390]) {
     await expect(page.locator('#dashboard-sections a')).toHaveCount(5);
     for(const card of await page.locator('#dashboard-sections a').all()) await expect(card).toHaveAttribute('href',/^\/games\/campaign-a\//);
     await page.screenshot({path:test.info().outputPath(`dashboard-${width}.png`),fullPage:true});
-    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
+    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/');await firstCard.getByRole('link',{name:'Characters',exact:true}).click();await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
     await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
     await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Campaign A');
     await page.getByLabel('Game name',{exact:true}).fill('The Lantern Campaign');
@@ -547,12 +547,25 @@ for(const width of [1280,390]) {
     await page.route('https://test.execute-api.us-west-2.amazonaws.com/image-links',route=>route.fulfill({json:{images:Object.fromEntries(assets.map(a=>[a.key,{url:image}]))},headers:jsonHeaders}));
     await selectGame(page,'test-b');
     for(const label of ['10 Characters','5 Sessions','2 Episodes','4 Chapters','9 Assets'])await expect(page.getByRole('link',{name:label,exact:true})).toBeVisible();
-    const card=page.locator('[data-section="assets"]');
+    const card=page.locator('#dashboard-sections [data-section="assets"]');
     await expect(card.locator('img')).toHaveCount(6);
     await expect(card.getByRole('link',{name:'and 3 more',exact:true})).toBeVisible();
     const boxes=await card.locator('img').evaluateAll(images=>images.map(img=>{const r=img.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));
     expect(boxes[0].y).toBeCloseTo(boxes[2].y,1);expect(boxes[3].y).toBeGreaterThan(boxes[0].y);
     for(const box of boxes){expect(box.width).toBeGreaterThan(50);expect(box.height).toBeCloseTo(box.width,0);expect(box.x+box.width).toBeLessThanOrEqual(width);}
+    const picture=card.getByRole('link',{name:'Picture 0',exact:true});
+    const original=await card.evaluate(el=>({background:getComputedStyle(el).backgroundColor,border:getComputedStyle(el).borderColor}));
+    await picture.hover();
+    await expect(picture).toHaveCSS('outline-width','2px');
+    expect(await picture.evaluate(el=>getComputedStyle(el).outlineColor)).not.toBe('rgba(0, 0, 0, 0)');
+    expect(await card.evaluate(el=>({background:getComputedStyle(el).backgroundColor,border:getComputedStyle(el).borderColor}))).toEqual(original);
+    const cardBox=await card.boundingBox();
+    await page.mouse.click(cardBox.x+cardBox.width-8,cardBox.y+cardBox.height-8);
+    await expect(page).toHaveURL('https://panther.place/games/test-b/dashboard');
+    await expect(card.getByRole('link',{name:'9 Assets',exact:true})).toHaveCSS('text-decoration-line','none');
+    await picture.focus();
+    await expect(picture).toBeFocused();
+    expect(await picture.evaluate(el=>getComputedStyle(el).outlineColor)).not.toBe('rgba(0, 0, 0, 0)');
     await page.screenshot({path:test.info().outputPath(`dashboard-counted-assets-${width}.png`),fullPage:true});
     await card.getByRole('link',{name:'and 3 more',exact:true}).click();
     await expect(page).toHaveURL('https://panther.place/games/test-b/assets');
