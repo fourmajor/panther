@@ -327,3 +327,8 @@
 @media(max-width:600px){.panther-dialog-content{--dialog-gutter:16px;--dialog-close-inset:10px;}}
 
 .panther-dialog-content [data-slot=dialog-footer]>[data-dialog-action=submit]{order:1;}
+
+/* Long form fields scroll independently; the common footer stays in view. */
+.panther-dom-dialog form:has(>[data-slot=dialog-body]){display:flex!important;flex-direction:column!important;min-height:0;max-height:calc(90dvh - 144px);gap:0!important;}
+.panther-dom-dialog form>[data-slot=dialog-body]{min-height:0;overflow:auto;overscroll-behavior:contain;flex:1 1 auto;display:grid;gap:16px;padding:2px;}
+.panther-dom-dialog form>[data-slot=dialog-footer]{flex:0 0 auto;}

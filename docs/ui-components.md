@@ -49,3 +49,5 @@ a specific `Generate Map`, `Generate Video`, `Generate Speech` or other supporte
 dialog with that type fixed and only the relevant model inputs. Upload remains
 a separate form. Frozen submissions and their cache keys include the selected
 type so an uncertain request cannot be replayed as a different media operation.
+
+Long native form dialogs use the shared `dialog-body` scroll region above the common footer. Scroll fields independently; do not move footer actions out of the viewport or add a sticky footer with a different background.

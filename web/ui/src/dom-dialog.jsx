@@ -13,6 +13,12 @@ function DOMContents({node,container,closes}) {
     const title=node.querySelector('h1,h2,h3');if(title)title.dataset.slot='dialog-title';
     for(const footer of node.querySelectorAll(footerSelector)){
       footer.dataset.slot='dialog-footer';footer.classList.add('panther-dialog-footer');
+      const form=footer.parentElement;
+      if(form?.tagName==='FORM'&&!form.querySelector(':scope > [data-slot=dialog-body]')){
+        const body=document.createElement('div');body.dataset.slot='dialog-body';body.className=form.className;
+        for(const child of [...form.children])if(child!==footer&&!child.matches('header,h1,h2,h3'))body.append(child);
+        form.insertBefore(body,footer);
+      }
       for(const button of footer.querySelectorAll(':scope > button')){
         const cancel=/^(Cancel|Close)$/.test(button.textContent.trim());
         button.classList.add(...buttonVariants({variant:cancel?'outline':'default'}).split(/\s+/),'ui-action-button');button.dataset.dialogAction=cancel?'cancel':'submit';

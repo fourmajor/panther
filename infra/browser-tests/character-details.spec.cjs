@@ -194,7 +194,7 @@ for(const width of [1280,390])test(`character edits stay in a focused dialog and
   await page.screenshot({path:test.info().outputPath(`character-edit-link-${width}.png`)});await edit.click();
   const dialog=page.getByRole('dialog',{name:'Edit character',exact:true});await expect(dialog).toBeVisible();
   await dialog.getByLabel('Backstory',{exact:true}).fill('An unsaved change');
-  const cancel=dialog.getByRole('button',{name:'Cancel'});await expect(cancel).toBeInViewport();
+  const cancel=dialog.getByRole('button',{name:'Cancel'});await expect(cancel).toBeInViewport();const fields=dialog.locator('[data-slot=dialog-body]');await expect(fields).toHaveCount(1);expect(await fields.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);const footer=dialog.locator('[data-slot=dialog-footer]');await expect(footer).toBeInViewport();for(const action of await footer.getByRole('button').all()){await expect(action).toBeInViewport();await expect.poll(async()=>Math.round((await action.boundingBox()).height*100)/100).toBe(36);}
   const hit=await cancel.evaluate(el=>{const r=el.getBoundingClientRect();const found=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return found===el||el.contains(found);});expect(hit).toBe(true);
   await page.screenshot({path:test.info().outputPath(`character-edit-modal-${width}.png`)});
   await cancel.click();await expect(dialog).toHaveCount(0);await expect(edit).toBeFocused();expect(control.posted).toHaveLength(0);
