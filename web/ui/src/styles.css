@@ -97,7 +97,7 @@
   --secondary-foreground: var(--ink);
   --muted: var(--panel);
   --muted-foreground: var(--panther-muted);
-  --accent: var(--panel-raised);
+  --accent: var(--line);
   --accent-foreground: var(--ink);
   --destructive: var(--danger);
   --destructive-foreground: var(--paper);
@@ -332,3 +332,22 @@
 .panther-dom-dialog form:has(>[data-slot=dialog-body]){display:flex!important;flex-direction:column!important;min-height:0;max-height:calc(90dvh - 144px);gap:0!important;}
 .panther-dom-dialog form>[data-slot=dialog-body]{min-height:0;overflow:auto;overscroll-behavior:contain;flex:1 1 auto;display:grid;gap:16px;padding:2px;}
 .panther-dom-dialog form>[data-slot=dialog-footer]{flex:0 0 auto;}
+
+/* Shared Field layout: equal label spacing and full-width registry controls. */
+.panther-dom-dialog form>[data-field-group=true]{display:flex;flex-direction:column;gap:24px;}
+.panther-dom-dialog [data-slot=field]{display:flex;flex-direction:column;gap:8px;margin:0;min-width:0;width:100%;}
+.panther-dom-dialog [data-slot=field-label]{font-size:14px;font-weight:500;line-height:20px;margin:0;}
+.panther-dom-dialog [data-slot=field] :is(input:not([type=checkbox]):not([type=radio]),textarea){box-sizing:border-box;width:100%;padding:8px 12px;font-size:14px;line-height:20px;border:1px solid var(--input);border-radius:6px;background:var(--background);color:var(--foreground);box-shadow:0 1px 2px rgb(0 0 0 / .05);}
+.panther-dom-dialog [data-slot=field] input:not([type=checkbox]):not([type=radio]){height:36px;min-height:36px;}
+.panther-dom-dialog [data-slot=field] textarea{height:auto;min-height:100px;resize:vertical;}
+.panther-dom-dialog [data-slot=field] .panther-select-trigger{width:100%;height:36px;}
+.scene-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+.scene-header-actions form{display:contents;}
+.scene-header-actions [hidden]{display:none!important;}
+.scene-editor-heading{flex-wrap:wrap;gap:12px;}
+.scene-editor-heading h3{flex:1;min-width:120px;}
+.scene-header-actions button{height:36px;min-height:36px;}
+.scene-order-row .scene-card::after{content:"";position:absolute;inset:0;border-radius:8px;}
+.scene-order-row .scene-drag-handle{position:relative;z-index:1;}
+.scene-order-row:has(.scene-card:hover){background:var(--accent);}
+.scene-order-row:has(.scene-card:focus-visible){outline:2px solid var(--ring);outline-offset:2px;}

@@ -7,7 +7,7 @@ import {Button} from './components/ui/button.jsx';
 
 function Scene({scene,index,selected,disabled,onSelect}) {
  const {attributes,listeners,setNodeRef,setActivatorNodeRef,transform,transition,isDragging}=useSortable({id:scene.id,disabled});
- return <div ref={setNodeRef} className="scene-order-row" data-dragging={isDragging?'true':undefined} style={{transform:CSS.Transform.toString(transform),transition}}>
+ return <div ref={setNodeRef} className="scene-order-row cursor-pointer" onClick={event=>{if(!isDragging&&!event.target.closest('button'))onSelect(scene);}} data-dragging={isDragging?'true':undefined} style={{transform:CSS.Transform.toString(transform),transition}}>
   <Button variant="ghost" size="icon" ref={setActivatorNodeRef} type="button" className="scene-drag-handle" aria-label={`Reorder ${scene.name}`} title="Drag to reorder" disabled={disabled} {...attributes} {...listeners}><GripVertical size={16} aria-hidden="true"/></Button>
   <Button variant="ghost" type="button" className="scene-card" aria-label={scene.name} aria-pressed={selected} data-order={`${index+1}.`} onClick={()=>onSelect(scene)}>{scene.name}</Button>
   <small>{scene.selectedOutputKey?'Ready':scene.type&&scene.type!=='general'?scene.type[0].toUpperCase()+scene.type.slice(1):'Not rendered'}</small>

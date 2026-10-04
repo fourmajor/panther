@@ -2,6 +2,7 @@ import React,{useLayoutEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {X} from 'lucide-react';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from './components/ui/dialog.jsx';
+import {styleFormFields} from './components/ui/field.jsx';
 import {buttonVariants} from './components/ui/button.jsx';
 const footerSelector='form > .model-control-row, form > .episode-form-actions, form > .editorial-form-actions, form > .local-generation-actions';
 function dedicatedClose(node){return [...node.querySelectorAll('button')].filter(button=>/^Close(?: |$)/.test(button.getAttribute('aria-label')||'')||(/^Close(?: |$)/.test(button.textContent.trim())&&(button.closest('header,.preview-header,.room-dialog-heading')||button.id==='style-preview-close')));}
@@ -17,7 +18,7 @@ function DOMContents({node,container,closes}) {
       if(form?.tagName==='FORM'&&!form.querySelector(':scope > [data-slot=dialog-body]')){
         const body=document.createElement('div');body.dataset.slot='dialog-body';body.className=form.className;
         for(const child of [...form.children])if(child!==footer&&!child.matches('header,h1,h2,h3'))body.append(child);
-        form.insertBefore(body,footer);
+        form.insertBefore(body,footer);styleFormFields(body);
       }
       for(const button of footer.querySelectorAll(':scope > button')){
         const cancel=/^(Cancel|Close)$/.test(button.textContent.trim());

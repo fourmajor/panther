@@ -280,13 +280,6 @@ class Store:
             previous = json.loads(row[0]) if row else None
             if body.get("expectedRevision") != (previous["revision"] if previous else None):
                 raise FileExistsError("This record changed. Reopen it before saving.")
-            if kind == "scene" and previous:
-                for job_kind in ("scene-render", "editorial"):
-                    for job_row in db.execute("SELECT payload FROM records WHERE kind=? AND game=?", (job_kind, game)):
-                        active = json.loads(job_row[0])
-                        ref = active.get("sceneRef") or active.get("creation", {}).get("sceneRef") or {}
-                        if ref.get("episodeId") == episode_id and ref.get("sceneId") == identity and active.get("status") in {"QUEUED", "SUBMITTED", "RUNNING", "PROCESSING", "COMPOSING", "IN_QUEUE", "IN_PROGRESS"}:
-                            raise FileExistsError("This scene is generating. You can edit it when generation finishes.")
             record = {"schemaVersion": 1, "entityType": "Episode" if kind == "episode" else "Scene", "gameId": game, "id": identity, "name": body["name"].strip(), "description": body.get("description", "").strip(), "revision": uuid.uuid4().hex, "updatedAt": datetime.now(timezone.utc).isoformat()}
             record["createdAt"] = previous["createdAt"] if previous else record["updatedAt"]
             if kind == "episode":

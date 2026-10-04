@@ -93,7 +93,8 @@ def download(url, target):
 def process(store, identity, root, fal, *, downloader=download, media_probe=probe, prompt_client=None, record_kind="scene-render"):
     standalone = record_kind == "asset-generation"
     job = store.get(record_kind, identity)
-    if not job or job.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'}:
+    if not job or (job.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'}
+                   and not (job.get('status') == 'UNKNOWN' and job.get('requestId') and job.get('urls'))):
         return False
     try:
         if not re.fullmatch(r'[a-f0-9]{64}', identity):
@@ -166,7 +167,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                 pin = job['mapPin']
                 image = verified(store, pin, job['gameId'])
                 body[v.PROFILES[model]['imageField']] = 'data:' + pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
-                body['prompt'] = 'Treat the input image as a map. Preserve its geography, labels, framing and visual style. Animate a red dot at the initial location and red footprints following the travelers along a clear route to the destination. ' + prompt
+                body['prompt'] = 'Treat the input image as a map. Preserve its geography, labels and visual style. Follow the requested camera movement and action. ' + prompt
             retain(folder / 'request.json', json.dumps({'endpoint': endpoint, 'payload': body, 'sceneRef': ref}, ensure_ascii=False).encode())
             job.update(status='RUNNING', dispatchStarted=now(), model=model, endpoint=endpoint, message=None)
             store.put(record_kind, identity, job, job['gameId'])
@@ -253,7 +254,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         return True
     except Exception as exc:
         current = store.get(record_kind, identity)
-        if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'} or any(current.get(field) != job.get(field) for field in ('prompt', 'model', 'sourceKeys', 'inputRefs', 'imagePin', 'sceneRef'))):
+        if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN'} or any(current.get(field) != job.get(field) for field in ('prompt', 'model', 'sourceKeys', 'inputRefs', 'imagePin', 'sceneRef'))):
             return False  # Preserve concurrent cancellation or a changed immutable request.
         # A failed GET/download can resume the known queue request without another POST.
         if job.get('requestId') and job.get('urls') and not isinstance(exc, (ValueError, v.TerminalModelRejection)):

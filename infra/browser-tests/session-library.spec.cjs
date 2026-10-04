@@ -77,21 +77,21 @@ for(const width of [1280,390])test(`episode-owned scenes can be created without 
  const workspace=page.locator('#episode-workspace');await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
  expect(writes).toHaveLength(2);expect(writes[1].episodeId).toBe(writes[0].id);expect(writes[1].type).toBe('action');expect(writes[1]).not.toHaveProperty('assetKeys');
  await expect(sceneDialog).toHaveCount(0);await expect(workspace.getByRole('button',{name:'Generate video',exact:true})).toHaveCount(0);
- await expect(workspace.locator('#scene-video-composer')).toBeVisible();
+ await expect(workspace.locator('[data-scene-generate]')).toBeVisible();
  await expect(workspace.locator('.episode-cards')).toBeHidden();await expect(workspace.locator('.episode-scenes-panel').getByRole('button',{name:'Lanterns on the river',exact:true})).toBeVisible();
- const toolbarActions=[workspace.getByRole('button',{name:'Create Scene',exact:true}),workspace.getByRole('button',{name:'Edit episode',exact:true}),workspace.getByRole('button',{name:'Edit scene',exact:true})];
+ const toolbarActions=[workspace.getByRole('button',{name:'Create Scene',exact:true}),workspace.getByRole('button',{name:'Edit episode',exact:true}),workspace.getByRole('button',{name:'Edit',exact:true})];
  const actionBoxes=[];for(const action of toolbarActions){await expect(action).toBeVisible();await expect(action).toBeInViewport();const bounds=await action.boundingBox();expect(bounds.height).toBeLessThanOrEqual(48);actionBoxes.push(bounds);expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
  expect(Math.max(...actionBoxes.map(box=>box.height))-Math.min(...actionBoxes.map(box=>box.height))).toBeLessThanOrEqual(2);
  const list=await workspace.locator('.episode-scenes-panel').boundingBox(),focused=await workspace.locator('.episode-scene-panel').boundingBox();
  if(width>800){expect(list.x+list.width).toBeLessThanOrEqual(focused.x);expect(Math.max(list.y,focused.y)).toBeLessThan(Math.min(list.y+list.height,focused.y+focused.height));}else expect(list.y+list.height).toBeLessThanOrEqual(focused.y);
  const back=workspace.getByRole('button',{name:'← Episodes',exact:true});await expect(back).toBeVisible();
- await expect(workspace.locator('textarea')).toHaveCount(0);await expect(workspace.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeVisible();
+ await expect(workspace.locator('textarea')).toHaveCount(0);await expect(workspace.locator('[data-scene-generate]')).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:test.info().outputPath(`episodes-scenes-${width}.png`),fullPage:true});
  await page.reload();await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
  await workspace.getByRole('button',{name:'← Episodes',exact:true}).click();await expect(workspace.locator('.episode-cards')).toBeVisible();await expect(page.getByLabel('Search episodes',{exact:true})).toBeVisible();await expect(page).not.toHaveURL(/episode=/);
  await workspace.getByRole('button',{name:'The crossing',exact:true}).click();await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
- await workspace.getByRole('button',{name:'Edit scene',exact:true}).click();const editDialog=page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Scene editor'})});await editDialog.getByLabel('Scene title',{exact:true}).fill('Unsaved title');await editDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(editDialog).toHaveCount(0);expect(writes).toHaveLength(2);await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
+ await workspace.getByRole('button',{name:'Edit',exact:true}).click();const editDialog=page.getByRole('dialog').filter({has:page.getByRole('form',{name:'Scene editor'})});await editDialog.getByLabel('Scene title',{exact:true}).fill('Unsaved title');await editDialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(editDialog).toHaveCount(0);expect(writes).toHaveLength(2);await expect(workspace.getByRole('heading',{name:'Lanterns on the river',exact:true})).toBeVisible();
 });
 for(const status of [403,503])test(`episode creation remains available when finished videos fail with ${status}`,async({page})=>{
  await fixture(page);await page.route(`${api}/assets*`,route=>route.fulfill({status,headers,json:{error:'Synthetic catalog failure'}}));

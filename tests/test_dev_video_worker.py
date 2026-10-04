@@ -152,3 +152,17 @@ def test_standalone_image_model_pins_initial_frame_and_lineage(tmp_path, monkeyp
     metadata, _ = store.object(store.get('asset-generation', identity)['assetKey'])
     assert key in metadata['sourceKeys']
     assert metadata['extra']['generation']['model'] == 'Veo 3.1 Fast'
+
+
+def test_unknown_with_verified_queue_identity_resumes_without_post(tmp_path):
+    store, identity = queued(tmp_path)
+    client = Fal(pending=True)
+    root = worker.private_root(tmp_path / 'work')
+    worker.process(store, identity, root, client)
+    job = store.get('scene-render', identity)
+    job['status'] = 'UNKNOWN'
+    store.put('scene-render', identity, job, 'fictional')
+    client.pending = False
+    assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    assert len([call for call in client.calls if call[0] == 'POST']) == 1
+    assert store.get('scene-render', identity)['status'] == 'DONE'

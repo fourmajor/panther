@@ -471,18 +471,19 @@ def test_generation_capabilities_require_fresh_running_services(tmp_path, monkey
 
 
 @pytest.mark.parametrize('status', ['QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'])
-def test_scene_cannot_change_during_background_generation(tmp_path, status):
+def test_scene_edits_preserve_pinned_background_generation(tmp_path, status):
     store = dev.Store(tmp_path / 'locked.sqlite')
     store.seed()
     store.save_story_entity('episode', {'gameId': 'preview-campaign', 'id': 'episode-one', 'name': 'Gate', 'description': '', 'expectedRevision': None, 'operationId': 'a' * 32})
     body = {'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'id': 'scene-one', 'name': 'The gate opens', 'description': '', 'type': 'opener', 'expectedRevision': None, 'operationId': 'b' * 32}
     scene = store.save_story_entity('scene', body)['record']
     store.put('scene-render', 'job-one', {'jobId': 'job-one', 'gameId': 'preview-campaign', 'sceneRef': {'episodeId': 'episode-one', 'sceneId': 'scene-one', 'revision': scene['revision']}, 'status': status}, 'preview-campaign')
+    changed = store.save_story_entity('scene', {**body, 'name': 'Changed', 'expectedRevision': scene['revision'], 'operationId': 'c' * 32})['record']
+    assert changed['revision'] != scene['revision']
+    assert store.get('scene-history', 'preview-campaign:episode-one:scene-one:' + scene['revision'])['record'] == scene
+    assert store.get('scene-render', 'job-one')['sceneRef']['revision'] == scene['revision']
     with pytest.raises(FileExistsError, match='generating'):
-        store.save_story_entity('scene', {**body, 'name': 'Changed', 'expectedRevision': scene['revision'], 'operationId': 'c' * 32})
-    assert store.get('scene', 'preview-campaign:episode-one:scene-one') == scene
-    with pytest.raises(FileExistsError, match='generating'):
-        store.submit_scene_render({'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'sceneId': 'scene-one', 'revision': scene['revision'], 'operationId': 'd' * 32})
+        store.submit_scene_render({'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'sceneId': 'scene-one', 'revision': changed['revision'], 'operationId': 'd' * 32})
     assert len(store.list('scene-render', 'preview-campaign')) == 1
 
 
