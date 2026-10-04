@@ -92,6 +92,8 @@ def video_prompt(store, job, folder, verifier, client=None):
     if job.get('videoPromptPolicy') == 2 and not style_id:
         raise ValueError('Choose a game visual style before generating')
     style = BY_ID.get(style_id, {}).get('prompt', '')
+    if job.get('sceneType') == 'map':
+        style = 'Animate the supplied cartographic map in its existing visual style. Preserve geography, labels and symbols; do not turn it into a live-action landscape.'
     ids = [character['id'] for character in characters]
     if len(ids) != len(set(ids)):
         raise ValueError('Character identities must be unique')
@@ -143,6 +145,8 @@ def video_prompt(store, job, folder, verifier, client=None):
         'For text/reference-to-video, establish composition explicitly. Identity portraits supply appearance, never override the selected style. '
         'H3: explicit actor/action order, observable emotion and sounds. Veo: subject, action, environment, camera, lighting and atmosphere. '
         'Kling: one continuous shot, clear actor/prop binding; no automatic multi-shot expansion. '
+        'A map shot animates the actual cartographic image, preserving geography/labels and its existing visual treatment, '
+        'not a live-action landscape. Check map-frame fidelity against that map treatment, not the game live-action character style. '
         'sourceFacts cite exact sourceKey and zero-based segmentIndex from transcripts; return [] without transcript facts. '
         'Do not infer speaker identities or add modern clothing/props. Preserve uncertainty. Do not invent missing setting facts.',
         {'direction': job['prompt'], 'model': job.get('model'), 'sceneType': job.get('sceneType'),

@@ -113,3 +113,13 @@ def test_visual_analysis_gets_scaled_pixels_and_rejects_incompatible_frame(tmp_p
     response.value.update(frameCompatible=True, portraitsCompatible=False, reason='The portrait has different ancestry.')
     with pytest.raises(ValueError, match='matching official portraits.*ancestry'):
         video_prompt(store, job, tmp_path, verified, SimpleNamespace(responses=response))
+
+
+def test_map_treatment_does_not_force_cartography_into_live_action(tmp_path):
+    store = Store(tmp_path / 'private.sqlite')
+    response = Responses({'renderPrompt': 'Track along the existing river.', 'sourceFacts': [], 'uncertainties': []})
+    value, _ = video_prompt(store, {'gameId': 'fictional', 'prompt': 'Follow the river', 'sceneType': 'map',
+        'sceneContext': {'game': {'visualStyle': 'photorealistic'}}}, tmp_path, verified, SimpleNamespace(responses=response))
+    assert 'cartographic map in its existing visual style' in value['renderPrompt']
+    assert 'Photorealistic live-action imagery' not in value['renderPrompt']
+    assert value['visualStyle'] == 'photorealistic'  # Preserve the actual game snapshot.
