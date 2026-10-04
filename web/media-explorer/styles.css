@@ -1721,6 +1721,8 @@ body { padding-bottom:0; }
 .approval-card h3 { flex:1;min-width:12rem;margin:0;overflow-wrap:anywhere; }
 .approval-card .eyebrow { width:100%;margin:0; }
 .approval-readiness { flex-basis:100%;color:var(--muted);margin:0; }
+/* An exact storyboard link opens review, not a competing episode-creation screen. */
+#session-library:has(#movie-workspace:not([hidden])) :is(#episode-workspace,#editorial-video-composer,#episode-create-action) { display:none; }
 .approval-card a { display:inline-flex;text-decoration:none;min-height:44px;align-items:center;padding:.7rem 1rem; }
 .workspace-home { margin:2rem 0 4rem; }
 .workspace-home h2 { font-size:clamp(1.7rem,3vw,3rem);line-height:1.15; }
