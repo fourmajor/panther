@@ -171,3 +171,47 @@ def test_flow_preserves_parallel_branches_and_independent_tasks(workshop):
     assert not any(edge["from"].startswith("novel-") and edge["to"].startswith("video-") for edge in graph["edges"])
     assert m.flow({"kind": "video-generation", "stages": stages[:2]})["edges"] == []
     assert m.flow({"kind": "video-production", "stages": stages[:2]})["edges"] == [{"from": "context", "to": "corrected-transcript"}]
+
+
+def test_hierarchy_exact_totals_status_changes_and_foreign_type_cursor(workshop):
+    m = workshop
+    for identity, state in [('a' * 64, 'done'), ('b' * 64, 'failed')]:
+        body = {'kind': 'session-finalization', 'gameId': 'synthetic-game', 'runId': identity, 'title': 'Fictional run', 'stages': [{'id': 'prepare', 'label': 'Prepare', 'status': state}], 'status': state, 'expectedRevision': None}
+        unpack(request(m, 'POST /workflow-progress', body=body, username='example-worker'))
+    ready(m)
+    assert request(m, query={'gameId': 'synthetic-game', 'view': 'types'})['statusCode'] == 503
+    cursor = None
+    while True:
+        result = unpack(request(m, 'POST /workflows/rebuild', body={'kind': 'hierarchy', 'cursor': cursor}, username='example-worker', rebuild=True))
+        cursor = result['cursor']
+        if not cursor:
+            break
+    types = unpack(request(m, query={'gameId': 'synthetic-game', 'view': 'types'}))['types']
+    summary = next(t for t in types if t['id'] == 'session-finalization')
+    assert summary['total'] == 2 and summary['successful'] == summary['failed'] == 1
+    item = m.get(m.INDEX, 'GAME#synthetic-game', 'session-finalization~' + 'b' * 64)
+    changed = {k: v for k, v in item.items() if k not in {'pk', 'sk', 'revision'}}
+    changed['status'] = 'done'
+    m.store(changed, item)
+    summary = unpack(request(m, query={'gameId': 'synthetic-game', 'view': 'types'}))['types'][0]
+    assert summary['total'] == summary['successful'] == 2 and summary['failed'] == 0
+    runs = unpack(request(m, query={'gameId': 'synthetic-game', 'view': 'runs', 'type': 'session-finalization'}))['workflows']
+    assert len(runs) == 2
+    wrong = m.encode({'pk': 'GAME#synthetic-game', 'sk': 'editorial~other'})
+    assert request(m, query={'gameId': 'synthetic-game', 'view': 'runs', 'type': 'session-finalization', 'cursor': wrong})['statusCode'] == 400
+    assert unpack(request(m, query={'gameId': 'another-game', 'view': 'types'}))['types'] == []
+
+
+def test_hierarchy_normalizes_iso_and_decimal_timestamps(workshop):
+    from decimal import Decimal
+    import workflow_hierarchy
+
+    result = workflow_hierarchy.summary('editorial', [
+        {'status': 'done', 'createdAt': '2026-10-03T01:00:00Z',
+         'reportedAt': '2026-10-03T02:00:00Z', 'observedAt': 9999999999},
+        {'status': 'failed', 'createdAt': Decimal('1'), 'reportedAt': Decimal('2')},
+    ])
+    assert result['total'] == 2
+    assert result['successful'] == result['failed'] == 1
+    assert result['latestRunAt'] == 1790989200
+    assert result['latestActivityAt'] == 1790992800

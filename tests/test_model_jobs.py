@@ -429,3 +429,49 @@ def test_expiration_preserves_success_and_releases_failed_publication_lock(broke
     )
     broker.handler({"operation": "expire", "jobId": job["jobId"]}, None)
     assert broker.get_job(job["jobId"])["status"] == "PUBLISHED"
+
+
+def test_reference_set_submission_blocks_archived_inputs_and_retains_active_pins(broker):
+    m = broker
+    body = manifest(m)
+    import asset_archive
+    db = asset_archive.db()
+    key = body['views']['front']
+    db.put_item(Item={**asset_archive.archive_key('test-game', key), 'schemaVersion': 1})
+    rejected = request(m, 'POST /model-reference-sets', body)
+    assert rejected['statusCode'] != 200
+    assert not m.table.query(KeyConditionExpression=__import__('boto3').dynamodb.conditions.Key('pk').eq('JOBS'))['Items']
+    db.delete_item(Key=asset_archive.archive_key('test-game', key))
+    job = unpack(request(m, 'POST /model-reference-sets', body))
+    row = db.get_item(Key={'pk': 'asset-references-v1#test-game', 'sk': 'model-job:' + job['jobId']})['Item']
+    assert set(body['views'].values()) <= set(row['keys'])
+    assert asset_archive.current_references('test-game', key)
+    m.table.update_item(Key={'pk': 'JOBS', 'sk': job['jobId']}, UpdateExpression='SET #status=:done', ExpressionAttributeNames={'#status': 'status'}, ExpressionAttributeValues={':done': 'PUBLISHED'})
+    assert not asset_archive.current_references('test-game', key)
+
+
+def test_job_reference_migration_uses_exact_stored_pins_and_rejects_unknown_inputs(broker):
+    m = broker
+    body = manifest(m)
+    job = unpack(request(m, 'POST /model-reference-sets', body))
+    import asset_job_references
+    import asset_archive
+    saved = m.get_job(job['jobId'])
+    snapshot = asset_job_references.job_reference('test-game', saved, m.table.name, 'model-job')
+    projected = asset_archive.db().get_item(Key={'pk': 'asset-references-v1#test-game', 'sk': snapshot['owner']})['Item']
+    assert snapshot['keys'] == projected['keys']
+    assert snapshot['active'] == projected['active']
+    assert asset_job_references.job_reference('different-game', saved, m.table.name, 'model-job') is None
+    broken = {**saved, 'views': {'front': {'key': 'games/foreign/assets/image/original/a.png'}}}
+    with pytest.raises(ValueError, match='another game'):
+        asset_job_references.job_reference('test-game', broken, m.table.name, 'model-job')
+
+
+def test_job_reference_migration_never_activates_partial_inventory():
+    import asset_job_references
+    class PartialTable:
+        def query(self, **kwargs):
+            assert kwargs['ConsistentRead'] is True
+            return {'Items': [], 'LastEvaluatedKey': {'pk': 'JOBS', 'sk': 'remaining'}}
+    with pytest.raises(RuntimeError, match='bounded inventory'):
+        asset_job_references.rows(PartialTable())

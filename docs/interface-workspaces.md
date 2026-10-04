@@ -1,28 +1,14 @@
-# Interface workspaces
+# Storyboard review navigation
 
-The original Studio stays available. Design Atlas previews five alternative
-home architectures without reloading the route or remounting editors, recording
-controls, playback, or model viewers. The saved selection is browser-local and
-independent of a game's generated-media style.
-
-| Workspace | Home structure | Interaction |
-| --- | --- | --- |
-| Chronicle | Facing contents and reading pages | Select a campaign chapter |
-| Cinema | Featured screening doorway and horizontal shelves | Browse recent media |
-| Production Board | Source, Make and Watch lanes | Follow the production path |
-| Pinboard | Asymmetric connected collections and bottom launch strip | Explore numbered notes |
-| Explorer | Searchable collection directory and inspector | Filter, select and inspect |
-
-These are alternative navigation homes, not five independent implementations of
-the same editors. Existing detail pages retain their shared behavior and each
-shell's navigation. Home links are projections of the same bounded recent data.
-Switching designs must preserve unsaved inputs and must not fetch game data.
+The application uses the shared stable layout. Design Atlas and alternate
+home shells were removed by the merged interface changes; they are not
+restored by storyboard navigation.
 
 ## Storyboard approval
 
-Each game's Dashboard, Sessions, Videos and Workflows expose **Review & approve
+Each game's Dashboard, Sessions, Episodes and Workflows expose **Review & approve
 storyboards**. Focused readers and editors retain their uncluttered layout. The dashboard and
-Videos list prepared `movie-review-plan` assets with session identity, a direct
+Episodes list prepared `movie-review-plan` assets with session identity, a direct
 review link, and the server's current approval/readiness state. A prepared plan
 is not automatically an unapproved or ready plan. Unknown status is explicit.
 
@@ -34,7 +20,6 @@ storyboard. Recent session preparation runs appear separately, including explici
 failure and a direct run link. Missing progress remains unreported, not zero.
 The existing exact-revision review and spending guards are unchanged.
 
-Browser regression checks cover all six homes at desktop and mobile sizes,
-different structural elements, collection selection, game-scoped review links,
-preference comparison/cancellation, and preservation of unsaved edits. Inspect
+Browser regression checks cover desktop and mobile first paint, game-scoped
+review links, preparation status, and focused storyboard detail pages. Inspect
 their rendered screenshots before merging visual changes.

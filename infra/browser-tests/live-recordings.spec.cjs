@@ -56,7 +56,7 @@ for (const width of [1280,390]) test(`provisional player names in live and earli
     {start:6,end:7,text:'Foreign identity remains unknown.',playerId:'foreign-player',attribution:'provisional-enrolled-voice'},
   ];
   await page.goto(`${origin}/games/test-game/transcripts`);
-  await page.getByRole('button',{name:/Open transcript for/}).first().click();
+  await page.getByRole('button',{name:'Open live transcript',exact:true}).first().click();
   const panel = page.getByRole('region',{name:'Live transcript',exact:true});
   await expect(panel.getByText('Alex Example (provisional):', {exact:true})).toBeVisible();
   await expect(panel.getByText('Unknown player (provisional):', {exact:true})).toBeVisible();
@@ -72,7 +72,7 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   const errors = []; page.on('pageerror', e=>errors.push(e.message));
   await page.goto(`${origin}/games/test-game/transcripts`);
   const badge = page.locator('#recording-badge'), panel = page.getByRole('region',{name:'Live transcript',exact:true});
-  await expect(panel).toBeHidden();await page.getByRole('button',{name:/Open transcript for/}).first().click();
+  await expect(panel).toBeHidden();await page.getByRole('button',{name:'Open live transcript',exact:true}).first().click();
   await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
   await expect(panel).toBeVisible(); await expect(panel).toContainText('The synthetic lantern is lit.');
   await expect(panel).not.toContainText('player labels are tentative');
@@ -88,21 +88,22 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
   expect(await badge.locator('.recording-dot').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
   feed.records[0].segments.push({start:4,end:8,approximateTiming:true,text:'<img src=x onerror=window.attacked=true> Synthetic second line.'});
   await page.reload();
-  await page.getByRole('button',{name:/Open transcript for/}).first().click();
+  await page.getByRole('button',{name:'Open live transcript',exact:true}).first().click();
   await expect(panel).toContainText('Synthetic second line.'); await expect(panel.locator('img')).toHaveCount(0);
   await expect(panel.locator('time').last()).toHaveText('~0:04');
   expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
   feed.records[0].segments.push({start:30,end:60,kind:'preview-gap',text:'Must not appear as spoken dialogue.'});
   feed.records[0].segments.push({start:61,end:65,text:'Valid speech after the gap.'});
   await page.reload();
-  await page.getByRole('button',{name:/Open transcript for/}).first().click();
+  await page.getByRole('button',{name:'Open live transcript',exact:true}).first().click();
   const gap = panel.getByRole('note');
   await expect(gap).toBeVisible(); await expect(gap).toContainText('Preview gap: invalid recognizer output');
   await expect(gap).toContainText('not silence');
   await expect(panel).not.toContainText('Must not appear as spoken dialogue');
   await expect(panel).toContainText('Valid speech after the gap.');
   await expect(badge).toHaveText('Recording in progress');
-  const gapBox = await gap.boundingBox();
+  let gapBox;
+  await expect.poll(async()=>{gapBox=await gap.boundingBox();return Boolean(gapBox);}).toBe(true);
   expect(gapBox.x).toBeGreaterThanOrEqual(0); expect(gapBox.x+gapBox.width).toBeLessThanOrEqual(width);
   // History controls increase panel height: scroll as a reader would, not by forced click.
   await page.mouse.wheel(0, Math.max(0,gapBox.y+gapBox.height-900));
@@ -127,7 +128,7 @@ for (const width of [1280,390]) test(`live transcript, accessible red badge and 
 test('automatic feed polling, cross-game isolation and sign-out cleanup', async({page}) => {
   const feed = await fixture(page); await page.clock.install();
   await page.goto(`${origin}/games/test-game/audio`);
-  await expect(page.locator('#recording-badge')).toHaveText('Recording in progress');await page.getByRole('button',{name:/Open transcript for/}).first().click();
+  await expect(page.locator('#recording-badge')).toHaveText('Recording in progress');await page.getByRole('button',{name:'Open live transcript',exact:true}).first().click();
   feed.records[0].segments.push({start:10,end:12,text:'Arrived automatically.'});
   await page.clock.fastForward(21000);
   await expect(page.locator('#live-recordings')).toContainText('Arrived automatically.');
@@ -152,7 +153,7 @@ for (const width of [1280,390]) test(`full live history beginning, paging and li
   feed.chunks = Array.from({length:45},(_,i)=>({partIndex:i,start:i*30,end:(i+1)*30,
     segments:[{start:i*30,end:i*30+2,text:`Historical speech ${i}.`}]}));
   await page.goto(`${origin}/games/test-game/transcripts`);
-  await page.getByRole('button',{name:/Open transcript for/}).first().click();
+  await page.getByRole('button',{name:'Open live transcript',exact:true}).first().click();
   const panel = page.getByRole('region',{name:'Live transcript',exact:true});
   await expect(panel).toContainText('Historical speech 44.');
   await expect(panel).not.toContainText('Historical speech 0.');
@@ -209,7 +210,7 @@ for (const width of [1280,390]) test(`recording badge stays in recording pages a
   await expect(badge).toBeHidden();
   await page.getByRole('link',{name:'Sessions',exact:true}).click();
   await expect(badge).toBeVisible(); await expect(badge).toHaveText('Recording in progress');
-  for (const section of ['Dashboard','Settings','Characters','Videos','Assets']) {
+  for (const section of ['Dashboard','Settings','Characters','Episodes','Assets']) {
     await page.getByRole('link',{name:section,exact:true}).click();
     await expect(badge).toBeHidden();
   }

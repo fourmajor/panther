@@ -183,6 +183,8 @@ def submit(body, claims):
             {":job": job_id, **({":old": head["jobId"]} if head else {})}
         ),
     }
+    import asset_archive
+    current_sources = list(views.values()) + [value for key, value in pin.items() if key.endswith("Key") and value]
     # The stream is the durable outbox: no lost job if the HTTP response or StartExecution fails.
     raw_db.transact_write_items(
         TransactItems=[
@@ -202,6 +204,8 @@ def submit(body, claims):
                 {"revision": body["expectedRevision"]},
             ),
             *source_guards,
+            *asset_archive.reference_writes(game, "model-job:" + job_id, current_sources,
+                active={"table": table.name, "pk": "JOBS", "sk": job_id}),
         ]
     )
     return response(200, public(job))

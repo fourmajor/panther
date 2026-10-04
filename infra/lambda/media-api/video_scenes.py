@@ -13,6 +13,7 @@ from access_policy import authorized
 import browse_index
 import asset_library
 import asset_metadata
+import scene_inputs
 import organization_records as records
 from novel_library import slug, text
 
@@ -237,7 +238,7 @@ def pin_episode(game, reference):
 def save(media, body, claims, kind):
     common = {"gameId", "id", "name", "description", "expectedRevision", "operationId"}
     allowed = common | (
-        {"episodeId", "type", "selectedOutputKey", "mapAssetKey"}
+        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs"}
         if kind == "scene"
         else {"sceneIds"}
     )
@@ -298,6 +299,21 @@ def save(media, body, claims, kind):
             ),
             selectedOutputSceneRevision=None,
         )
+        inputs = scene_inputs.normalize(body.get("generationInputs", (previous or {}).get("generationInputs")), game)
+        for character_id in inputs["characterIds"]:
+            character = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"]).get_item(
+                Key={"pk": f"GAME#{game}", "sk": f"CHARACTER#{character_id}"}, ConsistentRead=True
+            ).get("Item")
+            if not character or character.get("gameId") != game or character.get("id") != character_id:
+                raise ValueError("Choose a character from this game")
+        for source_key in scene_inputs.asset_keys({"generationInputs": inputs}):
+            pointer = {"pk": browse_index.partition(game, "all"), "sk": source_key}
+            source_row = db.get_item(Key=pointer, ConsistentRead=True).get("Item")
+            source = records.decode(source_row)
+            if not source or source.get("key") != source_key or asset_metadata.internal(source.get("kind", "")) or source.get("metadata", {}).get("extra", {}).get("relationshipRole") in {"processing", "intermediate", "internal"}:
+                raise ValueError("A selected source is unavailable")
+            guards.append(guard(db, pointer, "observed", source_row["observed"]))
+        record["generationInputs"] = inputs
         map_key = body.get("mapAssetKey", (previous or {}).get("mapAssetKey"))
         if "mapAssetKey" in body or "mapAssetKey" in (previous or {}):
             record["mapAssetKey"] = map_key
@@ -392,6 +408,16 @@ def save(media, body, claims, kind):
     record["createdAt"] = (
         previous["createdAt"] if previous else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     )
+    if record["entityType"] == "Scene":
+        import asset_archive
+
+        guards.extend(
+            asset_archive.reference_writes(
+                game,
+                "scene:{}:{}".format(record["episodeId"], identity),
+                [record.get("mapAssetKey"), record.get("selectedOutputKey"), *scene_inputs.asset_keys(record)],
+            )
+        )
     response = records.commit(db, PREFIX, kind, record, guarded, claims, fingerprint, guards, media)
     if response["statusCode"] == 200 and parent_record:
         payload = json.loads(response["body"])

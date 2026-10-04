@@ -29,7 +29,7 @@ def novel(editorial, monkeypatch):  # noqa: F811
     module = importlib.import_module("novel")
     monkeypatch.setattr(module.browse_index, "boto3", boto3)
     monkeypatch.setattr(module.browse_index, "ClientError", ClientError)
-    module.browse_index.table().put_item(Item={"pk": "v3#catalog", "sk": "ready"})
+    module.browse_index.table().put_item(Item={"pk": "v4#catalog", "sk": "ready"})
     return module
 
 
@@ -179,7 +179,7 @@ def test_index_upgrade_and_incomplete_status_reads_fail_closed(novel, monkeypatc
     completed(novel)
     monkeypatch.setattr(novel, "committed_records", lambda _: (_ for _ in ()).throw(RuntimeError()))
     assert request(novel, "GET /novel", query={"gameId": "test-game"})["statusCode"] == 503
-    novel.browse_index.table().delete_item(Key={"pk": "v3#catalog", "sk": "ready"})
+    novel.browse_index.table().delete_item(Key={"pk": "v4#catalog", "sk": "ready"})
     assert request(novel, "GET /novel", query={"gameId": "test-game"})["statusCode"] == 503
 
 

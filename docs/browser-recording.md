@@ -44,19 +44,36 @@ Retained browser originals remain available for a later successful save.
 
 Deploy with CDK context `browserTranscriptionSecretArn` pointing to an existing **us-west-2**
 Secrets Manager secret containing the API key as a plain string or `{"OPENAI_API_KEY":"…"}`.
-Only the transcription worker can read it; browser configuration contains no key. CDK owns the
+Only the transcription worker and authenticated credential broker can read it. The long-lived key never reaches the browser. The broker issues a 60-second Realtime credential; it is used only in memory and is never persisted or logged. Credentials can initialize sessions until expiry; provider sessions may continue afterward. CDK owns the
 integration, queues, IAM and on-demand state. A configured ARN enables the UI, but an invalid
-or unfunded key can still fail at the provider. Without that setting, recording and backup
-remain available and transcription controls are disabled. Preview CDK changes in the correct
+or unfunded key can still fail at the provider. Without that setting, new browser recording is disabled with a live-transcription availability
+notice; existing retained audio can still be recovered and saved. Preview CDK changes in the correct
 Panther account before deploying; do not create infrastructure through ad hoc AWS writes.
 
 This user-authorized feature is a narrow paid OpenAI API integration. It is not a fallback
 for the existing subscription-backed editorial/model workflows or local CLI ASR.
 
-Live transcription defaults on when configured. One click disables new live requests; already
-submitted work can finish. Live requests use completed 15-second parts and `gpt-transcribe`, so
-results arrive after a part closes and provider processing completes. Live output is provisional.
-Stop submits a **separate full pass**, regardless of the live toggle, using contiguous windows
+Record opens a recording dialog with Pause, Resume and Stop. Closing the dialog keeps
+capture running; the header indicator reopens it. Paused time is excluded from recorded audio.
+Live transcription uses OpenAI's dedicated `gpt-live-transcribe` Realtime model. A separate
+24 kHz PCM side channel sends audio roughly every 100 ms, without altering archived 32 kHz WAV
+parts. Incremental provider deltas appear while speech arrives, before a 15-second archive part
+closes. Session configuration pins English (`languages: ["en"]`), low delay and far-field noise
+reduction for room microphones. Client voice activity detection commits turns; server VAD is
+disabled (`turn_detection: null`). Silence is not submitted as invented speech. These hints reduce
+noise errors but do not guarantee perfect recognition. Live output remains provisional, with no
+invented speaker identities, word timestamps or confidence scores.
+
+The authenticated `/browser-recording/live-session` endpoint durably checkpoints issuance before
+requesting a credential. An ambiguous mint or broken stream is never automatically reconnected or
+repeated; the recorder keeps originals and shows the live error. A connection correlation ID is
+separate from the actual provider session ID. Token-free, browser-relayed provider events are preserved as bounded,
+immutable, idempotent `/browser-recording/live-events` receipts, independently of the final transcript.
+These provisional browser observations are not a verified transcript or evidence of speaker identity.
+The browser connects directly over TLS WebSocket; CDK's CSP permits only `wss://api.openai.com`.
+See the [Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription)
+and [client secret reference](https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets).
+Stop submits a **separate full pass** with `gpt-transcribe` and explicit English guidance, independent of live results, using contiguous windows
 of up to 18 parts (4.5 minutes; below the provider file limit). Longer recordings use multiple
 windows; this is not a promise of whole-session model context or perfect transcription.
 

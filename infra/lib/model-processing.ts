@@ -11,6 +11,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sfn from "aws-cdk-lib/aws-stepfunctions";
 import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
+import { AssetArchive } from "./asset-archive";
 import { CharacterAppearances } from "./character-appearances";
 
 /** Private application jobs, not CI. No AI service, inbound laptop connection, or idle compute. */
@@ -43,6 +44,7 @@ export class ModelProcessing extends Construct {
         MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS },
     });
     table.grantReadWriteData(fn);
+    AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.bucket.grantRead(fn, "games/*");
     CharacterAppearances.grantProducer(fn,props.browseTable,props.catalogTable);
     const wait = new tasks.LambdaInvoke(this, "WaitForLaptop", {

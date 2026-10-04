@@ -1,3 +1,4 @@
+import {AssetArchive} from "./asset-archive";
 import * as path from "node:path";
 import { Duration, RemovalPolicy } from "aws-cdk-lib";
 import { Construct } from "constructs";
@@ -35,6 +36,7 @@ export class GameCatalog extends Construct {
         CATALOG_READERS: props.accessEnvironment.CATALOG_READERS,
         ASSET_MIGRATORS: props.accessEnvironment.ASSET_MIGRATORS },
     });
+    AssetArchive.grantReferenceWrites(fn,props.browseTable);
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:ConditionCheckItem"],
       resources: [table.tableArn],
