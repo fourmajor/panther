@@ -52,7 +52,7 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   });
   return {writes,errors,chapter,publish(){published=true;episode={...episode,sceneIds:['arrival'],production:{state:'planned',jobId}};}};
 }
-for(const width of [1280,390]) {
+for(const width of [1280,871,390]) {
  test(`each storyboard shot owns generation and its selected cut at ${width}px`,async({page})=>{
    await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{human:true,multi:true,local:true});
    await page.route('https://videos.example/**',route=>route.fulfill({contentType:'video/webm',body:fs.readFileSync(path.join(__dirname,'fixtures/storyboard-take.webm'))}));
@@ -64,6 +64,12 @@ for(const width of [1280,390]) {
    expect(writes[1].shotSelection).toEqual({storyboardRevision:'e'.repeat(64),shotId:'gate',assetKey:'games/test-game/assets/take-0/original/video.webm',startSeconds:0});
    const video=board.locator('video[aria-label="Shot 1 video"]');
    await expect(video).toBeVisible();
+   const selector=board.getByRole('combobox',{name:'Take for shot 1'});
+   const bounds=await selector.evaluate(el=>{const card=el.closest('li'),box=el.getBoundingClientRect(),parent=card.getBoundingClientRect(),style=getComputedStyle(card);return {left:box.left,right:box.right,innerLeft:parent.left+parseFloat(style.paddingLeft),innerRight:parent.right-parseFloat(style.paddingRight)};});
+   expect(bounds.left).toBeGreaterThanOrEqual(bounds.innerLeft-1);
+   expect(bounds.right).toBeLessThanOrEqual(bounds.innerRight+1);
+   const playerBounds=await video.boundingBox(),selectorBounds=await selector.boundingBox();
+   expect(selectorBounds.width).toBeLessThanOrEqual(playerBounds.width+1);
    await expect.poll(()=>video.evaluate(el=>el.readyState)).toBeGreaterThan(0);
    expect(await video.evaluate(el=>el.duration)).toBeCloseTo(8,1);
    await video.evaluate(el=>{el.currentTime=4;el.dispatchEvent(new Event('timeupdate'));});
