@@ -132,6 +132,6 @@ test('Completed screen planning remains inspectable when the independent novel b
  await expect(detail).toContainText('Failed');
  await expect(detail).toContainText('Storyboards');
  await expect(detail).toContainText('Preflight review');
- await expect(detail).toContainText('Screen planning stops before paid generation.');
+ await expect(detail.locator('.workflow-stages li')).toHaveCount(4);
  await expect(detail.getByRole('button',{name:/generate video/i})).toHaveCount(0);
 });
