@@ -1538,6 +1538,9 @@ body { padding-bottom:6rem; }
 [data-interface=chronicle] .primary-nav a { justify-content:flex-start; padding:.65rem .4rem; min-height:44px; font:400 1rem Georgia,serif; border-bottom:1px solid var(--line); }
 [data-interface=chronicle] .primary-nav a[aria-current] { border-left:3px solid var(--panther-accent); padding-left:.65rem; }
 [data-interface=chronicle] .masthead .account { margin-top:auto; flex-wrap:wrap; }
+@media(min-width:801px) {
+  [data-interface=chronicle] .header-account-controls { position:fixed;top:1rem;right:1.5rem;z-index:45; }
+}
 [data-interface=chronicle] main { width:calc(100% - 320px); max-width:1050px; margin:0 48px 0 272px; padding-top:3rem; }
 [data-interface=chronicle] .dashboard-hero { display:block; border-bottom:3px double var(--line); }
 [data-interface=chronicle] .dashboard-hero h1 { font:400 clamp(2.7rem,5vw,5.4rem)/1.04 Georgia,serif; }

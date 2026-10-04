@@ -54,6 +54,11 @@ for(const width of [1440,390]) for(const design of designs) {
     await expect(page.locator('#approval-inbox h2')).toHaveCSS('color',themeInk);
     const accentInk=await page.evaluate(()=>{const sample=document.createElement('span');sample.style.color='var(--accent-dark)';document.body.append(sample);const color=getComputedStyle(sample).color;sample.remove();return color;});
     await expect(page.locator('#design-keep')).toHaveCSS('color',accentInk);
+    const avatar=page.getByRole('button',{name:'Account',exact:true});
+    await accessible(avatar,width);
+    const accountBounds=await avatar.boundingBox();
+    expect(accountBounds.x).toBeGreaterThan(width*.65);
+    expect(accountBounds.y).toBeLessThan(80);
     await accessible(page.locator('#design-open'),width);
     for(const link of await page.locator('#primary-nav a').all()) await accessible(link,width);
     const contrast=await page.locator('#primary-nav a[aria-current]').evaluate(el=>{
