@@ -270,14 +270,20 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
-Movie review plans appear under Videos before generation. Publish immutable `movie-review-plan`
-JSON assets following `docs/movie-review.md`; pin character portraits/source keys, disclose uncertain
-dialogue, and leave missing frames/prices explicitly null. Never fabricate price checks or substitute
-a portrait for a shot composition to unlock approval. The website saves revision-bound feedback and
-owner approval but cannot start generation. For a reviewed project, check its current exact-hash
-approval and cap before the separate existing CLI spending/rights gates. Changed plans need renewed
-approval; there is no automatic executor integration. Planning artifacts remain intermediate and
-excluded from factual transcript context.
+Episodes are the destination for the existing screen-planning pipeline. Each Episode owns
+ordered Scenes; each Scene owns its storyboard shots and revision history. Review AI
+storyboards inside the Scene; human-authored storyboards do not require approval. See
+`docs/episode-production.md`. Keep the original validated production packet pinned by
+key/checksum/size and retain exact input provenance. Planning/approval does not authorize
+paid media or retries. Existing immutable movie-review artifacts retain their evidence and
+budget decisions; they are not a second application library.
+
+Video takes belong to exact storyboard shots through `extra.storyboardShotRef`
+and `sceneRef`. Select explicit trims in `shotTakes`; scene assembly requires every
+current shot, in order. Keep originals immutable. Short takes cannot satisfy long
+shots. Upgrade all games with `panther videos migrate-workspace --storyboard-cuts`
+using the authenticated dry-run/apply/verify procedure in `docs/episode-production.md`.
+Never infer old take ownership or automatically retry paid requests.
 
 For shot preparation and actual editing, use `panther video production --help` and the trusted
 `docs/video-production.md`. Pin selected character appearances, prepared full-frame starting images

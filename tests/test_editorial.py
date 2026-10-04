@@ -261,7 +261,7 @@ def test_voice_proposals_separate_people_and_characters_without_inferred_consent
 def test_context_schema_cannot_select_catalog_paths_or_invent_asset_keys():
     import jsonschema
 
-    empty = worker.stage_schema("context", {"candidates": []})["properties"]["selectedKeys"]
+    empty = worker.stage_schema("context", {"candidates": [], "raw": {}})["properties"]["selectedKeys"]
     jsonschema.validate([], empty)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(["catalog.players"], empty)
@@ -589,7 +589,7 @@ def test_invalid_output_defers_automatically_instead_of_accepting(tmp_path, monk
 def test_context_schema_does_not_constrain_other_string_fields():
     import jsonschema
 
-    schema = worker.stage_schema("context", {"candidates": []})
+    schema = worker.stage_schema("context", {"candidates": [], "raw": {}})
     jsonschema.validate(
         report(evidenceIds=["raw", "catalog"], uncertainties=["Ambiguous name"]), schema
     )
@@ -1366,7 +1366,7 @@ def test_map_agent_attaches_verified_image_to_codex(tmp_path, monkeypatch):
 
     monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
     monkeypatch.setattr(worker.local, "run_process", run)
-    inputs = {"context": {}, "creation": {}, "mapInput": {"contentType": "image/png"}}
+    inputs = {"context": {}, "creation": {}, "mapInput": {"key":"games/test-game/assets/map/original/map.png", "contentType": "image/png"}}
     worker.agent(attempt, "video-treatment", inputs, lambda: None)
     assert commands[0][commands[0].index("--image") + 1] == str(image)
     image.unlink()
@@ -1483,6 +1483,15 @@ def test_recovery_preserves_history_pins_cutoff_and_never_approves_generation(ed
     assert recovered["raw"] == parent["raw"]
     assert recovered["contextCutoff"] == parent["contextCutoff"]
     assert recovered["target"] == "video"
+    assert recovered["episodeDestination"] is True
+    assert recovered["episodeRef"]["episodeId"] != parent["episodeRef"]["episodeId"]
+    import browse_index
+    import organization_records
+    pointer = organization_records.pointer("episode-scenes-v1", parent["gameId"], "episode", recovered["episodeRef"]["episodeId"])
+    episode = organization_records.decode(browse_index.table().get_item(Key=pointer)["Item"])
+    assert episode["production"]["jobId"] == recovered["jobId"]
+    assert episode["production"]["state"] == "planning"
+    assert episode["sceneIds"] == []
     assert recovered["videoGenerationAuthorized"] is False
     assert recovered["recovery"]["parentJobId"] == parent["jobId"]
     assert recovered["recovery"]["mode"] == "replay-pinned-inputs"
@@ -1513,3 +1522,169 @@ def test_finish_without_a_real_preflight_cannot_claim_ready(editorial):
     _, job = submitted(editorial)
     editorial.internal({"operation": "finish", "jobId": job["jobId"]})
     assert editorial.read("RUNS", job["jobId"])["status"] == "FAILED"
+def test_cloud_publication_uses_canonical_episode_store_and_live_lease(editorial):
+    import time
+    import organization_records
+    import browse_index
+    from botocore.exceptions import ClientError
+    m = editorial
+    _, job = submitted(m)
+    assert job['episodeDestination'] and job['episodeRef']
+    stage = 'video-generation-packets'
+    task = {'pk': 'TASKS', 'sk': job['jobId'] + ':' + stage, 'jobId': job['jobId'], 'gameId': job['gameId'],
+            'stage': stage, 'status': 'RUNNING', 'lease': 'exact-lease', 'leaseUntil': int(time.time()) + 600, 'actor': 'fictional-worker'}
+    m.table.put_item(Item=task)
+    packet = {'gameId': job['gameId'], 'jobId': job['jobId'], 'stage': stage, 'workflowVersion': PLAN['version'],
+              'passed': True, 'structuralValidation': 'passed', 'publicationStatus': 'accepted', 'videoGenerationAuthorized': False,
+              'sourceKeys': [job['raw']['key']], 'payload': {
+                'shots': [{'shotId': 'SC01_SH01', 'sceneId': 'SC01', 'durationSeconds': 8, 'description': 'The gates open.', 'camera': 'Wide', 'color': '#223344', 'subjects': []}],
+                'episode': {'schemaVersion': 1, 'title': 'Arrival', 'synopsis': 'The party reaches the gate.', 'scenes': [
+                    {'id': 'arrival', 'title': 'Arrival', 'type': 'general', 'prompt': 'The gates open.', 'narration': 'At dusk, they arrived.',
+                     'characterIds': [], 'referenceKeys': [job['raw']['key']], 'shotIds': ['SC01_SH01']}]}}}
+    key = f"games/test-game/assets/editorial-{job['jobId'][:32]}-packet/original/packet.json"
+    put(m, key, json.dumps(packet).encode(), 'application/json')
+    body = {'jobId': job['jobId'], 'stage': stage, 'lease': task['lease'], 'outputKey': key}
+    expired = {**task, 'leaseUntil': 0}
+    m.table.put_item(Item=expired)
+    with pytest.raises(ClientError):
+        m.update(task, body, 'complete')
+    db = browse_index.table()
+    target = organization_records.pointer('episode-scenes-v1', job['gameId'], 'episode', job['episodeRef']['episodeId'])
+    assert organization_records.decode(db.get_item(Key=target)['Item'])['sceneIds'] == []
+    m.table.put_item(Item=task)
+    assert m.update(task, body, 'complete') == {'ok': True}
+    episode = organization_records.decode(db.get_item(Key=target)['Item'])
+    assert episode['sceneIds'] == ['arrival']
+    scene = organization_records.decode(db.get_item(Key=organization_records.pointer('episode-scenes-v1', job['gameId'], 'scene#' + episode['id'], 'arrival'))['Item'])
+    assert scene['planningState'] == 'needs-approval' and scene['selectedOutputKey'] is None
+    # A replay between publication and task completion must preserve later edits.
+    m.table.put_item(Item=task)
+    changed = {**episode, 'name': 'Human edited title', 'revision': 'f' * 32}
+    db.put_item(Item={**target, 'revision': changed['revision'], 'payload': json.dumps(changed)})
+    assert m.update(task, body, 'complete') == {'ok': True}
+    assert organization_records.decode(db.get_item(Key=target)['Item'])['name'] == 'Human edited title'
+
+
+def test_cloud_chapter_adaptation_pins_canonical_bytes_and_creates_one_episode(editorial, monkeypatch):
+    import manual_chapters
+    import browse_index
+    import organization_records
+    m = editorial
+    __import__('boto3').resource('dynamodb').Table('test-job-catalog').put_item(Item={'pk':'GAMES','sk':'test-game','id':'test-game','name':'Fictional campaign'})
+    catalog_db = __import__('boto3').resource('dynamodb').Table('test-job-catalog')
+    catalog_db.put_item(Item={'pk':'GAME#test-game','sk':'CHARACTER#fictional-hero','id':'fictional-hero'})
+    monkeypatch.setattr(m,'pin_cast',lambda game, ids:[{'characterId':identity,'name':'Fictional hero','details':{},'appearanceAssets':[]} for identity in ids])
+    identity = 'c' * 64
+    key = 'games/test-game/assets/chapter-source/original/chapter.json'
+    original = json.dumps({'gameId': 'test-game', 'markdown': 'The travelers arrive at dusk.'}).encode()
+    put(m, key, original, 'application/json')
+    monkeypatch.setattr(manual_chapters, 'read', lambda game, chapter, media: {'id': identity, 'gameId': 'test-game', 'title': 'At dusk', 'details': {'artifact': {'key': key}}})
+    body = {'gameId': 'test-game', 'creation': {'schemaVersion': 4, 'target': 'video', 'chapterId': identity}}
+    result = request(m, 'POST /editorial-jobs', body)
+    assert result['statusCode'] == 200
+    job = unpack(result)
+    assert unpack(request(m, 'POST /editorial-jobs', body))['jobId'] == job['jobId']
+    assert job['chapterSource']['sha256'] == __import__('base64').b64encode(hashlib.sha256(original).digest()).decode()
+    assert job['rawSources'] == [] and job['videoGenerationAuthorized'] is False
+    assert [person['characterId'] for person in job['selectedCharacters']] == ['fictional-hero']
+    pointer = organization_records.pointer('episode-scenes-v1', 'test-game', 'episode', job['episodeRef']['episodeId'])
+    episode = organization_records.decode(browse_index.table().get_item(Key=pointer)['Item'])
+    assert episode['production']['state'] == 'planning' and episode['sceneIds'] == []
+    assert request(m, 'POST /editorial-jobs', {**body, 'gameId': 'another-game'})['statusCode'] == 400
+    assert request(m, 'POST /editorial-jobs', {'gameId': 'test-game', 'creation': {**body['creation'], 'markdown': 'Unpinned text'}})['statusCode'] == 400
+
+
+def test_scene_pipeline_publishes_only_its_owned_scene_and_replay_preserves_edits(editorial):
+    import time
+    import browse_index
+    import organization_records
+    from test_episode_destination import source
+    m = editorial
+    _, job = submitted(m)
+    previous = {'entityType':'Scene','schemaVersion':1,'gameId':job['gameId'], 'episodeId':'existing-episode', 'id':'arrival', 'revision':'b'*32, 'name':'Human title', 'selectedOutputKey':'retained-footage', 'generationInputs':{'durationSeconds':7.5}}
+    job.update(selectedScene=previous, episodeDestination=True)
+    from decimal import Decimal
+    stored = json.loads(json.dumps({**job,'pk':'RUNS','sk':job['jobId']}), parse_float=Decimal)
+    m.table.put_item(Item=stored)
+    pointer = organization_records.pointer('episode-scenes-v1', job['gameId'], 'scene#existing-episode', 'arrival')
+    db = browse_index.table()
+    db.put_item(Item={**pointer,'revision':previous['revision'],'payload':json.dumps(previous)})
+    _, packet, _ = source()
+    packet.update(gameId=job['gameId'],jobId=job['jobId'],workflowVersion=PLAN['version'],passed=True,sourceKeys=[job['raw']['key']])
+    packet['payload']['episode']['scenes'][0]['referenceKeys']=[job['raw']['key']]
+    stage='video-generation-packets'
+    task={'pk':'TASKS','sk':job['jobId']+':'+stage,'jobId':job['jobId'],'gameId':job['gameId'],'stage':stage,'status':'RUNNING','lease':'owned-scene-lease','leaseUntil':int(time.time())+600,'actor':'fictional-worker'}
+    m.table.put_item(Item=task)
+    key=f"games/test-game/assets/editorial-{job['jobId'][:32]}-scene-packet/original/packet.json"
+    put(m,key,json.dumps(packet).encode(),'application/json')
+    body={'jobId':job['jobId'],'stage':stage,'lease':task['lease'],'outputKey':key}
+    assert m.update(task,body,'complete')=={'ok':True}
+    scene=organization_records.decode(db.get_item(Key=pointer)['Item'])
+    assert scene['name']=='Human title' and scene['episodeId']=='existing-episode'
+    assert scene['generationInputs']['durationSeconds']==7.5 and scene['selectedOutputKey']=='retained-footage'
+    assert scene['storyboard']['origin']=='ai' and scene['planningState']=='needs-approval'
+    changed={**scene,'name':'Later edit','revision':'f'*32}
+    db.put_item(Item={**pointer,'revision':changed['revision'],'payload':json.dumps(changed)})
+    m.table.put_item(Item=task)
+    assert m.update(task,body,'complete')=={'ok':True}
+    assert organization_records.decode(db.get_item(Key=pointer)['Item'])['name']=='Later edit'
+
+
+def test_pinned_chapter_input_alias_is_valid_evidence_without_allowing_foreign_sources(tmp_path,monkeypatch):
+    report={'passed':True,'title':'Context','markdown':'Use the pinned story.','evidenceIds':['sourceChapter'],'uncertainties':[],'decisions':[],'selectedKeys':[],'shots':[],'edits':[]}
+    monkeypatch.setattr(worker,'agent',lambda *args:copy.deepcopy(report))
+    inputs={'catalog':{},'candidates':[],'sourceChapter':{'key':'games/test-game/assets/chapter/original/chapter.json','markdown':'The travelers arrive.'}}
+    assert worker.autonomous_stage(tmp_path,'context',inputs,lambda:None)[0]['passed']
+    report['evidenceIds']=['games/foreign-game/assets/chapter/original/chapter.json']
+    foreign=tmp_path/'foreign'
+    foreign.mkdir()
+    with pytest.raises(worker.local.Deferred,match='No structurally valid'):
+        worker.autonomous_stage(foreign,'context',inputs,lambda:None)
+
+
+def test_generation_schema_constrains_all_citations_to_pinned_evidence():
+    inputs={"catalog":{},"candidates":[],"sourceChapter":{"key":"games/test-game/assets/chapter/original/chapter.json"}}
+    schema=worker.stage_schema('video-source-brief',inputs)
+    allowed={'catalog','sourceChapter',inputs['sourceChapter']['key']}
+    assert set(schema['properties']['evidenceIds']['items']['enum'])==allowed
+    for field in ('decisions','edits'):
+        assert set(schema['properties'][field]['items']['properties']['evidenceIds']['items']['enum'])==allowed
+    assert 'enum' not in worker.SCHEMA['properties']['evidenceIds']['items']
+    assert "enum" not in schema["properties"]["title"]
+    assert "enum" not in schema["properties"]["uncertainties"]["items"]
+
+
+def test_storyboard_generation_schema_matches_renderer_palette_and_blocking():
+    import jsonschema
+    shot={'sceneId':'arrival','shotId':'dock','durationSeconds':8,'description':'Wet wharf','camera':'Wide','color':'#182838','subjects':[{'label':'Guide','x':0.5,'y':0.5}]}
+    jsonschema.validate(shot,worker.SHOT)
+    for change in ({'color':'cold blues'},{'durationSeconds':0},{'durationSeconds':121},{'subjects':[{'label':'Guide','x':1.1,'y':0.5}]}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**shot,**change},worker.SHOT)
+
+
+def test_episode_handoff_materializes_locked_panels_and_bounds_pinned_references(tmp_path,monkeypatch):
+    from test_episode_destination import source
+    _,packet,_=source()
+    shots=packet['payload']['shots']
+    episode=packet['payload']['episode']
+    inputs={'episodeDestination':True,'context':{'catalog':{'game':{'id':packet['gameId']},'characters':[]}},'priorStages':{'video-storyboards':{'shots':shots}},'productionSourceKeys':packet['sourceKeys']}
+    schema=worker.stage_schema('video-generation-packets',inputs)
+    assert schema['properties']['shots']['maxItems']==0
+    fields=schema['properties']['episode']['properties']['scenes']['items']['properties']
+    assert fields['characterIds']['maxItems']==0
+    assert fields['referenceKeys']['maxItems']==0
+    episode=copy.deepcopy(episode)
+    for scene in episode['scenes']:
+        scene['characterIds']=[]
+    response=report(evidenceIds=['catalog'],shots=[],episode=episode)
+    original=copy.deepcopy(response)
+    monkeypatch.setattr(worker,'agent',lambda *args:response)
+    result,_,history,_=worker.autonomous_stage(tmp_path,'video-generation-packets',inputs,lambda:None)
+    assert result['shots']==shots and response==original
+    assert history[0]['materializedShotsFrom']=='video-storyboards'
+    episode['scenes'][0]['referenceKeys']=['imaginary-prop']
+    other=tmp_path/'foreign'
+    other.mkdir()
+    with pytest.raises(worker.local.Deferred):
+        worker.autonomous_stage(other,'video-generation-packets',inputs,lambda:None)

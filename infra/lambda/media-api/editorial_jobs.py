@@ -238,19 +238,45 @@ def pin_game(game):
     }
 
 
+def episode_destination_writes(record, *, previous=None):
+    import episode_destination
+    import browse_index
+    return episode_destination.writes(browse_index.table(), record, previous=previous)
+
+
 def submit(body):
     legacy = set(body) == {"gameId", "rawKey"}
     if not legacy and set(body) != {"gameId", "creation"}:
         raise ValueError("Expected gameId and rawKey or a creation request")
     if not media._valid_slug(body["gameId"]):
         raise ValueError("Invalid game")
-    creation, selected_scene = None, None
+    creation, selected_scene, chapter_source = None, None, None
     if legacy:
         source_keys, context_keys = [body["rawKey"]], []
     else:
         creation = body["creation"]
         version = creation.get("schemaVersion") if isinstance(creation, dict) else None
         fields = {"schemaVersion", "target", "title", "brief", "sourceKeys", "contextKeys"}
+        if version == 4:
+            if set(creation) != {"schemaVersion", "target", "chapterId"} or creation["target"] != "video" or not re.fullmatch(r"[a-f0-9]{64}", creation.get("chapterId", "")):
+                raise ValueError("Choose a novel chapter to adapt")
+            import manual_chapters
+            import novel
+
+            chapter = manual_chapters.read(body["gameId"], creation["chapterId"], media)
+            if not chapter:
+                chapter_job = read("RUNS", creation["chapterId"])
+                if not chapter_job or chapter_job.get("gameId") != body["gameId"]:
+                    raise ValueError("Choose a chapter from this game")
+                chapter = novel.chapter(chapter_job)
+            if not chapter or chapter.get("gameId") != body["gameId"]:
+                raise ValueError("Chapter is not ready for adaptation")
+            chapter_source, _ = asset(chapter["details"]["artifact"]["key"], body["gameId"], maximum=512 * 1024)
+            roster = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"]).query(KeyConditionExpression=Key("pk").eq(f"GAME#{body['gameId']}") & Key("sk").begins_with("CHARACTER#"), Limit=21, ConsistentRead=True)
+            if roster.get("LastEvaluatedKey") or len(roster.get("Items", [])) > 20:
+                raise ValueError("Episode adaptation requires a bounded character roster")
+            creation = {**creation, "title": chapter["title"], "brief": "Adapt the supplied novel chapter into an episode, preserving its story outcomes.", "sourceKeys": [], "contextKeys": [], "characterIds": sorted(character["id"] for character in roster.get("Items", []))}
+            fields.update({"chapterId", "characterIds"})
         if version == 3:
             required = {"schemaVersion", "target", "brief", "sourceKeys", "contextKeys"}
             if (
@@ -272,7 +298,7 @@ def submit(body):
                 "sourceKeys",
                 "contextKeys",
             }
-            if not required <= set(creation) or not set(creation) <= required | {"title", "brief"}:
+            if not required <= set(creation) or not set(creation) <= required | {"title", "brief", "storyboardShotRef"}:
                 raise ValueError("Expected a scene-owned video creation request")
             ref = creation["sceneRef"]
             if (
@@ -287,6 +313,17 @@ def submit(body):
             import video_scenes
 
             selected_scene = video_scenes.pin_scene(body["gameId"], ref)
+            import episode_storyboards
+            episode_storyboards.require_ready(selected_scene)
+            if creation.get('storyboardShotRef'):
+                import storyboard_videos
+                reference = creation['storyboardShotRef']
+                if not isinstance(reference, dict) or set(reference) != {'revision', 'shotId'}:
+                    raise ValueError('Choose an exact storyboard shot revision')
+                board, selected_shot = storyboard_videos.shot(selected_scene, reference['shotId'])
+                if board['revision'] != reference['revision']:
+                    raise ValueError('The storyboard changed; choose its current shot')
+                fields.add('storyboardShotRef')
             prompt = creation.get("brief", "")
             if not isinstance(prompt, str):
                 raise ValueError("Expected a scene prompt")
@@ -300,7 +337,7 @@ def submit(body):
             not isinstance(creation, dict)
             or set(creation) != fields
             or type(version) is not int
-            or version not in {1, 2, 3}
+            or version not in {1, 2, 3, 4}
             or creation["target"] not in {"novel", "video"}
             or version == 2
             and creation["target"] != "video"
@@ -323,7 +360,7 @@ def submit(body):
                 raise ValueError("Invalid selected characters")
         source_keys, context_keys = creation["sourceKeys"], creation["contextKeys"]
         for keys, minimum, maximum in [
-            (source_keys, 0 if version in {2, 3} else 1, 8),
+            (source_keys, 0 if version in {2, 3, 4} else 1, 8),
             (context_keys, 0, 12),
         ]:
             if (
@@ -359,10 +396,10 @@ def submit(body):
         contexts.append({**ref, "kind": stored.get("kind", ""), "metadata": details})
     cast = (
         pin_cast(body["gameId"], creation["characterIds"])
-        if creation and creation["schemaVersion"] == 2
+        if creation and creation["schemaVersion"] in {2, 4}
         else []
     )
-    game_context = pin_game(body["gameId"]) if creation and creation["schemaVersion"] == 2 else None
+    game_context = pin_game(body["gameId"]) if creation and creation["schemaVersion"] in {2, 4} else None
     selected_map = pin_map(body["gameId"], selected_scene)
     snapshot_size = len(
         json.dumps([cast, game_context, selected_scene, selected_map], default=str).encode()
@@ -381,6 +418,8 @@ def submit(body):
     )
     if selected_map is not None:
         identity.append(selected_map)
+    if chapter_source:
+        identity.append(chapter_source)
     job_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     job = {
         "pk": "RUNS",
@@ -412,12 +451,25 @@ def submit(body):
             selectedScene=selected_scene,
             selectedMap=selected_map,
         )
+    if selected_scene and not creation.get("storyboardShotRef"):
+        job["episodeDestination"] = True
+    destination = None
+    if chapter_source or not creation:
+        from episode_destination import placeholder
+        job.update(episodeDestination=True)
+        if chapter_source:
+            job["chapterSource"] = chapter_source
+        destination = placeholder(job)
+        job["episodeRef"] = {"episodeId": destination["id"], "revision": destination["revision"]}
     try:
         import asset_archive
         from boto3.dynamodb.types import TypeSerializer
 
         serializer = TypeSerializer()
+        stored_job = json.loads(json.dumps(job), parse_float=Decimal)
         pinned = [ref["key"] for ref in [*references, *contexts]]
+        if chapter_source:
+            pinned.append(chapter_source["key"])
         if selected_map:
             pinned.append(selected_map["key"])
         for character in cast:
@@ -429,7 +481,7 @@ def submit(body):
                 {
                     "Put": {
                         "TableName": table.name,
-                        "Item": {key: serializer.serialize(value) for key, value in job.items()},
+                        "Item": {key: serializer.serialize(value) for key, value in stored_job.items()},
                         "ConditionExpression": "attribute_not_exists(pk)",
                     }
                 },
@@ -439,6 +491,7 @@ def submit(body):
                     pinned,
                     {"table": table.name, "pk": "RUNS", "sk": job_id},
                 ),
+                *(episode_destination_writes(destination) if destination else []),
             ]
         )
     except ClientError as exc:
@@ -498,12 +551,15 @@ def recover(body, actor):
         raise ValueError("Recovery must preserve the creation target")
     refs = parent.get("rawSources", [parent["raw"]] if parent.get("raw") else [])
     pins = [*refs, *parent.get("selectedContext", [])]
+    if parent.get("chapterSource"):
+        pins.append(parent["chapterSource"])
     if parent.get("selectedMap"):
         pins.append(parent["selectedMap"])
     for character in parent.get("selectedCharacters", []):
         pins.extend(character.get("appearanceAssets", []))
     for pin in pins:
-        current, _ = asset(pin["key"], parent["gameId"], maximum=16 * 1024**2)
+        maximum = 20 * 1024**2 if pin == parent.get("selectedMap") else 16 * 1024**2
+        current, _ = asset(pin["key"], parent["gameId"], maximum=maximum)
         if any(current[field] != pin[field] for field in ("key", "sha256", "size")):
             raise ValueError("Pinned recovery input changed")
     for pin in refs:
@@ -534,6 +590,18 @@ def recover(body, actor):
     }
     for field in ("novelFailed", "videoFailed", "completedAt", "failure"):
         job.pop(field, None)
+    destination = None
+    if body["target"] in {"video", "both"}:
+        if job.get("selectedScene"):
+            job["episodeDestination"] = not (job.get("creation") or {}).get("storyboardShotRef")
+        else:
+            from episode_destination import placeholder
+            job["episodeDestination"] = True
+            destination = placeholder(job)
+            job["episodeRef"] = {"episodeId": destination["id"], "revision": destination["revision"]}
+    else:
+        job.pop("episodeDestination", None)
+        job.pop("episodeRef", None)
     import asset_archive
     from boto3.dynamodb.types import TypeSerializer
 
@@ -565,6 +633,7 @@ def recover(body, actor):
                 [pin["key"] for pin in pins],
                 {"table": table.name, "pk": "RUNS", "sk": job_id},
             ),
+            *(episode_destination_writes(destination) if destination else []),
         ]
     )
     return public(job)
@@ -658,6 +727,39 @@ def owned(body, actor):
     return task
 
 
+def publish_episode(job, result, ref, task, body):
+    import episode_destination
+    import browse_index
+    import organization_records
+    episode, scenes = episode_destination.records(job, result, ref)
+    pointer = organization_records.pointer("episode-scenes-v1", job["gameId"], "episode", episode["id"])
+    current = organization_records.decode(browse_index.table().get_item(Key=pointer, ConsistentRead=True).get("Item"))
+    # Safe retry after publication but before task completion. A later
+    # human edit is never overwritten by replaying a worker callback.
+    published = browse_index.table().get_item(Key={"pk": f"episode-scenes-v1-history#episode#{job['gameId']}#{episode['id']}", "sk": episode["revision"]}, ConsistentRead=True).get("Item")
+    if published:
+        if organization_records.decode(published) != episode:
+            raise ValueError("Episode publication history conflicts")
+    else:
+        if not current or current["revision"] != job["episodeRef"]["revision"]:
+            raise ValueError("Episode changed while planning; retained plan requires reconciliation")
+        import asset_archive
+        source_keys = sorted({ref["key"], *[key for scene in scenes for key in scene["productionSource"]["referenceKeys"]]})
+        operations = [
+            *episode_destination_writes(episode, previous=job["episodeRef"]["revision"]),
+            *[operation for scene in scenes for operation in episode_destination_writes(scene)],
+            {"ConditionCheck": {"TableName": table.name,
+                "Key": organization_records.encode({"pk": "TASKS", "sk": task["sk"]}),
+                "ConditionExpression": "lease = :l AND leaseUntil > :n AND #s = :r AND actor = :a",
+                "ExpressionAttributeNames": {"#s": "status"},
+                "ExpressionAttributeValues": organization_records.encode({":l": body["lease"], ":n": int(time.time()), ":r": "RUNNING", ":a": task["actor"]})}},
+            *asset_archive.reference_writes(job["gameId"], "episode-production:" + episode["id"], source_keys,
+                {"table": browse_index.table().name, **pointer})]
+        if len(operations) > 100:
+            raise ValueError("Episode publication exceeds the bounded transaction limit")
+        boto3.client("dynamodb").transact_write_items(TransactItems=operations)
+
+
 def update(task, body, operation):
     now = int(time.time())
     values = {":lease": body["lease"], ":now": now, ":running": "RUNNING"}
@@ -688,6 +790,33 @@ def update(task, body, operation):
             if result["publicationStatus"] == "accepted" and not accepted:
                 raise ValueError("Failed review cannot claim unconditional acceptance")
             accepted = True
+        job = read("RUNS", task["jobId"])
+        if accepted and task["stage"] == "video-generation-packets" and job.get("episodeDestination"):
+            import browse_index
+            import organization_records
+
+            if job.get("selectedScene"):
+                from episode_destination import scene_record
+                scene = scene_record(job, result, ref)
+                pointer = organization_records.pointer("episode-scenes-v1", job["gameId"], "scene#" + scene["episodeId"], scene["id"])
+                current = organization_records.decode(browse_index.table().get_item(Key=pointer, ConsistentRead=True).get("Item"))
+                historical = browse_index.table().get_item(Key={"pk": f"episode-scenes-v1-history#scene#{scene['episodeId']}#{job['gameId']}#{scene['id']}", "sk": scene["revision"]}, ConsistentRead=True).get("Item")
+                if historical:
+                    if organization_records.decode(historical) != scene:
+                        raise ValueError("Scene production history conflicts")
+                else:
+                    if not current or current["revision"] != job["selectedScene"]["revision"]:
+                        raise ValueError("Scene changed while planning; retained plan requires reconciliation")
+                    import asset_archive
+                    operations = [*episode_destination_writes(scene, previous=current["revision"]),
+                        {"ConditionCheck": {"TableName": table.name, "Key": organization_records.encode({"pk": "TASKS", "sk": task["sk"]}),
+                            "ConditionExpression": "lease = :l AND leaseUntil > :n AND #s = :r",
+                            "ExpressionAttributeNames": {"#s": "status"},
+                            "ExpressionAttributeValues": organization_records.encode({":l": body["lease"], ":n": int(time.time()), ":r": "RUNNING"})}},
+                        *asset_archive.reference_writes(job["gameId"], "scene-production:" + scene["episodeId"] + ":" + scene["id"], [ref["key"], *scene["productionSource"]["referenceKeys"]], {"table": browse_index.table().name, **pointer})]
+                    boto3.client("dynamodb").transact_write_items(TransactItems=operations)
+            else:
+                publish_episode(job, result, ref, task, body)
         expression = "SET #s = :done, #output = :output, leaseUntil = :until"
         values.update(
             {

@@ -46,12 +46,8 @@ class Fal(v.Fal):
 
 
 def model_for(job):
-    kind = job.get('sceneType', job.get('type', 'general'))
-    if kind == 'map':
-        if not job.get('mapPin'):
-            raise ValueError('Choose a map asset for this scene')
-        return 'veo-3.1-fast-image-silent'
-    return 'kling-3-pro' if kind == 'action' else 'h3-max' if kind == 'dialogue' else 'veo-3.1-fast'
+    from panther_journal.video import scene_model
+    return scene_model(job)
 
 
 def verified(store, ref, game):
@@ -93,7 +89,8 @@ def download(url, target):
 def process(store, identity, root, fal, *, downloader=download, media_probe=probe, prompt_client=None, record_kind="scene-render"):
     standalone = record_kind == "asset-generation"
     job = store.get(record_kind, identity)
-    if not job or job.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'}:
+    if not job or (job.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'}
+                   and not (job.get('status') == 'UNKNOWN' and job.get('requestId') and job.get('urls'))):
         return False
     try:
         if not re.fullmatch(r'[a-f0-9]{64}', identity):
@@ -107,15 +104,22 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             scene = store.get('scene-history', job['gameId'] + ':' + ref['episodeId'] + ':' + ref['sceneId'] + ':' + ref['revision'])
             if not scene or scene['record']['revision'] != ref['revision']:
                 raise ValueError('Pinned scene revision was not found')
+            import episode_storyboards
+            episode_storyboards.require_ready(scene['record'])
+            if job.get('storyboardShotRef'):
+                import storyboard_videos
+                board, shot = storyboard_videos.shot(scene['record'], job['storyboardShotRef']['shotId'])
+                if job['storyboardShotRef']['revision'] != board['revision'] or job.get('sceneContext', {}).get('shots') != [shot]:
+                    raise ValueError('The pinned storyboard shot differs from this generation request')
         model = job.get('model') or model_for(job)
-        allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro'}
+        allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if standalone:
             allowed = {'veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if model not in allowed:
             raise ValueError('Unsupported selected video model')
-        endpoint = v.PROFILES[model]['endpoint']
-        if not isinstance(job.get('prompt'), str) or not 1 <= len(job['prompt']) <= 4000:
-            raise ValueError('Provide a scene prompt under 4000 characters')
+        endpoint = job.get('endpoint') or v.PROFILES[model]['endpoint']
+        if not isinstance(job.get('prompt'), str) or not job['prompt'].strip():
+            raise ValueError('Provide a scene prompt')
         inputs = list(job.get('inputRefs', []))
         if job.get('mapPin'):
             inputs.append(job['mapPin'])
@@ -130,11 +134,12 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         if standalone:
             from dev_asset_title import ensure_title
             ensure_title(store, record_kind, identity, job, folder, prompt_client)
-        if not job.get('preparedPrompt') and (job.get('transcriptKeys') or job.get('contextKeys') or job.get('characterContext')):
+        if not job.get('preparedPrompt') and (job.get('transcriptKeys') or job.get('contextKeys') or job.get('characterContext') or job.get('sceneContext')):
             if job.get('status') == 'COMPOSING':
                 raise RuntimeError('The previous prompt-composition outcome is unknown. Review retained responses before retrying; no paid request was repeated.')
             job.update(status='COMPOSING', message=None)
             store.put(record_kind, identity, job, job['gameId'])
+            job['model'] = model
             composition, evidence = video_prompt(store, job, folder, verified, prompt_client)
             job.update(preparedPrompt=composition['renderPrompt'], promptComposition={**composition, 'generation': evidence}, status='QUEUED')
             store.put(record_kind, identity, job, job['gameId'])
@@ -145,7 +150,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             if standalone and job.get('visualStyle'):
                 prompt += '\nVisual style: ' + job['visualStyle'].replace('-', ' ')
             shot = {'model': model, 'prompt': prompt}
-            body = v.payload(shot)
+            body = v.payload(shot, duration_seconds=job.get('generationDurationSeconds', 8))
             if standalone:
                 options = job.get('inputs', {})
                 if options.get('duration', 8) != 8 or options.get('aspectRatio', '16:9') != '16:9':
@@ -162,11 +167,24 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                             raise ValueError('The selected starting image must have a 16:9 canvas')
                         picture.verify()
                     body[v.PROFILES[model]['imageField']] = 'data:' + image_pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
+            if job.get('storyboardFramePin') and not job.get('mapPin'):
+                pin = job['storyboardFramePin']
+                image = verified(store, pin, job['gameId'])
+                field = v.PROFILES[model].get('imageField')
+                if not field:
+                    raise ValueError('A storyboard frame requires its image-to-video profile')
+                body[field] = 'data:' + pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
             if job.get('mapPin'):
                 pin = job['mapPin']
                 image = verified(store, pin, job['gameId'])
                 body[v.PROFILES[model]['imageField']] = 'data:' + pin['contentType'] + ';base64,' + base64.b64encode(image).decode()
-                body['prompt'] = 'Treat the input image as a map. Preserve its geography, labels, framing and visual style. Animate a red dot at the initial location and red footprints following the travelers along a clear route to the destination. ' + prompt
+                body['prompt'] = 'Treat the input image as a map. Preserve its geography, labels and visual style. Follow the requested camera movement and action. ' + prompt
+            from dev_video_conditioning import condition
+            endpoint, body, visual_references = condition(store, job, model, body, verified)
+            job['visualReferences'] = visual_references
+            original_prompt = body['prompt']
+            body['prompt'] = v.fit_prompt(original_prompt)
+            job['promptFitting'] = {'originalPrompt': prompt, 'conditionedPrompt': original_prompt, 'submittedCharacters': len(body['prompt']), 'truncated': body['prompt'] != original_prompt or len(prompt) > 2500}
             retain(folder / 'request.json', json.dumps({'endpoint': endpoint, 'payload': body, 'sceneRef': ref}, ensure_ascii=False).encode())
             job.update(status='RUNNING', dispatchStarted=now(), model=model, endpoint=endpoint, message=None)
             store.put(record_kind, identity, job, job['gameId'])
@@ -213,22 +231,25 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             generation['model'] = {'veo-3.1-fast': 'Veo 3.1 Fast', 'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model.removesuffix('-image')]
         title = job['name'] if standalone else scene['record']['name']
         association = {} if standalone else {'sceneRef': ref, 'episodeId': ref['episodeId'], 'sceneId': ref['sceneId']}
+        if job.get('storyboardShotRef'):
+            association['storyboardShotRef'] = job['storyboardShotRef']
         if standalone and job.get('imagePin'):
             lineage = list(dict.fromkeys(lineage + [job['imagePin']['key']]))
         metadata = asset_metadata.defaults('video', {'kind': 'video', 'title': title, 'contentType': 'video/mp4', 'sourceKeys': lineage + [response_key],
-            'characterIds': job.get('characterIds', []), 'extra': {'generation': generation, 'requestId': rid, **association,
+            'characterIds': job.get('promptComposition', {}).get('visibleCharacterIds', job.get('characterIds', [])), 'extra': {'generation': generation, 'requestId': rid, **association,
             'titleGeneration': job.get('titleGeneration'), 'relationshipRole': 'finished', 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'mediaProbe': quality}}, target.name, 'video/mp4', key)
-        response_bytes = json.dumps({'provider': 'fal', 'endpoint': endpoint, 'requestId': rid, 'result': output, **({'sceneRef': ref} if ref else {}), 'sourceKeys': lineage, 'request': json.loads((folder / 'request.json').read_text()), 'promptComposition': job.get('promptComposition'), 'titleGeneration': job.get('titleGeneration')}, ensure_ascii=False).encode()
+        response_bytes = json.dumps({'provider': 'fal', 'endpoint': endpoint, 'requestId': rid, 'result': output, **({'sceneRef': ref} if ref else {}), 'sourceKeys': lineage, 'request': json.loads((folder / 'request.json').read_text()), 'promptComposition': job.get('promptComposition'), 'promptFitting': job.get('promptFitting'), 'titleGeneration': job.get('titleGeneration')}, ensure_ascii=False).encode()
         response_metadata = asset_metadata.defaults('generation-response', {'kind': 'generation-response', 'title': title, 'contentType': 'application/json', 'sourceKeys': lineage,
             'extra': {'generation': generation, 'relationshipRole': 'intermediate', 'sha256': base64.b64encode(hashlib.sha256(response_bytes).digest()).decode()}}, 'provider-response.json', 'application/json', response_key)
         from panther_journal import cost_estimates
-        if not job.get('pricingEvidence'):
+        if not job.get('pricingEvidence') and endpoint == v.PROFILES[model]['endpoint']:
             try:
                 job['pricingEvidence'] = cost_estimates.live_fal_price(fal, model)
                 store.put(record_kind, identity, job, job['gameId'])
             except Exception:
                 pass  # Pricing unavailability never repeats or discards completed generation.
-        metadata = cost_estimates.annotate(metadata, {'model': model, 'payload': json.loads((folder / 'request.json').read_text())['payload']}, api_base=job.get('pricingEvidence', {}).get('rate'))
+        if endpoint == v.PROFILES[model]['endpoint']:
+            metadata = cost_estimates.annotate(metadata, {'model': model, 'payload': json.loads((folder / 'request.json').read_text())['payload']}, api_base=job.get('pricingEvidence', {}).get('rate'))
         if metadata.get('extra', {}).get('costEstimate') and job.get('pricingEvidence'):
             metadata['extra']['costEstimate']['evidence']['pricingApi'] = job['pricingEvidence']
         storage_layout.location(key, 'video', metadata)
@@ -253,10 +274,12 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         return True
     except Exception as exc:
         current = store.get(record_kind, identity)
-        if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS'} or any(current.get(field) != job.get(field) for field in ('prompt', 'model', 'sourceKeys', 'inputRefs', 'imagePin', 'sceneRef'))):
+        if current and (current.get('status') not in {'QUEUED', 'SUBMITTED', 'RUNNING', 'COMPOSING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN'} or any(current.get(field) != job.get(field) for field in ('prompt', 'model', 'sourceKeys', 'inputRefs', 'imagePin', 'sceneRef'))):
             return False  # Preserve concurrent cancellation or a changed immutable request.
+        if isinstance(exc, v.TerminalInputRejection) and exc.response is not None:
+            retain(root / identity / 'provider-rejection.json', json.dumps(exc.response).encode())
         # A failed GET/download can resume the known queue request without another POST.
-        if job.get('requestId') and job.get('urls') and not isinstance(exc, (ValueError, v.TerminalModelRejection)):
+        if job.get('requestId') and job.get('urls') and not isinstance(exc, (ValueError, v.TerminalModelRejection, v.TerminalInputRejection)):
             job.update(status='SUBMITTED', message='Video status or delivery is unavailable. The known request will be checked again; no new generation was submitted.', updatedAt=time.time())
         else:
             job.update(status='UNKNOWN' if isinstance(exc, RuntimeError) or job.get('outcomeUnknown') else 'FAILED', message=str(exc)[:800], updatedAt=time.time())

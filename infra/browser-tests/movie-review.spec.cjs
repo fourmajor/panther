@@ -2,177 +2,191 @@ const {test,expect}=require('@playwright/test');
 const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
-const key='games/test-game/assets/movie-plan/original/plan.json',frame='games/test-game/assets/frame/original/frame.svg';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{blocked=false,conflict=false,campaign=false,crowded=false}={}) {
-  const writes=[];
-  const plan={schemaVersion:1,entityType:'MovieReviewPlan',gameId:'test-game',projectId:'lantern',revisionId:'draft-01',sessionId:'session-one',title:'The House Beneath the Tide',summary:'A locked gate. An impossible light. Two companions discover that the abandoned lighthouse is not as empty as it seems.',
-    screenplay:'## INT. LIGHTHOUSE — NIGHT\n\nSalt water drips from the ceiling. Mira lifts her lantern.\n\n**MIRA**\n\nSomeone left the light on.\n\n<svg onload="window.attacked=true">',
-    sourceKeys:[frame],characters:[{id:'mira',name:'Mira Vale',portraitKey:frame}],budget:{capUsd:'10.00',currency:'USD',notes:'The ceiling includes retries. No automatic generation.'},
-    shots:[{id:'gate',title:'The last light',description:'Mira stands in the doorway, lantern raised. A pale light answers from the far end of the hall.',camera:'Slow push-in. Eye-level, 35 mm. Hold the doorway on screen left.',continuity:'Lantern stays in the right hand. Wet blue stone, warm amber practical light.',model:'Veo 3.1 Fast',modelReason:'Atmospheric establishing shot.',durationSeconds:8,characterIds:['mira'],referenceKeys:[frame],frameKey:blocked?null:frame,costUsd:blocked?null:'0.80',warnings:blocked?[{severity:'blocker',message:'Character identity needs checking.'}]:[]},
-      {id:'answer',title:'Someone is still here',description:'A close-up on Mira as the realization lands. She does not turn away from the light.',camera:'Locked close-up, 85 mm. Leave room in her eyeline.',continuity:'Same wet costume and lantern position.',dialogue:'MIRA: Someone left the light on.',model:'MiniMax H3 Max',modelReason:'Character performance and dialogue.',durationSeconds:8,characterIds:['mira'],referenceKeys:[frame],frameKey:frame,costUsd:'0.32',warnings:[{severity:'note',message:'Dialogue is adapted, not quoted from the recording.'}]}]};
-  if(campaign) {
-    plan.scope='campaign'; plan.sessionId=null;
-    plan.narratorSampleKey='games/test-game/assets/audition/original/voice.mp3';
-    plan.sourceKeys.push(plan.narratorSampleKey);
-    plan.shots[0].narration='The sea remembers every promise.';
-    plan.shots[0].footagePlan='8s new motion + 7s still detail.';
-  }
-  if(crowded) {
-    plan.shots=Array.from({length:16},(_,i)=>({...plan.shots[0],id:`shot-${i}`,title:`Frame ${i}`,frameKey:`games/test-game/assets/frame-${i}/original/frame.svg`,referenceKeys:[`games/test-game/assets/frame-${i}/original/frame.svg`]}));
-    plan.sourceKeys.push(...plan.shots.map(s=>s.frameKey));
-  }
-  let review=null;
-  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-operator'}))+'.test'})));
+async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false,takeSeconds=8}={}) {
+  const writes=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const chapter='c'.repeat(64),jobId='d'.repeat(64),frame='games/test-game/assets/frame/original/frame.png';
+  let episode={schemaVersion:1,entityType:'Episode',gameId:'test-game',id:'pilot',name:'The crossing',description:'At the gates',revision:'a'.repeat(32),sceneIds:planning?[]:['arrival'],...(planning?{production:{state:'planning',jobId}}:{})};
+  let scene={schemaVersion:1,entityType:'Scene',gameId:'test-game',episodeId:'pilot',id:'arrival',name:'Arrival',description:'The gates open.',type:'general',revision:'b'.repeat(32),selectedOutputKey:null,planningState:human?'ready':'needs-approval',storyboard:{schemaVersion:1,origin:human?'human':'ai',revision:'e'.repeat(64),decision:null,shots:[{shotId:'gate',description:'The party arrives at dusk.',camera:'Wide, slow push-in',durationSeconds:8,narration:'At dusk, they arrived.',frameKey:frame}]}};
+  let published=!planning;
+  if(multi){scene.storyboard.shots[0].durationSeconds=4;scene.storyboard.shots.push({shotId:'reaction',description:'The travelers react.',camera:'Close',durationSeconds:3,frameKey:null,narration:''});}
+  if(long)scene.storyboard.shots[0].durationSeconds=18;
+  const takes=multi||long||take?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.webm`,contentType:'video/webm',name:`Take ${i+1}`,lastModified:'2026-01-01T00:00:00Z',metadata:{title:`Take ${i+1}`,contentType:'video/webm',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:String(takeSeconds)}}}}})):[];
+  await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-editor'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
     const p=new URL(route.request().url()).pathname;
-    if(p==='/config.js') return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
+    if(p==='/config.js')return route.fulfill({contentType:'application/javascript',body:`window.PANTHER_CONFIG={apiUrl:'${api}',development:${local},clientId:'test',cognitoDomain:'https://test.amazoncognito.com',redirectUri:'${origin}/'};`});
     const file=p==='/vendor/model-viewer.min.js'?MODEL_VIEWER_BUNDLE_PATH:path.join(__dirname,'../../web/media-explorer',['/app.js','/styles.css','/ui-runtime.js','/ui-system.css'].includes(p)?p.slice(1):'index.html');
     return route.fulfill({body:fs.readFileSync(file),contentType:file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':'text/html'});
   });
-  await page.route('https://images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><defs><radialGradient id="a"><stop stop-color="#c29554"/><stop offset="1" stop-color="#263b40"/></radialGradient></defs><rect width="960" height="540" fill="#17252b"/><path d="M300 500V120Q480 -70 660 120V500" fill="url(#a)"/><path d="M350 500V170Q480 35 610 170V500" fill="#101e23"/><circle cx="460" cy="275" r="22" fill="#e2bf77"/><path d="M465 500V330L505 305L530 500" fill="#344c51"/><path d="M0 500H960" stroke="#9b9271" stroke-width="4"/></svg>'}));
-  await page.route(`${api}/**`,route=>{
-    const u=new URL(route.request().url());
-    if(route.request().method()==='OPTIONS') return route.fulfill({status:204,headers});
-    const games=[{id:'test-game',name:'The Saltwater Campaign',purpose:'campaign'},{id:'other-game',name:'Other game',purpose:'test'}];
-    let body={};
-    if(u.pathname==='/games') body={games};
-    if(u.pathname==='/game') body={game:games.find(g=>g.id===u.searchParams.get('gameId')),players:[],characters:[],memberships:[]};
-    if(u.pathname==='/assets') body={assets:u.searchParams.get('gameId')==='test-game'?[{key,kind:'movie-review-plan',name:'plan.json',contentType:'application/json',lastModified:'2026-01-01T00:00:00Z',metadata:{title:plan.title,description:plan.summary}}]:[]};
-    if(u.pathname==='/movie-review') {
-      if(route.request().method()==='POST') {
-        writes.push(route.request().postDataJSON());
-        if(conflict) return route.fulfill({status:409,headers,json:{error:'Plan or review changed. Refresh before saving.'}});
-        review={id:'saved-review',action:writes.at(-1).action,createdAt:1700000000,comments:writes.at(-1).comments}; body={review,generationStarted:false};
-      } else body={plan,sha256:'a'.repeat(64),review,canApprove:true,readiness:{knownCostUsd:blocked?'0.32':'1.12',costComplete:!blocked,durationSeconds:16,ready:!blocked,blockers:blocked?['gate: starting composition has not been prepared','gate: generation cost is not quoted','gate: Character identity needs checking.']:[]}};
+  await page.route('https://images.example/**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#263b40"/></svg>'}));
+  await page.route(`${api}/**`,async route=>{
+    const u=new URL(route.request().url()),post=route.request().method()==='POST';
+    if(route.request().method()==='OPTIONS')return route.fulfill({status:204,headers});
+    const game={id:'test-game',name:'A fictional campaign',purpose:'campaign'};let body={};
+    if(u.pathname==='/games')body={games:[game]};
+    if(u.pathname==='/game')body={game,players:[],characters:[],memberships:[]};
+    if(u.pathname==='/assets')body={assets:takes,cursor:null};
+    if(u.pathname==='/scene-assemblies'){if(post)writes.push(route.request().postDataJSON());body={jobId:'9'.repeat(64),status:'QUEUED'};}
+    if(u.pathname==='/scene-renders'){if(post){writes.push(route.request().postDataJSON());body={jobId:'f'.repeat(64),status:'QUEUED'};}else body={jobs:failed?[{jobId:'f'.repeat(64),status:'FAILED',message:'The provider rejected the video prompt because it exceeds its length limit.'}]:[]};}
+    if(u.pathname==='/object-url'){const take=takes.find(item=>item.key===u.searchParams.get('key'));body={url:'https://videos.example/take.webm',contentType:'video/webm',metadata:take?.metadata};}
+    if(u.pathname==='/characters')body={characters:[],cursor:null};
+    if(u.pathname==='/episodes')body=u.searchParams.has('id')?{record:episode}:{records:[episode],cursor:null};
+    if(u.pathname==='/scenes'){
+      if(post){const request=route.request().postDataJSON();writes.push(request);if(conflict)return route.fulfill({status:409,headers,json:{error:'This scene changed. Reopen it before saving.'}});
+        if(request.storyboardDecision){scene={...scene,planningState:request.storyboardDecision.action==='approved'?'ready':'changes-requested',storyboard:{...scene.storyboard,decision:request.storyboardDecision}};}
+        if(request.shotSelection){const selection=request.shotSelection,shot=scene.storyboard.shots.find(item=>item.shotId===selection.shotId);scene={...scene,shotTakes:{...scene.shotTakes,[shot.shotId]:{...selection,durationSeconds:Math.min(shot.durationSeconds,takeSeconds-selection.startSeconds)}}};}
+        if(request.storyboardShots){const changed=JSON.stringify(request.storyboardShots)!==JSON.stringify(scene.storyboard.shots);scene={...scene,planningState:changed?'ready':scene.planningState,storyboard:{...scene.storyboard,origin:changed?'human':scene.storyboard.origin,shots:request.storyboardShots,decision:changed?null:scene.storyboard.decision}};}
+        body={record:scene};
+      }else body={records:published?[scene]:[],cursor:null};
     }
-    if(u.pathname==='/object-url') body={url:'https://images.example/frame.svg',contentType:'image/svg+xml'};
-    if(u.pathname==='/image-links') body={images:Object.fromEntries(route.request().postDataJSON().keys.map(k=>[k,{url:'https://images.example/frame.svg'}])),expiresIn:300};
-    if(u.pathname==='/recordings/live') body={recordings:[]};
+    if(u.pathname==='/image-links')body={images:{[frame]:{url:'https://images.example/frame.svg'}}};
+    if(u.pathname==='/novel')body=u.searchParams.has('id')?{chapter:{id:chapter,gameId:'test-game',title:'The crossing',markdown:'The party crossed the river.',details:{}}}:{chapters:[{id:chapter,gameId:'test-game',title:'The crossing'}],cursor:null};
+    if(['/novel-stories','/novel-books'].includes(u.pathname))body={records:[],cursor:null};
+    if(u.pathname==='/novel-chapter')body={id:chapter,gameId:'test-game',title:'The crossing',markdown:'The party crossed the river.',sessionId:'fictional-session',createdAt:1700000000,details:{sourceKeys:[],review:{markdown:'',uncertainties:[]}} };
+    if(u.pathname==='/editorial-jobs'){
+      if(post){writes.push(route.request().postDataJSON());episode={...episode,sceneIds:[],production:{state:'planning',jobId}};published=false;body={jobId,episodeRef:{episodeId:'pilot',revision:episode.revision}};}
+      else if(u.searchParams.has('jobId'))body={job:{jobId,status:published?'READY_FOR_VIDEO_DISCUSSION':'PROCESSING'},tasks:[]};
+      else body={jobs:[]};
+    }
     return route.fulfill({headers,json:body});
   });
-  return writes;
+  return {writes,errors,chapter,publish(){published=true;episode={...episode,sceneIds:['arrival'],production:{state:'planned',jobId}};}};
 }
-async function open(page) {await page.goto(`${origin}/games/test-game/episodes?project=${encodeURIComponent(key)}`);await expect(page.getByRole('heading',{name:'The House Beneath the Tide',exact:true})).toBeVisible();}
-for(const width of [1440,390]) test(`professional review layout, screenplay and explicit approval at ${width}`,async({page})=>{
-  await page.setViewportSize({width,height:1000}); const writes=await fixture(page); const errors=[]; page.on('pageerror',e=>errors.push(e.message)); await open(page);
-  await expect(page.locator('#episode-workspace')).toBeHidden();
-  await expect(page.locator('#editorial-video-composer')).toBeHidden();
-  await expect(page.locator('.movie-frame img')).toHaveCount(2);
-  await expect(page.locator('.movie-budget')).toContainText('$1.12');
-  await expect(page.getByRole('button',{name:'Review approval…'})).toBeDisabled();
-  await page.screenshot({path:test.info().outputPath(`movie-storyboard-${width}.png`),fullPage:true});
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.getByLabel('I have reviewed this shot').check();
-  await page.getByRole('button',{name:'Inspect shot 2: Someone is still here'}).click();
-  await page.getByLabel('I have reviewed this shot').check();
-  await page.getByRole('button',{name:'Screenplay',exact:true}).click();
-  await expect(page.getByRole('article',{name:'Movie screenplay'})).toContainText('Someone left the light on.');
-  expect(await page.evaluate(()=>window.attacked)).toBeUndefined();
-  await page.screenshot({path:test.info().outputPath(`movie-screenplay-${width}.png`),fullPage:true});
-  const approve=page.getByRole('button',{name:'Review approval…'}); await approve.scrollIntoViewIfNeeded();
-  expect(await approve.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
-  await approve.click();
-  await expect(page.getByRole('button',{name:'Approve this plan',exact:true})).toBeDisabled();
-  await page.getByLabel('I approve this exact plan and budget ceiling.').check(); await page.getByRole('button',{name:'Approve this plan',exact:true}).click();
-  await expect(page.locator('.movie-feedback-status')).toContainText('Review saved');
-  expect(writes).toHaveLength(1); expect(writes[0].action).toBe('approved'); expect(writes[0].capUsd).toBe('10.00'); expect(writes[0].reviewedShotIds).toEqual(['gate','answer']);
-  await page.reload(); await expect(page.locator('.movie-budget')).toContainText('This revision was approved');
-  await selectGame(page,'other-game'); await expect(page.locator('#movie-workspace')).not.toContainText('The House Beneath the Tide');
-  expect(errors).toEqual([]);
-});
-test('blocked plan saves shot feedback, never pretends missing prices are zero',async({page})=>{
-  const writes=await fixture(page,{blocked:true}); await open(page);
-  await expect(page.locator('.movie-cost')).toContainText('Unquoted'); await expect(page.locator('.movie-frame').first()).toContainText('Composition to be prepared');
-  await page.getByLabel('Request a change to this shot').fill('Keep the lantern in her right hand.');
-  await page.getByRole('button',{name:'Save change requests'}).click(); await expect(page.locator('.movie-feedback-status')).toContainText('Review saved');
-  expect(writes[0].comments).toEqual([{shotId:'gate',text:'Keep the lantern in her right hand.'}]);
-  await expect(page.getByRole('button',{name:'Review approval…'})).toBeDisabled();
-  await page.screenshot({path:test.info().outputPath('movie-blocked.png'),fullPage:true});
-});
-test('conflicts retain unsaved feedback and do not show success',async({page})=>{
-  await fixture(page,{conflict:true});await open(page); await page.getByLabel('Request a change to this shot').fill('Change this shot.');
-  await page.getByRole('button',{name:'Save change requests'}).click();await expect(page.locator('.movie-feedback-status')).toContainText('Refresh before saving');
-  await expect(page.getByLabel('Request a change to this shot')).toHaveValue('Change this shot.');
-});
-test('stable storyboard references load after a physical catalog relocation',async({page})=>{
-  await fixture(page);
-  let moved=false;
-  const requests=[];
-  await page.route(`${api}/image-links`,route=>{
-    const keys=route.request().postDataJSON().keys;
-    requests.push(keys);
-    const url=moved?'https://images.example/content/workflows/job/image/frame.svg':'https://images.example/content/media/image/frame.svg';
-    return route.fulfill({headers,json:{images:Object.fromEntries(keys.map(k=>[k,{url}])),expiresIn:300}});
-  });
-  await open(page);
-  await expect.poll(()=>page.locator('.movie-frame img').evaluateAll(images=>images.every(img=>img.complete && img.naturalWidth>0))).toBe(true);
-  await expect(page.locator('.movie-frame img').first()).toHaveAttribute('src',/content\/media\/image/);
-  moved=true;
-  await page.reload();
-  await expect(page.locator('.movie-frame img').first()).toHaveAttribute('src',/content\/workflows\/job\/image/);
-  await expect.poll(()=>page.locator('.movie-frame img').evaluateAll(images=>images.length===2 && images.every(img=>img.complete && img.naturalWidth>0))).toBe(true);
-  expect(requests.flat().every(k=>k===frame)).toBe(true);
-  await expect(page.locator('.movie-frame').filter({hasText:'Image unavailable'})).toHaveCount(0);
-});
-for(const width of [1440,390]) test(`campaign storyboard has readable narration and separate audition at ${width}`,async({page})=>{
-  await page.setViewportSize({width,height:1000}); await fixture(page,{campaign:true}); await open(page);
-  await expect(page.locator('.movie-hero')).toContainText('Campaign-wide storyboard');
-  await expect(page.locator('.movie-narrator-sample a')).toHaveAttribute('href',/voice.mp3/);
-  await expect(page.locator('.movie-shot').first()).toContainText('The sea remembers every promise.');
-  await expect(page.locator('.movie-shot').first()).toContainText('8s new motion + 7s still detail.');
-  await expect(page.locator('.movie-shot .movie-action').first()).toContainText('Mira stands in the doorway');
-  await expect(page.locator('.movie-inspector')).toContainText('Mira Vale');
-  await expect(page.locator('#movie-workspace video, #movie-workspace audio')).toHaveCount(0);
-  await expect(page.locator('.movie-frame img').first()).toBeVisible();
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.screenshot({path:test.info().outputPath(`campaign-storyboard-${width}.png`),fullPage:true});
-  const card=page.locator('.movie-shot').first();
-  await card.scrollIntoViewIfNeeded();
-  expect(await card.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,Math.min(innerHeight-1,r.y+r.height/2)));})).toBe(true);
-  await card.click();
-  const bounds=await page.locator('.movie-inspector').boundingBox();
-  expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y).toBeLessThan(100);
-  await page.getByRole('button',{name:'Back to storyboard',exact:true}).click();
-  await expect(card).toBeFocused();
+for(const width of [1280,871,390]) {
+ test(`each storyboard shot owns generation and its selected cut at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{human:true,multi:true,local:true});
+   await page.route('https://videos.example/**',route=>route.fulfill({contentType:'video/webm',body:fs.readFileSync(path.join(__dirname,'fixtures/storyboard-take.webm'))}));
+   await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+   const board=page.getByRole('region',{name:'Scene storyboard'});
+   await board.getByRole('button',{name:'Generate shot 2',exact:true}).click();
+   expect(writes[0].shotId).toBe('reaction');expect(writes[0].prompt).toContain('The travelers react.');
+   await board.getByRole('combobox',{name:'Take for shot 1'}).click();await page.getByRole('option',{name:'Take 1 · 8s'}).click();
+   expect(writes[1].shotSelection).toEqual({storyboardRevision:'e'.repeat(64),shotId:'gate',assetKey:'games/test-game/assets/take-0/original/video.webm',startSeconds:0});
+   const video=board.locator('video[aria-label="Shot 1 video"]');
+   await expect(video).toBeVisible();
+   const selector=board.getByRole('combobox',{name:'Take for shot 1'});
+   const bounds=await selector.evaluate(el=>{const card=el.closest('li'),box=el.getBoundingClientRect(),parent=card.getBoundingClientRect(),style=getComputedStyle(card);return {left:box.left,right:box.right,innerLeft:parent.left+parseFloat(style.paddingLeft),innerRight:parent.right-parseFloat(style.paddingRight)};});
+   expect(bounds.left).toBeGreaterThanOrEqual(bounds.innerLeft-1);
+   expect(bounds.right).toBeLessThanOrEqual(bounds.innerRight+1);
+   const playerBounds=await video.boundingBox(),selectorBounds=await selector.boundingBox();
+   expect(selectorBounds.width).toBeLessThanOrEqual(playerBounds.width+1);
+   await expect.poll(()=>video.evaluate(el=>el.readyState)).toBeGreaterThan(0);
+   expect(await video.evaluate(el=>el.duration)).toBeCloseTo(8,1);
+   await video.evaluate(el=>{el.currentTime=4;el.dispatchEvent(new Event('timeupdate'));});
+   expect(await video.evaluate(el=>el.currentTime)).toBeCloseTo(0,1);
+   await expect(board.locator('video[aria-label="Shot 2 video"]')).toHaveCount(0);
+   await expect(board.getByLabel('Trim start (seconds)')).toBeVisible();
+   await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeDisabled();
+   await expect(page.getByRole('button',{name:'Generate',exact:true})).toHaveCount(0);
+   const actions=board.getByRole('group',{name:'Storyboard actions'});
+   const edit=actions.getByRole('button',{name:'Edit',exact:true}),assembly=actions.getByRole('button',{name:'Assemble',exact:true});
+   await expect(edit).toBeVisible();await expect(assembly).toBeVisible();
+   await expect(assembly.locator('svg.lucide-hammer')).toHaveCount(1);
+   const editBox=await edit.boundingBox(),assemblyBox=await assembly.boundingBox();
+   expect(Math.abs(editBox.y-assemblyBox.y)).toBeLessThanOrEqual(1);
+   expect(assemblyBox.x).toBeGreaterThan(editBox.x+editBox.width);
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+   await expect(page.getByText(/Finished videos unavailable/)).toHaveCount(0);expect(errors).toEqual([]);
+   await page.screenshot({path:test.info().outputPath(`shot-takes-${width}.png`),fullPage:true});
+   await board.getByRole('combobox',{name:'Take for shot 2'}).click();await page.getByRole('option',{name:'Take 1 · 8s'}).click();
+   await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeEnabled();
+   await board.getByRole('button',{name:'Assemble',exact:true}).click();
+   await expect.poll(()=>writes.some(item=>item.sceneId==='arrival'&&!item.shotId&&!item.shotSelection)).toBe(true);
+ });
+ test(`AI storyboard approval belongs to its scene at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page);
+   await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+   const board=page.getByRole('region',{name:'Scene storyboard'});
+   await expect(page.getByRole('img',{name:'Storyboard needs approval',exact:true})).toBeVisible();
+   await expect(board).toContainText('Needs approval');await expect(board).toContainText('The party arrives at dusk.');
+   await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeDisabled();
+   const frame=board.getByRole('button',{name:'Open storyboard frame for shot 1'});await frame.hover();
+   const hover=await frame.evaluate(el=>getComputedStyle(el).borderColor);await page.mouse.move(0,0);expect(hover).not.toBe(await frame.evaluate(el=>getComputedStyle(el).borderColor));
+   await board.getByRole('button',{name:'Approve',exact:true}).click();await expect(board.getByRole('button',{name:'Approve',exact:true})).toHaveCount(0);
+   expect(writes[0].storyboardDecision).toEqual({revision:'e'.repeat(64),action:'approved'});
+   await expect(page.getByRole('img',{name:'Storyboard needs approval',exact:true})).toHaveCount(0);
+   await expect(page.getByRole('img',{name:'Storyboard approved',exact:true})).toBeVisible();
+   await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
+   await expect(page.locator('#storyboard-entry,#approval-inbox,#video-approval-inbox,#session-video-plans')).toHaveCount(0);
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+   await page.screenshot({path:test.info().outputPath(`owned-storyboard-${width}.png`),fullPage:true});expect(errors).toEqual([]);
+ });
+ test(`rejected storyboard has a scene-list icon at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});await fixture(page);
+   await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+   const board=page.getByRole('region',{name:'Scene storyboard'});
+   await board.getByRole('button',{name:'Request changes',exact:true}).click();
+   await expect(page.getByRole('img',{name:'Storyboard rejected',exact:true})).toBeVisible();
+   await expect(page.getByRole('img',{name:'Storyboard approved',exact:true})).toHaveCount(0);
+   await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeDisabled();
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ });
+ test(`human storyboards save through the scene without approval at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});const {writes}=await fixture(page,{human:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+   const board=page.getByRole('region',{name:'Scene storyboard'});await expect(board.getByRole('button',{name:'Approve',exact:true})).toHaveCount(0);
+   await board.getByRole('group',{name:'Storyboard actions'}).getByRole('button',{name:'Edit',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Edit storyboard'});
+   await dialog.getByLabel('Action and composition').fill('The gates close behind the travelers.');
+   await dialog.getByRole('button',{name:'Save storyboard'}).click();await expect(dialog).toHaveCount(0);
+   expect(writes[0].storyboardShots[0].description).toBe('The gates close behind the travelers.');expect(writes[0].origin).toBeUndefined();await expect(board).toContainText('The gates close behind the travelers.');
+ });
+ test(`chapter adaptation creates one owned pending Episode at ${width}px`,async({page})=>{
+   await page.setViewportSize({width,height:1000});const state=await fixture(page);
+   await page.goto(`${origin}/games/test-game/episodes`);await page.getByRole('button',{name:'Create Episode options'}).click();const menu=page.getByRole('menuitem',{name:'Create from Novel…'});await menu.hover();await menu.click();
+   const dialog=page.getByRole('dialog',{name:'Create TV Episode'});await dialog.getByRole('combobox').click();await page.getByRole('option',{name:'The crossing'}).click();await page.keyboard.press('Escape');
+   await dialog.getByRole('button',{name:'Create TV Episode',exact:true}).click();await expect(page).toHaveURL(/episodes\/pilot$/);await expect(page.getByRole('region',{name:'Episode preparation'})).toContainText('Preparing episode');
+   expect(state.writes[0]).toEqual({gameId:'test-game',creation:{schemaVersion:4,target:'video',chapterId:state.chapter}});
+   state.publish();await expect(page.getByRole('region',{name:'Scene storyboard'})).toBeVisible({timeout:10000});await expect(page.getByRole('region',{name:'Episode preparation'})).toHaveCount(0);expect(state.errors).toEqual([]);
+ });
+}
+test('conflicting storyboard decisions stay visible and never claim approval',async({page})=>{
+ await fixture(page,{conflict:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);const board=page.getByRole('region',{name:'Scene storyboard'});await board.getByRole('button',{name:'Approve',exact:true}).click();await expect(board.getByRole('alert')).toContainText('This scene changed');await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeDisabled();
 });
 
-for(const width of [1440,390]) test(`gallery batch recovers failures and loads sixteen images without per-image API calls at ${width}`,async({page})=>{
-  await page.setViewportSize({width,height:1000});
-  await fixture(page,{crowded:true});
-  let total=0,failed=false,individualCalls=0;
-  await page.route(`${api}/object-url?**`,route=>{individualCalls++;return route.fulfill({status:503,headers,json:{message:'No per-image API allowed'}});});
-  await page.route(`${api}/image-links`,async route=>{
-    total++;
-    const body=route.request().postDataJSON();
-    expect(body.gameId).toBe('test-game'); expect(body.keys).toHaveLength(17);
-    if(!failed) {failed=true;return route.fulfill({status:503,headers,json:{message:'Service Unavailable'}});}
-    return route.fulfill({headers,json:{images:Object.fromEntries(body.keys.map(asset=>[asset,{url:`https://images.example/frame.svg?attempt=${total}&key=${encodeURIComponent(asset)}`}])) ,expiresIn:300}});
-  });
-  let badImage=false,imageActive=0,imagePeak=0;
-  await page.route('https://images.example/**',async route=>{
-    if(!badImage) {badImage=true;return route.fulfill({status:403,body:'Expired URL'});}
-    imageActive++; imagePeak=Math.max(imagePeak,imageActive);
-    await new Promise(resolve=>setTimeout(resolve,100)); imageActive--;
-    return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#596a50"/></svg>'});
-  });
-  await open(page);
-  await expect(page.locator('.movie-frame.has-image')).toHaveCount(16);
-  expect(total).toBe(3); expect(individualCalls).toBe(0); expect(failed&&badImage).toBe(true);
-  expect(imagePeak).toBeGreaterThan(3);
-  expect(await page.locator('.movie-frame img').evaluateAll(imgs=>imgs.every(img=>img.complete&&img.naturalWidth>0))).toBe(true);
-  const before=total;
-  await page.getByRole('button',{name:'Inspect shot 1: Frame 0',exact:true}).click();
-  await expect(page.locator('.movie-frame.has-image')).toHaveCount(16);
-  expect(total).toBe(before);
-  await page.getByRole('button',{name:'Back to storyboard',exact:true}).click();
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await page.screenshot({path:test.info().outputPath(`image-recovery-${width}.png`)});
+for(const width of [1280,390])test(`chapter reader starts the same episode adaptation at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});const state=await fixture(page);
+ await page.goto(`${origin}/games/test-game/novel/${state.chapter}`);
+ const action=page.getByRole('button',{name:'Create TV Episode',exact:true});await expect(action).toBeVisible();await expect(action).toBeInViewport();await action.click();
+ await expect(page).toHaveURL(/episodes\/pilot$/);await expect(page.getByRole('region',{name:'Episode preparation'})).toContainText('Preparing episode');
+ expect(state.writes[0]).toEqual({gameId:'test-game',creation:{schemaVersion:4,target:'video',chapterId:state.chapter}});expect(state.errors).toEqual([]);
 });
 
-// Exercise the visible Radix Select, including the portal and keyboard focus.
-async function selectGame(page,id) {
-  const name=await page.locator(`#game-selector option[value="${id}"]`).textContent();
-  await page.getByRole('combobox',{name:'Current game'}).click();
-  await page.getByRole('option',{name,exact:true}).click();
-}
+for(const width of [1280,871,390])test(`long storyboard cuts explain missing footage at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});await fixture(page,{human:true,local:true,long:true});
+ await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ const board=page.getByRole('region',{name:'Scene storyboard'});
+ await board.getByRole('combobox',{name:'Take for shot 1'}).click();
+ await expect(page.getByRole('option',{name:'Take 1 · 8s — needs 18s',exact:true})).toBeDisabled();
+ await page.keyboard.press('Escape');
+ await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeDisabled();
+ await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
+ await expect(board).not.toContainText('eight seconds or less');
+});
+test('a failed earlier scene request explains why no shot take exists',async({page})=>{
+ await fixture(page,{human:true,local:true,failed:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ const board=page.getByRole('region',{name:'Scene storyboard'});
+ await expect(board.getByRole('status')).toContainText('exceeds its length limit');
+ await expect(board).toContainText('No take available for this shot.');
+ await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
+});
+
+test('an eight-second take is selectable for an eight-second shot',async({page})=>{
+ await fixture(page,{human:true,local:true,take:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ await page.getByRole('combobox',{name:'Take for shot 1'}).click();
+ await expect(page.getByRole('option',{name:'Take 1 · 8s',exact:true})).toBeEnabled();
+});
+
+for(const width of [1280,390])test(`a fifteen-second take supports an eighteen-second planned cut at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});await fixture(page,{human:true,local:true,long:true,takeSeconds:15});
+ await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ const board=page.getByRole('region',{name:'Scene storyboard'});
+ const sceneEdit=page.getByRole('button',{name:'Edit',exact:true}).first();
+ const boardEdit=board.getByRole('group',{name:'Storyboard actions'}).getByRole('button',{name:'Edit',exact:true});
+ expect((await boardEdit.boundingBox()).height).toBe((await sceneEdit.boundingBox()).height);
+ const appearance=button=>{const style=getComputedStyle(button);return [style.backgroundColor,style.borderColor,style.borderRadius,style.fontSize,style.fontWeight];};
+ expect(await boardEdit.evaluate(appearance)).toEqual(await sceneEdit.evaluate(appearance));
+ await board.getByRole('combobox',{name:'Take for shot 1'}).click();
+ await page.getByRole('option',{name:'Take 1 · 15s',exact:true}).click();
+ await expect(board).toContainText('Cut: 15s · planned 18s');
+ await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeEnabled();
+});

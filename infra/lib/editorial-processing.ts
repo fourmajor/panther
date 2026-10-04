@@ -44,8 +44,10 @@ export class EditorialProcessing extends Construct {
       logGroup: new logs.LogGroup(this, "Logs", { retention: logs.RetentionDays.ONE_MONTH }),
     });
     table.grantReadWriteData(fn);
+    table.grant(fn,"dynamodb:ConditionCheckItem");
     AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.browseTable.grant(fn, "dynamodb:Query", "dynamodb:GetItem");
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"],resources:[props.browseTable.tableArn],conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["episode-scenes-v1#*","episode-scenes-v1-history#*"]}}}));
     props.catalogTable.grant(fn, "dynamodb:GetItem");
     props.bucket.grantRead(fn, "games/*");
     const failed = new tasks.LambdaInvoke(this, "RecordFailure", {

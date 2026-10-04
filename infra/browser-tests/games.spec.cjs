@@ -394,7 +394,7 @@ for (const width of [1280, 390]) {
     for(const [section,selector] of [
       ['characters','#character-create'],['sessions','#room-start'],
       ['novel','#novel .explorer-heading [data-generation-action]'],
-      ['videos','#episode-create-action'],['assets','.assets-actions .ui-button-primary'],
+      ['videos','#episode-create-action button:first-child'],['assets','.assets-actions .ui-button-primary'],
     ]) {
       await page.goto(`https://panther.place/games/campaign-a/${section}`);
       const button=page.locator(selector);
@@ -405,8 +405,8 @@ for (const width of [1280, 390]) {
         const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
         const heading=el.closest('.explorer-heading')||el.closest('.assets-toolbar');
         const headingRect=heading.getBoundingClientRect();
-        const group=el.closest('.assets-actions')||el;const groupRect=group.getBoundingClientRect();
-        return {height:rect.height,fontSize:style.fontSize,fontWeight:style.fontWeight,lineHeight:style.lineHeight,paddingLeft:style.paddingLeft,paddingRight:style.paddingRight,border:style.borderWidth,radius:style.borderRadius,background:style.backgroundColor,color:style.color,fontFamily:style.fontFamily,letterSpacing:style.letterSpacing,textTransform:style.textTransform,hit:el===hit||el.contains(hit),right:groupRect.right,toolbarRight:headingRect.right};
+        const group=el.closest('.assets-actions,#episode-create-action')||el;const groupRect=group.getBoundingClientRect();
+        return {height:rect.height,fontSize:style.fontSize,fontWeight:style.fontWeight,lineHeight:style.lineHeight,paddingLeft:style.paddingLeft,paddingRight:style.paddingRight,border:style.borderWidth,radius:style.borderTopLeftRadius,background:style.backgroundColor,color:style.color,fontFamily:style.fontFamily,letterSpacing:style.letterSpacing,textTransform:style.textTransform,hit:el===hit||el.contains(hit),right:groupRect.right,toolbarRight:headingRect.right};
       });
       expect(measured.height).toBe(36);
       expect(measured.hit).toBe(true);
@@ -443,7 +443,7 @@ for(const width of [1280,390])test(`all main page titles use one heading scale a
  for(const section of ['dashboard','characters','sessions','novel','videos','assets','workflows']){
   await page.goto(`https://panther.place/games/campaign-a/${section}`);const title=page.locator('main .page-heading h1:visible').first();await expect(title).toBeVisible();
   const readScale=()=>title.evaluate(el=>{const s=getComputedStyle(el);return{size:s.fontSize,lineHeight:s.lineHeight,weight:s.fontWeight,marginTop:s.marginTop,marginBottom:s.marginBottom};});await expect.poll(async()=>Boolean((await readScale()).size)).toBe(true);baseline ||= await readScale();await expect.poll(readScale).toEqual(baseline);
-  const mainPadding=await page.locator('main').evaluate(el=>getComputedStyle(el).paddingTop);expect(mainPadding).toBe(width===390?'12px':'16px');
+  const mainPadding=await page.locator('main').evaluate(el=>getComputedStyle(el).paddingTop);expect(mainPadding).toBe('8px');
   const headingPadding=await title.evaluate(el=>getComputedStyle(el.closest('.page-heading')).paddingTop);expect(headingPadding).toBe('8px');
  }
 });

@@ -152,3 +152,95 @@ def test_standalone_image_model_pins_initial_frame_and_lineage(tmp_path, monkeyp
     metadata, _ = store.object(store.get('asset-generation', identity)['assetKey'])
     assert key in metadata['sourceKeys']
     assert metadata['extra']['generation']['model'] == 'Veo 3.1 Fast'
+
+
+def test_unknown_with_verified_queue_identity_resumes_without_post(tmp_path):
+    store, identity = queued(tmp_path)
+    client = Fal(pending=True)
+    root = worker.private_root(tmp_path / 'work')
+    worker.process(store, identity, root, client)
+    job = store.get('scene-render', identity)
+    job['status'] = 'UNKNOWN'
+    store.put('scene-render', identity, job, 'fictional')
+    client.pending = False
+    assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    assert len([call for call in client.calls if call[0] == 'POST']) == 1
+    assert store.get('scene-render', identity)['status'] == 'DONE'
+
+
+def test_completed_input_rejection_stops_polling_without_another_submission(tmp_path):
+    store, identity = queued(tmp_path)
+    client = Fal(pending=True)
+    root = worker.private_root(tmp_path / 'work')
+    worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    class Rejected:
+        def request(self, method, url, **kwargs):
+            assert method == 'GET'
+            if kwargs.get('completed_result'):
+                raise worker.v.TerminalInputRejection('The provider rejected the video prompt because it exceeds its length limit.', {'detail': [{'type': 'string_too_long', 'input': 'synthetic-private-input'}]})
+            return {'status': 'COMPLETED', 'request_id': 'request-example'}
+    worker.process(store, identity, root, Rejected())
+    assert store.get('scene-render', identity)['status'] == 'FAILED'
+    assert b'synthetic-private-input' in (root / identity / 'provider-rejection.json').read_bytes()
+    assert not worker.process(store, identity, root, Rejected())
+    assert len([call for call in client.calls if call[0] == 'POST']) == 1
+
+
+def test_reference_render_keeps_actual_endpoint_on_resume_and_selected_cast(tmp_path):
+    import json
+    from test_dev_video_conditioning import fixture
+    store, identity = queued(tmp_path)
+    reference_store, references = fixture(tmp_path / 'references')
+    with reference_store.connect() as source, store.connect() as target:
+        for row in source.execute('SELECT * FROM objects'):
+            target.execute('INSERT INTO objects VALUES (?,?,?,?,?)', row)
+    job = store.get('scene-render', identity)
+    job.update(sceneType='dialogue', videoPromptPolicy=2,
+        characterIds=['hero', 'absent'], characterContext=references['characterContext'],
+        inputRefs=[c['portraitPin'] for c in references['characterContext']],
+        preparedPrompt='Hero closes the door.', promptComposition={'schemaVersion': 2, 'visibleCharacterIds': ['hero']})
+    store.put('scene-render', identity, job, 'fictional')
+
+    class ReferenceFal(Fal):
+        def request(self, method, url, **kwargs):
+            if method == 'POST':
+                self.calls.append((method, url, kwargs))
+                prefix = 'https://queue.fal.run/minimax/h3-max/requests/request-example'
+                return {'request_id': 'request-example', 'status_url': prefix + '/status', 'response_url': prefix}
+            return super().request(method, url, **kwargs)
+
+    client = ReferenceFal(pending=True)
+    root = worker.private_root(tmp_path / 'work')
+    assert not worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    assert store.get('scene-render', identity)['endpoint'] == 'minimax/h3-max/reference-to-video'
+    client.pending = False
+    assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
+    assert len([call for call in client.calls if call[0] == 'POST']) == 1
+    finished = store.get('scene-render', identity)
+    metadata, _ = store.object(finished['outputKey'])
+    assert metadata['characterIds'] == ['hero']
+    assert metadata['extra']['generation']['model'] == 'MiniMax H3 Max (post-trained by fal)'
+    assert metadata['extra']['generation']['cost']['status'] == 'unknown'
+    assert 'costEstimate' not in metadata['extra']  # Never reuse a different endpoint's price.
+    request = json.loads((root / identity / 'request.json').read_text())
+    assert len(request['payload']['reference_image_urls']) == 1
+    assert 'Absent' not in request['payload']['prompt']
+
+
+def test_long_prompt_is_submitted_once_and_original_is_retained(tmp_path):
+    import json
+    store, identity = queued(tmp_path)
+    job = store.get('scene-render', identity)
+    job['prompt'] = 'Travel through the city. ' + 'Architectural detail. ' * 400
+    original = job['prompt']
+    store.put('scene-render', identity, job, 'fictional')
+    client = Fal()
+    assert worker.process(store, identity, worker.private_root(tmp_path / 'work'), client,
+                          downloader=fake_download, media_probe=fake_probe)
+    posts = [call for call in client.calls if call[0] == 'POST']
+    assert len(posts) == 1 and len(posts[0][2]['json']['prompt']) <= 2500
+    completed = store.get('scene-render', identity)
+    assert completed['prompt'] == original and completed['promptFitting']['truncated']
+    response = json.loads(store.object(completed['responseKey'])[1])
+    assert response['promptFitting']['originalPrompt'] == original
+    assert response['request']['payload']['prompt'] == posts[0][2]['json']['prompt']

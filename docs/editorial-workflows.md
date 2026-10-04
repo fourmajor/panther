@@ -33,6 +33,14 @@ input and workflow version produce the same run ID. Arbitrary file uploads do no
 committed through `editorial submit`; derived outputs cannot recursively trigger a new pipeline.
 Future workflows require a new version instead of silently changing an execution's definition.
 
+## Episode destination
+
+Workflow version 5 publishes the existing screen branch into canonical Episodes, owned
+Scenes and scene-owned storyboard revisions. Chapter adaptation and raw-session screen
+planning share that pipeline. See [Episode production](episode-production.md) for storage,
+publication guards and the AI-only approval state machine. Human storyboard edits do not
+require approval. The standalone storyboard review UI has been removed.
+
 ## Process and artifacts
 
 Separately generated speech follows the owner's premium narration policy: ElevenLabs Eleven
@@ -245,7 +253,7 @@ on the laptop. Independent AI sessions can share biases; automatic review is not
 
 ## Operations
 
-### Recovery and independent branches (workflow 5)
+### Recovery and independent branches (workflow 6)
 
 Novel and screen planning now have separate failure boundaries. A failed novel step does
 not cancel video preparation; a failed video step does not cancel the chapter. Readiness
@@ -262,7 +270,7 @@ panther editorial recover --job-id FAILED_JOB_ID --target video
 Use `novel` or `both` for the other branches. Explicit creation requests retain their
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
-version-5 execution. It replays the requested planning branch from source; it does not
+version-6 execution. It replays the requested planning branch from source; it does not
 relabel or reuse older-version stage outputs as newly reviewed results. The new job
 records its parent and recovery mode. Repeating the same parent/target/version request
 returns the same recovery job, including when that job has failed; recovering a new
