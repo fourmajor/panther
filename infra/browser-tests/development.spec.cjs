@@ -75,8 +75,8 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.getByText('The northern gate',{exact:true}).filter({visible:true}).first()).toBeVisible();
   await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');
   await page.goto(origin+'/games/preview-campaign/dashboard');
-  await expect(page.locator('#dashboard-sections').getByRole('link',{name:'The northern gate'})).toBeVisible();
-  await expect(page.locator('#dashboard-sections').getByRole('link',{name:'Ash Meadow'})).toBeVisible();
+  for(const section of ['novel','videos','assets'])await expect(page.locator(`#dashboard-sections [data-section="${section}"]`).getByRole('link',{name:'The northern gate',exact:true})).toBeVisible();
+  await expect(page.locator('#dashboard-sections [data-section="characters"]').getByRole('link',{name:'Ash Meadow',exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   await page.screenshot({path:testInfo.outputPath(`development-dashboard-${width}.png`),fullPage:true});
 });
