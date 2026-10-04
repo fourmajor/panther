@@ -33,6 +33,14 @@ input and workflow version produce the same run ID. Arbitrary file uploads do no
 committed through `editorial submit`; derived outputs cannot recursively trigger a new pipeline.
 Future workflows require a new version instead of silently changing an execution's definition.
 
+## Episode destination
+
+Workflow version 5 publishes the existing screen branch into canonical Episodes, owned
+Scenes and scene-owned storyboard revisions. Chapter adaptation and raw-session screen
+planning share that pipeline. See [Episode production](episode-production.md) for storage,
+publication guards and the AI-only approval state machine. Human storyboard edits do not
+require approval. The standalone storyboard review UI has been removed.
+
 ## Process and artifacts
 
 Separately generated speech follows the owner's premium narration policy: ElevenLabs Eleven

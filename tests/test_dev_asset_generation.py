@@ -171,3 +171,33 @@ def test_generic_state_projection_preserves_real_worker_records(tmp_path, raw, v
     store.put('service', 'video', {'status': 'RUNNING', 'updatedAt': time.time() - 60})
     assert store.asset_generation_view(job)['status'] == visible
     assert store.get('asset-generation', 'fictional') == job
+
+
+def test_completed_title_contract_repair_reuses_receipt_without_another_title_request(tmp_path):
+    from panther_journal.asset_generation_title import request_for, validate_response
+    from dev_playback_worker import retain
+    store = store_at(tmp_path)
+    identity = store.submit_asset_generation(request('image', model='gpt-image-2'))['jobId']
+    job = store.get('asset-generation', identity)
+    job.update(status='ATTENTION', titlePhase='GENERATING')
+    store.put('asset-generation', identity, job, 'imaginary')
+    title = 'A' * 81
+    folder = tmp_path / 'work' / identity
+    folder.mkdir(parents=True)
+    retain(folder / 'title-request.json', json.dumps(request_for(job['type'], job['prompt'])).encode())
+    receipt = {'id':'retained-title','responseId':'retained-title','status':'completed','output_text':json.dumps({'title':title})}
+    retain(folder / 'title-response.json', json.dumps(receipt).encode())
+    buffer = BytesIO()
+    Image.new('RGB', (8, 8)).save(buffer, format='PNG')
+    images = []
+    def generate(**body):
+        images.append(body)
+        return SimpleNamespace(_request_id='fictional-image',model_dump=lambda **kw:{'data':[{'b64_json':base64.b64encode(buffer.getvalue()).decode()}]})
+    client = SimpleNamespace(images=SimpleNamespace(generate=generate),responses=Responses({},AssertionError('Title inference must not repeat')))
+    assert images_worker.process(store,identity,tmp_path/'work',client,'gpt-image-2')
+    assert store.get('asset-generation',identity)['name'] == title
+    assert not client.responses.calls and len(images) == 1
+    assert not images_worker.process(store,identity,tmp_path/'work',client,'gpt-image-2')
+    assert len(images) == 1
+    with pytest.raises(ValueError):
+        validate_response({**receipt,'output_text':json.dumps({'title':'A'*161})})

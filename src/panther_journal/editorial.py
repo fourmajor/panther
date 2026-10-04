@@ -45,11 +45,11 @@ SHOT = obj(
     {
         "sceneId": TEXT,
         "shotId": TEXT,
-        "durationSeconds": {"type": "number"},
+        "durationSeconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 120},
         "description": TEXT,
         "camera": TEXT,
-        "color": TEXT,
-        "subjects": array(obj({"label": TEXT, "x": {"type": "number"}, "y": {"type": "number"}})),
+        "color": {"type": "string", "pattern": r"^#[0-9a-fA-F]{6}$"},
+        "subjects": array(obj({"label": TEXT, "x": {"type": "number", "minimum": 0, "maximum": 1}, "y": {"type": "number", "minimum": 0, "maximum": 1}})),
     }
 )
 SCHEMA = obj(
@@ -79,8 +79,50 @@ SCHEMA = obj(
 )
 
 
+def evidence_ids(stage, inputs):
+    """The same finite citation vocabulary governs generation and validation."""
+    evidence = inputs.get("context", {})
+    allowed = {"catalog", *evidence, *inputs.get("priorStages", {})}
+    if inputs.get("raw") is not None or inputs.get("sourceTranscripts"):
+        allowed.add("raw")
+    if inputs.get("creation"):
+        allowed.add("creation")
+    if inputs.get("candidate") is not None:
+        allowed.add("candidate")
+    allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
+    if inputs.get("mapInput"):
+        allowed.add(inputs["mapInput"]["key"])
+    if inputs.get("sourceChapter"):
+        allowed.update({"sourceChapter", inputs["sourceChapter"]["key"]})
+    if stage == "context":
+        allowed.update(c["key"] for c in inputs["candidates"])
+
+    return allowed
+
+
 def stage_schema(stage, inputs):
     schema = copy.deepcopy(SCHEMA)
+    citations = sorted(evidence_ids(stage, inputs))
+    citation_field = array({"type": "string", "enum": citations})
+    schema["properties"]["evidenceIds"] = copy.deepcopy(citation_field)
+    for field in ("decisions", "edits"):
+        schema["properties"][field]["items"]["properties"]["evidenceIds"] = copy.deepcopy(citation_field)
+    if stage == "video-generation-packets" and inputs.get("episodeDestination"):
+        from panther_journal.episode_adaptation import SCHEMA as EPISODE_SCHEMA
+        schema["properties"]["episode"] = copy.deepcopy(EPISODE_SCHEMA)
+        schema["required"].append("episode")
+        # These are inputs, not fresh creative output. Materialize the exact locked
+        # panels after validating the provider response rather than regenerating them.
+        schema["properties"]["shots"] = {"type": "array", "items": copy.deepcopy(SHOT), "maxItems": 0}
+        scene = schema["properties"]["episode"]["properties"]["scenes"]["items"]["properties"]
+        catalog = inputs["context"]["catalog"]
+        choices = {
+            "characterIds": [c.get("characterId", c.get("id")) for c in catalog.get("characters", [])],
+            "referenceKeys": inputs.get("productionSourceKeys", []),
+            "shotIds": [shot["shotId"] for shot in inputs["priorStages"]["video-storyboards"]["shots"]],
+        }
+        for field, values in choices.items():
+            scene[field] = array({"type": "string", "enum": sorted(set(values))}) if values else {"type": "array", "items": copy.deepcopy(TEXT), "maxItems": 0}
     if stage == "video-source-brief":
         schema["properties"]["sourceFacts"] = array(
             obj(
@@ -223,18 +265,7 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
     valid = None
     candidate = inputs.get("candidate")
     evidence = inputs.get("context", {})
-    allowed = {"catalog", *evidence, *inputs.get("priorStages", {})}
-    if inputs.get("raw") is not None or inputs.get("sourceTranscripts"):
-        allowed.add("raw")
-    if inputs.get("creation"):
-        allowed.add("creation")
-    if inputs.get("candidate") is not None:
-        allowed.add("candidate")
-    allowed.update(source["key"] for source in inputs.get("sourceTranscripts", []))
-    if inputs.get("mapInput"):
-        allowed.add(inputs["mapInput"]["key"])
-    if stage == "context":
-        allowed.update(c["key"] for c in inputs["candidates"])
+    allowed = evidence_ids(stage, inputs)
 
     def call(role, data):
         nonlocal calls
@@ -281,6 +312,17 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
 
                 if identity(value["shots"]) != identity(expected):
                     raise ValueError("Storyboard must preserve the locked shot sequence")
+            if role == "video-generation-packets" and data.get("episodeDestination"):
+                from panther_journal.episode_adaptation import validate
+                expected = data["priorStages"]["video-storyboards"]["shots"]
+                value = copy.deepcopy(value)
+                value["shots"] = copy.deepcopy(expected)
+                entry["materializedShotsFrom"] = "video-storyboards"
+                catalog = data["context"]["catalog"]
+                validate(value["episode"], game=catalog["game"]["id"],
+                         shot_ids=[shot["shotId"] for shot in expected],
+                         source_keys=data.get("productionSourceKeys", []),
+                         character_ids=[character.get("characterId", character.get("id")) for character in catalog.get("characters", [])])
         except (ValueError, jsonschema.ValidationError) as exc:
             entry["validationError"] = str(exc)[:2000]
             raise ValueError(entry["validationError"]) from exc
@@ -436,6 +478,8 @@ def upload(config, file, job, kind, category, source_keys, run_suffix):
         if scene_ref
         else {}
     )
+    if (job.get('creation') or {}).get('storyboardShotRef'):
+        scene_metadata['storyboardShotRef'] = job['creation']['storyboardShotRef']
     write_json(
         meta,
         {
@@ -695,7 +739,16 @@ def process(config, root, claim):
             selected_map["contentType"]
         ]
         local.download(config, selected_map, folder / ("map-first-frame" + extension))
-    sources = [ref["key"] for ref in raw_references]
+    chapter_source = job.get("chapterSource")
+    chapter = fetch(config, chapter_source, folder, "source-chapter.json") if chapter_source else None
+    if chapter_source:
+        if not isinstance(chapter, dict) or chapter.get("gameId") != job["gameId"]:
+            raise ValueError("Pinned chapter belongs to another game")
+        manuscript = chapter.get("markdown") or chapter.get("payload", {}).get("chapter")
+        if not isinstance(manuscript, str) or not manuscript.strip():
+            raise ValueError("Pinned chapter has no manuscript")
+        chapter = {"key": chapter_source["key"], "markdown": manuscript, "role": "creative-adaptation-source"}
+    sources = [ref["key"] for ref in raw_references] + ([chapter_source["key"]] if chapter_source else [])
     if selected_map:
         sources.append(selected_map["key"])
     sources.extend(
@@ -704,7 +757,7 @@ def process(config, root, claim):
         for ref in character.get("appearanceAssets", [])
     )
     if stage == "context":
-        if (job.get("creation") or {}).get("schemaVersion") == 2:
+        if (job.get("creation") or {}).get("schemaVersion") in {2, 4}:
             catalog = pinned_cast(job)
         else:
             catalog = cloud.api(config, "GET", "/game", params={"gameId": job["gameId"]})
@@ -758,10 +811,11 @@ def process(config, root, claim):
             {
                 "raw": raw,
                 "catalog": creative_content(catalog)
-                if (job.get("creation") or {}).get("schemaVersion") == 2
+                if (job.get("creation") or {}).get("schemaVersion") in {2, 4}
                 else catalog,
                 "candidates": candidates,
                 "creation": job.get("creation"),
+                "sourceChapter": chapter,
             },
             heartbeat,
         )
@@ -817,6 +871,9 @@ def process(config, root, claim):
             "candidate": candidate,
             "creation": job.get("creation"),
             "mapInput": selected_map,
+            "sourceChapter": chapter,
+            "episodeDestination": bool(job.get("episodeDestination")),
+            "productionSourceKeys": list(dict.fromkeys(sources)),
         }
         if stage not in PLAN["video"]:
             inputs["raw"] = raw
@@ -830,6 +887,8 @@ def process(config, root, claim):
             allowed.add("creation")
         if candidate is not None:
             allowed.add("candidate")
+        if chapter is not None:
+            allowed.update({"sourceChapter", chapter["key"]})
         if not set(report["evidenceIds"]) <= allowed:
             raise ValueError("Unknown evidence citation")
         payload = report

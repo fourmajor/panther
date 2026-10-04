@@ -134,7 +134,14 @@ def publish(store, job, response, request, *, raw_image=None):
 
 def process(store, identity, root, client, model, *, fal=None, downloader=None):
     job = store.get("asset-generation", identity)
-    if not job or job.get("mediaType", "image") != "image" or job.get("status") not in {"QUEUED", "GENERATING", "SUBMITTED", "IN_QUEUE", "IN_PROGRESS"}:
+    # Revalidate a completed title after a contract repair. There must be no
+    # evidence of any media dispatch; neither title inference nor media is retried.
+    folder = root / identity
+    retained_title = bool(job and job.get('status') == 'ATTENTION' and job.get('titlePhase') == 'GENERATING'
+        and not job.get('outcomeUnknown') and not job.get('requestId') and not job.get('dispatchStarted')
+        and (folder / 'title-response.json').is_file()
+        and not any((folder / name).exists() for name in ('request.json', 'submission.json', 'provider-response.json')))
+    if not job or job.get("mediaType", "image") != "image" or (job.get("status") not in {"QUEUED", "GENERATING", "SUBMITTED", "IN_QUEUE", "IN_PROGRESS"} and not retained_title):
         return False
     try:
         if not re.fullmatch(r"[a-f0-9]{64}", identity) or job.get("generationAuthorized") is not True or job.get("type") not in {"image", "map", "blueprint", "location", "portrait"}:
@@ -263,6 +270,9 @@ def process_fal(store, identity, job, folder, fal, downloader=None):
             response = fal.request('GET', v.queue_url(job['urls']['response'], rid, endpoint, 'response'), completed_result=True)
             retain(response_file, json.dumps(response).encode())
         response = json.loads(response_file.read_bytes())
+        if any(response.get('has_nsfw_concepts', [])):
+            job.update(providerRejected=True, outcomeUnknown=False)
+            raise ValueError('The provider blocked this image; no image was published')
         outputs = response.get('images') if pinned['outputShape'] == 'images' else [response.get('image')]
         if not isinstance(outputs, list) or len(outputs) != 1 or not isinstance(outputs[0], dict):
             raise ValueError('Provider did not return one complete image')
@@ -287,9 +297,9 @@ def process_fal(store, identity, job, folder, fal, downloader=None):
             retain(folder / f'worker-error-{time.time_ns()}.json', json.dumps({'type': type(error).__name__, 'message': diagnostic, 'errorCode': code, 'requestId': job.get('requestId'), 'billingStatus': 'unknown'}).encode())
         except (OSError, ValueError):
             pass
-        if response_file.is_file() and not response_file.is_symlink():
+        if response_file.is_file() and not response_file.is_symlink() and not job.get('providerRejected'):
             job.update(publicationRecoveryAvailable=True, outcomeUnknown=False)
-        job.update(status='ATTENTION', message='Image generation could not be confirmed.' if job.get('outcomeUnknown') else 'Image generation is unavailable.', updatedAt=time.time())
+        job.update(status='ATTENTION', message='The provider blocked this image. Edit the prompt before generating again.' if job.get('providerRejected') else 'Image generation could not be confirmed.' if job.get('outcomeUnknown') else 'Image generation is unavailable.', updatedAt=time.time())
         store.put('asset-generation', identity, job, job['gameId'])
         return False
 

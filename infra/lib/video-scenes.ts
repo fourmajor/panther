@@ -17,7 +17,7 @@ export class VideoScenes extends Construct {
     const fn = new lambda.Function(this,"Api",{runtime:lambda.Runtime.PYTHON_3_13,architecture:lambda.Architecture.ARM_64,
       handler:"video_scenes.handler",code:lambda.Code.fromAsset(path.join(__dirname,"../../lambda/media-api"),{exclude:["**/__pycache__/**","**/*.pyc"]}),
       environment:{ASSET_BUCKET_NAME:props.bucket.bucketName,ASSET_BROWSE_TABLE:props.browseTable.tableName,CATALOG_TABLE:props.catalogTable.tableName,
-        CATALOG_READERS:props.accessEnvironment.CATALOG_READERS,MODEL_PUBLISHERS:props.accessEnvironment.MODEL_PUBLISHERS,ASSET_MIGRATORS:props.accessEnvironment.ASSET_MIGRATORS},
+        CATALOG_READERS:props.accessEnvironment.CATALOG_READERS,MODEL_PUBLISHERS:props.accessEnvironment.MODEL_PUBLISHERS,MODEL_WORKERS:props.accessEnvironment.MODEL_WORKERS,ASSET_MIGRATORS:props.accessEnvironment.ASSET_MIGRATORS},
       memorySize:128,timeout:Duration.seconds(30),logGroup:new logs.LogGroup(this,"Logs",{retention:logs.RetentionDays.ONE_MONTH})});
     AssetArchive.grantReferenceWrites(fn,props.browseTable);
     props.browseTable.grant(fn,"dynamodb:GetItem","dynamodb:Query");

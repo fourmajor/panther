@@ -125,7 +125,11 @@ def handler(event, _context):
     if not authorized(claims, "ASSET_MIGRATORS"):
         return media._response(403, {"error": "This account cannot migrate episode organization"})
     try:
-        return migrate(media, json.loads(event.get("body") or "{}"), claims)
+        body = json.loads(event.get("body") or "{}")
+        if body.get("schemaVersion") == 2:
+            import storyboard_video_migration
+            return storyboard_video_migration.migrate(media, body, claims)
+        return migrate(media, body, claims)
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
         return media._response(400, {"error": "Migration inventory or request is invalid; no further episodes applied"})
     except ClientError:

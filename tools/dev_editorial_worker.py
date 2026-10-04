@@ -57,6 +57,8 @@ def prepare_job(store, job):
     """Pin present inputs explicitly; do not claim a historical submission snapshot."""
     game = job["gameId"]
     creation = job["creation"]
+    if job.get("workflowVersion") not in {None, editorial.PLAN["version"]}:
+        raise ValueError("This job uses an earlier workflow contract. Its checkpoints are preserved; submit a new version rather than mixing revisions.")
     if not all(field in job for field in ("rawSources", "selectedContext", "catalog", "sessionId", "contextCutoff")):
         job = store.prepare_editorial_job(job)
     updated = dict(job)
@@ -310,6 +312,23 @@ class Transport:
         task = {**(self.store.get("editorial-task", job["jobId"] + ":" + stage) or {}), "jobId": job["jobId"], "stage": stage, "status": "DONE", "outputKey": key, "output": reference, "completedAt": time.time()}
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if stage == "video-generation-packets" and job.get("episodeDestination"):
+                from episode_destination import records as episode_records
+                if job.get("selectedScene"):
+                    from episode_destination import scene_record
+                    scene = scene_record(job, envelope, reference)
+                    identity = job["gameId"] + ":" + scene["episodeId"] + ":" + scene["id"]
+                    row = db.execute("SELECT payload FROM records WHERE kind='scene' AND id=?", (identity,)).fetchone()
+                    if not row or json.loads(row[0])["revision"] != job["selectedScene"]["revision"]:
+                        raise ValueError("Scene changed during planning; the exact plan is retained for reconciliation")
+                    db.execute("UPDATE records SET payload=? WHERE kind='scene' AND id=?", (json.dumps(scene), identity))
+                    history = {"record": scene, "previousRecord": json.loads(row[0]), "recordedAt": time.time()}
+                    db.execute("INSERT INTO records VALUES (?,?,?,?)", ("scene-history", identity + ":" + scene["revision"], job["gameId"], json.dumps(history)))
+                    episode, scenes = None, []
+                else:
+                    episode, scenes = episode_records(job, envelope, reference)
+                if episode:
+                    self.publish_episode(db, job, episode, scenes)
             if stage == "novel-chapter":
                 payload = envelope["payload"]
                 title = payload["review"]["title"] or job["creation"]["title"]
@@ -324,6 +343,21 @@ class Transport:
                     db.execute("INSERT INTO records VALUES ('chapter',?,?,?)", (job["jobId"], job["gameId"], json.dumps(chapter)))
             for kind, identity, record in (("editorial-task", job["jobId"] + ":" + stage, task), ("editorial", job["jobId"], job)):
                 db.execute("INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET payload=excluded.payload", (kind, identity, job["gameId"], json.dumps(record)))
+
+    def publish_episode(self, db, job, episode, scenes):
+        episode_key = job["gameId"] + ":" + episode["id"]
+        row = db.execute("SELECT payload FROM records WHERE kind='episode' AND id=?", (episode_key,)).fetchone()
+        previous = json.loads(row[0]) if row else None
+        if not previous or previous["revision"] != job["episodeRef"]["revision"]:
+            raise ValueError("Episode changed during planning; the exact plan is retained for reconciliation")
+        for kind, identity, record in [("episode", episode_key, episode), *[("scene", job["gameId"] + ":" + episode["id"] + ":" + scene["id"], scene) for scene in scenes]]:
+            if kind == "episode":
+                db.execute("UPDATE records SET payload=? WHERE kind='episode' AND id=?", (json.dumps(record), identity))
+            else:
+                db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind, identity, job["gameId"], json.dumps(record)))
+            history = {"record": record, "previousRecord": previous if kind == "episode" else None, "recordedAt": time.time()}
+            db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind + "-history", identity + ":" + record["revision"], job["gameId"], json.dumps(history)))
+
 
 
 def process(store, identity, root, client, model, *, offline_revalidation=False):

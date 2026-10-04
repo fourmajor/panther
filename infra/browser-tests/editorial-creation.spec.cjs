@@ -6,7 +6,7 @@ const key=id=>`games/test-game/assets/${id}/original/raw.json`;
 const transcripts=[{key:key('source-one'),name:'raw.json',kind:'raw-transcript',metadata:{title:'First session'}},{key:key('source-two'),name:'raw.json',kind:'raw-transcript',metadata:{title:'Second session'}}];
 const internalAsset={key:'games/test-game/assets/migration-audit/original/provenance.json',name:'provenance.json',kind:'game-context',metadata:{title:'Migration provenance audit',category:'reference'}};
 const sceneRef={episodeId:'episode-one',sceneId:'scene-one',revision:'scene-revision'};
-async function openScene(page){await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'A moonlit crossing',exact:true}).click();await expect(page.locator('#scene-video-composer')).toBeVisible();}
+async function openScene(page){await page.getByRole('button',{name:'First episode',exact:true}).click();await page.getByRole('button',{name:'A moonlit crossing',exact:true}).click();await expect(page.locator('[data-scene-generate]')).toBeVisible();}
 const characters=[{id:'lantern-guide',characterId:'lantern-guide',name:'Lantern Guide'},{id:'river-scout',characterId:'river-scout',name:'River Scout'}];
 const contextAsset={key:'games/test-game/assets/context/original/lore.json',name:'lore.json',kind:'game-context',metadata:{title:'Campaign lore',category:'reference'}};
 const mapAsset={key:'games/test-game/assets/atlas/original/map.png',name:'map.png',kind:'map',contentType:'image/png',metadata:{title:'Riverlands atlas',category:'reference'}};
@@ -91,7 +91,7 @@ for(const width of [1280,390])for(const target of ['novel'])test(`Create ${targe
 });
 
 async function editSceneInputs(page,prompt,{characters=[],transcript=false}={}) {
- await page.getByRole('button',{name:'Edit scene',exact:true}).click();
+ await page.getByRole('button',{name:'Edit',exact:true}).click();
  const editor=page.getByRole('form',{name:'Scene editor',exact:true});
  await editor.getByLabel('Prompt',{exact:true}).fill(prompt);
  for(const name of characters){await editor.getByRole('combobox',{name:'Characters',exact:true}).click();await page.getByRole('combobox',{name:'Search characters',exact:true}).fill(name);await page.getByRole('option',{name,exact:true}).click();}
@@ -106,7 +106,7 @@ for(const width of [1280,390])for(const withSources of [false,true])test(`Prompt
  await expect(composer.locator('.scene-cast-summary')).toHaveText('Lantern Guide · River Scout');
  await expect(composer.locator('textarea,input')).toHaveCount(0);
  await expect(composer).not.toContainText('Migration provenance audit');
- const submit=composer.getByRole('button',{name:'Generate',exact:true});await expect(submit).toBeInViewport();
+ const submit=page.locator('[data-scene-generate]');await expect(submit).toBeInViewport();
  await page.screenshot({path:testInfo.outputPath(`prompt-video-${withSources?'sources':'characters'}-${width}.png`),fullPage:true});
  await submit.click();await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');
  expect(submissions).toEqual([{gameId:'test-game',creation:{schemaVersion:2,target:'video',brief:'A moonlit crossing',characterIds:['lantern-guide','river-scout'],sourceKeys:withSources?[transcripts[0].key]:[],contextKeys:[],sceneRef:{...sceneRef,revision:'map-scene-revision'}}}]);
@@ -116,8 +116,8 @@ test('video submission failure preserves saved prompt and selected characters',a
  await fixture(context);await page.goto('https://panther.place/games/test-game/videos');await openScene(page);
  await editSceneInputs(page,'A river scout meets the lantern guide',{characters:['Lantern Guide']});
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/editorial-jobs',route=>route.request().method()==='POST'?route.fulfill({status:503,headers:{'access-control-allow-origin':'https://panther.place'},json:{error:'Temporarily unavailable'}}):route.fallback());
- const composer=page.locator('#scene-video-composer');await composer.getByRole('button',{name:'Generate',exact:true}).click();await expect(composer).toContainText('Temporarily unavailable');
- await page.getByRole('button',{name:'Edit scene',exact:true}).click();const editor=page.getByRole('form',{name:'Scene editor',exact:true});
+ const composer=page.locator('#scene-video-composer');await page.locator('[data-scene-generate]').click();await expect(composer).toContainText('Temporarily unavailable');
+ await page.getByRole('button',{name:'Edit',exact:true}).click();const editor=page.getByRole('form',{name:'Scene editor',exact:true});
  await expect(editor.getByLabel('Prompt',{exact:true})).toHaveValue('A river scout meets the lantern guide');await expect(editor).toContainText('Lantern Guide');
 });
 
@@ -129,32 +129,32 @@ async function mapImage(page,context){
 for(const width of [1280,390])test(`Map image and route prompt persist before generation at ${width}px`,async({page,context},testInfo)=>{
  await page.setViewportSize({width,height:900});const {submissions,sceneWrites}=await fixture(context,{mapScene:true});
  await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await openScene(page);
- await page.getByRole('button',{name:'Edit scene',exact:true}).click();const editor=page.getByRole('form',{name:'Scene editor',exact:true});
+ await page.getByRole('button',{name:'Edit',exact:true}).click();const editor=page.getByRole('form',{name:'Scene editor',exact:true});
  await editor.getByRole('combobox',{name:'Map image',exact:true}).click();
  for(const name of ['Foreign map','Internal audit image','Unsupported SVG'])await expect(page.getByRole('option',{name,exact:true})).toHaveCount(0);
  await page.getByRole('option',{name:'Riverlands atlas',exact:true}).click();await expect(editor.getByAltText('Selected map',{exact:true})).toBeVisible();
  await editor.getByRole('button',{name:'More images',exact:true}).click();await editor.getByRole('combobox',{name:'Map image',exact:true}).click();await page.getByRole('option',{name:'Coastal atlas',exact:true}).click();
  await editor.getByLabel('Prompt',{exact:true}).fill('The travelers move from Harbor to the Hills.');await editor.getByRole('button',{name:'Save changes',exact:true}).click();await expect(editor).not.toBeVisible();
- const submit=page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true});await expect(submit).toBeInViewport();await page.screenshot({path:testInfo.outputPath(`map-video-${width}.png`),fullPage:true});await submit.click();
+ const submit=page.locator('[data-scene-generate]');await expect(submit).toBeInViewport();await page.screenshot({path:testInfo.outputPath(`map-video-${width}.png`),fullPage:true});await submit.click();
  await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');expect(sceneWrites).toHaveLength(1);expect(sceneWrites[0]).toMatchObject({type:'map',mapAssetKey:secondMap.key,expectedRevision:sceneRef.revision});
  expect(submissions).toHaveLength(1);expect(submissions[0].creation).toMatchObject({brief:'The travelers move from Harbor to the Hills.',sourceKeys:[],sceneRef:{...sceneRef,revision:'map-scene-revision'}});
- await page.reload();await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');await page.getByRole('button',{name:'Edit scene',exact:true}).click();
+ await page.reload();await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');await page.getByRole('button',{name:'Edit',exact:true}).click();
  await expect(editor.getByRole('combobox',{name:'Scene type',exact:true})).toHaveText('Map');await expect(editor.getByRole('combobox',{name:'Map image',exact:true})).toHaveText('Coastal atlas');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 test('Scene editor can set Map type and image with only a title',async({page,context})=>{
- const{sceneWrites}=await fixture(context,{mapScene:true});await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await openScene(page);await page.getByRole('button',{name:'Edit scene',exact:true}).click();
+ const{sceneWrites}=await fixture(context,{mapScene:true});await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await openScene(page);await page.getByRole('button',{name:'Edit',exact:true}).click();
  const editor=page.getByRole('form',{name:'Scene editor',exact:true});await editor.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'General',exact:true}).click();await expect(editor.getByRole('combobox',{name:'Map image',exact:true})).toBeHidden();
  await editor.getByRole('combobox',{name:'Scene type',exact:true}).click();await page.getByRole('option',{name:'Map',exact:true}).click();await editor.getByRole('combobox',{name:'Map image',exact:true}).click();await page.getByRole('option',{name:'Riverlands atlas',exact:true}).click();await editor.getByRole('button',{name:'Save changes',exact:true}).click();
- await expect.poll(()=>sceneWrites.length).toBe(1);expect(sceneWrites[0]).toMatchObject({type:'map',mapAssetKey:mapAsset.key,description:''});await expect(page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true})).toBeEnabled();
+ await expect.poll(()=>sceneWrites.length).toBe(1);expect(sceneWrites[0]).toMatchObject({type:'map',mapAssetKey:mapAsset.key,description:''});await expect(page.locator('[data-scene-generate]')).toBeEnabled();
 });
 test('A failed map save retains the image and prompt and retries the same operation',async({page,context})=>{
- const {submissions,sceneWrites}=await fixture(context,{mapScene:true});await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await openScene(page);await page.getByRole('button',{name:'Edit scene',exact:true}).click();
+ const {submissions,sceneWrites}=await fixture(context,{mapScene:true});await page.goto('https://panther.place/games/test-game/videos');await mapImage(page,context);await openScene(page);await page.getByRole('button',{name:'Edit',exact:true}).click();
  const editor=page.getByRole('form',{name:'Scene editor',exact:true});await editor.getByRole('combobox',{name:'Map image',exact:true}).click();await page.getByRole('option',{name:'Riverlands atlas',exact:true}).click();await editor.getByLabel('Prompt',{exact:true}).fill('Travel from Harbor to Hills');
  let failedBody;await page.route('https://test.execute-api.us-west-2.amazonaws.com/scenes',route=>{if(route.request().method()==='POST'&&!failedBody){failedBody=route.request().postDataJSON();return route.fulfill({status:503,headers:{'access-control-allow-origin':'https://panther.place'},json:{error:'Map save temporarily unavailable'}});}return route.fallback();});
  await editor.getByRole('button',{name:'Save changes',exact:true}).click();await expect(editor).toContainText('Map save temporarily unavailable');expect(submissions).toHaveLength(0);await expect(editor.getByLabel('Prompt',{exact:true})).toHaveValue('Travel from Harbor to Hills');await expect(editor.getByRole('combobox',{name:'Map image',exact:true})).toHaveText('Riverlands atlas');
  await editor.getByRole('button',{name:'Retry save',exact:true}).click();await expect(editor).not.toBeVisible();expect(sceneWrites).toEqual([failedBody]);
- await page.locator('#scene-video-composer').getByRole('button',{name:'Generate',exact:true}).click();await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');expect(submissions).toHaveLength(1);
+ await page.locator('[data-scene-generate]').click();await expect(page.locator('#scene-work-progress')).toContainText('Video plan ready');expect(submissions).toHaveLength(1);
 });
 
 for(const width of [1280,390])test(`Novel has one prompt action and supports a chapter without transcripts at ${width}px`,async({page,context})=>{
@@ -230,20 +230,13 @@ for(const width of [1280,390])test(`Empty Novel explains its purpose and offers 
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 
-for(const width of [1280,390])test(`Automatic session plans remain reviewable before spending at ${width}px`,async({page,context},testInfo)=>{
+for(const width of [1280,390])test(`Automatic session planning stays inside its owned episode at ${width}px`,async({page,context})=>{
  await page.setViewportSize({width,height:900});const{submissions}=await fixture(context,{automatic:true});
- await page.goto('https://panther.place/games/test-game/videos');
- const composer=page.locator('#session-video-plans');
- const project=composer.getByRole('button',{name:'Session test-session · automatic',exact:true});
- await expect(project).toBeVisible();const box=await project.boundingBox();if(box.y+box.height>900)await page.mouse.wheel(0,box.y-450);await expect(project).toBeInViewport();await project.click();
- const progress=page.getByRole('dialog',{name:'Session test-session · automatic',exact:true});await expect(progress).toContainText('Video plan ready');await expect(progress).toContainText('Rendering requires approval');
- await expect(progress.locator('details,summary')).toHaveCount(0);
- const screenplay=progress.getByRole('button',{name:'View Screenplay',exact:true});
- await expect(screenplay).toBeVisible();
- await expect(screenplay).toHaveAttribute('data-output-key','games/test-game/assets/plan/original/screenplay.json');
+ await page.goto('https://panther.place/games/test-game/episodes');
+ await expect(page.locator('#session-video-plans,#video-approval-inbox')).toHaveCount(0);
+ await expect(page.locator('#episode-workspace').getByRole('button',{name:'First episode',exact:true})).toBeVisible();
  expect(submissions).toHaveLength(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- await page.screenshot({path:testInfo.outputPath(`automatic-session-${width}.png`)});
 });
 
 for(const width of [1280,390])test(`Completed chapter replaces its job without a reload at ${width}px`,async({page,context})=>{
@@ -336,4 +329,18 @@ for (const width of [1280,390]) test(`Manual and generated chapters have separat
  const assets=page.getByRole('dialog',{name:'Assets',exact:true});await expect(assets.getByLabel('Campaign lore',{exact:true})).toBeVisible();
  await expect(assets.getByText('Migration provenance audit',{exact:true})).toHaveCount(0);
  await assets.getByRole('button',{name:'Close',exact:true}).click();
+});
+
+for(const width of [1280,390])test(`Markdown outline uses the themed reader at ${width}px`,async({page,context},testInfo)=>{
+ await page.setViewportSize({width,height:900});await fixture(context);
+ const output='games/test-game/assets/outline/original/novel-outline.md';
+ await page.route('**/objects?*',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{objects:[{key:output,name:'novel-outline.md',size:140,lastModified:'2026-01-02T18:30:00Z'}],prefixes:[],cursor:null}}));
+ await page.route('**/object-url?*',route=>new URL(route.request().url()).searchParams.get('key')===output?route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{key:output,filename:'novel-outline.md',contentType:'text/markdown',size:140,url:'https://files.example/outline.md',metadata:{title:'Novel outline'}}}):route.fallback());
+ await page.route('https://files.example/outline.md',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},contentType:'text/markdown',body:'## The crossing\n\nThe companions approach the river at dusk.\n\n<script>window.outlineExecuted=true</script>'}));
+ await page.goto('https://panther.place/games/test-game/media?folder='+encodeURIComponent('games/test-game/assets/outline/original/'));
+ await page.getByRole('button',{name:'novel-outline.md',exact:true}).click();
+ const reader=page.locator('#preview-body article');await expect(reader.getByRole('heading',{name:'The crossing',exact:true})).toBeVisible();await expect(reader).toContainText('The companions approach the river at dusk.');await expect(page.locator('#preview-body iframe')).toHaveCount(0);
+ const contrast=await reader.evaluate(el=>{const s=getComputedStyle(el);const rgb=x=>x.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});const luminance=x=>{const c=rgb(x);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};const a=luminance(s.color),b=luminance(s.backgroundColor);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);});expect(contrast).toBeGreaterThanOrEqual(4.5);expect(await page.evaluate(()=>window.outlineExecuted)).toBeUndefined();expect(await reader.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+ await expect.poll(()=>page.locator('#preview-dialog').evaluate(el=>getComputedStyle(el.closest('[role=dialog]')).opacity)).toBe('1');
+ await page.screenshot({path:testInfo.outputPath(`markdown-outline-${width}.png`)});
 });

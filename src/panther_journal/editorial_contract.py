@@ -25,7 +25,7 @@ BRIEFS = {
     "novel-revision": "Produce the complete revised chapter, addressing developmental notes. Preserve intended voice and source outcomes. Add a change log outside the reader-facing prose and list unresolved editorial questions.",
     "novel-line-copyedit": "Produce the complete line- and copyedited chapter. Improve sentence rhythm, clarity, dialogue, grammar and consistency without flattening voice. Supply a style sheet for names, capitalization, POV, tense, chronology and terminology.",
     "novel-proof": "Check the copyedited Markdown reading proof, including headings, paragraph breaks and dialogue punctuation. If revisionFeedback exists, revise the actual candidate chapter to address it. Return the COMPLETE final chapter alone in markdown, with proof notes and invention disclosures separately in decisions/uncertainties. This is a digital manuscript proof, not a claim of typeset print proofing.",
-    "novel-chapter": "Independently quality-check the supplied candidate chapter (the latest revision, taking precedence over older priorStages) against sources, brief and edits. Require compelling scene-level storytelling, coherent POV, resolved developmental issues, faithful consequential outcomes, and disclosed inventions. Return pass/fail with actionable reasons; do not rewrite the chapter in this review. Rejection triggers an automatic actual manuscript revision and fresh audit, not a human approval request.",
+    "novel-chapter": "Independently quality-check the supplied candidate chapter (the latest revision, taking precedence over older priorStages) against sources, brief and edits. Require compelling scene-level storytelling, coherent POV, resolved developmental issues, faithful consequential outcomes, and disclosed inventions. The title field becomes the published chapter title: use the story's concise literary title, never an audit, assessment, delivery or review label. Return pass/fail with actionable reasons; do not rewrite the chapter in this review. Rejection triggers an automatic actual manuscript revision and fresh audit, not a human approval request.",
     "video-treatment": "Develop a screen adaptation brief, logline, synopsis/treatment, character arcs, audience/tone, provisional runtime and scene beats. Identify compression, invented dialogue and other dramatization explicitly. This is a creative reimagining, not a transcript or campaign canon.",
     "video-screenplay": "Write the complete screenplay using scene headings, present-tense action and character/dialogue formatting. Show rather than narrate. Preserve source outcomes and track invented material. Use stable scene IDs.",
     "video-script-edit": "Independently review screenplay structure, visual storytelling, character motivation, dialogue, pacing, source fidelity and feasibility. Supply concrete revision notes and continuity issues.",
@@ -123,6 +123,10 @@ BRIEFS["video-generation-packets"] += (
     " Travel/map shots must cite actual map and location references, not invented geography."
     " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
 )
+BRIEFS["video-source-brief"] += (
+    " When sourceChapter is present, use it as the exact creative source of the episode adaptation."
+    " Cite its key, preserve consequential story outcomes, and keep sourceFacts empty unless actual sourceTranscripts supply the cited utterances."
+)
 
 BRIEFS["video-source-brief"] += (
     " A map scene has mapInput: an exact checksummed image, first-frame role, and route-animation instructions."
@@ -143,3 +147,54 @@ BRIEFS["novel-brief"] += (
     " Choose a concise original chapter title from the actual user direction and source-backed chapter content."
     " Optional absent transcripts stay absent; never invent source speech or factual session history."
 )
+
+# The same screen stages can publish an owned Episode. Manuscripts are creative
+# source material, never raw testimony or factual context for corrections.
+BRIEFS["video-generation-packets"] += (
+    " When episodeDestination is true, also return episode with schemaVersion 1, title, synopsis and ordered scenes."
+    " Each scene needs a unique slug id, concise title, type (general/opener/travel/map/action/dialogue),"
+    " complete render prompt, exact narration words (empty when none), characterIds, referenceKeys and shotIds."
+    " Copy the exact locked video-storyboards shots into the shots field. Partition every prior shot into exactly one scene, preserving shot order. Follow the locked shooting script,"
+    " voice casting and continuity plans. Do not claim audio or footage exists. sourceChapter is a creative"
+    " adaptation source; preserve its consequential story outcomes and disclose inventions separately."
+)
+
+BRIEFS["video-generation-packets"] += " For a scene-directed request (creation.sceneRef), emit exactly one scene using creation.sceneRef.sceneId; preserve that existing owner rather than creating a second episode or extra scenes."
+
+BRIEFS["video-generation-packets"] += (
+    " For an Episode destination, return shots as an empty array; the application copies the exact validated storyboard panels."
+    " Reference those existing panels only through episode.scenes[].shotIds and partition every shot exactly once in its locked order."
+    " Use only the characterIds and referenceKeys allowed by the output schema; narrative NPC names remain prose unless they have a pinned catalog identity."
+    " Do not turn proposed prop labels, names or future assets into stored references."
+)
+
+
+BRIEFS["video-source-brief"] += (
+    " A request with creation.storyboardShotRef targets exactly that existing storyboard shot."
+    " The pinned scene supplies context only: do not render other shots or rewrite its approved direction."
+)
+BRIEFS["video-storyboards"] += (
+    " For creation.storyboardShotRef, plan only the exact pinned shot in the scene catalog."
+    " Preserve its shotId, action, camera, narration and duration; do not expand into a whole scene."
+)
+BRIEFS["video-generation-packets"] += (
+    " For creation.storyboardShotRef, emit footage instructions only for that exact shot."
+    " Longer raw takes will be trimmed to the storyboard duration; never claim a short take satisfies a longer item."
+)
+
+# Provider-neutral production discipline: these constraints improve new plans,
+# without changing previously approved storyboards or authorizing inference.
+for _stage in ('video-shot-list', 'video-storyboards', 'video-generation-packets'):
+    BRIEFS[_stage] += (
+        " Plan independently renderable shots of at most eight seconds each. Split complex sequences"
+        " into separate items rather than asking a single take to change locations, cut cameras or"
+        " perform several simultaneous interactions. Keep every consequential source action across"
+        " those items. Each item must state only its visible cast, relative size and screen positions,"
+        " one primary physical action with a clear start and end, exact prop ownership, setting/time,"
+        " consistent lighting/palette and mood. Express emotion as observable gaze, posture or movement."
+        " Bind character appearance to pinned portraits but apply the same game visual-style guidance"
+        " across all items; identity-reference rendering style does not override it. Include relevant"
+        " setting/story continuity, not the whole cast or unrelated plot. Separate narration from"
+        " on-screen speech. Starting frames depict the composed shot, never a portrait contact sheet."
+        " Specify acceptance checks for visible cast, costume, hands, props, geography and source outcomes."
+    )

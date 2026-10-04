@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -132,7 +133,7 @@ def download(config, scene, folder):
 
 def assemble(manifest, paths, folder):
     """Normalize finished tracks without creative edits, muting, or fabricated stems."""
-    if len(paths) != len(manifest["scenes"]) or not 1 <= len(paths) <= 20:
+    if len(paths) != len(manifest["scenes"]) or not 1 <= len(paths) <= 24:
         raise click.ClickException("Every ordered scene needs exactly one output")
     if (folder / "episode.mp4").exists() or any(folder.glob("scene-*.mkv")):
         raise click.ClickException(
@@ -148,8 +149,10 @@ def assemble(manifest, paths, folder):
             raise click.ClickException("Episode profile requires one SDR video track per scene")
         if max(videos[0]["width"], videos[0]["height"]) > 4096:
             raise click.ClickException("Episode profile supports inputs through 4K")
-        duration = float(info["format"]["duration"])
-        if not 0 < duration <= 300:
+        available = float(info["format"]["duration"])
+        duration = scene.get('durationSeconds', available)
+        start = scene.get('startSeconds', 0)
+        if type(duration) not in (int, float) or type(start) not in (int, float) or not all(math.isfinite(value) for value in (duration, start, available)) or not 0 < duration <= 300 or start < 0 or start + duration > available + .001:
             raise click.ClickException("Each finished scene must be at most five minutes")
         durations.append(duration)
         tracks = [s for s in info["streams"] if s["codec_type"] == "audio"]
@@ -166,6 +169,8 @@ def assemble(manifest, paths, folder):
         args = input_args(path)
         if not has_audio:
             args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+        if manifest['scenes'][index].get('startSeconds', 0):
+            args += ['-ss', manifest['scenes'][index]['startSeconds']]
         args += [
             "-map",
             "0:v:0",
