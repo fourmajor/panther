@@ -178,10 +178,11 @@ def page(game, section, cursor=None):
     next_key = result.get("LastEvaluatedKey")
     import asset_archive
 
+    archived = asset_archive.archived_keys(game, [item["sk"] for item in result.get("Items", [])])
     assets = [
         json.loads(item["payload"])
         for item in result.get("Items", [])
-        if not asset_archive.archived(game, item["sk"])
+        if item["sk"] not in archived
     ]
     if section == "sessions":
         assets = [asset for asset in assets if session_asset(asset)]

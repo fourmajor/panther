@@ -4,6 +4,22 @@ const origin='https://panther.place',api='https://test.execute-api.us-west-2.ama
 const jwt='test.'+Buffer.from(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-editor'})).toString('base64url')+'.test';
 const key=id=>`games/test-game/assets/${id}/original/image.png`;
 const rawKey='games/test-game/assets/raw/original/room.wav';
+
+test('Archive-filtered full catalog pages retain their cursor and load the next page',async({page,context})=>{
+ await fixture(page,context);
+ const item=i=>({key:key(`note-${i}`).replace(/image\.png$/,'notes.json'),name:'notes.json',kind:'unknown',contentType:'application/json',metadata:{title:`Campaign note ${i}`}});
+ const reads=[];
+ await context.route(`${api}/assets?**`,route=>{const cursor=new URL(route.request().url()).searchParams.get('cursor');reads.push(cursor);return route.fulfill({json:{catalogVersion:4,assets:cursor?[item(101)]:Array.from({length:99},(_,i)=>item(i+1)),cursor:cursor?null:'next-page'},headers:{'access-control-allow-origin':origin}});});
+ await page.goto(`${origin}/games/test-game/assets`);
+ const library=page.getByRole('region',{name:'Assets',exact:true});
+ await expect(library.locator('.assets-card')).toHaveCount(99);
+ await library.getByRole('button',{name:'Load more',exact:true}).click();
+ await expect(library.locator('.assets-card')).toHaveCount(100);
+ await expect(library.getByRole('button',{name:'Campaign note 101 Other · JSON',exact:true})).toBeVisible();
+ await expect(library.getByRole('button',{name:'Load more',exact:true})).toHaveCount(0);
+ expect(reads).toEqual([null,'next-page']);
+});
+
 const checksum=bytes=>crypto.createHash('sha256').update(bytes).digest('base64');
 async function fixture(page,context,{failure=false,development=false,imagesReady=true}={}){
  const images=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=600;canvas.height=300;const c=canvas.getContext('2d');c.fillStyle='#dfd1aa';c.fillRect(0,0,600,300);c.strokeStyle='#829da2';c.lineWidth=28;c.beginPath();c.moveTo(250,0);c.bezierCurveTo(50,170,430,160,270,300);c.stroke();c.fillStyle='#39382e';c.font='22px serif';c.fillText('Riverlands',220,36);c.font='18px serif';c.fillText('Harbor',75,200);c.fillText('Hills',440,90);return canvas.toDataURL('image/png').split(',')[1];});

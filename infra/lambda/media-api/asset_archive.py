@@ -56,6 +56,28 @@ def archived(game, key):
     return bool(db().get_item(Key=archive_key(game, key), ConsistentRead=True).get("Item"))
 
 
+def archived_keys(game, keys):
+    """Read one bounded catalog page's tombstones, never one network call per asset."""
+    keys = list(dict.fromkeys(keys))
+    if len(keys) > 100:
+        raise ValueError("Archive lookup exceeds a catalog page")
+    if not keys:
+        return set()
+    table = db()
+    pending = {table.name: {"Keys": [archive_key(game, key) for key in keys],
+                            "ConsistentRead": True}}
+    result = set()
+    for attempt in range(4):
+        response = table.meta.client.batch_get_item(RequestItems=pending)
+        result.update(item["sk"] for item in response.get("Responses", {}).get(table.name, []))
+        pending = response.get("UnprocessedKeys", {})
+        if not pending:
+            return result
+        if attempt < 3:
+            time.sleep(0.05 * 2**attempt)
+    raise RuntimeError("Archive status lookup incomplete; retry")
+
+
 def reference_writes(game, owner, keys, active=None):
     """Compose with the owning entity/job transaction, never as a separate write."""
     table = db()
