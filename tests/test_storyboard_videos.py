@@ -85,3 +85,19 @@ def test_invalid_cut_cannot_be_selected(change):
         metadata["extra"].pop("storyboardShotRef")
     with pytest.raises(ValueError):
         videos.select(scene, selection, metadata, copy.deepcopy(scene))
+
+
+@pytest.mark.parametrize('planned,available,accepted', [(18,15,True),(10,8,True),(12,8,False)])
+def test_near_enough_cuts_use_actual_footage_duration(planned, available, accepted):
+    scene, metadata, selection = example()
+    scene['storyboard']['shots'] = [{**scene['storyboard']['shots'][0], 'durationSeconds': planned}]
+    metadata['extra']['mediaProbe']['format']['duration'] = str(available)
+    selection['startSeconds'] = 0
+    if not accepted:
+        with pytest.raises(ValueError, match='shorter'):
+            videos.select(scene, selection, metadata, None)
+        return
+    scene['shotTakes'] = videos.select(scene, selection, metadata, None)
+    assert scene['shotTakes']['arrival']['durationSeconds'] == available
+    assert videos.composition(scene)['ready']
+    assert videos.composition(scene)['clips'][0]['durationSeconds'] == available

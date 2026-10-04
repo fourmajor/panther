@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false}={}) {
+async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false,takeSeconds=8}={}) {
   const writes=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   const chapter='c'.repeat(64),jobId='d'.repeat(64),frame='games/test-game/assets/frame/original/frame.png';
   let episode={schemaVersion:1,entityType:'Episode',gameId:'test-game',id:'pilot',name:'The crossing',description:'At the gates',revision:'a'.repeat(32),sceneIds:planning?[]:['arrival'],...(planning?{production:{state:'planning',jobId}}:{})};
@@ -11,7 +11,7 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   let published=!planning;
   if(multi){scene.storyboard.shots[0].durationSeconds=4;scene.storyboard.shots.push({shotId:'reaction',description:'The travelers react.',camera:'Close',durationSeconds:3,frameKey:null,narration:''});}
   if(long)scene.storyboard.shots[0].durationSeconds=18;
-  const takes=multi||long||take?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.webm`,contentType:'video/webm',name:`Take ${i+1}`,lastModified:'2026-01-01T00:00:00Z',metadata:{title:`Take ${i+1}`,contentType:'video/webm',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:'8'}}}}})):[];
+  const takes=multi||long||take?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.webm`,contentType:'video/webm',name:`Take ${i+1}`,lastModified:'2026-01-01T00:00:00Z',metadata:{title:`Take ${i+1}`,contentType:'video/webm',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:String(takeSeconds)}}}}})):[];
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-editor'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
     const p=new URL(route.request().url()).pathname;
@@ -35,7 +35,7 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
     if(u.pathname==='/scenes'){
       if(post){const request=route.request().postDataJSON();writes.push(request);if(conflict)return route.fulfill({status:409,headers,json:{error:'This scene changed. Reopen it before saving.'}});
         if(request.storyboardDecision){scene={...scene,planningState:request.storyboardDecision.action==='approved'?'ready':'changes-requested',storyboard:{...scene.storyboard,decision:request.storyboardDecision}};}
-        if(request.shotSelection){const selection=request.shotSelection,shot=scene.storyboard.shots.find(item=>item.shotId===selection.shotId);scene={...scene,shotTakes:{...scene.shotTakes,[shot.shotId]:{...selection,durationSeconds:shot.durationSeconds}}};}
+        if(request.shotSelection){const selection=request.shotSelection,shot=scene.storyboard.shots.find(item=>item.shotId===selection.shotId);scene={...scene,shotTakes:{...scene.shotTakes,[shot.shotId]:{...selection,durationSeconds:Math.min(shot.durationSeconds,takeSeconds-selection.startSeconds)}}};}
         if(request.storyboardShots){const changed=JSON.stringify(request.storyboardShots)!==JSON.stringify(scene.storyboard.shots);scene={...scene,planningState:changed?'ready':scene.planningState,storyboard:{...scene.storyboard,origin:changed?'human':scene.storyboard.origin,shots:request.storyboardShots,decision:changed?null:scene.storyboard.decision}};}
         body={record:scene};
       }else body={records:published?[scene]:[],cursor:null};
@@ -159,7 +159,8 @@ for(const width of [1280,871,390])test(`long storyboard cuts explain missing foo
  await expect(page.getByRole('option',{name:'Take 1 · 8s — needs 18s',exact:true})).toBeDisabled();
  await page.keyboard.press('Escape');
  await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeDisabled();
- await expect(board).toContainText('Split this item into shots of eight seconds or less');
+ await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeEnabled();
+ await expect(board).not.toContainText('eight seconds or less');
 });
 test('a failed earlier scene request explains why no shot take exists',async({page})=>{
  await fixture(page,{human:true,local:true,failed:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
@@ -173,4 +174,17 @@ test('an eight-second take is selectable for an eight-second shot',async({page})
  await fixture(page,{human:true,local:true,take:true});await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
  await page.getByRole('combobox',{name:'Take for shot 1'}).click();
  await expect(page.getByRole('option',{name:'Take 1 · 8s',exact:true})).toBeEnabled();
+});
+
+for(const width of [1280,390])test(`a fifteen-second take supports an eighteen-second planned cut at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});await fixture(page,{human:true,local:true,long:true,takeSeconds:15});
+ await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ const board=page.getByRole('region',{name:'Scene storyboard'});
+ const sceneEdit=page.getByRole('button',{name:'Edit',exact:true}).first();
+ const boardEdit=board.getByRole('group',{name:'Storyboard actions'}).getByRole('button',{name:'Edit',exact:true});
+ expect((await boardEdit.boundingBox()).height).toBe((await sceneEdit.boundingBox()).height);
+ await board.getByRole('combobox',{name:'Take for shot 1'}).click();
+ await page.getByRole('option',{name:'Take 1 · 15s',exact:true}).click();
+ await expect(board).toContainText('Cut: 15s · planned 18s');
+ await expect(board.getByRole('button',{name:'Assemble',exact:true})).toBeEnabled();
 });

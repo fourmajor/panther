@@ -46,13 +46,8 @@ class Fal(v.Fal):
 
 
 def model_for(job):
-    kind = job.get('sceneType', job.get('type', 'general'))
-    if kind == 'map':
-        if not job.get('mapPin'):
-            raise ValueError('Choose a map asset for this scene')
-        return 'veo-3.1-fast-image-silent'
-    model = 'kling-3-pro' if kind == 'action' else 'h3-max' if kind == 'dialogue' else 'veo-3.1-fast'
-    return model + '-image' if job.get('storyboardFramePin') else model
+    from panther_journal.video import scene_model
+    return scene_model(job)
 
 
 def verified(store, ref, game):
@@ -114,7 +109,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             if job.get('storyboardShotRef'):
                 import storyboard_videos
                 board, shot = storyboard_videos.shot(scene['record'], job['storyboardShotRef']['shotId'])
-                if job['storyboardShotRef']['revision'] != board['revision'] or shot['durationSeconds'] > 8 or job.get('sceneContext', {}).get('shots') != [shot]:
+                if job['storyboardShotRef']['revision'] != board['revision'] or job.get('sceneContext', {}).get('shots') != [shot]:
                     raise ValueError('The pinned storyboard shot differs from this generation request')
         model = job.get('model') or model_for(job)
         allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
@@ -123,8 +118,8 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         if model not in allowed:
             raise ValueError('Unsupported selected video model')
         endpoint = job.get('endpoint') or v.PROFILES[model]['endpoint']
-        if not isinstance(job.get('prompt'), str) or not 1 <= len(job['prompt']) <= 4000:
-            raise ValueError('Provide a scene prompt under 4000 characters')
+        if not isinstance(job.get('prompt'), str) or not job['prompt'].strip():
+            raise ValueError('Provide a scene prompt')
         inputs = list(job.get('inputRefs', []))
         if job.get('mapPin'):
             inputs.append(job['mapPin'])
@@ -155,7 +150,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             if standalone and job.get('visualStyle'):
                 prompt += '\nVisual style: ' + job['visualStyle'].replace('-', ' ')
             shot = {'model': model, 'prompt': prompt}
-            body = v.payload(shot)
+            body = v.payload(shot, duration_seconds=job.get('generationDurationSeconds', 8))
             if standalone:
                 options = job.get('inputs', {})
                 if options.get('duration', 8) != 8 or options.get('aspectRatio', '16:9') != '16:9':
@@ -187,8 +182,9 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             from dev_video_conditioning import condition
             endpoint, body, visual_references = condition(store, job, model, body, verified)
             job['visualReferences'] = visual_references
-            if len(body['prompt']) > 2500:
-                raise ValueError('The video prompt exceeds the provider limit; shorten the shot before generating')
+            original_prompt = body['prompt']
+            body['prompt'] = v.fit_prompt(original_prompt)
+            job['promptFitting'] = {'originalPrompt': prompt, 'conditionedPrompt': original_prompt, 'submittedCharacters': len(body['prompt']), 'truncated': body['prompt'] != original_prompt or len(prompt) > 2500}
             retain(folder / 'request.json', json.dumps({'endpoint': endpoint, 'payload': body, 'sceneRef': ref}, ensure_ascii=False).encode())
             job.update(status='RUNNING', dispatchStarted=now(), model=model, endpoint=endpoint, message=None)
             store.put(record_kind, identity, job, job['gameId'])
@@ -242,7 +238,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         metadata = asset_metadata.defaults('video', {'kind': 'video', 'title': title, 'contentType': 'video/mp4', 'sourceKeys': lineage + [response_key],
             'characterIds': job.get('promptComposition', {}).get('visibleCharacterIds', job.get('characterIds', [])), 'extra': {'generation': generation, 'requestId': rid, **association,
             'titleGeneration': job.get('titleGeneration'), 'relationshipRole': 'finished', 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'mediaProbe': quality}}, target.name, 'video/mp4', key)
-        response_bytes = json.dumps({'provider': 'fal', 'endpoint': endpoint, 'requestId': rid, 'result': output, **({'sceneRef': ref} if ref else {}), 'sourceKeys': lineage, 'request': json.loads((folder / 'request.json').read_text()), 'promptComposition': job.get('promptComposition'), 'titleGeneration': job.get('titleGeneration')}, ensure_ascii=False).encode()
+        response_bytes = json.dumps({'provider': 'fal', 'endpoint': endpoint, 'requestId': rid, 'result': output, **({'sceneRef': ref} if ref else {}), 'sourceKeys': lineage, 'request': json.loads((folder / 'request.json').read_text()), 'promptComposition': job.get('promptComposition'), 'promptFitting': job.get('promptFitting'), 'titleGeneration': job.get('titleGeneration')}, ensure_ascii=False).encode()
         response_metadata = asset_metadata.defaults('generation-response', {'kind': 'generation-response', 'title': title, 'contentType': 'application/json', 'sourceKeys': lineage,
             'extra': {'generation': generation, 'relationshipRole': 'intermediate', 'sha256': base64.b64encode(hashlib.sha256(response_bytes).digest()).decode()}}, 'provider-response.json', 'application/json', response_key)
         from panther_journal import cost_estimates

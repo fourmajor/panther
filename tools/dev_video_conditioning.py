@@ -49,6 +49,5 @@ def condition(store, job, model, body, verifier):
     else:
         raise ValueError('Selected model has no reviewed character-reference input mode')
     body['prompt'] = '\n'.join(bindings) + '\nIdentity images are not opening frames. Apply the selected visual style.\n' + body['prompt']
-    if len(body['prompt']) > 2500:
-        raise ValueError('Reference bindings exceed the prompt limit; split this storyboard shot')
+
     return endpoint, body, labels

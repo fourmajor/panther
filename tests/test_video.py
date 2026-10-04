@@ -1247,3 +1247,22 @@ def test_completed_prompt_length_rejection_is_typed_without_echoing_input():
     assert 'length limit' in str(rejected.value)
     with pytest.raises(click.ClickException):
         fal.request('POST', v.QUEUE + '/minimax/h3-max/image-to-video', completed_result=True)
+
+
+@pytest.mark.parametrize('model,planned,expected', [('h3-max',18,15),('h3-max',12,12),('kling-3-pro',12,12),('kling-3-pro',4.5,5),('veo-3.1-fast',10,8)])
+def test_scene_duration_uses_selected_model_capability(model, planned, expected):
+    from panther_journal.video import generation_duration, payload
+    duration = generation_duration(model, planned)
+    assert duration == expected
+    body = payload({'model': model, 'prompt': 'Hold the camera.'}, duration_seconds=duration)
+    assert str(expected) in str(body['duration'])
+
+
+def test_provider_prompt_is_bounded_without_modifying_original():
+    from panther_journal.video import payload
+    shot = {'model': 'h3-max', 'prompt': 'Visible action. ' + 'detail ' * 1000}
+    original = shot['prompt']
+    body = payload(shot)
+    assert len(body['prompt']) <= 2500
+    assert body['prompt'].startswith('Visible action.')
+    assert shot['prompt'] == original

@@ -39,8 +39,9 @@ def select(scene, selection, metadata, historical):
         available = float(extra['mediaProbe']['format']['duration'])
     except (KeyError, TypeError, ValueError):
         raise ValueError('This take has no verified video duration') from None
-    if type(start) not in (int, float) or not math.isfinite(start) or start < 0 or not math.isfinite(available) or start + duration > available + .001:
+    if type(start) not in (int, float) or not math.isfinite(start) or start < 0 or not math.isfinite(available) or available-start + .001 < duration*.8:
         raise ValueError('The take is shorter than this cut. Choose more footage or shorten the storyboard shot')
+    duration = min(duration, available-start)
     existing[item['shotId']] = {**selection, 'durationSeconds': duration, 'generationSceneRevision': ref['revision']}
     return existing
 
@@ -51,7 +52,7 @@ def composition(scene):
     clips, missing = [], []
     for item in board.get('shots', []):
         take = takes.get(item['shotId'])
-        if not take or take['storyboardRevision'] != board['revision'] or take['durationSeconds'] != item['durationSeconds']:
+        if not take or take['storyboardRevision'] != board['revision'] or type(take.get('durationSeconds')) not in (int, float) or not math.isfinite(take['durationSeconds']) or not item['durationSeconds']*.8-.001 <= take['durationSeconds'] <= item['durationSeconds']:
             missing.append(item['shotId'])
         else:
             clips.append(copy.deepcopy(take))
