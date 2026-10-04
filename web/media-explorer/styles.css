@@ -1061,7 +1061,7 @@ h1 { font-size:clamp(2rem,4vw,3.4rem); line-height:1.1; letter-spacing:-.035em; 
 .welcome h1 { font-size:clamp(2.6rem,6vw,4.6rem); }
 .explorer-heading { margin-bottom:1.5rem; }
 .explorer-heading h1 { margin-bottom:.25rem; }
-.dashboard-hero { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:1.5rem 0 2.8rem; border-bottom:1px solid var(--line); }
+.dashboard-hero { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:1.5rem 0 2.8rem; }
 .dashboard-hero h1 { font-size:clamp(2.5rem,5vw,4.4rem); max-width:48rem; margin:.5rem 0 1rem; overflow-wrap:anywhere; }
 .dashboard-description { max-width:43rem; color:var(--panther-muted); line-height:1.75; font-size:1.03rem; white-space:pre-line; overflow-wrap:anywhere; }
 .dashboard-facts { display:flex; flex-wrap:wrap; gap:.6rem; margin-top:1.4rem; }
@@ -1968,3 +1968,8 @@ html[data-booting] .masthead .brand strong {display:none}
 .masthead #game-toolbar {grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;max-width:36rem;}
 #game-create-button {height:36px;white-space:nowrap;flex-shrink:0;}
 @media(max-width:360px) {#game-create-button {width:36px;min-width:36px;padding:0;}#game-create-button .game-create-label {display:none;}}
+
+#dashboard .dashboard-recent-links.grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;}
+@media(max-width:600px){.dashboard-sections{grid-template-columns:minmax(0,1fr);}}
+
+#dashboard .dashboard-asset-thumbnail {height:auto;aspect-ratio:1;border-radius:6px;overflow:hidden;}

@@ -96,7 +96,7 @@ async function fixture(page, canEditGame = false, development = false) {
     if (url.pathname === '/games') body = { games: currentGames };
     if (url.pathname === '/dashboard-recent') {
       const characters=id==='test-b'?[{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}]:[];
-      body={complete:true,groups:{characters,transcripts:[],videos:[],chapters:[]},counts:{characters:characters.length,transcripts:0,videos:0,chapters:0}};
+      body={complete:true,groups:{characters,transcripts:[],videos:[],chapters:[],assets:[]},counts:{characters:characters.length,transcripts:0,videos:0,chapters:0,assets:0}};
     }
     if (url.pathname === '/game' || posted) body = { game: {...currentGames.find(g=>g.id===id), visualStyle:styles.get(id)}, visualStyles, canEditGame, gameSettings:descriptions.get(id) || {description:null,descriptionRevision:null},
       players:[{id:'person',name: id === 'test-b' ? 'Test Person' : 'Campaign Person'}],
@@ -416,8 +416,8 @@ for (const width of [1280, 390]) {
       if(section==='assets')expect((await page.getByRole('button',{name:'Upload',exact:true}).boundingBox()).height).toBe(36);
       for(const action of await page.getByRole('button',{name:/^(Upload|Generate)(?: |$)/}).all()){
         if(!await action.isVisible())continue;
-        await expect(action.locator('svg')).toHaveCount(1);await expect(action.locator('svg')).toHaveAttribute('aria-hidden','true');
-        await expect(action.locator('svg')).toHaveClass((await action.textContent()).trim().startsWith('Upload')?/lucide-upload/:/lucide-sparkles/);
+        const menu=await action.getAttribute('aria-haspopup')==='menu';await expect(action.locator('svg')).toHaveCount(menu?2:1);for(const icon of await action.locator('svg').all())await expect(icon).toHaveAttribute('aria-hidden','true');if(menu)await expect(action.locator('svg').last()).toHaveClass(/lucide-chevron-down/);
+        await expect(action.locator('svg').first()).toHaveClass((await action.textContent()).trim().startsWith('Upload')?/lucide-upload/:/lucide-sparkles/);
         const actionStyle=await action.evaluate(el=>{const c=getComputedStyle(el);return {height:el.getBoundingClientRect().height,border:c.borderTopStyle};});expect(actionStyle.height).toBe(36);expect(actionStyle.border).toBe('solid');
       }
       for(const select of await page.getByRole('combobox').all())if(await select.isVisible()){
@@ -531,3 +531,30 @@ for(const width of [1280,390,320])test(`header Create Game stays beside the sele
   await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(create).toBeFocused();
   await page.getByRole('button',{name:'Account',exact:true}).click();await expect(create).toBeHidden();
 });
+
+for(const width of [1280,390]) {
+  test(`dashboard explains empty sections and shows counted recent thumbnails at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:1000});
+    await fixture(page);
+    await page.goto('https://panther.place/games/campaign-a/dashboard');
+    await expect(page.locator('.dashboard-hero')).toHaveCSS('border-bottom-width','0px');
+    for(const [section,text] of [['characters','The people and creatures'],['sessions','Recordings of you and your friends'],['novel','Write chapters yourself'],['videos','Plan episodes'],['assets','Images, maps, videos, audio']]){
+      await expect(page.locator(`[data-section="${section}"] p`)).toContainText(text);
+    }
+    const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="gold"/></svg>');
+    const assets=Array.from({length:6},(_,i)=>({key:`games/test-b/assets/picture-${i}/original/image.png`,title:`Picture ${i}`,contentType:'image/png'}));
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/dashboard-recent*',route=>route.fulfill({json:{complete:true,groups:{characters:[],sessions:[],episodes:[],chapters:[],assets},counts:{characters:10,sessions:5,episodes:2,chapters:4,assets:9}},headers:jsonHeaders}));
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/image-links',route=>route.fulfill({json:{images:Object.fromEntries(assets.map(a=>[a.key,{url:image}]))},headers:jsonHeaders}));
+    await selectGame(page,'test-b');
+    for(const label of ['10 Characters','5 Sessions','2 Episodes','4 Chapters','9 Assets'])await expect(page.getByRole('link',{name:label,exact:true})).toBeVisible();
+    const card=page.locator('[data-section="assets"]');
+    await expect(card.locator('img')).toHaveCount(6);
+    await expect(card.getByRole('link',{name:'and 3 more',exact:true})).toBeVisible();
+    const boxes=await card.locator('img').evaluateAll(images=>images.map(img=>{const r=img.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));
+    expect(boxes[0].y).toBeCloseTo(boxes[2].y,1);expect(boxes[3].y).toBeGreaterThan(boxes[0].y);
+    for(const box of boxes){expect(box.width).toBeGreaterThan(50);expect(box.height).toBeCloseTo(box.width,0);expect(box.x+box.width).toBeLessThanOrEqual(width);}
+    await page.screenshot({path:test.info().outputPath(`dashboard-counted-assets-${width}.png`),fullPage:true});
+    await card.getByRole('link',{name:'and 3 more',exact:true}).click();
+    await expect(page).toHaveURL('https://panther.place/games/test-b/assets');
+  });
+}

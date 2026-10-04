@@ -1,3 +1,4 @@
+import {DashboardCards} from './dashboard-cards.jsx';
 export {LiveTranscription} from './live-transcription.js';
 export {renderProseMarkdown} from './prose-markdown.js';
 import {ChapterEditor} from './chapter-editor.jsx';
@@ -191,3 +192,6 @@ export function openChapterEditor(props){const host=document.createElement('div'
 const librarySearchRoots=new WeakMap();
 export function mountLibrarySearchFilters(host,props){if(!librarySearchRoots.has(host))librarySearchRoots.set(host,createRoot(host));librarySearchRoots.get(host).render(<LibrarySearchFilters {...props}/>);}
 export function unmountLibrarySearchFilters(host){librarySearchRoots.get(host)?.unmount();librarySearchRoots.delete(host);}
+
+const dashboardRoots=new WeakMap();
+export function mountDashboardCards(host,props){if(!dashboardRoots.has(host))dashboardRoots.set(host,createRoot(host));dashboardRoots.get(host).render(<QueryClientProvider client={client}><DashboardCards {...props}/></QueryClientProvider>);}

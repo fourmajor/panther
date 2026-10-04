@@ -60,7 +60,9 @@ def test_recent_is_complete_beyond_first_page_without_reading_asset_bodies(catal
         "transcripts": 125,
         "videos": 6,
         "chapters": 6,
-        "assets": 0,
+        "assets": 137,
+        "sessions": 125,
+        "episodes": 0,
     }
     assert [item["title"] for item in value["groups"]["transcripts"]] == [
         f"Source {n}" for n in range(124, 119, -1)
@@ -135,3 +137,34 @@ def test_dashboard_assets_are_finished_images_from_catalog_metadata(catalog):
     assert value["counts"]["assets"] == 2
     assert [a["kind"] for a in value["groups"]["assets"]] == ["unknown-image", "map"]
     assert not catalog.media.s3.mock_calls
+
+
+def test_dashboard_six_recent_assets_and_actual_session_episode_counts(catalog):
+    db, index = prepare(catalog)
+    for number in range(8):
+        key = put_asset(db, index, number, kind="raw-transcript")
+        row = db.get_item(Key={"pk": index.partition("test-game", "all"), "sk": key})["Item"]
+        asset = json.loads(row["payload"])
+        asset["metadata"]["sessionId"] = "shared-session"
+        db.put_item(Item={**row, "payload": json.dumps(asset)})
+    for number in range(2):
+        db.put_item(Item={"pk": "episode-scenes-v1#episode#test-game", "sk": str(number),
+            "payload": json.dumps({"id": f"episode-{number}", "name": f"Episode {number}", "updatedAt": "2026-09-30T12:00:00+00:00"})})
+    value = json.loads(request(catalog, "GET /dashboard-recent", username="example-member")["body"])
+    assert value["counts"]["sessions"] == 1
+    assert value["counts"]["episodes"] == 2
+    assert value["counts"]["assets"] == 8
+    assert len(value["groups"]["assets"]) == 6
+    assert value["groups"]["assets"][0]["title"] == "Source 7"
+
+
+def test_session_counts_follow_exact_inputs_without_guessing_from_titles(catalog):
+    import dashboard_recent
+
+    raw = {"key": "raw", "kind": "raw-transcript", "metadata": {"sessionId": "session-one"}}
+    corrected = {"key": "corrected", "kind": "corrected-transcript", "sourceKeys": ["raw"], "metadata": {}}
+    audio = {"key": "audio", "kind": "recording-playback", "sourceKeys": ["raw"], "metadata": {}}
+    unrelated = {"key": "other", "kind": "raw-transcript", "metadata": {"title": "Same name"}}
+    narration = {"key": "narration", "kind": "narration", "contentType": "audio/mp3", "metadata": {}}
+    entries = dashboard_recent.session_entries([raw, corrected, audio, unrelated, narration])
+    assert {entry["key"] for entry in entries} == {"raw", "other"}

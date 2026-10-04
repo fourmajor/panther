@@ -596,13 +596,15 @@ function renderDashboard() {
   for (const selector of ['#dashboard-purpose','#dashboard-facts','.dashboard-open','#dashboard .dashboard-section-heading','#dashboard .dashboard-bottom','#dashboard-recent']) {
     document.querySelector(selector)?.setAttribute('hidden','');
   }
-  const cards = document.getElementById("dashboard-sections");for(const icon of cards.querySelectorAll("[data-dashboard-icon]"))window.PantherUI.unmountIcon?.(icon);cards.replaceChildren();
-  for (const [section,label] of [["characters","Characters"],["sessions","Sessions"],["novel","Novel"],["videos","Episodes"],["assets","Assets"]]) {
-    const card=document.createElement('section');card.className='dashboard-card';card.dataset.section=section;
-    const icon=document.createElement('span'),arrow=document.createElement('span');icon.className='dashboard-section-icon';arrow.className='dashboard-card-arrow';icon.dataset.dashboardIcon=section;arrow.dataset.dashboardIcon='arrow';icon.setAttribute('aria-hidden','true');arrow.setAttribute('aria-hidden','true');card.append(icon,arrow);window.PantherUI.mountIcon(icon,section);window.PantherUI.mountIcon(arrow,'arrow');
-    const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
-    const list=document.createElement('ul');list.className='dashboard-recent-links';list.setAttribute('aria-label',`Recent ${label.toLowerCase()}`);card.append(title,list);cards.append(card);
-  }
+  drawDashboardCards(null);
+}
+
+function drawDashboardCards(data) {
+  const gameId=state.gameId;
+  window.PantherUI.mountDashboardCards(document.getElementById('dashboard-sections'),{
+    gameId,data,request:api,onNavigate:navigate,
+    onPreview:item=>void previewFile({key:item.key,name:item.title||item.metadata?.title||item.name,size:item.size}),
+  });
 }
 
 async function loadDashboardRecent(epoch) {
@@ -611,19 +613,7 @@ async function loadDashboardRecent(epoch) {
     const result=await api('/dashboard-recent',{gameId});
     if(epoch!==routeEpoch||gameId!==state.gameId)return;
     if(result.complete!==true||!result.groups)throw new Error('Recent activity unavailable');
-    for(const [section,key] of [['characters','characters'],['sessions','transcripts'],['novel','chapters'],['videos','videos'],['assets','assets']]) {
-      const card=document.querySelector(`#dashboard-sections [data-section="${section}"]`),list=card.querySelector('ul');list.replaceChildren();
-      const items=Array.isArray(result.groups[key])?result.groups[key]:[];
-      for(const item of items.slice(0,5)) {
-        const row=document.createElement('li');let link;
-        if(section==='characters'){link=document.createElement('a');link.href=characterPath({...item,gameId});link.textContent=item.name;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.pathname);};}
-        else if(section==='novel')link=novelLink(item.title,item.id);
-        else link=assetLink(item,item.metadata?.title||item.title||item.name);
-        row.append(link);list.append(row);
-      }
-      const count=result.counts?.[key];
-      if(Number.isInteger(count)&&count>items.slice(0,5).length){const row=document.createElement('li'),link=document.createElement('a');gameLink(link,section);link.textContent=`+ ${count-items.slice(0,5).length} more`;row.append(link);list.append(row);}
-    }
+    drawDashboardCards(result);
   }catch(error){if(epoch===routeEpoch&&gameId===state.gameId){const host=document.getElementById('dashboard-recent');host.hidden=false;host.textContent=error.message;}}
 }
 

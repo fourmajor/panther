@@ -14,7 +14,7 @@ import {AssetGenerationStatus} from './asset-generation-status.jsx';
 const emptyJobs=[];
 const baseFilters=[['all','All'],['map','Maps'],['blueprint','Blueprints'],['location','Locations'],['portrait','Portraits'],['artwork','Artwork'],['video','Videos'],['audio','Audio'],['document','Documents'],['model-3d','3D'],['other','Other']];
 
-function AssetThumbnail({asset,onThumbnail,gameId}) {
+export function AssetThumbnail({asset,onThumbnail,gameId,className=""}) {
   const host=useRef(null);
   const [visible,setVisible]=useState(false),[failedUrl,setFailedUrl]=useState('');
   const image=assetIsImage(asset);
@@ -32,7 +32,7 @@ function AssetThumbnail({asset,onThumbnail,gameId}) {
   const preview=useQuery({queryKey:['asset-thumbnail',gameId,asset.key],queryFn:()=>onThumbnail(asset),enabled:(image||video)&&visible&&!asset.previewUrl&&Boolean(onThumbnail),staleTime:240000,retry:false,refetchInterval:query=>video&&!query.state.data&&!query.state.error?3000:false});
   const url=asset.previewUrl||preview.data||'';
   const duration=video?assetVideoDuration(asset):null;
-  return <span ref={host} className="assets-card-image">{url&&url!==failedUrl?<img src={url} alt="" loading="lazy" onError={()=>setFailedUrl(url)}/>:<Icon size={32} aria-hidden="true"/>}{video&&<><span className="assets-video-play" aria-hidden="true"><Play size={22} fill="currentColor"/></span>{duration!==null&&<span className="assets-video-duration" aria-hidden="true" title={`Duration ${Math.floor(duration/60)} minutes ${Math.floor(duration%60)} seconds`}>{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}</>}</span>;
+  return <span ref={host} className={`assets-card-image ${className}`}>{url&&url!==failedUrl?<img src={url} alt="" loading="lazy" onError={()=>setFailedUrl(url)}/>:<Icon size={32} aria-hidden="true"/>}{video&&<><span className="assets-video-play" aria-hidden="true"><Play size={22} fill="currentColor"/></span>{duration!==null&&<span className="assets-video-duration" aria-hidden="true" title={`Duration ${Math.floor(duration/60)} minutes ${Math.floor(duration%60)} seconds`}>{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}</>}</span>;
 }
 export function AssetsLibrary({gameId,assets=[],loading=false,error='',hasMore=false,onMore,onOpen,onUpload,onGenerate,onThumbnail,onGenerationStatus,initialJobs=emptyJobs,browseFilesHref,onBrowseFiles,onCapabilities,onGenerationOptions,actionsHost,onDelete,characters=[],onCharacters,onTags,onRename}) {
   const [renamed,setRenamed]=useState(new Map());

@@ -1120,10 +1120,14 @@ class Handler(BaseHTTPRequestHandler):
                 production_asset_views()
                 import asset_metadata
                 assets = store.objects(game)
-                groups = {"characters": store.list("character", game), "transcripts": [a for a in assets if "transcript" in a["kind"]], "videos": [a for a in assets if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game), "assets": [a for a in assets if a["contentType"].startswith("image/") and not asset_metadata.internal(a["kind"]) and not a.get("lineageWarning") and a["metadata"].get("extra", {}).get("relationshipRole") not in {"processing", "intermediate", "internal"}]}
+                finished = [a for a in assets if not asset_metadata.internal(a["kind"]) and not a.get("lineageWarning") and a["metadata"].get("extra", {}).get("relationshipRole") not in {"processing", "intermediate", "internal"}]
+                transcripts = [a for a in finished if "transcript" in a["kind"]]
+                from dashboard_recent import session_entries
+                sessions = session_entries(assets)
+                groups = {"characters": store.list("character", game), "transcripts": transcripts, "sessions": sessions, "episodes": store.list("episode", game), "videos": [a for a in finished if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game), "assets": finished}
                 for values in groups.values():
-                    values.sort(key=lambda value: str(value.get("updatedAt", value.get("publishedAt", value.get("lastModified", "")))), reverse=True)
-                result = {"complete": True, "groups": {k: v[:5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
+                    values.sort(key=lambda a: str(a.get("updatedAt", a.get("lastModified", ""))), reverse=True)
+                result = {"complete": True, "groups": {k: v[:6 if k == "assets" else 5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
             elif path == "/episode-composition":
                 store.game(game)
                 result = store.episode_composition(game, q["episodeId"], q["revision"])
