@@ -9,6 +9,8 @@ import re
 URL = 'https://api.fal.ai/v1/models'
 PRICES = URL + '/pricing'
 CATALOG_ID = 'fal-text-to-image-v1'
+VIDEO_PRICE_ID = 'curated-video-prices-v1'
+VIDEO_PRICE_ENDPOINTS = ('minimax/h3-max/text-to-video', 'minimax/h3-max/image-to-video', 'fal-ai/veo3.1/fast', 'fal-ai/veo3.1/fast/image-to-video', 'fal-ai/kling-video/v3/pro/text-to-video', 'fal-ai/kling-video/v3/pro/image-to-video')
 
 
 def resolved(schema, document):
@@ -115,6 +117,12 @@ def refresh(store, fal):
         if item['endpoint'] in prices:
             item['priceEstimate'] = prices[item['endpoint']]
     catalog = {'schemaVersion': 1, 'complete': True, 'checkedAt': checked, 'source': URL, 'models': models, 'excluded': excluded}
+    try:
+        video_prices = price_options(fal.request('GET', PRICES, params={'endpoint_id': ','.join(VIDEO_PRICE_ENDPOINTS)}), checked)
+        if video_prices:
+            store.put('model-pricing', VIDEO_PRICE_ID, {'schemaVersion': 1, 'prices': video_prices, 'checkedAt': checked})
+    except Exception:
+        pass  # Price discovery must not change an executable model or erase prior evidence.
     store.put('model-catalog', CATALOG_ID, catalog)
     store.put('model-catalog-health', CATALOG_ID, {'status': 'READY', 'updatedAt': checked, 'modelCount': len(models)})
     return catalog

@@ -34,7 +34,7 @@ def job(**extra):
     return {"schemaVersion": 2, "jobId": "a" * 64, "gameId": "fictional", "type": "map", "prompt": "A harbor map", "visualStyle": "watercolor", "model": "gpt-image-1", **extra}
 
 
-@pytest.mark.parametrize("model", ["gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"])
+@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"])
 def test_selected_model_style_and_real_title_are_durable(tmp_path, model, monkeypatch):
     monkeypatch.setattr(worker.local, "run_process", lambda *a, **k: pytest.fail("No fresh Codex calls"))
     request = job(model=model)

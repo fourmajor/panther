@@ -245,7 +245,7 @@ def test_publication_verifies_uploaded_image_and_worker_only_resume(generation):
             "generation": {
                 "method": "ai",
                 "provider": "OpenAI",
-                "model": "gpt-image-1",
+                "model": job["model"],
                 "cost": {"status": "unknown"},
             },
         }
@@ -457,7 +457,7 @@ def test_generation_options_and_prompt_only_contract(generation):
     options = unpack(call(generation, "GET /asset-generation", gameId="test-game", view="options"))
     kinds = {item["id"]: item for item in options["generationTypes"]}
     assert set(kinds) == {"image", "map", "blueprint", "location", "portrait"}
-    assert {model["id"] for model in kinds["image"]["models"]} == generation.MODELS
+    assert {model["id"] for model in kinds["image"]["models"]} == {"gpt-image-2"}
     assert {style["id"] for style in kinds["image"]["styles"]} == generation.STYLES
     body = request(type="image", model="gpt-image-1-mini", style="watercolor")
     del body["name"]

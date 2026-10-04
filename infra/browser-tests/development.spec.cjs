@@ -75,8 +75,8 @@ for(const width of [1280,390]) test(`development data comes from the database an
   await expect(page.getByText('The northern gate',{exact:true}).filter({visible:true}).first()).toBeVisible();
   await expect(page.locator('#scene-work-progress')).toContainText('Waiting to start');
   await page.goto(origin+'/games/preview-campaign/dashboard');
-  await expect(page.locator('#dashboard-sections').getByRole('link',{name:'The northern gate'})).toBeVisible();
-  await expect(page.locator('#dashboard-sections').getByRole('link',{name:'Ash Meadow'})).toBeVisible();
+  for(const section of ['novel','videos','assets'])await expect(page.locator(`#dashboard-sections [data-section="${section}"]`).getByRole('link',{name:'The northern gate',exact:true})).toBeVisible();
+  await expect(page.locator('#dashboard-sections [data-section="characters"]').getByRole('link',{name:'Ash Meadow',exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   await page.screenshot({path:testInfo.outputPath(`development-dashboard-${width}.png`),fullPage:true});
 });
@@ -104,4 +104,20 @@ for(const width of [1280,390]) test(`chapter generation polls its submitted non-
  const denied=await page.request.get(origin+`/editorial-jobs?gameId=northern-chronicle&jobId=${job.jobId}`,{headers});expect(denied.status()).toBe(404);
  await page.reload();await expect(progress).toContainText('Generation unavailable');await expect(progress).not.toContainText('Generation job not found');
  await page.goto(origin+'/games/northern-chronicle/novel');await expect(page.locator('.novel-job-card')).toHaveCount(0);
+});
+
+for(const width of [1280,390])test(`Real local selected portrait loads and exposes replacement controls at ${width}px`,async({page},testInfo)=>{
+ await page.setViewportSize({width,height:900});await page.goto(origin+'/account');await page.getByRole('button',{name:'Regenerate demo data'}).click();await expect(page.getByText('Demo data regenerated.',{exact:true})).toBeVisible();
+ await page.goto(origin+'/games/preview-campaign/characters');await page.getByRole('button',{name:'Create Character',exact:true}).click();await page.locator('#character-create-form').getByLabel('Character name').fill('Harbor Scout');await page.getByRole('button',{name:'Create Character',exact:true}).click();await expect(page.locator('#character-name')).toHaveText('Harbor Scout');
+ const profileUrl=page.url(),characterId=new URL(profileUrl).pathname.split('/').at(-1),image=page.locator('#character-portrait-only'),avatar=page.locator('.character-avatar'),actions=page.locator('.character-portrait-actions'),upload=page.locator('#character-portrait-upload'),generate=page.locator('#character-portrait-generate');
+ const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=240;canvas.height=320;const c=canvas.getContext('2d');c.fillStyle='#233c45';c.fillRect(0,0,240,320);c.fillStyle='#e3bd79';c.beginPath();c.arc(120,100,45,0,Math.PI*2);c.fill();c.fillRect(65,160,110,130);return canvas.toDataURL('image/png').split(',')[1];});
+ const chooser=page.waitForEvent('filechooser');await upload.click();await(await chooser).setFiles({name:'harbor-scout.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});await expect(image).toBeVisible();await expect.poll(()=>image.evaluate(el=>el.complete&&el.naturalWidth)).toBe(240);await expect.poll(()=>image.evaluate(el=>el.naturalHeight)).toBe(320);
+ const headers={Authorization:'Bearer synthetic-development-test'},record=await page.request.get(origin+`/character-details?gameId=preview-campaign&characterId=${characterId}`,{headers});expect(record.ok()).toBe(true);const selectedKey=(await record.json()).character.details.thumbnailAssetKey;expect(selectedKey).toMatch(/\/original\/harbor-scout\.png$/);
+ for(const reload of [false,true]){
+  if(reload){await page.reload();await expect(image).toBeVisible();await expect.poll(()=>image.evaluate(el=>el.complete&&el.naturalWidth)).toBe(240);}
+  await avatar.hover();await expect.poll(()=>actions.evaluate(el=>Number(getComputedStyle(el).opacity))).toBe(1);
+  for(const button of [upload,generate]){await expect(button).toBeVisible();const [portraitBox,buttonBox]=await Promise.all([image.boundingBox(),button.boundingBox()]);expect(buttonBox.x).toBeGreaterThanOrEqual(portraitBox.x);expect(buttonBox.x+buttonBox.width).toBeLessThanOrEqual(portraitBox.x+portraitBox.width);expect(buttonBox.y).toBeGreaterThanOrEqual(portraitBox.y);expect(buttonBox.y+buttonBox.height).toBeLessThanOrEqual(portraitBox.y+portraitBox.height);if(await button.isEnabled())expect(await button.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
+  await page.mouse.move(width-5,850);await page.locator('#character-back').focus();await page.keyboard.press('Tab');await expect(upload).toBeFocused();await expect.poll(()=>actions.evaluate(el=>Number(getComputedStyle(el).opacity))).toBe(1);if(await generate.isEnabled()){await page.keyboard.press('Tab');await expect(generate).toBeFocused();await expect.poll(()=>actions.evaluate(el=>Number(getComputedStyle(el).opacity))).toBe(1);}else{await expect(generate).toHaveAttribute('title','Image generation is unavailable');}
+ }
+ expect(page.url()).toBe(profileUrl);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:testInfo.outputPath(`real-local-portrait-${width}.png`),fullPage:true});
 });

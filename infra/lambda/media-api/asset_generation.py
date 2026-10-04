@@ -17,7 +17,7 @@ from access_policy import authorized
 import index as media
 
 TYPES = {"image", "map", "blueprint", "location", "portrait"}
-MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
+MODELS = {"gpt-image-2", "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
 STYLES = {"photorealistic", "anime", "illustrated-fantasy", "comic-book", "watercolor", "oil-painting", "stylized-3d", "pixel-art"}
 
 def options(game):
@@ -26,7 +26,7 @@ def options(game):
     record = boto3.resource("dynamodb").Table(os.environ["CATALOG_TABLE"]).get_item(Key={"pk":"GAMES","sk":game}, ConsistentRead=True).get("Item")
     if not record:
         raise ValueError("Game not found")
-    return {"generationTypes":[{"id":kind,"name":"Image" if kind == "image" else kind.title(),"available":True,"models":[{"id":model,"name":model,"inputs":{}} for model in sorted(MODELS)],"defaultModel":"gpt-image-1","styles":[{"id":style,"name":style.replace("-"," ").title()} for style in sorted(STYLES)],"defaultStyle":record.get("visualStyle","illustrated-fantasy")} for kind in sorted(TYPES)], "renameSupported":False}
+    return {"generationTypes":[{"id":kind,"name":"Image" if kind == "image" else kind.title(),"available":True,"models":[{"id":model,"name":"GPT Image 2","provider":"OpenAI","inputs":{}} for model in ("gpt-image-2",)],"defaultModel":"gpt-image-2","styles":[{"id":style,"name":style.replace("-"," ").title()} for style in sorted(STYLES)],"defaultStyle":record.get("visualStyle","illustrated-fantasy")} for kind in sorted(TYPES)], "renameSupported":False}
 
 
 def table():
@@ -71,8 +71,8 @@ def submit(body):
     style = body.get("style", body.get("visualStyle"))
     if (
         "style" in body and "visualStyle" in body
-        or not isinstance(body.get("model", "gpt-image-1"), str)
-        or body.get("model", "gpt-image-1") not in MODELS
+        or not isinstance(body.get("model", "gpt-image-2"), str)
+        or body.get("model", "gpt-image-2") not in MODELS
         or style is not None and (not isinstance(style, str) or style not in STYLES)
     ):
         raise ValueError("Choose a supported model and visual style")
@@ -127,7 +127,7 @@ def submit(body):
         "createdAt": int(time.time()),
         "assetKey": None,
         "visualStyle": style or game_record.get("visualStyle", "illustrated-fantasy"),
-        "model": body.get("model", "gpt-image-1"),
+        "model": body.get("model", "gpt-image-2"),
         "generationAuthorized": True,
         **({"characterReference": character_reference} if character_reference else {}),
     }

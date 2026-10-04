@@ -13,7 +13,7 @@ import re
 import sqlite3
 import sys
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -657,6 +657,23 @@ class Store:
             result["lineageWarning"] = "Large document: only compact metadata links are indexed."
         return result
 
+    def image_links(self, game, keys, origin):
+        """Resolve a bounded set of exact, active same-game image identities."""
+        self.game(game)
+        if not isinstance(keys, list) or not 1 <= len(keys) <= 60:
+            raise ValueError("Choose between 1 and 60 images")
+        if any(not isinstance(key, str) or not key.startswith(f"games/{game}/assets/") or ".." in key.split("/") for key in keys):
+            raise ValueError("Choose same-game image assets")
+        images = {}
+        with self.connect() as db:
+            for key in dict.fromkeys(keys):
+                row = db.execute("SELECT metadata FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (key, game)).fetchone()
+                if not row or not json.loads(row[0]).get("contentType", "").startswith("image/"):
+                    images[key] = {"error": "Image unavailable", "retryable": False}
+                else:
+                    images[key] = {"url": origin + "/development/object?" + urlencode({"key": key})}
+        return {"images": images, "expiresIn": None}
+
     def object(self, key):
         with self.connect() as db:
             row = db.execute("SELECT metadata,data FROM objects WHERE key=?", (key,)).fetchone()
@@ -1101,12 +1118,15 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.game(game)
             elif path == "/dashboard-recent":
                 production_asset_views()
-                import asset_metadata
+                from dashboard_recent import finished_asset, session_entries
                 assets = store.objects(game)
-                groups = {"characters": store.list("character", game), "transcripts": [a for a in assets if "transcript" in a["kind"]], "videos": [a for a in assets if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game), "assets": [a for a in assets if a["contentType"].startswith("image/") and not asset_metadata.internal(a["kind"]) and not a.get("lineageWarning") and a["metadata"].get("extra", {}).get("relationshipRole") not in {"processing", "intermediate", "internal"}]}
+                finished = [a for a in assets if finished_asset(a)]
+                transcripts = [a for a in finished if "transcript" in a["kind"]]
+                sessions = session_entries(assets)
+                groups = {"characters": store.list("character", game), "transcripts": transcripts, "sessions": sessions, "episodes": store.list("episode", game), "videos": [a for a in finished if a["contentType"].startswith("video/")], "chapters": store.list("chapter", game), "assets": finished}
                 for values in groups.values():
-                    values.sort(key=lambda value: str(value.get("updatedAt", value.get("publishedAt", value.get("lastModified", "")))), reverse=True)
-                result = {"complete": True, "groups": {k: v[:5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
+                    values.sort(key=lambda a: str(a.get("updatedAt", a.get("lastModified", ""))), reverse=True)
+                result = {"complete": True, "groups": {k: v[:6 if k == "assets" else 5] for k, v in groups.items()}, "counts": {k: len(v) for k, v in groups.items()}}
             elif path == "/episode-composition":
                 store.game(game)
                 result = store.episode_composition(game, q["episodeId"], q["revision"])
@@ -1273,6 +1293,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def post(self, path, body):
         store = self.server.store
+        if path == "/image-links":
+            return self.send(store.image_links(body["gameId"], body["keys"], self.origin))
         if path == "/games":
             return self.send(store.create_game(body))
         if path == "/development/seed":

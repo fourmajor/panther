@@ -10,6 +10,7 @@ from boto3.dynamodb.conditions import Key
 import browse_index
 import storage_layout
 import asset_metadata
+import organization_records
 
 MAX_ASSETS = 5000
 MAX_CHARACTERS = 500
@@ -127,6 +128,42 @@ def character_summaries(catalog, game):
     return summaries
 
 
+def finished_asset(asset):
+    """Match the ordinary library projection; processing records remain stored."""
+    kind = asset.get("kind", "")
+    extra = asset.get("metadata", {}).get("extra", {})
+    return not (
+        asset_metadata.internal(kind) or asset.get("lineageWarning")
+        or "browserPart" in extra
+        or extra.get("relationshipRole") in {"processing", "intermediate", "internal"}
+        or re.search(r"(?:^|-)(?:provenance|receipts?|manifest|checkpoint|migration|audit|metadata|plans?|draft|storyboards?|packets?)(?:-|$)|^editorial-", kind)
+    )
+
+
+def session_entries(assets):
+    """Group explicit session metadata and exact input links, preserving unknown identities."""
+    by_key = {asset["key"]: asset for asset in assets}
+    def identity(asset, seen):
+        if asset.get("metadata", {}).get("sessionId"):
+            return asset["metadata"]["sessionId"]
+        if asset["key"] in seen:
+            return None
+        sources = [by_key[key] for key in asset.get("sourceKeys", asset.get("metadata", {}).get("sourceKeys", [])) if key in by_key]
+        linked = {identity(source, seen | {asset["key"]}) or source["key"] for source in sources}
+        return next(iter(linked)) if len(linked) == 1 else None
+    sessions = {}
+    for asset in sorted(assets, key=lambda a: observed_time(a.get("lastModified")) or 0, reverse=True):
+        kind, key = asset.get("kind", ""), asset["key"]
+        if kind in {"narration", "music", "voice-performance", "speech"}:
+            continue
+        if not (kind in {"transcript", "raw-transcript", "corrected-transcript", "edited-transcript", "recording-playback"} or asset.get("recording", {}).get("partCount", 0) > 0 or asset.get("contentType", "").startswith("audio/")):
+            continue
+        if key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind:
+            continue
+        sessions.setdefault(identity(asset, set()) or key, asset)
+    return list(sessions.values())
+
+
 def recent(catalog, game):
     db = browse_index.table()
     if not db.get_item(
@@ -153,6 +190,8 @@ def recent(catalog, game):
         "videos": [],
         "chapters": [],
         "assets": [],
+        "sessions": [],
+        "episodes": [],
     }
     for asset in assets:
         key = asset.get("key")
@@ -177,13 +216,12 @@ def recent(catalog, game):
             "title": title,
             "contentType": asset.get("contentType"),
             "kind": kind,
+            "thumbnailKey": asset.get("thumbnailKey"),
+            "durationSeconds": metadata.get("extra", {}).get("mediaProbe", {}).get("format", {}).get("duration", metadata.get("extra", {}).get("mediaProbe", {}).get("duration")),
             "lastModified": date_value(asset.get("lastModified")),
         }
-        if (
-            asset.get("contentType", "").startswith("image/")
-            and not asset_metadata.internal(kind)
-            and not asset.get("lineageWarning")
-        ):
+        paired_export = key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind
+        if finished_asset(asset) and not paired_export:
             groups["assets"].append(entry)
         if kind in {"transcript", "raw-transcript", "corrected-transcript", "edited-transcript"}:
             if not (key.endswith(".md") and by_key.get(key[:-3] + ".json", {}).get("kind") == kind):
@@ -197,6 +235,19 @@ def recent(catalog, game):
             groups["chapters"].append(
                 {**entry, "id": chapter["id"], "title": chapter.get("title", title)}
             )
+    groups["sessions"] = [{
+        "key": asset["key"], "name": asset.get("name"),
+        "title": asset.get("metadata", {}).get("title") or asset.get("name"),
+        "lastModified": date_value(asset.get("lastModified")),
+    } for asset in session_entries(assets)]
+    episode_rows = bounded_query(db, {
+        "KeyConditionExpression": Key("pk").eq(f"episode-scenes-v1#episode#{game}"),
+        "ConsistentRead": True, "Limit": 100, "ProjectionExpression": "sk, payload",
+    }, MAX_ASSETS)
+    groups["episodes"] = [
+        {"id": record["id"], "name": record["name"], "lastModified": date_value(record.get("updatedAt"))}
+        for row in episode_rows if (record := organization_records.decode(row))
+    ]
     counts = {name: len(items) for name, items in groups.items()}
     for name, items in groups.items():
 
@@ -206,5 +257,5 @@ def recent(catalog, game):
             )
             return (date is None, -(date or 0), item.get("id", item.get("key", "")))
 
-        groups[name] = sorted(items, key=order)[:5]
+        groups[name] = sorted(items, key=order)[:6 if name == "assets" else 5]
     return {"complete": True, "groups": groups, "counts": counts}
