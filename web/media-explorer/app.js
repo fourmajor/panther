@@ -2819,7 +2819,7 @@ async function openLocalGeneration(title, endpoint, body, onDone=()=>{}, existin
     }
     if(active){timer=setTimeout(()=>void poll(),3000);return;}
     retry.hidden=sceneJob;
-    if(sceneJob&&['FAILED','ATTENTION'].includes(job.status)&&!job.outcomeUnknown)status.textContent=`Video generation did not finish. ${job.message||'Review the scene inputs before generating again.'}`;
+    if(sceneJob&&['FAILED','ATTENTION'].includes(job.status)&&!job.outcomeUnknown)status.textContent=`Video generation failed. ${job.message?.replace(/^Video generation failed\.\s*/i,'')||'Review the scene inputs before generating again.'}`;
     if(job.status==='UNKNOWN'||job.outcomeUnknown||job.recoverableWaiting){if(!job.recoverableWaiting)status.textContent='Generation is unconfirmed; it may still be running or billed. Check status for an update.';retry.hidden=false;retry.textContent='Check status';if(sceneJob)setSceneRenderLock(body.sceneId||job.sceneRef?.sceneId,true);}
     else retry.textContent='Try again';
   };
