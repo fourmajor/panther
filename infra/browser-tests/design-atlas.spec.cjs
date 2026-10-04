@@ -17,6 +17,8 @@ async function fixture(page) {
       '/recordings/live':{recordings:[]},
       '/characters':{characters:[],cursor:null},
       '/objects':{prefixes:[],objects:[],cursor:null},
+      '/assets':{assets:[{key:'games/synthetic-game/assets/review/original/plan.json',kind:'movie-review-plan',name:'plan.json',metadata:{title:'Last session storyboard',sessionId:'synthetic-session'}}],cursor:null},
+      '/workflows':{workflows:[],cursor:null},
     };
     await route.fulfill({json:bodies[pathname] || {},headers:{'access-control-allow-origin':'https://panther.place'}});
   });
@@ -38,6 +40,7 @@ async function accessible(locator, width) {
   expect(await locator.evaluate(element=>{const r=element.getBoundingClientRect();const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return hit===element||element.contains(hit);})).toBe(true);
 }
 
+
 for(const width of [1440,390])test(`First paint uses the stable Panther theme without exploration scaffolding at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:1000});const errors=[];page.on('pageerror',error=>errors.push(error.message));const reads=await fixture(page);
  await page.addInitScript(()=>{localStorage.setItem('panther.interface.v1','poster');window.bootFrames=[];const sample=()=>{if(document.body){const header=document.querySelector('.masthead'),welcome=document.getElementById('welcome');window.bootFrames.push({atlas:document.body.innerText.includes('Design Atlas'),welcome:welcome&&!welcome.hidden,header:header?.getBoundingClientRect().height,background:getComputedStyle(document.documentElement).backgroundColor});}if(window.bootFrames.length<150)requestAnimationFrame(sample);};requestAnimationFrame(sample);});
@@ -52,4 +55,27 @@ for(const width of [1440,390])test(`First paint uses the stable Panther theme wi
  const before=reads.filter(path=>path==='/game').length;await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();await expect(page.locator('#game-name')).toHaveValue('The Lantern Expedition');await page.locator('#game-description').fill('An unsaved fictional setting.');
  await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).focus();await page.keyboard.press('Shift+D');await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.locator('#game-description')).toHaveValue('An unsaved fictional setting.');expect(reads.filter(path=>path==='/game').length).toBe(before);expect(errors).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  await page.screenshot({path:test.info().outputPath(`stable-panther-${width}.png`),fullPage:true});
+
+});
+
+test('storyboard approval doorway is game-scoped and does not generate or approve anything',async({page})=>{
+  const reads=await fixture(page);
+  await page.goto('https://panther.place/games/synthetic-game/dashboard');
+  const entry=page.locator('#storyboard-entry');
+  await expect(entry).toHaveAttribute('href','/games/synthetic-game/episodes?review=1');
+  await entry.click();
+  await expect(page.locator('#video-approval-inbox')).toContainText('Last session storyboard');
+  await expect(page.locator('#video-approval-inbox .approval-card a')).toHaveAttribute('href',/episodes\?project=games%2Fsynthetic-game/);
+  expect(reads.every(path=>!path.includes('generate')&&!path.includes('submit'))).toBe(true);
+});
+
+test('failed session preparation is clearly distinct from an approvable storyboard',async({page})=>{
+  await fixture(page);
+  await page.route('https://test.execute-api.us-west-2.amazonaws.com/workflows**',route=>route.fulfill({json:{workflows:[{id:'editorial~synthetic-run',kind:'editorial',gameId:'synthetic-game',sessionId:'latest-session',status:'failed',createdAt:100}],cursor:null},headers:{'access-control-allow-origin':'https://panther.place'}}));
+  await page.goto('https://panther.place/games/synthetic-game/dashboard');
+  const row=page.locator('.approval-preparation-row');
+  await expect(row).toContainText('Session latest-session');
+  await expect(row).toContainText('Preparation failed');
+  await expect(row).toContainText('not a ready-to-approve storyboard');
+  await expect(row.getByRole('link')).toHaveAttribute('href','/games/synthetic-game/workflows/editorial/editorial~synthetic-run');
 });

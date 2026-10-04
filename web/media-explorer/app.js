@@ -1,5 +1,6 @@
 const config = window.PANTHER_CONFIG;
 
+
 // One loading treatment everywhere. Counts come from responses, never simulated percentages.
 const loadingStates = new WeakMap();
 function showLoading(host, message) {
@@ -456,6 +457,7 @@ function showApplicationChrome() {
 }
 
 function setActiveNavigation(section) {
+  document.getElementById('storyboard-entry').hidden=!['dashboard','videos','workflows','sessions'].includes(section);
   for (const link of elements.primaryNav.querySelectorAll("a")) {
     const part = link.dataset.section || link.getAttribute("href").split("/").at(-1);
     link.dataset.section = part;
@@ -570,6 +572,9 @@ async function selectGame(requested, epoch) {
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
   elements.gameRuleset.textContent = state.gameDetail.game.ruleset ? `System: ${state.gameDetail.game.ruleset}` : "System not set";
+  const reviewEntry = document.getElementById("storyboard-entry");
+  reviewEntry.href = `${gamePath("videos")}?review=1`;
+  reviewEntry.onclick = event => {if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();navigate(reviewEntry.href);};
   renderGameStyle();
   if (liveGame !== selected) { liveGame = selected; void refreshLive(); }
   return true;
@@ -603,6 +608,46 @@ function renderDashboard() {
     const title=document.createElement('h2'),link=document.createElement('a');gameLink(link,section);link.textContent=label;link.className='dashboard-card-link';title.append(link);
     const list=document.createElement('ul');list.className='dashboard-recent-links';list.setAttribute('aria-label',`Recent ${label.toLowerCase()}`);card.append(title,list);cards.append(card);
   }
+  void loadApprovalInbox(document.getElementById("approval-inbox"), routeEpoch);
+}
+
+async function loadApprovalInbox(host,epoch,cursor=null,append=false) {
+  const gameId=state.gameId,current=()=>epoch===routeEpoch&&gameId===state.gameId&&host.isConnected;
+  if(!append){host.replaceChildren(movieNode('h2','Review & approve storyboards'),movieNode('p','Choose a session below. Review the shots and script, then approve its exact plan and budget. Approval never silently starts a paid request.'));}
+  const status=movieNode('p','Finding prepared storyboards…');status.setAttribute('role','status');host.append(status);
+  if(!append){
+    const preparation=movieNode('section',undefined,'approval-preparation');preparation.setAttribute('aria-label','Session preparation');host.append(preparation);
+    void api('/workflows',{gameId}).then(result=>{
+      if(!current()||!preparation.isConnected)return;
+      if(!Array.isArray(result.workflows))throw new Error('Workflow status unavailable');
+      const jobs=result.workflows.filter(job=>['editorial','session-finalization'].includes(job.kind)&&typeof job.id==='string'&&typeof job.sessionId==='string'&&job.sessionId&&job.gameId===gameId&&job.status!=='done')
+        .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0)).slice(0,3);
+      for(const job of jobs){const row=movieNode('article',undefined,'approval-preparation-row');row.dataset.state=job.status;
+        const progress=Number.isInteger(job.completedStages)&&Number.isInteger(job.totalStages)&&job.totalStages>0?`${job.completedStages} of ${job.totalStages} preparation stages complete`:'Preparation progress not reported';
+        row.append(movieNode('strong',`Session ${job.sessionId}`),movieNode('p',job.status==='failed'?'Preparation failed — open its workflow to see what needs fixing. This is not a ready-to-approve storyboard.':`${progress} · ${job.sourceStatus||job.status}. This workflow status is not a storyboard approval.`));
+        const link=movieNode('a','View session preparation →');link.href=`${gamePath('workflows')}/${encodeURIComponent(job.kind)}/${encodeURIComponent(job.id)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};row.append(link);preparation.append(row);
+      }
+      if(result.cursor)preparation.append(movieNode('p','Recent preparation runs shown. Open Workflows for more runs.','movie-small'));
+    }).catch(()=>{if(current()&&preparation.isConnected)preparation.append(movieNode('p','Session preparation status is unavailable. Check Workflows; no readiness has been assumed.'));});
+  }
+  try{
+    const result=await api('/assets',{gameId,section:'videos',cursor});if(!current())return;
+    if(!Array.isArray(result.assets))throw new Error('Storyboard catalog unavailable');
+    let count=0;const checks=[];
+    for(const asset of result.assets.filter(a=>a.kind==='movie-review-plan'&&sameGameKey(a.key)).sort((a,b)=>String(b.lastModified||'').localeCompare(String(a.lastModified||'')))){count++;const card=movieNode('article',undefined,'approval-card');card.append(movieNode('p',asset.metadata?.sessionId?`SESSION / ${asset.metadata.sessionId}`:'PREPARED MOVIE PLAN','eyebrow'),movieNode('h3',asset.metadata?.title||asset.name));
+      const link=movieNode('a','Review storyboard & approve →','primary-button');link.href=`${gamePath('videos')}?project=${encodeURIComponent(asset.key)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};
+      const readiness=movieNode('p','Checking this plan’s review status…','approval-readiness');readiness.setAttribute('role','status');card.append(link,readiness);host.append(card);
+      checks.push(async()=>{try{const data=await api('/movie-review',{gameId,key:asset.key});if(!current()||!card.isConnected)return;
+        readiness.textContent=data.review?.action==='approved'?'This revision is already approved.':data.readiness?.ready?'Ready for your shot-by-shot review and approval.':Array.isArray(data.readiness?.blockers)&&data.readiness.blockers.length?`Preparation needs attention: ${data.readiness.blockers[0]}`:'Open this plan to check its preparation and approval requirements.';
+        if(data.review?.action==='approved')link.textContent='View approved storyboard →';
+      }catch{if(current()&&card.isConnected)readiness.textContent='Review status unavailable. Open the plan to retry; no approval has been assumed.';}});
+    }
+    status.textContent=count?'Approval is available inside each plan after every shot is reviewed and its checks pass.':result.cursor?'No prepared storyboards on this catalog page. More entries are available below.':'No prepared storyboards on this page. If your session is still being prepared, check its workflow.';
+    if(result.cursor){const more=movieButton('Find more storyboards',()=>{more.remove();void loadApprovalInbox(host,epoch,result.cursor,true);});host.append(more);}
+    if(!append){const workflow=movieNode('a','Check session preparation in Workflows →');gameLink(workflow,'workflows');host.append(workflow);}
+    // Bound detail reads; never fan out an entire game or scan source storage.
+    await Promise.all(Array.from({length:Math.min(4,checks.length)},async()=>{while(checks.length&&current())await checks.shift()();}));
+  }catch(error){if(current()){status.textContent=`Could not load storyboard reviews: ${error.message}`;host.append(movieButton('Retry storyboard list',()=>void loadApprovalInbox(host,epoch)));}}
 }
 
 async function loadDashboardRecent(epoch) {
@@ -624,7 +669,7 @@ async function loadDashboardRecent(epoch) {
       const count=result.counts?.[key];
       if(Number.isInteger(count)&&count>items.slice(0,5).length){const row=document.createElement('li'),link=document.createElement('a');gameLink(link,section);link.textContent=`+ ${count-items.slice(0,5).length} more`;row.append(link);list.append(row);}
     }
-  }catch(error){if(epoch===routeEpoch&&gameId===state.gameId){const host=document.getElementById('dashboard-recent');host.hidden=false;host.textContent=error.message;}}
+    }catch(error){if(epoch===routeEpoch&&gameId===state.gameId){const host=document.getElementById('dashboard-recent');host.hidden=false;host.textContent=error.message;}}
 }
 
 function applyGameDetail(detail) {
@@ -3062,6 +3107,9 @@ function renderLiveSessionEntries(){
 }
 
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
+  const inbox=document.getElementById('video-approval-inbox');
+  inbox.hidden=section!=='videos'||new URLSearchParams(location.search).has('project')||episodeRouteParams().has('episode');
+  if(!inbox.hidden&&!cursor)void loadApprovalInbox(inbox,epoch);
   document.getElementById("session-library").dataset.paged = String(previousAssets.length > 0 || Boolean(cursor));
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
   const status = document.getElementById("library-status"), list = document.getElementById("library-list");
@@ -3432,7 +3480,7 @@ function drawMovieWorkspace(host, data, key, assets, current) {
       }
   }
   function renderAside() {
-    aside.replaceChildren(movieNode("p", "PRODUCTION CHECKPOINT", "eyebrow"), movieNode("h3", "Review before you spend"));
+    aside.replaceChildren(movieNode("p", "STORYBOARD APPROVAL", "eyebrow"), movieNode("h3", "Review before you spend"));
     const cost = movieNode("div", undefined, "movie-cost");
     cost.append(movieNode("strong", data.readiness.costComplete ? movieMoney(data.readiness.knownCostUsd) : "Unquoted"),
       movieNode("span", "estimated generation cost", "movie-muted")); aside.append(cost);

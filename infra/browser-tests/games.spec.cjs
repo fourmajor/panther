@@ -91,8 +91,9 @@ async function fixture(page, canEditGame = false, development = false) {
       styles.set(id, posted.visualStyle);
     }
     let body = {};
+    if (url.pathname === '/assets') body = {assets:[],cursor:null};
     if (url.pathname === '/recordings/live') body = {recordings:[]};
-    if (url.pathname === '/workflows') body = {types:[]};
+    if (url.pathname === '/workflows') body = {types:[],workflows:[],cursor:null};
     if (url.pathname === '/games') body = { games: currentGames };
     if (url.pathname === '/dashboard-recent') {
       const characters=id==='test-b'?[{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}]:[];
