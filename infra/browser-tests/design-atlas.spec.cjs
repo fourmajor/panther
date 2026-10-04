@@ -19,6 +19,7 @@ async function fixture(page) {
       '/characters':{characters:[],cursor:null},
       '/objects':{prefixes:[],objects:[],cursor:null},
       '/assets':{assets:[{key:'games/synthetic-game/assets/review/original/plan.json',kind:'movie-review-plan',name:'plan.json',metadata:{title:'Last session storyboard',sessionId:'synthetic-session'}}],cursor:null},
+      '/workflows':{workflows:[],cursor:null},
     };
     await route.fulfill({json:bodies[pathname] || {},headers:{'access-control-allow-origin':'https://panther.place'}});
   });
@@ -154,4 +155,15 @@ test('storyboard approval doorway is game-scoped and does not generate or approv
   await expect(page.locator('#video-approval-inbox')).toContainText('Last session storyboard');
   await expect(page.locator('#video-approval-inbox .approval-card a')).toHaveAttribute('href',/videos\?project=games%2Fsynthetic-game/);
   expect(reads.every(path=>!path.includes('generate')&&!path.includes('submit'))).toBe(true);
+});
+
+test('failed session preparation is clearly distinct from an approvable storyboard',async({page})=>{
+  await fixture(page);
+  await page.route('https://test.execute-api.us-west-2.amazonaws.com/workflows**',route=>route.fulfill({json:{workflows:[{id:'editorial~synthetic-run',kind:'editorial',gameId:'synthetic-game',sessionId:'latest-session',status:'failed',createdAt:100}],cursor:null},headers:{'access-control-allow-origin':'https://panther.place'}}));
+  await page.goto('https://panther.place/games/synthetic-game/dashboard');
+  const row=page.locator('.approval-preparation-row');
+  await expect(row).toContainText('Session latest-session');
+  await expect(row).toContainText('Preparation failed');
+  await expect(row).toContainText('not a ready-to-approve storyboard');
+  await expect(row.getByRole('link')).toHaveAttribute('href','/games/synthetic-game/workflows?workflow=editorial~synthetic-run');
 });

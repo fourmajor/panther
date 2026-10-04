@@ -91,6 +91,8 @@ async function fixture(page, canEditGame = false) {
       styles.set(id, posted.visualStyle);
     }
     let body = {};
+    if (url.pathname === '/workflows') body = {workflows:[],cursor:null};
+    if (url.pathname === '/assets') body = {assets:[],cursor:null};
     if (url.pathname === '/recordings/live') body = {recordings:[]};
     if (url.pathname === '/games') body = { games: currentGames };
     if (url.pathname === '/dashboard-recent') {

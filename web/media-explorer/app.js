@@ -750,6 +750,21 @@ async function loadApprovalInbox(host,epoch,cursor=null,append=false) {
   const gameId=state.gameId,current=()=>epoch===routeEpoch&&gameId===state.gameId&&host.isConnected;
   if(!append){host.replaceChildren(movieNode('h2','Review & approve storyboards'),movieNode('p','Choose a session below. Review the shots and script, then approve its exact plan and budget. Approval never silently starts a paid request.'));}
   const status=movieNode('p','Finding prepared storyboards…');status.setAttribute('role','status');host.append(status);
+  if(!append){
+    const preparation=movieNode('section',undefined,'approval-preparation');preparation.setAttribute('aria-label','Session preparation');host.append(preparation);
+    void api('/workflows',{gameId}).then(result=>{
+      if(!current()||!preparation.isConnected)return;
+      if(!Array.isArray(result.workflows))throw new Error('Workflow status unavailable');
+      const jobs=result.workflows.filter(job=>['editorial','session-finalization'].includes(job.kind)&&typeof job.id==='string'&&typeof job.sessionId==='string'&&job.sessionId&&job.gameId===gameId&&job.status!=='done')
+        .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0)).slice(0,3);
+      for(const job of jobs){const row=movieNode('article',undefined,'approval-preparation-row');row.dataset.state=job.status;
+        const progress=Number.isInteger(job.completedStages)&&Number.isInteger(job.totalStages)&&job.totalStages>0?`${job.completedStages} of ${job.totalStages} preparation stages complete`:'Preparation progress not reported';
+        row.append(movieNode('strong',`Session ${job.sessionId}`),movieNode('p',job.status==='failed'?'Preparation failed — open its workflow to see what needs fixing. This is not a ready-to-approve storyboard.':`${progress} · ${job.sourceStatus||job.status}. This workflow status is not a storyboard approval.`));
+        const link=movieNode('a','View session preparation →');link.href=`${gamePath('workflows')}?workflow=${encodeURIComponent(job.id)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};row.append(link);preparation.append(row);
+      }
+      if(result.cursor)preparation.append(movieNode('p','Recent preparation runs shown. Open Workflows for more runs.','movie-small'));
+    }).catch(()=>{if(current()&&preparation.isConnected)preparation.append(movieNode('p','Session preparation status is unavailable. Check Workflows; no readiness has been assumed.'));});
+  }
   try{
     const result=await api('/assets',{gameId,section:'videos',cursor});if(!current())return;
     if(!Array.isArray(result.assets))throw new Error('Storyboard catalog unavailable');

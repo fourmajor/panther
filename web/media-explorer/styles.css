@@ -1721,6 +1721,10 @@ body { padding-bottom:0; }
 .approval-card h3 { flex:1;min-width:12rem;margin:0;overflow-wrap:anywhere; }
 .approval-card .eyebrow { width:100%;margin:0; }
 .approval-readiness { flex-basis:100%;color:var(--muted);margin:0; }
+.approval-preparation-row { padding:1rem;margin:1rem 0;border-left:3px solid var(--accent);background:var(--panel-raised); }
+.approval-preparation-row[data-state=failed] { border-color:var(--danger); }
+.approval-preparation-row p { color:var(--muted);line-height:1.5; }
+.approval-preparation-row a,.approval-inbox > a { color:var(--accent);text-underline-offset:4px; }
 /* An exact storyboard link opens review, not a competing episode-creation screen. */
 #session-library:has(#movie-workspace:not([hidden])) :is(#episode-workspace,#editorial-video-composer,#episode-create-action) { display:none; }
 .approval-card a { display:inline-flex;text-decoration:none;min-height:44px;align-items:center;padding:.7rem 1rem; }

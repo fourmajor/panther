@@ -30,7 +30,9 @@ Catalog reads remain bounded and paginated; finding another page is explicit.
 Plan-status reads have at most four concurrent requests. No home projection
 scans source storage. An empty page is not proof the entire game has no plans.
 Sessions still in preparation link to Workflows rather than inventing a ready
-storyboard. The existing exact-revision review and spending guards are unchanged.
+storyboard. Recent session preparation runs appear separately, including explicit
+failure and a direct run link. Missing progress remains unreported, not zero.
+The existing exact-revision review and spending guards are unchanged.
 
 Browser regression checks cover all six homes at desktop and mobile sizes,
 different structural elements, collection selection, game-scoped review links,
