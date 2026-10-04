@@ -165,5 +165,5 @@ test('failed session preparation is clearly distinct from an approvable storyboa
   await expect(row).toContainText('Session latest-session');
   await expect(row).toContainText('Preparation failed');
   await expect(row).toContainText('not a ready-to-approve storyboard');
-  await expect(row.getByRole('link')).toHaveAttribute('href','/games/synthetic-game/workflows?workflow=editorial~synthetic-run');
+  await expect(row.getByRole('link')).toHaveAttribute('href','/games/synthetic-game/workflows/editorial/editorial~synthetic-run');
 });

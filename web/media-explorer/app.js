@@ -768,7 +768,7 @@ async function loadApprovalInbox(host,epoch,cursor=null,append=false) {
       for(const job of jobs){const row=movieNode('article',undefined,'approval-preparation-row');row.dataset.state=job.status;
         const progress=Number.isInteger(job.completedStages)&&Number.isInteger(job.totalStages)&&job.totalStages>0?`${job.completedStages} of ${job.totalStages} preparation stages complete`:'Preparation progress not reported';
         row.append(movieNode('strong',`Session ${job.sessionId}`),movieNode('p',job.status==='failed'?'Preparation failed — open its workflow to see what needs fixing. This is not a ready-to-approve storyboard.':`${progress} · ${job.sourceStatus||job.status}. This workflow status is not a storyboard approval.`));
-        const link=movieNode('a','View session preparation →');link.href=`${gamePath('workflows')}?workflow=${encodeURIComponent(job.id)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};row.append(link);preparation.append(row);
+        const link=movieNode('a','View session preparation →');link.href=`${gamePath('workflows')}/${encodeURIComponent(job.kind)}/${encodeURIComponent(job.id)}`;link.onclick=event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(link.href);};row.append(link);preparation.append(row);
       }
       if(result.cursor)preparation.append(movieNode('p','Recent preparation runs shown. Open Workflows for more runs.','movie-small'));
     }).catch(()=>{if(current()&&preparation.isConnected)preparation.append(movieNode('p','Session preparation status is unavailable. Check Workflows; no readiness has been assumed.'));});
@@ -3252,7 +3252,7 @@ function renderLiveSessionEntries(){
 
 async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
   const inbox=document.getElementById('video-approval-inbox');
-  inbox.hidden=section!=='videos'||new URLSearchParams(location.search).has('project');
+  inbox.hidden=section!=='videos'||new URLSearchParams(location.search).has('project')||episodeRouteParams().has('episode');
   if(!inbox.hidden&&!cursor)void loadApprovalInbox(inbox,epoch);
   document.getElementById("session-library").dataset.paged = String(previousAssets.length > 0 || Boolean(cursor));
   const gameId = state.gameId, current = () => epoch === routeEpoch && gameId === state.gameId && state.tokens;
