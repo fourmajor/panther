@@ -328,7 +328,7 @@ for(const width of [1280,390]) {
     await page.setViewportSize({width,height:1000}); await fixture(page);
     const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     await page.goto(`${origin}/games/campaign-a/novel`);
-    await expect(page.locator('.novel-card')).toHaveCount(2);
+    await expect(page.locator('.novel-card')).toHaveCount(2);expect(await page.locator('main').evaluate(el=>parseFloat(getComputedStyle(el).paddingTop))).toBeLessThanOrEqual(16);
     await expect(page.getByRole('link',{name:'The Earlier Lantern',exact:true})).toHaveCount(0);
     const link=page.getByRole('link',{name:'The Lantern Room',exact:true});
     await accessibleInViewport(link,width); await link.click();

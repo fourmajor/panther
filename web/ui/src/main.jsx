@@ -34,6 +34,7 @@ import "./styles.css";
 
 const chapterReviewRoots=new WeakMap();
 export function mountChapterReview(host,props){host.className="sticky top-4 z-20 mb-4 flex justify-end";let root=chapterReviewRoots.get(host);if(!root){root=createRoot(host);chapterReviewRoots.set(host,root);}root.render(<QueryClientProvider client={client}><ChapterReview key={props.gameId+props.chapterId} {...props}/></QueryClientProvider>);}
+export function unmountChapterReview(host){chapterReviewRoots.get(host)?.unmount();chapterReviewRoots.delete(host);}
 const storyboardRoots=new WeakMap();
 export function mountSceneStoryboard(host,props){let root=storyboardRoots.get(host);if(!root){root=createRoot(host);storyboardRoots.set(host,root);}root.render(<QueryClientProvider client={client}><SceneStoryboard {...props}/></QueryClientProvider>);}
 export function unmountSceneStoryboard(host){storyboardRoots.get(host)?.unmount();storyboardRoots.delete(host);}

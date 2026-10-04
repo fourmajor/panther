@@ -2178,6 +2178,7 @@ function clearNovel() {
   currentChapter = null;
   novel.reader.hidden = true;
   for (const part of ["list", "prose", "details", "pagination", "title", "notice"]) novel[part].replaceChildren();
+  window.PantherUI.unmountChapterReview(novel.review);
   novel.review.replaceChildren();
   for(const name of ["artwork", "art-before", "art-after"]) novel[name].replaceChildren();
   novel.artwork.hidden=true;
@@ -2614,7 +2615,7 @@ document.addEventListener("pointerdown", event => {
   if (narrativePreviewAnchor && !narrativePreviewAnchor.contains(event.target) && !narrativePreviewCard?.contains(event.target)) dismissNarrativePreview();
 });
 window.addEventListener("resize", positionNarrativePreview);
-document.addEventListener("scroll", positionNarrativePreview, true);
+document.addEventListener("scroll", event=>{if(narrativePreviewCard?.contains(event.target))return;positionNarrativePreview();}, true);
 
 function novelLink(title, id, bookId = null) {
   const link = document.createElement("a");
