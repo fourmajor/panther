@@ -5,6 +5,7 @@
 .header-account-controls .account-avatar{border-radius:50%;width:36px;height:36px;overflow:hidden;background:var(--panel-raised);color:var(--ink);font-size:12px;font-weight:600;padding:0;border:1px solid var(--line)}
 .account-avatar img{width:100%;height:100%;object-fit:cover}
 .notification-bell{position:relative;flex-shrink:0}
+.header-account-controls .notification-bell svg{display:block;width:20px;height:20px}
 .notification-dot{position:absolute;right:5px;top:5px;width:8px;height:8px;border-radius:50%;background:#ef4444;border:1px solid var(--paper)}
 .notification-unknown{position:absolute;right:2px;top:0;font-size:11px;color:var(--danger)}
 .notification-popover{width:min(380px,calc(100vw - 24px));max-height:min(680px,75vh);overflow:auto;padding:12px;background:var(--panel);color:var(--ink)}
