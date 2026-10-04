@@ -272,6 +272,7 @@ def test_local_map_selection_accepts_ordinary_images_without_guessing_kind(tmp_p
         db.execute("UPDATE objects SET metadata=? WHERE key=?", (json.dumps({"kind": "document", "contentType": mime}), key))
     scene = store.save_story_entity("scene", {**body, "mapAssetKey": key})["record"]
     assert scene["mapAssetKey"] == key
+    assert scene["storyboard"]["shots"][0]["frameKey"] == key
     assert store.pin_map("preview-campaign", scene)["contentType"] == mime
 
 
