@@ -7,7 +7,7 @@ const rawKey='games/test-game/assets/raw/original/room.wav';
 
 test('Archive-filtered full catalog pages retain their cursor and load the next page',async({page,context})=>{
  await fixture(page,context);
- const item=i=>({key:key(`note-${i}`),name:'notes.json',kind:'unknown',contentType:'application/json',metadata:{title:`Campaign note ${i}`}});
+ const item=i=>({key:key(`note-${i}`).replace(/image\.png$/,'notes.json'),name:'notes.json',kind:'unknown',contentType:'application/json',metadata:{title:`Campaign note ${i}`}});
  const reads=[];
  await context.route(`${api}/assets?**`,route=>{const cursor=new URL(route.request().url()).searchParams.get('cursor');reads.push(cursor);return route.fulfill({json:{catalogVersion:4,assets:cursor?[item(101)]:Array.from({length:99},(_,i)=>item(i+1)),cursor:cursor?null:'next-page'},headers:{'access-control-allow-origin':origin}});});
  await page.goto(`${origin}/games/test-game/assets`);
