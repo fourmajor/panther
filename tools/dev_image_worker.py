@@ -270,6 +270,9 @@ def process_fal(store, identity, job, folder, fal, downloader=None):
             response = fal.request('GET', v.queue_url(job['urls']['response'], rid, endpoint, 'response'), completed_result=True)
             retain(response_file, json.dumps(response).encode())
         response = json.loads(response_file.read_bytes())
+        if any(response.get('has_nsfw_concepts', [])):
+            job.update(providerRejected=True, outcomeUnknown=False)
+            raise ValueError('The provider blocked this image; no image was published')
         outputs = response.get('images') if pinned['outputShape'] == 'images' else [response.get('image')]
         if not isinstance(outputs, list) or len(outputs) != 1 or not isinstance(outputs[0], dict):
             raise ValueError('Provider did not return one complete image')
@@ -294,9 +297,9 @@ def process_fal(store, identity, job, folder, fal, downloader=None):
             retain(folder / f'worker-error-{time.time_ns()}.json', json.dumps({'type': type(error).__name__, 'message': diagnostic, 'errorCode': code, 'requestId': job.get('requestId'), 'billingStatus': 'unknown'}).encode())
         except (OSError, ValueError):
             pass
-        if response_file.is_file() and not response_file.is_symlink():
+        if response_file.is_file() and not response_file.is_symlink() and not job.get('providerRejected'):
             job.update(publicationRecoveryAvailable=True, outcomeUnknown=False)
-        job.update(status='ATTENTION', message='Image generation could not be confirmed.' if job.get('outcomeUnknown') else 'Image generation is unavailable.', updatedAt=time.time())
+        job.update(status='ATTENTION', message='The provider blocked this image. Edit the prompt before generating again.' if job.get('providerRejected') else 'Image generation could not be confirmed.' if job.get('outcomeUnknown') else 'Image generation is unavailable.', updatedAt=time.time())
         store.put('asset-generation', identity, job, job['gameId'])
         return False
 

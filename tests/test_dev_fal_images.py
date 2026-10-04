@@ -221,3 +221,24 @@ def test_verified_megapixel_estimate_and_preserving_migration(tmp_path):
     with store.connect() as db:
         original = json.loads(db.execute('SELECT metadata FROM objects WHERE key=?', (key,)).fetchone()[0])
     assert original == metadata
+
+
+def test_provider_blocked_image_is_retained_but_never_published_or_selected(tmp_path):
+    store, identity = queued(tmp_path,kind='portrait')
+    class Blocked(Fal):
+        def request(self,method,url,**kwargs):
+            result=super().request(method,url,**kwargs)
+            if method=='GET' and not url.endswith('/status'):
+                result['has_nsfw_concepts']=[True]
+            return result
+    fal=Blocked()
+    root=worker.private_root(tmp_path/'work')
+    assert not worker.process(store,identity,root,SimpleNamespace(),'gpt-image-2',fal=fal,downloader=lambda *args:pytest.fail('Blocked output must not download'))
+    job=store.get('asset-generation',identity)
+    assert job['providerRejected'] and not job['outcomeUnknown']
+    assert not job.get('publicationRecoveryAvailable') and not job.get('assetKey')
+    assert store.get('character','fictional:guide')['details']['thumbnailAssetKey'] is None
+    assert store.asset_generation_view(job)['message']=='The provider blocked this image. Edit the prompt before generating again.'
+    assert (root/identity/'provider-response.json').is_file()
+    assert not worker.process(store,identity,root,SimpleNamespace(),'gpt-image-2',fal=fal)
+    assert sum(method=='POST' for method,*_ in fal.calls)==1

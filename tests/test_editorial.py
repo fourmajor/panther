@@ -1575,3 +1575,15 @@ def test_scene_pipeline_publishes_only_its_owned_scene_and_replay_preserves_edit
     m.table.put_item(Item=task)
     assert m.update(task,body,'complete')=={'ok':True}
     assert organization_records.decode(db.get_item(Key=pointer)['Item'])['name']=='Later edit'
+
+
+def test_pinned_chapter_input_alias_is_valid_evidence_without_allowing_foreign_sources(tmp_path,monkeypatch):
+    report={'passed':True,'title':'Context','markdown':'Use the pinned story.','evidenceIds':['sourceChapter'],'uncertainties':[],'decisions':[],'selectedKeys':[],'shots':[],'edits':[]}
+    monkeypatch.setattr(worker,'agent',lambda *args:copy.deepcopy(report))
+    inputs={'catalog':{},'candidates':[],'sourceChapter':{'key':'games/test-game/assets/chapter/original/chapter.json','markdown':'The travelers arrive.'}}
+    assert worker.autonomous_stage(tmp_path,'context',inputs,lambda:None)[0]['passed']
+    report['evidenceIds']=['games/foreign-game/assets/chapter/original/chapter.json']
+    foreign=tmp_path/'foreign'
+    foreign.mkdir()
+    with pytest.raises(worker.local.Deferred,match='No structurally valid'):
+        worker.autonomous_stage(foreign,'context',inputs,lambda:None)

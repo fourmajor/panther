@@ -289,3 +289,19 @@ def test_chapter_runs_existing_screen_stages_and_atomically_publishes_owned_epis
     assert scene['selectedOutputKey'] is None
     assert store.get('scene-history', 'fictional:' + episode['id'] + ':arrival:' + scene['revision'])['record'] == scene
     assert not store.list('scene-render') and not store.list('narration')
+
+
+def test_resume_requires_confirmed_structural_failure_and_retains_audit(tmp_path):
+    store=worker.Store(tmp_path/'resume.sqlite')
+    store.put('game','fictional',{'id':'fictional','name':'Fictional'})
+    job={'jobId':'a'*64,'gameId':'fictional','status':'FAILED','updatedAt':1,'message':'No structurally valid editorial output; retry later without spending or requesting editorial approval.'}
+    store.put('editorial',job['jobId'],job,'fictional')
+    body={'gameId':'fictional','jobId':job['jobId'],'expectedUpdatedAt':1}
+    assert store.resume_editorial(body)['status']=='QUEUED'
+    assert store.list('editorial-recovery','fictional')[0]['previousRecord']==job
+    with pytest.raises(FileExistsError):
+        store.resume_editorial(body)
+    job.update(status='ATTENTION',message='Provider outcome unknown')
+    store.put('editorial',job['jobId'],job,'fictional')
+    with pytest.raises(ValueError,match='unknown provider'):
+        store.resume_editorial(body)

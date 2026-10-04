@@ -238,7 +238,7 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
     if inputs.get("mapInput"):
         allowed.add(inputs["mapInput"]["key"])
     if inputs.get("sourceChapter"):
-        allowed.add(inputs["sourceChapter"]["key"])
+        allowed.update({"sourceChapter", inputs["sourceChapter"]["key"]})
     if stage == "context":
         allowed.update(c["key"] for c in inputs["candidates"])
 
@@ -859,6 +859,8 @@ def process(config, root, claim):
             allowed.add("creation")
         if candidate is not None:
             allowed.add("candidate")
+        if chapter is not None:
+            allowed.update({"sourceChapter", chapter["key"]})
         if not set(report["evidenceIds"]) <= allowed:
             raise ValueError("Unknown evidence citation")
         payload = report

@@ -631,6 +631,8 @@ class Store:
         if job:
             job = {**job, "status": {"DONE": "PUBLISHED", "IN_QUEUE": "QUEUED", "SUBMITTED": "QUEUED", "IN_PROGRESS": "GENERATING", "COMPOSING": "GENERATING"}.get(job.get("status"), job.get("status"))}
         label = "Image generation" if job and job.get("mediaType", "image") == "image" else "Generation"
+        if job and job.get('providerRejected'):
+            return {**job, 'message': 'The provider blocked this image. Edit the prompt before generating again.', 'error': None}
         if job and job.get("status") in {"FAILED", "BLOCKED", "ATTENTION", "UNKNOWN"} and not job.get("recoverableWaiting"):
             message = label + " could not be confirmed." if job.get("outcomeUnknown") else "The asset could not be saved." if job.get("publicationRecoveryAvailable") else {400: ("The image" if label == "Image generation" else "The asset") + " could not be generated. Try another prompt.", 422: ("The image" if label == "Image generation" else "The asset") + " could not be generated. Try another prompt.", 429: label + " is temporarily unavailable."}.get(job.get("errorCode"), label + " is unavailable. Check the server configuration.")
             return {**job, "message": message, "error": None}
@@ -791,6 +793,27 @@ class Store:
             for kind, record_id, value in [("editorial", identity, job), ("episode", game + ":" + episode["id"], episode), ("episode-history", game + ":" + episode["id"] + ":" + episode["revision"], history)]:
                 db.execute("INSERT INTO records VALUES (?,?,?,?)", (kind, record_id, game, json.dumps(value)))
             return job
+
+    def resume_editorial(self, body):
+        if set(body) != {'gameId', 'jobId', 'expectedUpdatedAt'}:
+            raise ValueError('Choose the saved workflow to resume')
+        self.game(body['gameId'])
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute("SELECT payload FROM records WHERE kind='editorial' AND id=? AND game=?", (body['jobId'],body['gameId'])).fetchone()
+            if not row:
+                raise LookupError('Workflow not found')
+            job = json.loads(row[0])
+            if job.get('updatedAt') != body['expectedUpdatedAt']:
+                raise FileExistsError('Workflow changed. Read its status again.')
+            if job.get('status') != 'FAILED' or job.get('message') != 'No structurally valid editorial output; retry later without spending or requesting editorial approval.':
+                raise ValueError('Only a confirmed structural failure can resume; unknown provider outcomes remain blocked')
+            previous = dict(job)
+            job.update(status='QUEUED', message=None, updatedAt=time.time())
+            audit = {'previousRecord': previous, 'recordedAt': job['updatedAt'], 'reason': 'Explicit structural-recovery request; complete matching provider receipts reused'}
+            db.execute("INSERT INTO records VALUES ('editorial-recovery',?,?,?)", (job['jobId']+':'+uuid.uuid4().hex,job['gameId'],json.dumps(audit)))
+            db.execute("UPDATE records SET payload=? WHERE kind='editorial' AND id=?", (json.dumps(job),job['jobId']))
+        return job
 
     def editorial_view(self, job):
         if job and job.get("status") in {"FAILED", "BLOCKED", "ATTENTION", "DEFERRED"}:
@@ -1433,6 +1456,8 @@ class Handler(BaseHTTPRequestHandler):
             collection = {"schemaVersion": 1, "entityType": "VideoCollection", "gameId": game, "id": identity, "name": body["name"], "description": body["description"], "assetKeys": body["assetKeys"], "revision": uuid.uuid4().hex, "updatedAt": datetime.now(timezone.utc).isoformat()}
             store.put("collection", game + ":" + identity, collection, game)
             return self.send({"collection": collection})
+        if path == '/editorial-jobs/resume':
+            return self.send(store.resume_editorial(body))
         if path == "/editorial-jobs":
             game, creation = body["gameId"], body["creation"]
             store.game(game)
