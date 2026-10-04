@@ -148,13 +148,29 @@ def test_complete_pagination_cache_and_pricing_no_partial_replacement(tmp_path):
     assert store.get('model-catalog', catalog.CATALOG_ID) == result
 
 
-def test_options_expose_dynamic_models_and_relative_provider_prices(tmp_path):
-    store, _ = queued(tmp_path)
+def test_options_curate_models_without_erasing_cached_or_queued_contracts(tmp_path):
+    store, job_id = queued(tmp_path)
+    before = store.get('asset-generation', job_id)
+    original = store.get('model-catalog', catalog.CATALOG_ID)
+    curated = []
+    for endpoint in ('fal-ai/flux-pro/v1.1', 'fal-ai/flux/schnell'):
+        value = catalog.contract(model(endpoint))
+        value['priceEstimate'] = {'amount': '.04', 'currency': 'USD', 'unit': 'megapixels'}
+        curated.append(value)
+    store.put('model-catalog', catalog.CATALOG_ID, {**original, 'models': [*original['models'], *curated]})
+    store.put('model-pricing', catalog.VIDEO_PRICE_ID, {'schemaVersion': 1, 'prices': {
+        'minimax/h3-max/text-to-video': {'amount': '.03', 'unit': 'seconds'},
+        'minimax/h3-max/image-to-video': {'amount': '.04', 'unit': 'seconds'}}})
     options = store.asset_generation_options('fictional')
     image = next(item for item in options['generationTypes'] if item['id'] == 'image')
-    assert next(item for item in image['models'] if item['id'] == ENDPOINT)['priceEstimate']['unit'] == 'images'
+    assert [item['id'] for item in image['models']] == ['fal-ai/flux-pro/v1.1', 'fal-ai/flux/schnell', 'gpt-image-1.5', 'gpt-image-1-mini']
+    assert image['defaultModel'] == 'fal-ai/flux-pro/v1.1'
     video = next(item for item in options['generationTypes'] if item['id'] == 'video')
-    assert video['models'][0]['priceEstimate']['amount'] == '1.2'
+    assert video['models'][0]['providerBasePrice']['amount'] == '.03'
+    assert video['models'][0]['providerImageBasePrice']['amount'] == '.04'
+    assert image['models'][0]['priceEstimate']['unit'] == 'megapixels'
+    assert catalog.selected(store, ENDPOINT) == original['models'][0]
+    assert store.get('asset-generation', job_id) == before
 
 
 def test_fal_official_portrait_preserves_character_history(tmp_path):

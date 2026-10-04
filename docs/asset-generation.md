@@ -14,15 +14,22 @@ standalone video, narration or text jobs that its workers cannot execute.
 
 Hosted image model choices are `gpt-image-1`, `gpt-image-1.5` and `gpt-image-1-mini`.
 Local Generate Asset additionally discovers active fal text-to-image models through the
-read-only catalog API. It offers every executable prompt-based image contract with
-provider-default inputs and one downloadable image result. Models requiring an initial
+read-only catalog API. The visible picker is curated to FLUX 1.1 Pro, FLUX 1 Schnell,
+GPT Image 1.5 and GPT Image Mini. fal choices appear only when their active executable
+contracts are available. FLUX 1.1 Pro is the active improved successor to FLUX 1 Pro;
+the original endpoint is not advertised without active capability metadata. Models requiring an initial
 image, extra credentials or other unsupported required inputs are excluded rather than
-advertised as working. Large model lists use a searchable shadcn combobox.
+advertised as working. The complete discovery cache remains separate from the small visible picker;
+previously selected jobs retain their exact model contracts.
 
 The image worker stores a complete versioned catalog in the local database, separate
 from processor heartbeats, and refreshes it every six hours. A selected job pins the
 endpoint, schema hash, explicit standard defaults and provider price evidence; later
 catalog changes cannot alter queued generation. Catalog/pricing discovery is read-only.
+Video presents three supported families: MiniMax H3 Max, Veo 3.1 Fast and Kling 3 Pro.
+Selecting a starting image explicitly pins the matching image-to-video endpoint; otherwise
+the text-to-video endpoint is used. Both modes use the existing eight-second, 16:9 contract.
+Existing explicit variant IDs remain valid for immutable queued requests.
 Model controls display estimated provider unit prices, OpenAI medium-image output
 rates, video profile estimates per eight seconds and speech credits per thousand
 characters where known. These are estimates, not reconciled billed charges; settings,

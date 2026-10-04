@@ -430,9 +430,9 @@ for (const width of [1280, 390]) {
     await expect(save).toBeVisible();
     expect((await save.boundingBox()).height).toBe(36);
     await page.goto('https://panther.place/account');
-    const back=page.getByRole('button',{name:'Back to game',exact:true});
+    const back=page.getByRole('link',{name:'Back to game',exact:true});
     await expect(back).toBeVisible();
-    expect((await back.boundingBox()).height).toBe(36);
+    expect((await back.boundingBox()).height).toBe(44);
   });
 }
 

@@ -871,12 +871,14 @@ function setModelControls(enabled) {
 function loadProfilePortrait(record,epoch=routeEpoch) {
   if(!record?.details?.thumbnailAssetKey||new URLSearchParams(location.search).has("appearance")||new URLSearchParams(location.search).has("selection"))return;
   const key=record.details.thumbnailAssetKey,gameId=record.gameId,characterId=record.characterId;
+  const current=()=>epoch===routeEpoch&&state.gameId===gameId&&state.currentCharacter?.characterId===characterId&&state.currentCharacterFacts?.details?.thumbnailAssetKey===key;
+  const failed=error=>{if(!current())return;const status=document.getElementById('character-portrait-status');status.replaceChildren(document.createTextNode(error.message||'Portrait could not be loaded. '));const retry=document.createElement('button');retry.type='button';retry.className='quiet-button';retry.textContent='Retry';retry.addEventListener('click',()=>{status.replaceChildren();loadProfilePortrait(record,epoch);});status.append(' ',retry);};
   void api("/image-links",{},{body:{gameId,keys:[key]}}).then(result=>{
-    if(epoch!==routeEpoch||state.gameId!==gameId||state.currentCharacter?.characterId!==characterId)return;
+    if(!current())return;
     const url=result.images?.[key]?.url;
-    if(!url)return;
-    const portrait=document.getElementById("character-portrait-only");portrait.src=url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;
-  }).catch(()=>{});
+    if(!url)throw new Error('Portrait could not be loaded.');
+    const portrait=document.getElementById("character-portrait-only");portrait.onerror=()=>failed(new Error('Portrait could not be loaded.'));portrait.src=url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;
+  }).catch(failed);
 }
 
 function configureCharacter(profile) {
@@ -1317,16 +1319,23 @@ function generateCharacterPortrait(gameId,characterId,epoch) {
   void openCharacterAssetComposer(gameId,characterId,epoch,'generate',true);
 }
 const characterCompletedJobs=new Set();
+function updateCharacterPortraitGenerating(gameId,characterId) {
+  const active=[...assetGenerationJobs.values()].some(job=>job.gameId===gameId&&job.selectAsPortrait&&(job.characterId===characterId||job.characterIds?.includes(characterId))&&(job.recoverableWaiting||!['PUBLISHED','FAILED','UNKNOWN','ATTENTION','DEFERRED','BLOCKED','CANCELLED'].includes(job.status)));
+  const avatar=document.querySelector('.character-avatar');
+  avatar.dataset.generating=String(active);avatar.setAttribute('aria-busy',String(active));
+  avatar.querySelector('.character-portrait-actions').hidden=active;
+  const generate=document.getElementById('character-portrait-generate');generate.disabled=active||generate.dataset.generationAvailable==='false';
+}
 function drawCharacterGeneration(gameId,characterId,epoch) {
   const jobs=[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&(job.characterId===characterId||job.characterIds?.includes(characterId))&&job.status!=='PUBLISHED');
   const current=()=>epoch===routeEpoch&&state.currentCharacter?.characterId===characterId;
   for(const [id,portrait] of [['character-portrait-progress',true],['character-assets-progress',false]]) {
     window.PantherUI.mountCharacterGenerationJobs(document.getElementById(id),{gameId,jobs:jobs.filter(job=>Boolean(job.selectAsPortrait)===portrait),
-      onGenerationStatus:async job=>{const updated=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,updated);return updated;},
+      onGenerationStatus:async job=>{const updated=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,updated);if(current())updateCharacterPortraitGenerating(gameId,characterId);return updated;},
       onPublished:async job=>{if(characterCompletedJobs.has(job.jobId))return;characterCompletedJobs.add(job.jobId);assetIndex=null;await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(!current())return;await loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);if(job.selectAsPortrait&&job.portraitAssigned===false)document.getElementById('character-portrait-status').textContent=job.assignmentMessage||'Portrait saved in Assets. The profile changed while it was generating.';drawCharacterGeneration(gameId,characterId,epoch);},
       onOpen:asset=>void previewFile({key:asset.key,name:asset.title||asset.name||'Asset'})});
   }
-  document.getElementById('character-portrait-generate').disabled=jobs.some(job=>job.selectAsPortrait&&!['FAILED','UNKNOWN','ATTENTION','BLOCKED','CANCELLED'].includes(job.status));
+  updateCharacterPortraitGenerating(gameId,characterId);
 }
 async function openCharacterAssetComposer(gameId,characterId,epoch,mode,selectAsPortrait=false) {
   const host=document.getElementById('character-asset-composer'),status=document.getElementById('character-portrait-status');
@@ -1384,8 +1393,8 @@ async function loadCharacter(gameId, characterId) {
   drawCharacterGeneration(gameId,characterId,epoch);
   void (async()=>{let cursor=null;for(let pageIndex=0;pageIndex<100;pageIndex++){const page=await api("/asset-generation",{gameId,characterId,cursor});if(epoch!==routeEpoch)return;for(const job of page.jobs||[])assetGenerationJobs.set(job.jobId,job);drawCharacterGeneration(gameId,characterId,epoch);cursor=page.cursor;if(!cursor)return;}throw new Error('Older generation progress could not be loaded.');})().catch(error=>{if(epoch===routeEpoch)document.getElementById('character-portrait-status').textContent=error.message;});
   document.getElementById("character-portrait-generate").onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
-  const portraitGenerators=[document.getElementById("character-portrait-generate"),...document.querySelectorAll('[data-character-generate]')];for(const button of portraitGenerators){button.disabled=false;button.title="";}
-  if(config.development===true)void api('/generation-capabilities').then(capabilities=>{if(epoch!==routeEpoch)return;for(const button of portraitGenerators){button.disabled=capabilities.images===false;button.title=button.disabled?'Image generation is unavailable':'';}}).catch(()=>{if(epoch===routeEpoch)for(const button of portraitGenerators){button.disabled=true;button.title='Image generation is unavailable';}});
+  const portraitGenerators=[document.getElementById("character-portrait-generate"),...document.querySelectorAll('[data-character-generate]')];for(const button of portraitGenerators){button.disabled=false;button.title="";delete button.dataset.generationAvailable;}updateCharacterPortraitGenerating(gameId,characterId);
+  if(config.development===true)void api('/generation-capabilities').then(capabilities=>{if(epoch!==routeEpoch)return;for(const button of portraitGenerators){button.dataset.generationAvailable=String(capabilities.images!==false);button.disabled=capabilities.images===false;button.title=button.disabled?'Image generation is unavailable':'';}updateCharacterPortraitGenerating(gameId,characterId);}).catch(()=>{if(epoch===routeEpoch)for(const button of portraitGenerators){button.dataset.generationAvailable='false';button.disabled=true;button.title='Image generation is unavailable';}});
   document.getElementById("characters-more").hidden = true;
   document.getElementById("character-create").hidden = true;
   document.getElementById("character-create-form").hidden = true;
@@ -2684,6 +2693,9 @@ function sameGameKey(key) {
 }
 
 function clearLibrary() {
+  // The recorder owns these nodes even while the session list displays them.
+  // Restore them before clearing the list so navigation cannot delete its player.
+  restoreSessionCaptureResult();
   document.getElementById('episode-workspace')?.stopEditing?.();
   for(const host of document.querySelectorAll("[data-multi-filter]"))window.PantherUI.unmountMultiSelect?.(host);
   for(const native of document.querySelectorAll('#episode-workspace select[data-react-select]'))window.PantherUI.destroySelect(native);
@@ -3027,7 +3039,7 @@ function ensureSessionGroup(list,sessionId,title='Session',startedAt=null){
 }
 function restoreSessionCaptureResult(){
   const result=document.getElementById('room-result');if(result&&result.closest('.session-group'))document.getElementById('room-recorder').append(result);
-  document.getElementById('room-result-name').hidden=false;
+  const name=document.getElementById('room-result-name');if(name)name.hidden=false;
 }
 function sessionName(asset,date){
   const title=asset?.recording?.sessionName||asset?.metadata?.sessionName||asset?.metadata?.title;
@@ -4481,10 +4493,12 @@ function closeAccountSettings() {
   document.getElementById("account-page").hidden = true;
   document.getElementById("account-settings-body").replaceChildren();
   document.getElementById("account-settings-button").removeAttribute("aria-current");
+  document.getElementById("account-settings-button").hidden=false;
+  document.getElementById("account-game-back").hidden=true;
 }
 
 function visitAccount(recovery = false) {
-  if (!location.pathname.startsWith("/account")) accountReturnPath = location.pathname + location.search;
+  if (!location.pathname.startsWith("/account")) accountReturnPath = location.pathname + location.search + location.hash;
   navigate(recovery ? "/account/recovery" : "/account");
 }
 
@@ -4555,7 +4569,10 @@ async function openAccountSettings(recovery=false) {
   elements.logout.hidden=recovery;
   document.getElementById("account-settings-title").textContent=recovery?"Password recovery":"Account";
   document.getElementById("account-page-subtitle").textContent=recovery?"Get back into your account.":"Manage your profile and security.";
-  document.getElementById("account-settings-back").textContent=recovery?"Back to sign in":"Back to game";
+  document.getElementById("account-settings-back").textContent="Back to sign in";
+  document.getElementById("account-settings-back").hidden=!recovery;
+  document.getElementById("account-settings-button").hidden=!recovery;
+  const gameBack=document.getElementById("account-game-back");gameBack.hidden=recovery;gameBack.href=accountReturnPath;
   document.getElementById("account-settings-title").tabIndex=-1;
   document.getElementById("account-settings-title").focus({preventScroll:true});
   document.getElementById("account-settings-button").setAttribute("aria-current","page");
@@ -4591,8 +4608,9 @@ async function openAccountSettings(recovery=false) {
     return;
   }
   if(epoch!==accountSettingsEpoch) return;
-  host.replaceChildren();
-  const identity=accountSection(host,"Profile",`Username: ${profile.username}`);
+  const profileStack=document.createElement("div"), securityStack=document.createElement("div");
+  profileStack.className=securityStack.className="account-column";host.replaceChildren(profileStack,securityStack);
+  const identity=accountSection(profileStack,"Profile",`Username: ${profile.username}`);
   let displayName,avatar;
   const profileForm=accountForm(identity,"Save profile",async()=>{
     const selected=["","panther","moon","star"].some(name=>avatar.value===(name?`${window.location.origin}/avatars/${name}.svg`:""));
@@ -4611,7 +4629,7 @@ async function openAccountSettings(recovery=false) {
   function showAvatar(){const permitted=["panther","moon","star"].some(name=>avatar.value===`${window.location.origin}/avatars/${name}.svg`);avatarPreview.hidden=!permitted;if(permitted)avatarPreview.src=avatar.value;else avatarPreview.removeAttribute("src");}
   avatar.addEventListener("change",showAvatar); showAvatar(); avatarLabel.append(avatarTitle,avatar,avatarPreview); profileForm.insertBefore(avatarLabel,profileForm.querySelector("button"));
 
-  const emailSection=accountSection(host,"Email & recovery",`Current email: ${profile.email || "Not configured"} · ${profile.emailVerified?"Verified":"Not verified"}. A replacement address becomes active only after verification.`);
+  const emailSection=accountSection(profileStack,"Email & recovery",`Current email: ${profile.email || "Not configured"} · ${profile.emailVerified?"Verified":"Not verified"}. A replacement address becomes active only after verification.`);
   let email;
   const emailForm=accountForm(emailSection,"Send email verification",async()=>{
     await accountRequest("email",{email:email.value.trim()}); return "Verification requested for the new address. Enter the code below; your old address remains active until verified.";
@@ -4626,7 +4644,7 @@ async function openAccountSettings(recovery=false) {
   emailCode=accountField(verifyForm,"Email verification code"); emailCode.required=true; emailCode.autocomplete="one-time-code";
   accountForm(emailSection,"Resend email code",async()=>{await accountRequest("resend-email");return "Verification requested. Check the pending or current address.";});
 
-  const passwordSection=accountSection(host,"Password","At least 16 characters, including uppercase and lowercase letters, a number and a symbol.");
+  const passwordSection=accountSection(securityStack,"Password","At least 16 characters, including uppercase and lowercase letters, a number and a symbol.");
   let previous,proposed,confirmation;
   const passwordForm=accountForm(passwordSection,"Change password",async()=>{
     if(proposed.value!==confirmation.value) throw new Error("The new passwords do not match.");
@@ -4636,7 +4654,7 @@ async function openAccountSettings(recovery=false) {
   proposed=accountField(passwordForm,"New password","password"); proposed.required=true; proposed.minLength=16;
   confirmation=accountField(passwordForm,"Confirm new password","password"); confirmation.required=true;
 
-  const mfaSection=accountSection(host,"Authenticator security",`Authenticator MFA is ${profile.totpEnabled?"enabled":"not enabled"}. Keep a secure backup in your authenticator. Email password recovery does not remove MFA; losing the authenticator requires administrator help. Panther does not issue recovery codes.`);
+  const mfaSection=accountSection(securityStack,"Authenticator security",`Authenticator MFA is ${profile.totpEnabled?"enabled":"not enabled"}. Keep a secure backup in your authenticator. Email password recovery does not remove MFA; losing the authenticator requires administrator help. Panther does not issue recovery codes.`);
   if(!profile.totpEnabled) {
     const enrollment=document.createElement("div");
     const setupForm=accountForm(mfaSection,"Set up authenticator",async()=>{
@@ -4670,7 +4688,7 @@ async function openAccountSettings(recovery=false) {
     });
     acknowledge=accountField(disable,"I understand this removes authenticator protection","checkbox");
   }
-  const sessions=accountSection(host,"Sessions","Sign out everywhere revokes Cognito refresh credentials and prevents renewal. Existing Panther API tokens can remain usable until their one-hour expiry. It also signs out this browser.");
+  const sessions=accountSection(securityStack,"Sessions","Sign out everywhere revokes Cognito refresh credentials and prevents renewal. Existing Panther API tokens can remain usable until their one-hour expiry. It also signs out this browser.");
   let confirmed;
   const allSessions=accountForm(sessions,"Sign out everywhere",async()=>{
     if(!confirmed.checked)throw new Error("Confirm that you want to sign out all devices.");
@@ -4678,7 +4696,7 @@ async function openAccountSettings(recovery=false) {
   });
   confirmed=accountField(allSessions,"Sign out all my devices","checkbox");
   if(config.development === true) {
-    const development=accountSection(host,"Development","Regenerate demo records. Uploaded files and authored chapters are kept.");
+    const development=accountSection(securityStack,"Development","Regenerate demo records. Uploaded files and authored chapters are kept.");
     accountForm(development,"Regenerate demo data",async()=>{
       const response=await fetch("/development/seed",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:"{}",signal:AbortSignal.timeout(30000)});
       const result=await response.json();
@@ -4692,6 +4710,7 @@ async function openAccountSettings(recovery=false) {
 document.getElementById("account-settings-button").addEventListener("click",()=>visitAccount());
 document.getElementById("password-recovery-button").addEventListener("click",()=>visitAccount(true));
 document.getElementById("account-settings-back").addEventListener("click",leaveAccount);
+document.getElementById("account-game-back").addEventListener("click",event=>{event.preventDefault();leaveAccount();});
 
 // A single bounded projection feeds both overview and detail; no source-storage
 // enumeration or worker invocation happens while browsing the Workshop.
