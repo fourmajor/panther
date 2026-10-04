@@ -134,7 +134,14 @@ def publish(store, job, response, request, *, raw_image=None):
 
 def process(store, identity, root, client, model, *, fal=None, downloader=None):
     job = store.get("asset-generation", identity)
-    if not job or job.get("mediaType", "image") != "image" or job.get("status") not in {"QUEUED", "GENERATING", "SUBMITTED", "IN_QUEUE", "IN_PROGRESS"}:
+    # Revalidate a completed title after a contract repair. There must be no
+    # evidence of any media dispatch; neither title inference nor media is retried.
+    folder = root / identity
+    retained_title = bool(job and job.get('status') == 'ATTENTION' and job.get('titlePhase') == 'GENERATING'
+        and not job.get('outcomeUnknown') and not job.get('requestId') and not job.get('dispatchStarted')
+        and (folder / 'title-response.json').is_file()
+        and not any((folder / name).exists() for name in ('request.json', 'submission.json', 'provider-response.json')))
+    if not job or job.get("mediaType", "image") != "image" or (job.get("status") not in {"QUEUED", "GENERATING", "SUBMITTED", "IN_QUEUE", "IN_PROGRESS"} and not retained_title):
         return False
     try:
         if not re.fullmatch(r"[a-f0-9]{64}", identity) or job.get("generationAuthorized") is not True or job.get("type") not in {"image", "map", "blueprint", "location", "portrait"}:
