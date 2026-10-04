@@ -43,7 +43,7 @@ for(const width of [1280,390]) {
     await page.setViewportSize({width,height:900}); const {calls,profile}=await fixture(context);
     await page.goto('https://panther.place/media');
     await visibleControl(page.getByRole('button',{name:'Account',exact:true}));
-    await page.getByRole('button',{name:'Account',exact:true}).click();
+    await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
     await expect(page).toHaveURL('https://panther.place/account');
     const dialog=page.locator('#account-page');
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -96,7 +96,7 @@ for(const width of [1280,390]) {
 
 test('authenticator removal and global sign-out require explicit acknowledgement',async({page,context})=>{
   const {calls}=await fixture(context,{mfa:true}); await page.goto('https://panther.place/media');
-  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   const dialog=page.locator('#account-page');
   await dialog.getByRole('button',{name:'Disable authenticator',exact:true}).click();
   await expect(dialog).toContainText('Confirm that you want to remove');
@@ -167,7 +167,7 @@ test('closing account setup discards a delayed authenticator secret',async({page
     if(route.request().postDataJSON().action!=='mfa-start')return route.fallback();
     requested(); await held; return route.fulfill({json:{secretCode:'DELAYED-SYNTHETIC-SECRET'}});
   });
-  await page.goto('https://panther.place/media'); await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.goto('https://panther.place/media'); await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click(); await seen;
   await page.getByRole('button',{name:'Back to game'}).click();
   const completed=page.waitForResponse(response=>response.url().endsWith('/auth/account'));
@@ -183,7 +183,7 @@ test('Account supports direct URLs and browser back while discarding enrollment 
   await expect(page.getByLabel('Display name')).toHaveValue('Example Member');
   await page.getByRole('button',{name:'Back to game'}).click();
   await expect(page.locator('#dashboard')).toBeVisible();
-  await page.getByRole('button',{name:'Account',exact:true}).click();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click();
   await expect(page.getByLabel('Authenticator setup key')).toBeVisible();
   await page.goBack();
@@ -203,5 +203,5 @@ test('Password recovery supports a direct signed-out URL',async({page,context})=
 });
 
 for(const width of [1280,390])test(`Account has real section cards and owns sign out at ${width}px`,async({page,context})=>{
- await page.setViewportSize({width,height:900});await fixture(context);await page.goto('https://panther.place/media');const account=page.getByRole('button',{name:'Account',exact:true});await expect(account).toHaveAttribute('title','Account');await expect(account).toHaveText('');const icon=account.locator('svg');await expect(icon).toBeVisible();const geometry=await icon.boundingBox();expect(geometry.width).toBe(20);expect(geometry.height).toBe(20);expect(await icon.evaluate(el=>getComputedStyle(el).stroke)).toBe(await account.evaluate(el=>getComputedStyle(el).color));expect(await icon.evaluate(el=>getComputedStyle(el).fill)).toBe('none');await expect(page.getByRole('button',{name:'Sign out',exact:true})).toHaveCount(0);await account.click();const panel=page.locator('#account-page');await expect(panel.locator('.account-section')).toHaveCount(5);await expect(page.getByRole('navigation',{name:'Account sections'})).toHaveCount(0);const back=panel.getByRole('button',{name:'Back to game',exact:true}),logout=panel.getByRole('button',{name:'Sign out',exact:true});await visibleControl(back);await visibleControl(logout);const positions=await Promise.all([back.boundingBox(),logout.boundingBox()]);expect(positions[1].x).toBeGreaterThan(positions[0].x);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await logout.click();await expect(page).toHaveURL(/^https:\/\/test.amazoncognito.com\/logout\?/);await expect(page.getByText('Signed out',{exact:true})).toBeVisible();
+ await page.setViewportSize({width,height:900});await fixture(context);await page.goto('https://panther.place/media');const account=page.getByRole('button',{name:'Account',exact:true});await expect(account).toHaveClass(/account-avatar/);await expect(account).toHaveText('EM');await expect(account).toHaveCSS('border-radius','50%');await expect(page.getByRole('button',{name:'Sign out',exact:true})).toHaveCount(0);await account.click();await expect(page.getByRole('button',{name:'Sign out',exact:true})).toBeVisible();await page.getByRole('button',{name:'Account settings',exact:true}).click();const panel=page.locator('#account-page');await expect(panel.locator('.account-section')).toHaveCount(5);await expect(page.getByRole('navigation',{name:'Account sections'})).toHaveCount(0);const back=panel.getByRole('button',{name:'Back to game',exact:true}),logout=panel.getByRole('button',{name:'Sign out',exact:true});await visibleControl(back);await visibleControl(logout);const positions=await Promise.all([back.boundingBox(),logout.boundingBox()]);expect(positions[1].x).toBeGreaterThan(positions[0].x);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await logout.click();await expect(page).toHaveURL(/^https:\/\/test.amazoncognito.com\/logout\?/);await expect(page.getByText('Signed out',{exact:true})).toBeVisible();
 });

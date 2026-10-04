@@ -1,5 +1,29 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
+.header-account-controls{display:flex;align-items:center;gap:6px}
+.header-account-controls .account-avatar{border-radius:50%;width:36px;height:36px;overflow:hidden;background:var(--panel-raised);color:var(--ink);font-size:12px;font-weight:600;padding:0;border:1px solid var(--line)}
+.account-avatar img{width:100%;height:100%;object-fit:cover}
+.notification-bell{position:relative;flex-shrink:0}
+.notification-dot{position:absolute;right:5px;top:5px;width:8px;height:8px;border-radius:50%;background:#ef4444;border:1px solid var(--paper)}
+.notification-unknown{position:absolute;right:2px;top:0;font-size:11px;color:var(--danger)}
+.notification-popover{width:min(380px,calc(100vw - 24px));max-height:min(680px,75vh);overflow:auto;padding:12px;background:var(--panel);color:var(--ink)}
+.notification-popover h2{font-size:16px;font-weight:600;margin:4px 8px 12px}
+.notification-popover-list{max-height:50vh;overflow:auto}
+.notification-row{display:grid;grid-template-columns:8px minmax(0,1fr);align-items:start;gap:12px;padding:14px 12px;width:100%;border-radius:6px;background:transparent;color:var(--ink);text-align:left;border:0;border-bottom:1px solid var(--line);min-height:44px}
+.notification-row:hover,.notification-row:focus-visible{background:var(--panel-raised)}
+.notification-row>span:last-child{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
+.notification-row strong{font-size:14px;font-weight:600}
+.notification-row span span{font-size:13px;color:var(--panther-muted)}
+.notification-row time{font-size:11px;color:var(--panther-muted)}
+.notification-marker{margin-top:6px;width:7px;height:7px;border-radius:50%;background:#ef4444}
+.notification-marker.is-read{background:var(--line)}
+.account-menu{display:grid;gap:6px;width:220px;background:var(--panel);color:var(--ink)}
+.account-menu>strong{padding:6px 8px;overflow-wrap:anywhere;font-size:14px}
+.account-menu button{justify-content:flex-start;gap:10px;min-height:44px}
+.notification-history-link{width:100%;margin-top:8px;min-height:44px}
+.notifications-page{max-width:850px;margin:0 auto 3rem}
+.notification-history-note{color:var(--panther-muted);font-size:13px;margin-bottom:20px}
 @source "./**/*.{js,jsx}";
 
 .panther-select-trigger { background: var(--panel); color: var(--ink); border-color: var(--line); width: min(18rem, 38vw); }

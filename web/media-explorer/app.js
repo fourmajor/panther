@@ -282,6 +282,8 @@ function storeTokens(tokens) {
 }
 
 function clearSession() {
+  headerProfile=null;headerProfileScope=null;
+  window.PantherUI.unmountAccountControls(document.getElementById('header-account-controls'));
   roomCapture?.interrupt();
   assetUploads.clear();assetGenerationJobs.clear();assetListing={gameId:null,assets:[],cursor:null,loading:false,error:'',pages:0};
   window.PantherUI.clear();
@@ -440,7 +442,7 @@ async function api(path, parameters = {}, options = {}) {
     await window.PantherUI.invalidate(scope, mutationReadPaths(path), options.body.gameId);
     return result;
   }
-  const sensitive = /(?:live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
+  const sensitive = /(?:notifications|live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
     staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
@@ -516,6 +518,9 @@ document.addEventListener("visibilitychange", () => {if (document.visibilityStat
 document.addEventListener("input", event => {const form = event.target.closest?.("form");if (form) form.dataset.dirty = "true";}, true);
 
 function showWelcome(message = "") {
+  window.PantherUI.unmountAccountControls(document.getElementById('header-account-controls'));
+  window.PantherUI.unmountNotificationsPage(document.getElementById('notifications-page'));
+  document.getElementById('notifications-page').hidden=true;
   closeAccountSettings();
   document.getElementById("page-loading").hidden = true;
   clearLibrary();
@@ -541,6 +546,21 @@ function showApplicationChrome() {
   elements.welcome.hidden = true;
   elements.account.hidden = false;
   elements.primaryNav.hidden = false;
+  syncAccountControls();
+}
+
+let headerProfile=null,headerProfileScope=null;
+function openNotification(notice){
+  const target=notice.target;
+  if(target?.type!=='workflow'||!/^\w[\w-]*$/.test(target.gameId)||!/^[-a-z]+$/.test(target.kind)||!/^[-a-z]+~[a-z0-9-]+$/.test(target.id))return;
+  navigate(`/games/${encodeURIComponent(target.gameId)}/workflows/${encodeURIComponent(target.kind)}/${encodeURIComponent(target.id)}`);
+}
+function notificationProps(){return {scope:apiScope(),onLoad:async parameters=>{const result=await api('/notifications',parameters);if(!Array.isArray(result.notifications))throw new Error('Notification response unavailable');return result;},onRead:id=>api('/notifications/read',{},{body:{id}}),onOpen:openNotification};}
+function syncAccountControls(){
+  const scope=apiScope(),claims=decodeToken(state.tokens.id_token);
+  const render=()=>window.PantherUI.mountAccountControls(document.getElementById('header-account-controls'),{...notificationProps(),profile:headerProfile||{username:claims['cognito:username']||claims.username},onSettings:()=>visitAccount(),onSignOut:()=>void logout(),onHistory:()=>navigate('/notifications')});
+  if(headerProfileScope!==scope){headerProfileScope=scope;headerProfile=null;void accountRequest('get').then(profile=>{if(state.tokens&&apiScope()===scope){headerProfile=profile;render();}}).catch(()=>{/* Initials remain usable if profile lookup fails. */});}
+  render();
 }
 
 function setActiveNavigation(section) {
@@ -1801,6 +1821,8 @@ function panCharacterModel(horizontal, vertical) {
 }
 
 async function renderRoute() {
+  window.PantherUI.unmountNotificationsPage(document.getElementById('notifications-page'));
+  document.getElementById('notifications-page').hidden=true;
   closeOptionalInfoDialogs();
   const legacyEpisodeRoute=location.pathname.match(/^(\/games\/[a-z0-9]+(?:-[a-z0-9]+)*)?\/videos((?:\/[^?#]*)?)$/);
   if(legacyEpisodeRoute){navigate(`${legacyEpisodeRoute[1]||''}/episodes${legacyEpisodeRoute[2]}${location.search}${location.hash}`,{replace:true});return;}
@@ -1837,6 +1859,10 @@ async function renderRoute() {
   try { await ensureSession(); } catch (error) { if (epoch === routeEpoch) pageLoading.hidden = true; showWelcome(error.message); return; }
   if (epoch !== routeEpoch) return;
   showApplicationChrome();
+  if(location.pathname==='/notifications'){
+    elements.characters.hidden=true;elements.explorer.hidden=true;document.getElementById('game-context').hidden=true;pageLoading.hidden=true;
+    setActiveNavigation('notifications');const host=document.getElementById('notifications-page');host.hidden=false;window.PantherUI.mountNotificationsPage(host,notificationProps());await roomCapture?.render('notifications',epoch);return;
+  }
   const workflowRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/([^/]+))?\/?$/);
   const gameRoute = workflowRoute || window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|episodes|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
@@ -4788,7 +4814,8 @@ async function openAccountSettings(recovery=false) {
   let displayName,avatar;
   const profileForm=accountForm(identity,"Save profile",async()=>{
     const selected=["","panther","moon","star"].some(name=>avatar.value===(name?`${window.location.origin}/avatars/${name}.svg`:""));
-    await accountRequest("profile",{name:displayName.value.trim(),picture:selected?avatar.value:null}); return "Profile saved.";
+    await accountRequest("profile",{name:displayName.value.trim(),picture:selected?avatar.value:null});
+    headerProfile={...profile,name:displayName.value.trim(),picture:selected?avatar.value:profile.picture};syncAccountControls();return "Profile saved.";
   });
   displayName=accountField(profileForm,"Display name","text",profile.name); displayName.maxLength=120;
   const avatarLabel=document.createElement("label"), avatarTitle=document.createElement("span"), avatarPreview=document.createElement("img");

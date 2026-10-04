@@ -8,6 +8,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as sources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as logs from "aws-cdk-lib/aws-logs";
+import {Notifications} from "./notifications";
 
 /** Read-time views never enumerate source storage or invoke a worker. */
 export class WorkflowWorkshop extends Construct {
@@ -16,6 +17,7 @@ export class WorkflowWorkshop extends Construct {
     const index=new dynamodb.Table(this,"Index",{
       partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},sortKey:{name:"sk",type:dynamodb.AttributeType.STRING},
       billingMode:dynamodb.BillingMode.PAY_PER_REQUEST,encryption:dynamodb.TableEncryption.AWS_MANAGED,removalPolicy:RemovalPolicy.RETAIN,
+      stream:dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
     const environment={...props.accessEnvironment,WORKSHOP_TABLE:index.tableName,
       WORKSHOP_SOURCES:JSON.stringify(Object.fromEntries(Object.entries(props.tables).map(([kind,table])=>[kind,{name:table.tableName,arn:table.tableArn}]))),
@@ -34,5 +36,6 @@ export class WorkflowWorkshop extends Construct {
     props.api.addRoutes({path:"/workflows",methods:[api.HttpMethod.GET],authorizer:props.authorizer,integration:view});
     props.api.addRoutes({path:"/workflow-progress",methods:[api.HttpMethod.POST],authorizer:props.authorizer,integration:view});
     props.api.addRoutes({path:"/workflows/rebuild",methods:[api.HttpMethod.POST],authorizer:props.authorizer,integration:new integrations.HttpLambdaIntegration("WorkshopRebuild",writer)});
+    new Notifications(this,"Notifications",{api:props.api,authorizer:props.authorizer,environment,index});
   }
 }
