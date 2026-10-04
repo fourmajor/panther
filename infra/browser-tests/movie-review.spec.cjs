@@ -10,7 +10,7 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   let scene={schemaVersion:1,entityType:'Scene',gameId:'test-game',episodeId:'pilot',id:'arrival',name:'Arrival',description:'The gates open.',type:'general',revision:'b'.repeat(32),selectedOutputKey:null,planningState:human?'ready':'needs-approval',storyboard:{schemaVersion:1,origin:human?'human':'ai',revision:'e'.repeat(64),decision:null,shots:[{shotId:'gate',description:'The party arrives at dusk.',camera:'Wide, slow push-in',durationSeconds:8,narration:'At dusk, they arrived.',frameKey:frame}]}};
   let published=!planning;
   if(multi){scene.storyboard.shots[0].durationSeconds=4;scene.storyboard.shots.push({shotId:'reaction',description:'The travelers react.',camera:'Close',durationSeconds:3,frameKey:null,narration:''});}
-  const takes=multi?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.mp4`,contentType:'video/mp4',metadata:{title:`Take ${i+1}`,contentType:'video/mp4',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:'8'}}}}})):[];
+  const takes=multi?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.webm`,contentType:'video/webm',name:`Take ${i+1}`,lastModified:'2026-01-01T00:00:00Z',metadata:{title:`Take ${i+1}`,contentType:'video/webm',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:'8'}}}}})):[];
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-editor'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
     const p=new URL(route.request().url()).pathname;
@@ -26,8 +26,9 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
     if(u.pathname==='/games')body={games:[game]};
     if(u.pathname==='/game')body={game,players:[],characters:[],memberships:[]};
     if(u.pathname==='/assets')body={assets:takes,cursor:null};
+    if(u.pathname==='/scene-assemblies'){if(post)writes.push(route.request().postDataJSON());body={jobId:'9'.repeat(64),status:'QUEUED'};}
     if(u.pathname==='/scene-renders'){if(post){writes.push(route.request().postDataJSON());body={jobId:'f'.repeat(64),status:'QUEUED'};}else body={jobs:[]};}
-    if(u.pathname==='/object-url'){const take=takes.find(item=>item.key===u.searchParams.get('key'));body={url:'https://videos.example/take.mp4',contentType:'video/mp4',metadata:take?.metadata};}
+    if(u.pathname==='/object-url'){const take=takes.find(item=>item.key===u.searchParams.get('key'));body={url:'https://videos.example/take.webm',contentType:'video/webm',metadata:take?.metadata};}
     if(u.pathname==='/characters')body={characters:[],cursor:null};
     if(u.pathname==='/episodes')body=u.searchParams.has('id')?{record:episode}:{records:[episode],cursor:null};
     if(u.pathname==='/scenes'){
@@ -53,14 +54,14 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
 }
 for(const width of [1280,390]) {
  test(`each storyboard shot owns generation and its selected cut at ${width}px`,async({page})=>{
-   await page.setViewportSize({width,height:1000});const {writes}=await fixture(page,{human:true,multi:true,local:true});
-   await page.route('https://videos.example/**',route=>route.fulfill({contentType:'video/mp4',body:fs.readFileSync(path.join(__dirname,'fixtures/storyboard-take.mp4'))}));
+   await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{human:true,multi:true,local:true});
+   await page.route('https://videos.example/**',route=>route.fulfill({contentType:'video/webm',body:fs.readFileSync(path.join(__dirname,'fixtures/storyboard-take.webm'))}));
    await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
    const board=page.getByRole('region',{name:'Scene storyboard'});
    await board.getByRole('button',{name:'Generate shot 2',exact:true}).click();
    expect(writes[0].shotId).toBe('reaction');expect(writes[0].prompt).toContain('The travelers react.');
    await board.getByRole('combobox',{name:'Take for shot 1'}).click();await page.getByRole('option',{name:'Take 1 · 8.0s'}).click();
-   expect(writes[1].shotSelection).toEqual({storyboardRevision:'e'.repeat(64),shotId:'gate',assetKey:'games/test-game/assets/take-0/original/video.mp4',startSeconds:0});
+   expect(writes[1].shotSelection).toEqual({storyboardRevision:'e'.repeat(64),shotId:'gate',assetKey:'games/test-game/assets/take-0/original/video.webm',startSeconds:0});
    const video=board.locator('video[aria-label="Shot 1 video"]');
    await expect(video).toBeVisible();
    await expect.poll(()=>video.evaluate(el=>el.readyState)).toBeGreaterThan(0);
@@ -71,7 +72,12 @@ for(const width of [1280,390]) {
    await expect(board.getByLabel('Trim start (seconds)')).toBeVisible();
    await expect(board.getByRole('button',{name:'Assemble scene'})).toBeDisabled();
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+   await expect(page.getByText(/Finished videos unavailable/)).toHaveCount(0);expect(errors).toEqual([]);
    await page.screenshot({path:test.info().outputPath(`shot-takes-${width}.png`),fullPage:true});
+   await board.getByRole('combobox',{name:'Take for shot 2'}).click();await page.getByRole('option',{name:'Take 2 · 8.0s'}).click();
+   await expect(board.getByRole('button',{name:'Assemble scene'})).toBeEnabled();
+   await board.getByRole('button',{name:'Assemble scene'}).click();
+   await expect.poll(()=>writes.some(item=>item.sceneId==='arrival'&&!item.shotId&&!item.shotSelection)).toBe(true);
  });
  test(`AI storyboard approval belongs to its scene at ${width}px`,async({page})=>{
    await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page);
