@@ -49,3 +49,24 @@ def test_video_prompt_invalid_evidence_is_rejected_before_rendering(tmp_path):
     response = Responses({'renderPrompt': 'Example', 'sourceFacts': [{'sourceKey': 'invented', 'segmentIndex': 0, 'fact': 'Invented'}], 'uncertainties': []})
     with pytest.raises(ValueError, match='invalid transcript'):
         video_prompt(store, {'gameId': 'fictional', 'prompt': 'Example'}, tmp_path, verified, SimpleNamespace(responses=response))
+
+
+def test_video_handoff_keeps_exact_appearance_when_composer_omits_it(tmp_path):
+    store = Store(tmp_path / 'private.sqlite')
+    character = {'name': 'Example cleric', 'details': {'overview': 'Dark skin, cropped silver hair, rust-red cloak.', 'subtitle': 'Human cleric'}}
+    scene = {'name': 'Token handoff', 'game': {'ruleset': 'Pathfinder'}, 'shots': [{'description': 'A six-notched copper token in a goblin palm.'}]}
+    response = Responses({'renderPrompt': 'Push in on the token.', 'sourceFacts': [], 'uncertainties': []})
+    value, _ = video_prompt(store, {'gameId': 'fictional', 'prompt': 'Token handoff', 'characterContext': [character], 'sceneContext': scene}, tmp_path, verified, SimpleNamespace(responses=response))
+    assert character['details']['overview'] in value['renderPrompt']
+    assert scene['shots'][0]['description'] in value['renderPrompt']
+    assert 'Pathfinder' in value['renderPrompt']
+    assert len(value['renderPrompt']) <= 4000
+    assert json.loads(response.calls[0]['input'])['scene'] == scene
+
+
+def test_overlarge_continuity_fails_before_paid_prompt_request(tmp_path):
+    store = Store(tmp_path / 'private.sqlite')
+    response = Responses({})
+    with pytest.raises(ValueError, match='continuity exceeds'):
+        video_prompt(store, {'gameId': 'fictional', 'prompt': 'Example', 'characterContext': [{'name': 'Example', 'details': {'overview': 'x' * 4000}}]}, tmp_path, verified, SimpleNamespace(responses=response))
+    assert response.calls == []

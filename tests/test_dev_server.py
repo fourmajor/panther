@@ -503,6 +503,24 @@ def test_scene_edits_preserve_pinned_background_generation(tmp_path, status):
     assert len(store.list('scene-render', 'preview-campaign')) == 1
 
 
+def test_scene_render_pins_adaptation_sources_and_world_context(tmp_path):
+    import json
+    store = dev.Store(tmp_path / 'continuity.sqlite')
+    store.seed()
+    store.save_story_entity('episode', {'gameId': 'preview-campaign', 'id': 'episode-one', 'name': 'Gate', 'description': '', 'expectedRevision': None, 'operationId': 'a' * 32})
+    scene = store.save_story_entity('scene', {'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'id': 'scene-one', 'name': 'The gate opens', 'description': 'A medieval gate', 'type': 'general', 'expectedRevision': None, 'operationId': 'b' * 32})['record']
+    key = 'games/preview-campaign/assets/chapter/original/chapter.json'
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (key, 'preview-campaign', json.dumps({'contentType': 'application/json'}), b'{"story":"A medieval gate opens"}', 'now'))
+    scene['productionSource'] = {'referenceKeys': [key]}
+    store.put('scene', 'preview-campaign:episode-one:scene-one', scene, 'preview-campaign')
+    job = store.submit_scene_render({'gameId': 'preview-campaign', 'episodeId': 'episode-one', 'sceneId': 'scene-one', 'revision': scene['revision'], 'prompt': 'Show the gate', 'operationId': 'c' * 32})
+    assert job['contextKeys'] == [key]
+    assert job['inputRefs'][0]['key'] == key
+    assert job['sceneContext']['direction'] == 'A medieval gate'
+    assert job['sceneContext']['game']['name'] == store.game('preview-campaign')['game']['name']
+
+
 def test_tags_combine_existing_assets_with_inline_created_tags(tmp_path):
     store = dev.Store(tmp_path / 'tags.sqlite')
     store.seed()

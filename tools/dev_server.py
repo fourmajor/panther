@@ -1092,6 +1092,11 @@ class Store:
         for keys in (source_keys, context_keys):
             if not isinstance(keys, list) or len(keys) > 20 or any(not isinstance(key, str) for key in keys) or len(set(keys)) != len(keys):
                 raise ValueError("Choose valid sources from this game.")
+        # The approved scene's source material belongs in the handoff even when
+        # the user did not manually add it again in the generation form.
+        context_keys = list(dict.fromkeys(context_keys + scene.get("productionSource", {}).get("referenceKeys", [])))
+        if len(context_keys) > 20:
+            raise ValueError("The scene has too many source references.")
         for key in dict.fromkeys(source_keys + context_keys):
             if not key.startswith(f"games/{game}/assets/"):
                 raise ValueError("Choose sources from this game.")
@@ -1102,7 +1107,9 @@ class Store:
         map_pin = self.pin_map(game, scene)
         if map_pin:
             refs.append(map_pin)
-        job = {"gameId": game, "sceneRef": {"episodeId": episode, "sceneId": identity, "revision": scene["revision"]}, "prompt": prompt.strip(), "sceneType": scene["type"], "sourceKeys": [ref["key"] for ref in refs], "inputRefs": refs, "mapPin": map_pin, "characterIds": characters, "characterContext": character_context, "transcriptKeys": source_keys, "contextKeys": context_keys}
+        game_record = self.game(game)['game']
+        scene_context = {"name": scene["name"], "direction": scene.get("description", ""), "shots": scene.get("storyboard", {}).get("shots", []), "game": {field: game_record.get(field) for field in ("name", "ruleset", "visualStyle")}}
+        job = {"gameId": game, "sceneRef": {"episodeId": episode, "sceneId": identity, "revision": scene["revision"]}, "prompt": prompt.strip(), "sceneType": scene["type"], "sourceKeys": [ref["key"] for ref in refs], "inputRefs": refs, "mapPin": map_pin, "characterIds": characters, "characterContext": character_context, "sceneContext": scene_context, "transcriptKeys": source_keys, "contextKeys": context_keys}
         operation = body["operationId"]
         if not isinstance(operation, str) or not re.fullmatch(r"[a-f0-9]{32}", operation):
             raise ValueError("Invalid generation request.")
