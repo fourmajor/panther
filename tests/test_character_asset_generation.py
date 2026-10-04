@@ -44,7 +44,7 @@ def test_hosted_official_selection_and_history_are_atomic(generation, select, ra
         catalog.put_item(Item=old)
     key = f"games/test-game/assets/generated-{job['jobId'][:40]}/original/image.png"
     checksum = base64.b64encode(hashlib.sha256(image_bytes()).digest()).decode()
-    metadata = {'title': 'Scout', 'characterIds': ['hero'], 'extra': {'assetGenerationJobId': job['jobId'], 'assetType': 'portrait', 'sha256': checksum, 'relationshipRole': 'finished', 'generation': {'provider': 'OpenAI', 'model': 'gpt-image-1', 'cost': {'status': 'unknown'}}}}
+    metadata = {'title': 'Scout', 'characterIds': ['hero'], 'extra': {'assetGenerationJobId': job['jobId'], 'assetType': 'portrait', 'sha256': checksum, 'relationshipRole': 'finished', 'generation': {'provider': 'OpenAI', 'model': job['model'], 'cost': {'status': 'unknown'}}}}
     generation.media.s3.put_object(Bucket=generation.media.BUCKET_NAME, Key=key, Body=image_bytes(), ContentType='image/png', ChecksumSHA256=checksum, ChecksumAlgorithm='SHA256', Metadata={'panther': base64.b64encode(json.dumps(metadata).encode()).decode()})
     completed = unpack(call(generation, 'POST /asset-generation/complete', body={'jobId': job['jobId'], 'lease': claimed['lease'], 'assetKey': key}, username='example-worker'))
     revised = catalog.get_item(Key={'pk': old['pk'], 'sk': old['sk']})['Item']

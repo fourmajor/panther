@@ -294,7 +294,7 @@ def process_fal(store, identity, job, folder, fal, downloader=None):
         return False
 
 
-def run(database, work_dir, *, key_file=None, env_file=None, model="gpt-image-1", once=False, client=None, fal=None):
+def run(database, work_dir, *, key_file=None, env_file=None, model="gpt-image-2", once=False, client=None, fal=None):
     os.umask(0o077)
     store, root = Store(database), private_root(work_dir)
     configured_client = client is None
@@ -360,7 +360,7 @@ if __name__ == "__main__":
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--api-key-file", type=Path)
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env")
-    parser.add_argument("--model", default="gpt-image-1")
+    parser.add_argument("--model", default="gpt-image-2")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     run(args.database, args.work_dir, key_file=args.api_key_file, env_file=args.env_file, model=args.model, once=args.once)

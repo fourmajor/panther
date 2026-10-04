@@ -20,7 +20,7 @@ def test_tokens_and_cached_input():
     assert c.openai('gpt-5-mini', {'input_tokens': 1, 'output_tokens': 1, 'input_tokens_details': {'cached_tokens': 2}}) is None
 
 
-@pytest.mark.parametrize('model,amount', [('gpt-image-1', '0.042'), ('gpt-image-1.5', '0.034'), ('gpt-image-1-mini', '0.011')])
+@pytest.mark.parametrize('model,amount', [('gpt-image-2', '0.053'), ('gpt-image-1', '0.042'), ('gpt-image-1.5', '0.034'), ('gpt-image-1-mini', '0.011')])
 def test_fixed_image_output_excludes_unreported_inputs(model, amount):
     estimate = c.openai(model, request={'size': '1024x1024', 'quality': 'medium'})
     assert estimate['amount'] == amount and estimate['scope'] == 'image-output'
@@ -103,3 +103,9 @@ def test_silent_historical_video_request_selects_exact_profile(tmp_path):
     estimate = list(candidates(store))[0][-1]
     assert estimate['amount'] == '0.8'
     assert estimate['evidence']['inputs']['model'] == 'veo-3.1-fast-image-silent'
+
+
+def test_gpt_image_2_uses_its_own_token_tariff():
+    estimate = c.openai('gpt-image-2', {'input_tokens_details': {'text_tokens': 1000, 'image_tokens': 1000}, 'output_tokens': 1000})
+    assert estimate['amount'] == '0.0215'
+    assert estimate['evidence']['inputs']['usdPerMillionTokens'] == {'textInput': '2.5', 'imageInput': '4', 'imageOutput': '15'}

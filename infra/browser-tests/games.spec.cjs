@@ -97,7 +97,7 @@ async function fixture(page, canEditGame = false, development = false) {
     if (url.pathname === '/games') body = { games: currentGames };
     if (url.pathname === '/dashboard-recent') {
       const characters=id==='test-b'?[{id:'hero',name:'Test Hero',gameId:id},{id:'guide',name:'Lantern Guide',gameId:id}]:[];
-      body={complete:true,groups:{characters,transcripts:[],videos:[],chapters:[]},counts:{characters:characters.length,transcripts:0,videos:0,chapters:0}};
+      body={complete:true,groups:{characters,transcripts:[],videos:[],chapters:[],assets:[]},counts:{characters:characters.length,transcripts:0,videos:0,chapters:0,assets:0}};
     }
     if (url.pathname === '/game' || posted) body = { game: {...currentGames.find(g=>g.id===id), visualStyle:styles.get(id)}, visualStyles, canEditGame, gameSettings:descriptions.get(id) || {description:null,descriptionRevision:null},
       players:[{id:'person',name: id === 'test-b' ? 'Test Person' : 'Campaign Person'}],
@@ -216,7 +216,7 @@ for (const width of [1280,390]) {
     const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     await page.goto('https://panther.place/');
     await expect(page.locator('#dashboard-name')).toHaveText('Campaign A');
-    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');await expect(page.locator('.dashboard-card-arrow svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-arrow svg.lucide-arrow-up-right')).toHaveCount(0);
+    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');await expect(page.locator('.dashboard-card-link svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-link svg.lucide-arrow-up-right')).toHaveCount(0);
     await expect(page.locator('header #game-select-trigger')).toBeVisible();
     const selectorBox=await page.locator('#game-select-trigger').boundingBox();
     expect(selectorBox.y).toBeLessThan(100); expect(selectorBox.x).toBeLessThan(width/2);
@@ -227,7 +227,7 @@ for (const width of [1280,390]) {
     await expect(page.locator('#dashboard-sections a')).toHaveCount(5);
     for(const card of await page.locator('#dashboard-sections a').all()) await expect(card).toHaveAttribute('href',/^\/games\/campaign-a\//);
     await page.screenshot({path:test.info().outputPath(`dashboard-${width}.png`),fullPage:true});
-    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
+    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/');await firstCard.getByRole('link',{name:'Characters',exact:true}).click();await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
     await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
     await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Campaign A');
     await page.getByLabel('Game name',{exact:true}).fill('The Lantern Campaign');
@@ -417,8 +417,8 @@ for (const width of [1280, 390]) {
       if(section==='assets')expect((await page.getByRole('button',{name:'Upload',exact:true}).boundingBox()).height).toBe(36);
       for(const action of await page.getByRole('button',{name:/^(Upload|Generate)(?: |$)/}).all()){
         if(!await action.isVisible())continue;
-        await expect(action.locator('svg')).toHaveCount(1);await expect(action.locator('svg')).toHaveAttribute('aria-hidden','true');
-        await expect(action.locator('svg')).toHaveClass((await action.textContent()).trim().startsWith('Upload')?/lucide-upload/:/lucide-sparkles/);
+        const menu=await action.getAttribute('aria-haspopup')==='menu';await expect(action.locator('svg')).toHaveCount(menu?2:1);for(const icon of await action.locator('svg').all())await expect(icon).toHaveAttribute('aria-hidden','true');if(menu)await expect(action.locator('svg').last()).toHaveClass(/lucide-chevron-down/);
+        await expect(action.locator('svg').first()).toHaveClass((await action.textContent()).trim().startsWith('Upload')?/lucide-upload/:/lucide-sparkles/);
         const actionStyle=await action.evaluate(el=>{const c=getComputedStyle(el);return {height:el.getBoundingClientRect().height,border:c.borderTopStyle};});expect(actionStyle.height).toBe(36);expect(actionStyle.border).toBe('solid');
       }
       for(const select of await page.getByRole('combobox').all())if(await select.isVisible()){
@@ -431,9 +431,9 @@ for (const width of [1280, 390]) {
     await expect(save).toBeVisible();
     expect((await save.boundingBox()).height).toBe(36);
     await page.goto('https://panther.place/account');
-    const back=page.getByRole('button',{name:'Back to game',exact:true});
+    const back=page.getByRole('link',{name:'Back to game',exact:true});
     await expect(back).toBeVisible();
-    expect((await back.boundingBox()).height).toBe(36);
+    expect((await back.boundingBox()).height).toBe(44);
   });
 }
 
@@ -474,13 +474,13 @@ for (const width of [1280,390]) {
     await page.goto('https://panther.place/games/campaign-a/dashboard');
     await expect(page.getByText('Current game',{exact:true})).toHaveCount(0);
     await page.locator('#game-select-root').getByRole('combobox').click();
-    await page.getByRole('option',{name:'Create game…',exact:true}).click();
-    const dialog=page.getByRole('dialog',{name:'Create game',exact:true});await expect(dialog).toBeVisible();
+    await page.getByRole('option',{name:'Create Game…',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'Create Game',exact:true});await expect(dialog).toBeVisible();
     await dialog.getByLabel('Name',{exact:true}).fill('Imaginary Voyage');
     await dialog.getByRole('combobox',{name:'Game system',exact:true}).click();
     await page.getByRole('option',{name:'Other',exact:true}).click();
     await dialog.getByLabel('Custom game system',{exact:true}).fill('Imaginary Rules');
-    await dialog.getByRole('button',{name:'Create game',exact:true}).click();
+    await dialog.getByRole('button',{name:'Create Game',exact:true}).click();
     await expect(page).toHaveURL(/\/games\/imaginary-voyage-[a-f0-9]+\/dashboard$/);
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('#game-select-root').getByRole('combobox')).toContainText('Imaginary Voyage');
@@ -492,12 +492,12 @@ for(const width of [1280,390])test(`Create game searches rules editions and pers
  await page.setViewportSize({width,height:900});await fixture(page,true,true);let created;
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/games',route=>{if(route.request().method()==='POST'){created=route.request().postDataJSON();return route.fulfill({headers:jsonHeaders,json:{game:created}});}return route.fulfill({headers:jsonHeaders,json:{games:[...games,...(created?[created]:[])]}});});
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/game?*',route=>route.fulfill({headers:jsonHeaders,json:{game:created||games[0],gameSettings:{description:''},players:[],memberships:[],characters:[],canEditGame:true,visualStyles:[]}}));
- await page.goto('https://panther.place/games/campaign-a/dashboard');await page.locator('#game-select-root').getByRole('combobox').click();await page.getByRole('option',{name:'Create game…',exact:true}).click();
- const dialog=page.getByRole('dialog',{name:'Create game',exact:true});await dialog.getByLabel('Name',{exact:true}).fill('Edition Voyage');await dialog.getByRole('combobox',{name:'Game system',exact:true}).click();const search=page.getByRole('combobox',{name:'Search game systems',exact:true});await search.fill('D&D');
+ await page.goto('https://panther.place/games/campaign-a/dashboard');await page.locator('#game-select-root').getByRole('combobox').click();await page.getByRole('option',{name:'Create Game…',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Create Game',exact:true});await dialog.getByLabel('Name',{exact:true}).fill('Edition Voyage');await dialog.getByRole('combobox',{name:'Game system',exact:true}).click();const search=page.getByRole('combobox',{name:'Search game systems',exact:true});await search.fill('D&D');
  await expect(page.getByRole('option',{name:'Dungeons & Dragons — 5.5e (2024)',exact:true})).toBeVisible();await expect(page.getByRole('option',{name:'Dungeons & Dragons — 5e (2014)',exact:true})).toBeVisible();
  await search.fill('Pathfinder');const option=page.getByRole('option',{name:'Pathfinder — 2e Remaster',exact:true});await expect(option).toBeInViewport();expect(await option.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await page.screenshot({path:test.info().outputPath(`game-systems-${width}.png`)});await search.press('Enter');await expect(dialog).toBeVisible();await expect(dialog.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');await expect(dialog.getByLabel('Custom game system',{exact:true})).toHaveCount(0);
- await dialog.getByRole('button',{name:'Create game',exact:true}).click();await expect(page).toHaveURL(/\/games\/edition-voyage-[a-f0-9]+\/dashboard$/);expect(created.ruleset).toBe('Pathfinder — 2e Remaster');
+ await dialog.getByRole('button',{name:'Create Game',exact:true}).click();await expect(page).toHaveURL(/\/games\/edition-voyage-[a-f0-9]+\/dashboard$/);expect(created.ruleset).toBe('Pathfinder — 2e Remaster');
  await page.getByRole('link',{name:'Settings',exact:true}).click();await expect(page.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');
 });
 
@@ -511,3 +511,64 @@ for(const width of [1280,390])test(`Account avatar is round and keyboard accessi
  await expect(page.getByRole('button',{name:'Sign out',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Account settings',exact:true}).click();await expect(page).toHaveURL('https://panther.place/account');
 });
+
+for(const width of [1280,390,320])test(`header Create Game stays beside the selector and reuses its dialog at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});await fixture(page,true,true);
+  await page.goto('https://panther.place/games/campaign-a/dashboard');
+  const create=page.locator('#game-create-button'),selector=page.locator('#game-select-root').getByRole('combobox');
+  await expect(create).toBeVisible();await expect(create).toBeInViewport();await expect(create).toHaveAccessibleName('Create Game');
+  await expect(create).toHaveAttribute('data-button-variant','outline');await expect(create.locator('svg')).toBeVisible();
+  const [a,b]=await Promise.all([selector.boundingBox(),create.boundingBox()]);
+  expect(b.x).toBeGreaterThanOrEqual(a.x+a.width);expect(Math.abs(b.y-a.y)).toBeLessThanOrEqual(4);
+  expect(b.x+b.width).toBeLessThanOrEqual(width);expect(a.width).toBeGreaterThanOrEqual(70);
+  expect(await create.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+  if(width>=390)await expect(create.locator('.game-create-label')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:test.info().outputPath(`header-create-game-${width}.png`)});
+  await create.click();let dialog=page.getByRole('dialog',{name:'Create Game',exact:true});await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Name',{exact:true})).toBeFocused();await expect(dialog.getByRole('button',{name:'Create Game',exact:true})).toBeDisabled();
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(create).toBeFocused();
+  await create.press('Enter');dialog=page.getByRole('dialog',{name:'Create Game',exact:true});await expect(dialog).toBeVisible();await expect(dialog.getByLabel('Name',{exact:true})).toBeFocused();
+  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(create).toBeFocused();
+  await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();await expect(create).toBeHidden();
+});
+
+for(const width of [1280,390]) {
+  test(`dashboard explains empty sections and shows counted recent thumbnails at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:1000});
+    await fixture(page);
+    await page.goto('https://panther.place/games/campaign-a/dashboard');
+    await expect(page.locator('.dashboard-hero')).toHaveCSS('border-bottom-width','0px');
+    for(const [section,text] of [['characters','The people and creatures'],['sessions','Recordings of you and your friends'],['novel','Write chapters yourself'],['videos','Plan episodes'],['assets','Images, maps, videos, audio']]){
+      await expect(page.locator(`[data-section="${section}"] p`)).toContainText(text);
+    }
+    const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="gold"/></svg>');
+    const assets=Array.from({length:6},(_,i)=>({key:`games/test-b/assets/picture-${i}/original/image.png`,title:`Picture ${i}`,contentType:'image/png'}));
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/dashboard-recent*',route=>route.fulfill({json:{complete:true,groups:{characters:[],sessions:[],episodes:[],chapters:[],assets},counts:{characters:10,sessions:5,episodes:2,chapters:4,assets:9}},headers:jsonHeaders}));
+    await page.route('https://test.execute-api.us-west-2.amazonaws.com/image-links',route=>route.fulfill({json:{images:Object.fromEntries(assets.map(a=>[a.key,{url:image}]))},headers:jsonHeaders}));
+    await selectGame(page,'test-b');
+    for(const label of ['10 Characters','5 Sessions','2 Episodes','4 Chapters','9 Assets'])await expect(page.getByRole('link',{name:label,exact:true})).toBeVisible();
+    const card=page.locator('#dashboard-sections [data-section="assets"]');
+    await expect(card.locator('img')).toHaveCount(6);
+    await expect(card.getByRole('link',{name:'and 3 more',exact:true})).toBeVisible();
+    const boxes=await card.locator('img').evaluateAll(images=>images.map(img=>{const r=img.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};}));
+    expect(boxes[0].y).toBeCloseTo(boxes[2].y,1);expect(boxes[3].y).toBeGreaterThan(boxes[0].y);
+    for(const box of boxes){expect(box.width).toBeGreaterThan(50);expect(box.height).toBeCloseTo(box.width,0);expect(box.x+box.width).toBeLessThanOrEqual(width);}
+    const picture=card.getByRole('link',{name:'Picture 0',exact:true});
+    const original=await card.evaluate(el=>({background:getComputedStyle(el).backgroundColor,border:getComputedStyle(el).borderColor}));
+    await picture.hover();
+    await expect(picture).toHaveCSS('outline-width','2px');
+    expect(await picture.evaluate(el=>getComputedStyle(el).outlineColor)).not.toBe('rgba(0, 0, 0, 0)');
+    expect(await card.evaluate(el=>({background:getComputedStyle(el).backgroundColor,border:getComputedStyle(el).borderColor}))).toEqual(original);
+    const cardBox=await card.boundingBox();
+    await page.mouse.click(cardBox.x+cardBox.width-8,cardBox.y+cardBox.height-8);
+    await expect(page).toHaveURL('https://panther.place/games/test-b/dashboard');
+    await expect(card.getByRole('link',{name:'9 Assets',exact:true})).toHaveCSS('text-decoration-line','none');
+    await picture.focus();
+    await expect(picture).toBeFocused();
+    expect(await picture.evaluate(el=>getComputedStyle(el).outlineColor)).not.toBe('rgba(0, 0, 0, 0)');
+    await page.screenshot({path:test.info().outputPath(`dashboard-counted-assets-${width}.png`),fullPage:true});
+    await card.getByRole('link',{name:'and 3 more',exact:true}).click();
+    await expect(page).toHaveURL('https://panther.place/games/test-b/assets');
+  });
+}

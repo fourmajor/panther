@@ -128,7 +128,7 @@ for(const width of [1280,390]) {
       expect(await control.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     }
     const close=page.getByRole('button',{name:'Close recording',exact:true});
-    const closeBox=await close.boundingBox();expect(closeBox.width).toBeGreaterThanOrEqual(44);
+    const closeBox=await close.boundingBox();expect(closeBox.width).toBe(44);expect(closeBox.height).toBe(44);await expect(close).toHaveAttribute('data-slot','dialog-close');expect(await close.evaluate(el=>getComputedStyle(el).borderWidth)).toBe('0px');await expect(close.locator('svg.lucide-x')).toHaveCount(1);
     expect(await close.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
     await page.screenshot({path:test.info().outputPath(`browser-recording-dialog-${width}.png`),fullPage:true});
     await close.click();
@@ -188,9 +188,11 @@ test('failed full-pass request reuses immutable interrupted manifest',async({pag
 
 test('recording remains stoppable on the Account page and processes directly below',async({page})=>{
   await fixture(page,true);
+  await expect(page.locator('#game-create-button')).toBeEnabled();
   await page.locator('#room-start').click();
   await expect(page.locator('#room-state')).toBeVisible();
   await expect.poll(()=>page.locator('#room-level').evaluate(element=>element.value)).toBeGreaterThan(0);
+  await expect(page.locator('#game-create-button')).toBeDisabled();
   await page.getByRole('button',{name:'Close recording',exact:true}).click();
   await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();
   await page.locator('#room-recording-indicator').click();
@@ -200,7 +202,8 @@ test('recording remains stoppable on the Account page and processes directly bel
   const rectangle=await stop.boundingBox();
   expect(await stop.evaluate((element,point)=>element.contains(document.elementFromPoint(point.x,point.y)),{x:rectangle.x+rectangle.width/2,y:rectangle.y+rectangle.height/2})).toBe(true);
   await stop.click();await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
-  await page.getByRole('button',{name:'Back to game',exact:true}).click();await expect(page.locator('#room-result')).toBeVisible();
+  await page.getByRole('link',{name:'Back to game',exact:true}).click();await expect(page.locator('#room-result')).toBeVisible();
+  await expect(page.locator('#game-create-button')).toBeEnabled();
   await expect(page.locator('#room-audio-status')).toHaveText('Audio ready');
   expect((await page.locator('#room-result').boundingBox()).y).toBeGreaterThan((await page.locator('.room-controls').boundingBox()).y);
 });
@@ -347,6 +350,15 @@ for(const width of [1280,390])test(`Finished capture integrates one transcript a
  const download=card.getByRole('button',{name:'Download audio',exact:true});await expect(download).toHaveCount(1);await expect(download).toBeInViewport();const player=await card.locator('audio').boundingBox(),action=await download.boundingBox();expect(Math.abs(player.y+player.height/2-action.y-action.height/2)).toBeLessThan(3);
  expect(await download.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:test.info().outputPath(`finished-session-${width}.png`),fullPage:true});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ for(let attempt=0;attempt<2;attempt++){
+  await page.locator('#primary-nav a[data-section="novel"]').click();
+  await expect(page.locator('#novel')).toBeVisible();await expect(page.locator('#primary-nav a[data-section="novel"]')).toHaveAttribute('aria-current','page');
+  await expect(page.locator('#room-audio')).toHaveCount(1);await expect(page.locator('#room-result-name')).toHaveCount(1);
+  await page.locator('#primary-nav a[data-section="sessions"]').click();await expect(card.locator('audio')).toHaveCount(1);await expect(card.getByRole('link',{name:'Transcript',exact:true})).toHaveCount(1);
+ }
+ expect(errors).toEqual([]);
+ expect(await page.locator('#primary-nav').evaluate(nav=>getComputedStyle(nav).borderTopWidth)).toBe('0px');
 });
 
 for(const width of [1280,390])test(`Streaming failure keeps recording recoverable without another paid live request at ${width}px`,async({page})=>{

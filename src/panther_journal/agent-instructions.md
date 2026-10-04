@@ -806,7 +806,11 @@ from browser heuristics. Local rename preserves original bytes and metadata hist
 The image laptop worker runs with
 `panther assets worker --work-dir /private/path/asset-generation` and uses a private
 `OPENAI_API_KEY` to call the selected OpenAI Images model directly. Local Generate Asset also supports configured `FAL_API_KEY` text-to-image
-models discovered from the complete active fal catalog. Jobs pin executable prompt
+models discovered from the complete active fal catalog. The user-facing image picker offers
+FLUX 1.1 Pro, FLUX 1 Schnell, GPT Image 1.5 and GPT Image Mini only; unsupported or inactive
+fal choices are omitted. Video offers MiniMax H3 Max, Veo 3.1 Fast and Kling 3 Pro, with
+an optional starting image explicitly choosing the corresponding image-to-video endpoint.
+Older queued selections retain their exact contracts. Jobs pin executable prompt
 contracts, standard defaults and pricing evidence; unknown dispatches are never
 automatically resubmitted. Preserve exact original images and request/response
 lineage, and distinguish displayed provider unit estimates from billed charges. No fresh Codex

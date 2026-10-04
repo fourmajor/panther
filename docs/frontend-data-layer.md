@@ -6,6 +6,7 @@ generated `ui-runtime.js` and `ui-system.css`; CI rebuilds and checks those byte
 CDK publishes them through the same content-addressed release as the explorer.
 The bundle contains React, TanStack Query, TanStack Table, Radix Select, Lucide,
 and Tailwind 4; it does not fetch dependencies from a third-party CDN.
+Dialog compositions must follow the [shared dialog contract](ui-components.md).
 
 `window.PantherUI` is the bridge for existing views. Every authenticated API read
 uses the shared QueryClient: account identity, endpoint and sorted parameters

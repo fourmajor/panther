@@ -153,9 +153,10 @@ implemented processors and their actual model-specific inputs. Availability foll
 fresh worker heartbeats; speech additionally requires an available stock voice list.
 Hosted availability may differ from the local stack.
 
-Images support the configured default and explicit `gpt-image-1`, `gpt-image-1.5`
-and `gpt-image-1-mini` choices, without model fallback. With `FAL_API_KEY`, the image
-worker also caches the complete active executable fal text-to-image catalog, pins
+Images default to `gpt-image-2`; historical requests retain explicit
+`gpt-image-1`, `gpt-image-1.5` and `gpt-image-1-mini` support without model fallback. With `FAL_API_KEY`, the image
+worker also caches the complete active executable fal text-to-image catalog; the UI exposes
+only the curated FLUX 1.1 Pro and GPT Image 2 choices. Older models remain executable for pinned historical jobs, but are absent from the picker. GPT Image 2 uses the Images API at medium quality and 1024×1024, with a $0.053 output-only estimate from the [official pricing guide](https://developers.openai.com/api/docs/guides/image-generation); input and title costs are separate. It pins
 selected OpenAPI contracts and polls durable provider queue identities. The shared
 Generate Asset form searches these models and displays provider price estimates;
 unsupported required-input contracts are omitted honestly. Standalone video uses the

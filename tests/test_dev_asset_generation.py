@@ -44,8 +44,9 @@ def test_options_honest_and_narration_failure_does_not_hide_other_media(tmp_path
     kinds = {entry['id']: entry for entry in store.asset_generation_options('imaginary')['generationTypes']}
     assert kinds['text']['available'] and kinds['map']['available']
     assert not kinds['narration']['available'] and kinds['narration']['voices'] == []
-    assert {m['id'] for m in kinds['map']['models']} == {'gpt-image-1', 'gpt-image-1.5', 'gpt-image-1-mini'}
-    assert kinds['video']['models'][3]['inputs']['requiresInitialImage']
+    assert {m['id'] for m in kinds['map']['models']} == {'gpt-image-2'}
+    assert [m['id'] for m in kinds['video']['models']] == ['h3-max', 'veo-3.1-fast', 'kling-3-pro']
+    assert all(m['inputs']['optionalInitialImage'] for m in kinds['video']['models'])
 
 
 def test_titleless_submission_pins_model_style_and_operation(tmp_path):
@@ -100,6 +101,14 @@ def test_video_frame_exact_pin_and_narration_words(tmp_path, monkeypatch):
     job = store.get('asset-generation', created['jobId'])
     assert job['imagePin']['sha256'] == base64.b64encode(hashlib.sha256(raw).digest()).decode()
     assert job['inputRefs'] == [job['imagePin']] and job['sourceKeys'] == [key]
+    for index, family in enumerate(('h3-max', 'veo-3.1-fast', 'kling-3-pro')):
+        payload = request('video', model=family, operationId=str(index + 3) * 32, inputs={'initialImageKey': key})
+        selected = store.submit_asset_generation(payload)
+        pinned = store.get('asset-generation', selected['jobId'])
+        assert pinned['model'] == family + '-image'
+        assert pinned['request']['model'] == family
+        assert pinned['imagePin'] == job['imagePin']
+        assert store.submit_asset_generation(payload)['jobId'] == selected['jobId']
     monkeypatch.setattr(store, 'narration_voices', lambda: {'voices': [{'id': 'fictional-voice', 'name': 'Narrator'}]})
     created = store.submit_asset_generation(request('narration', operationId='b' * 32, inputs={'voiceId': 'fictional-voice', 'direction': 'Warm'}))
     job = store.get('asset-generation', created['jobId'])
@@ -127,7 +136,7 @@ def test_rename_changes_only_title_with_history_checksum_and_idempotence(tmp_pat
 
 def test_image_generated_title_selected_model_and_title_unknown_prevents_media(tmp_path):
     store = store_at(tmp_path)
-    identity = store.submit_asset_generation(request('image', model='gpt-image-1.5'))['jobId']
+    identity = store.submit_asset_generation(request('image', model='gpt-image-2'))['jobId']
     class Images:
         def __init__(self):
             self.calls = []
@@ -140,7 +149,7 @@ def test_image_generated_title_selected_model_and_title_unknown_prevents_media(t
     client = SimpleNamespace(images=images, responses=Responses({'title': 'River boat'}))
     assert images_worker.process(store, identity, tmp_path / 'work', client, 'gpt-image-1')
     job = store.get('asset-generation', identity)
-    assert job['name'] == 'River boat' and images.calls[0]['model'] == 'gpt-image-1.5'
+    assert job['name'] == 'River boat' and images.calls[0]['model'] == 'gpt-image-2'
     metadata, _ = store.object(job['assetKey'])
     assert metadata['title'] == 'River boat' and metadata['extra']['titleGeneration']['provider'] == 'OpenAI'
     images_worker.asset_metadata.validate_generation(metadata['extra']['titleGeneration'])
