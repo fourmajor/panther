@@ -183,6 +183,8 @@ for(const width of [1280,390])test(`a fifteen-second take supports an eighteen-s
  const sceneEdit=page.getByRole('button',{name:'Edit',exact:true}).first();
  const boardEdit=board.getByRole('group',{name:'Storyboard actions'}).getByRole('button',{name:'Edit',exact:true});
  expect((await boardEdit.boundingBox()).height).toBe((await sceneEdit.boundingBox()).height);
+ const appearance=button=>{const style=getComputedStyle(button);return [style.backgroundColor,style.borderColor,style.borderRadius,style.fontSize,style.fontWeight];};
+ expect(await boardEdit.evaluate(appearance)).toEqual(await sceneEdit.evaluate(appearance));
  await board.getByRole('combobox',{name:'Take for shot 1'}).click();
  await page.getByRole('option',{name:'Take 1 · 15s',exact:true}).click();
  await expect(board).toContainText('Cut: 15s · planned 18s');
