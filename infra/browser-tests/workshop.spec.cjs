@@ -116,3 +116,22 @@ test('A single active stage retains real animated progress without duplicating i
  job.status='done';job.stages[0].status='done';job.completedStages=1;await page.reload();
  await expect(detail.getByText('Complete',{exact:true})).toHaveCount(1);await expect(detail.locator('.workflow-stage-meter')).toHaveCount(0);await expect(detail.locator('.workflow-current-stage')).toHaveCount(0);
 });
+
+test('Completed screen planning remains inspectable when the independent novel branch fails',async({page})=>{
+ const state=await fixture(page);
+ const job=sample('8'.repeat(64),'editorial','done','Session screen planning',[
+   {id:'context',label:'Context selection',status:'done'},
+   {id:'novel-line-copyedit',label:'Line and copyedit',status:'failed',attempts:3},
+   {id:'video-storyboards',label:'Storyboards',status:'done'},
+   {id:'video-preflight',label:'Preflight review',status:'done'},
+ ],{workflowVersion:5,sourceStatus:'READY_FOR_VIDEO_DISCUSSION'});
+ state.jobs=[job];
+ await page.goto(`https://panther.place/games/synthetic-game/workflows/editorial/${job.id}`);
+ const detail=page.locator('.workflow-detail');
+ await expect(detail).toContainText('Line and copyedit');
+ await expect(detail).toContainText('Failed');
+ await expect(detail).toContainText('Storyboards');
+ await expect(detail).toContainText('Preflight review');
+ await expect(detail.locator('.workflow-stages li')).toHaveCount(4);
+ await expect(detail.getByRole('button',{name:/generate video/i})).toHaveCount(0);
+});

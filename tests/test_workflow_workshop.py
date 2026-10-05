@@ -100,6 +100,24 @@ def test_bounded_pagination_and_scoped_cursor(workshop):
     assert request(m, query={"gameId": "other-game", "cursor": first["cursor"]})["statusCode"] == 400
 
 
+def test_recovery_target_and_historical_plan_do_not_invent_pending_steps(workshop):
+    m = workshop
+    m.PLAN["video"].insert(0, "video-source-brief")
+    table, key = seed(m)
+    table.update_item(Key=key, UpdateExpression="SET workflowVersion=:v, target=:target",
+                      ExpressionAttributeValues={":v": 3, ":target": "novel"})
+    old = m.source_view("editorial", key)
+    assert [stage["id"] for stage in old["stages"]] == ["context", "corrected-transcript", "novel-draft"]
+    table.update_item(Key=key, UpdateExpression="SET target=:target",
+                      ExpressionAttributeValues={":target": "video"})
+    old = m.source_view("editorial", key)
+    assert "video-source-brief" not in [stage["id"] for stage in old["stages"]]
+    table.update_item(Key=key, UpdateExpression="SET workflowVersion=:v",
+                      ExpressionAttributeValues={":v": 5})
+    current = m.source_view("editorial", key)
+    assert "video-source-brief" in [stage["id"] for stage in current["stages"]]
+
+
 def test_stream_retries_failed_observations(workshop, monkeypatch):
     m = workshop
     _, key = seed(m, "playback")

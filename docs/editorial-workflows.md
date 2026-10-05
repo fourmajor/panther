@@ -253,6 +253,39 @@ on the laptop. Independent AI sessions can share biases; automatic review is not
 
 ## Operations
 
+### Recovery and independent branches (workflow 6)
+
+Novel and screen planning now have separate failure boundaries. A failed novel step does
+not cancel video preparation; a failed video step does not cancel the chapter. Readiness
+requires an actual completed final chapter or video preflight, not just a successful
+coordinator callback. Exhausted worker attempts retain a structured failure reason.
+
+Recover a failed run through Panther authentication, never by editing the job table or
+reusing an expired Step Functions callback:
+
+```sh
+panther editorial recover --job-id FAILED_JOB_ID --target video
+```
+
+Use `novel` or `both` for the other branches. Explicit creation requests retain their
+original target. Recovery verifies every pinned source's checksum and size, preserves
+the original context cutoff and any submitted scene/cast snapshots, and starts a new
+version-6 execution. It replays the requested planning branch from source; it does not
+relabel or reuse older-version stage outputs as newly reviewed results. The new job
+records its parent and recovery mode. Repeating the same parent/target/version request
+returns the same recovery job, including when that job has failed; recovering a new
+failure requires explicitly naming that failed job. Original executions, artifacts,
+failed candidates and logs remain intact. No video, speech or spending is authorized.
+
+Upgrade the pinned laptop worker from reviewed merged main before submitting recovery.
+The worker's branch-scoped input selection and lossless transcript-overlay projection
+prevent older duplicated transcript/audit bundles from growing with both branches.
+Inputs still have a hard prompt limit; no speech is silently truncated to fit.
+After deployment, run `panther workflows rebuild` and verify all games to refresh
+historical observations. Older executions omit stages that did not exist in their
+protocol, rather than displaying invented pending work. Their saved source jobs
+and artifacts remain unchanged.
+
 AWS CDK creates retained on-demand DynamoDB jobs, a durable stream outbox, short-lived Lambda brokers,
 and a Standard Step Functions state machine in `us-west-2`. Each AI stage queues and
 [waits for a callback](https://docs.aws.amazon.com/step-functions/latest/dg/connect-to-resource.html).

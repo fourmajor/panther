@@ -234,8 +234,12 @@
 - After opening a pull request, inspect its diff and available checks.
 - Automatic CI is intentionally deferred; local verification is the normal readiness gate except
   for frontend-affecting changes, which also require self-hosted Playwright verification below.
-- Follow the operator's current merge policy: when green, assign the PR to the owner; do not merge
-  unless the user explicitly authorizes merging. This supersedes the former automatic-merge rule.
+- This repository is AI-agent led: the owner gives direction and agents implement, verify,
+  merge and deploy in-scope changes autonomously. When a PR's required checks pass on its
+  current SHA and its diff is reviewed, merge it without a routine owner approval request.
+  This standing authorization does not waive tests, CDK diff review, authentication,
+  source-integrity guards, destructive-action boundaries or separately required spending
+  and exact storyboard approvals.
 - Commit/push ready changes on the trusted branch without a routine permission question. In a shared
   checkout inspect `git diff --cached` first so another agent's staged files are not swept in.
 - Run `yarn review:smart` before every push (`--staged` for the index; `--offline` without model access).

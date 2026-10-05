@@ -74,8 +74,19 @@ export class EditorialProcessing extends Construct {
     const videoBranch = new sfn.Choice(this, "VideoRequested")
       .when(sfn.Condition.stringEquals("$.target", "novel"), new sfn.Pass(this, "SkipVideo"))
       .otherwise(sequence(plan.video));
+    // A discipline's failure must not cancel the other discipline's callback.
+    const isolated = (name: string, chain: sfn.Chain): sfn.Parallel => {
+      const branch = new sfn.Parallel(this, `${name}ProtectedBranch`, {resultPath: sfn.JsonPath.DISCARD})
+        .branch(chain);
+      branch.addCatch(new tasks.LambdaInvoke(this, `${name}RecordFailure`, {
+        lambdaFunction: fn,
+        payload: sfn.TaskInput.fromObject({operation: "branch-fail", branch: name.toLowerCase(), "jobId.$": "$.jobId"}),
+        resultPath: sfn.JsonPath.DISCARD,
+      }), {resultPath: "$.branchFailure"});
+      return branch;
+    };
     const branches = new sfn.Parallel(this, "Adaptations", { resultPath: sfn.JsonPath.DISCARD })
-      .branch(novelBranch.afterwards(), videoBranch.afterwards());
+      .branch(isolated("Novel", novelBranch.afterwards()), isolated("Video", videoBranch.afterwards()));
     const correction = new sfn.Choice(this, "TranscriptCorrectionRequired")
       .when(sfn.Condition.stringEquals("$.sourceMode", "prompt"), new sfn.Pass(this, "SkipTranscriptCorrection"))
       .otherwise(sequence(plan.correction.slice(1)));
