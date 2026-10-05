@@ -3,12 +3,14 @@ const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false,takeSeconds=8}={}) {
+async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false,takeSeconds=8,rawCast=false}={}) {
   const writes=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   const chapter='c'.repeat(64),jobId='d'.repeat(64),frame='games/test-game/assets/frame/original/frame.png';
   let episode={schemaVersion:1,entityType:'Episode',gameId:'test-game',id:'pilot',name:'The crossing',description:'At the gates',revision:'a'.repeat(32),sceneIds:planning?[]:['arrival'],...(planning?{production:{state:'planning',jobId}}:{})};
   let scene={schemaVersion:1,entityType:'Scene',gameId:'test-game',episodeId:'pilot',id:'arrival',name:'Arrival',description:'The gates open.',type:'general',revision:'b'.repeat(32),selectedOutputKey:null,planningState:human?'ready':'needs-approval',storyboard:{schemaVersion:1,origin:human?'human':'ai',revision:'e'.repeat(64),decision:null,shots:[{shotId:'gate',description:'The party arrives at dusk.',camera:'Wide, slow push-in',durationSeconds:8,narration:'At dusk, they arrived.',frameKey:frame}]}};
   let published=!planning;
+  const characters=rawCast?[{id:'fictional-hero',characterId:'fictional-hero',name:'Lantern Scout'}]:[];
+  if(rawCast)scene.generationInputs={schemaVersion:1,characterIds:['fictional-hero'],sourceKeys:[],contextKeys:[]};
   if(multi){scene.storyboard.shots[0].durationSeconds=4;scene.storyboard.shots.push({shotId:'reaction',description:'The travelers react.',camera:'Close',durationSeconds:3,frameKey:null,narration:''});}
   if(long)scene.storyboard.shots[0].durationSeconds=18;
   const takes=multi||long||take?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.webm`,contentType:'video/webm',name:`Take ${i+1}`,lastModified:'2026-01-01T00:00:00Z',metadata:{title:`Take ${i+1}`,contentType:'video/webm',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:String(takeSeconds)}}}}})):[];
@@ -25,12 +27,12 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
     if(route.request().method()==='OPTIONS')return route.fulfill({status:204,headers});
     const game={id:'test-game',name:'A fictional campaign',purpose:'campaign'};let body={};
     if(u.pathname==='/games')body={games:[game]};
-    if(u.pathname==='/game')body={game,players:[],characters:[],memberships:[]};
+    if(u.pathname==='/game')body={game,players:[],characters,memberships:[]};
     if(u.pathname==='/assets')body={assets:takes,cursor:null};
     if(u.pathname==='/scene-assemblies'){if(post)writes.push(route.request().postDataJSON());body={jobId:'9'.repeat(64),status:'QUEUED'};}
     if(u.pathname==='/scene-renders'){if(post){writes.push(route.request().postDataJSON());body={jobId:'f'.repeat(64),status:'QUEUED'};}else body={jobs:failed?[{jobId:'f'.repeat(64),status:'FAILED',message:'The provider rejected the video prompt because it exceeds its length limit.'}]:[]};}
     if(u.pathname==='/object-url'){const take=takes.find(item=>item.key===u.searchParams.get('key'));body={url:'https://videos.example/take.webm',contentType:'video/webm',metadata:take?.metadata};}
-    if(u.pathname==='/characters')body={characters:[],cursor:null};
+    if(u.pathname==='/characters')body={characters,cursor:null};
     if(u.pathname==='/episodes')body=u.searchParams.has('id')?{record:episode}:{records:[episode],cursor:null};
     if(u.pathname==='/scenes'){
       if(post){const request=route.request().postDataJSON();writes.push(request);if(conflict)return route.fulfill({status:409,headers,json:{error:'This scene changed. Reopen it before saving.'}});
@@ -53,6 +55,15 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   });
   return {writes,errors,chapter,publish(){published=true;episode={...episode,sceneIds:['arrival'],production:{state:'planned',jobId}};}};
 }
+for(const width of [1280,390])test(`published raw-session cast retains AI approval gate at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{rawCast:true});
+ await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ await expect(page.locator('.scene-cast-summary')).toHaveText('Lantern Scout');
+ const board=page.getByRole('region',{name:'Scene storyboard'});
+ await expect(board.getByRole('button',{name:'Approve',exact:true})).toBeVisible();
+ await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeDisabled();
+ expect(writes).toEqual([]);expect(errors).toEqual([]);
+});
 for(const width of [1280,871,390]) {
  test(`each storyboard shot owns generation and its selected cut at ${width}px`,async({page})=>{
    await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{human:true,multi:true,local:true});

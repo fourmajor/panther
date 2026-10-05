@@ -110,6 +110,34 @@ def test_invalid_destination_fails_before_publication(change):
         destination.records(job, artifact, pin)
 
 
+@pytest.mark.parametrize("invalid", [None, "foreign-game", "foreign-run", "unvalidated", "foreign-character"])
+def test_raw_session_cast_comes_only_from_validated_context(invalid):
+    job, artifact, pin = source()
+    job.pop("creation")
+    artifact["payload"]["episode"]["scenes"][0]["characterIds"] = ["fictional-hero"]
+    context = {"jobId": job["jobId"], "gameId": job["gameId"], "stage": "context",
+               "workflowVersion": artifact["workflowVersion"], "structuralValidation": "passed",
+               "publicationStatus": "accepted-with-notes", "payload": {"evidence": {"catalog": {
+                   "game": {"id": job["gameId"]}, "characters": [{"id": "fictional-hero"}]}}}}
+    if invalid == "foreign-game":
+        context["payload"]["evidence"]["catalog"]["game"]["id"] = "other-game"
+    elif invalid == "foreign-run":
+        context["jobId"] = "b" * 64
+    elif invalid == "unvalidated":
+        context["structuralValidation"] = "unknown"
+    elif invalid == "foreign-character":
+        artifact["payload"]["episode"]["scenes"][0]["characterIds"] = ["unknown-person"]
+    if invalid:
+        with pytest.raises(ValueError):
+            destination.records(job, artifact, pin, context=context)
+    else:
+        _, scenes = destination.records(job, artifact, pin, context=context)
+        assert scenes[0]["generationInputs"]["characterIds"] == ["fictional-hero"]
+        assert scenes[0]["planningState"] == "needs-approval"
+        with pytest.raises(ValueError):
+            destination.records(job, artifact, pin)
+
+
 def test_local_chapter_submission_pins_bytes_and_persists_episode_placeholder(tmp_path):
     from test_dev_server import dev
 

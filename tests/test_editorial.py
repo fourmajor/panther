@@ -1551,7 +1551,24 @@ def test_cloud_publication_uses_canonical_episode_store_and_live_lease(editorial
                 'episode': {'schemaVersion': 1, 'title': 'Arrival', 'synopsis': 'The party reaches the gate.', 'scenes': [
                     {'id': 'arrival', 'title': 'Arrival', 'type': 'general', 'prompt': 'The gates open.', 'narration': 'At dusk, they arrived.',
                      'characterIds': [], 'referenceKeys': [job['raw']['key']], 'shotIds': ['SC01_SH01']}]}}}
+    context_key = f"games/test-game/assets/editorial-{job['jobId'][:32]}-context/original/context.json"
+    context = {'gameId': job['gameId'], 'jobId': job['jobId'], 'stage': 'context',
+               'workflowVersion': PLAN['version'], 'structuralValidation': 'passed',
+               'publicationStatus': 'accepted', 'payload': {'evidence': {'catalog': {
+                   'game': {'id': job['gameId']}, 'characters': [{'id': 'fictional-hero'}]}}}}
+    put(m, context_key, json.dumps(context).encode(), 'application/json')
+    context_pin, _ = m.asset(context_key, job['gameId'])
+    m.table.put_item(Item={'pk': 'TASKS', 'sk': job['jobId'] + ':context',
+                          'status': 'DONE', 'output': context_pin})
+    packet['inputArtifacts'] = {'context': context_pin}
+    packet['payload']['episode']['scenes'][0]['characterIds'] = ['fictional-hero']
     key = f"games/test-game/assets/editorial-{job['jobId'][:32]}-packet/original/packet.json"
+    wrong_pin = copy.deepcopy(packet)
+    wrong_pin['inputArtifacts']['context']['sha256'] = 'not-the-completed-context'
+    put(m, key, json.dumps(wrong_pin).encode(), 'application/json')
+    with pytest.raises(ValueError, match="completed context stage"):
+        m.update(task, {'jobId': job['jobId'], 'stage': stage,
+                        'lease': task['lease'], 'outputKey': key}, 'complete')
     put(m, key, json.dumps(packet).encode(), 'application/json')
     body = {'jobId': job['jobId'], 'stage': stage, 'lease': task['lease'], 'outputKey': key}
     expired = {**task, 'leaseUntil': 0}
@@ -1567,6 +1584,7 @@ def test_cloud_publication_uses_canonical_episode_store_and_live_lease(editorial
     assert episode['sceneIds'] == ['arrival']
     scene = organization_records.decode(db.get_item(Key=organization_records.pointer('episode-scenes-v1', job['gameId'], 'scene#' + episode['id'], 'arrival'))['Item'])
     assert scene['planningState'] == 'needs-approval' and scene['selectedOutputKey'] is None
+    assert scene['generationInputs']['characterIds'] == ['fictional-hero']
     # A replay between publication and task completion must preserve later edits.
     m.table.put_item(Item=task)
     changed = {**episode, 'name': 'Human edited title', 'revision': 'f' * 32}

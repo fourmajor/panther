@@ -49,8 +49,12 @@ planning publishes a new revision into the exact submitted Scene, preserving its
 owner rather than creating another Episode.
 
 Publication requires the validated packet, current worker lease and unchanged
-submitted destination revision. Cloud writes retain reverse source references;
-local writes atomically commit owned records, history and stage completion.
+submitted destination revision. Cloud writes retain reverse source references.
+Raw-session casts come from the exact completed context artifact, checksum-pinned
+in the packet and checked against the durable context task. Explicitly selected
+casts stay restricted to those selections. Neither a current catalog read nor
+generated character names can expand a publication's allowed cast.
+Local writes atomically commit owned records, history and stage completion.
 Conflicting human edits preserve the completed plan and fail publication rather
 than overwrite the edit. Cloud callback replay recognizes exact published history
 and never overwrites a later user revision.
