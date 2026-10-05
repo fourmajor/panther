@@ -1259,6 +1259,49 @@ def test_media_delivery_host_allowlist(url):
         v.media_url(url)
 
 
+@pytest.mark.parametrize("damage", [None, "request", "manifest", "sources", "checksum", "host", "foreign"])
+def test_compact_download_provenance_is_exact_read_only_lineage(monkeypatch, damage):
+    manifest = {"gameId": "synthetic-game", "sourceKeys": ["games/synthetic-game/assets/input/original/plate.png"]}
+    doc = {"schemaVersion": 1, "entityType": "VideoGenerationProvenance", "planId": "plan",
+           "attemptId": "attempt", "requestId": "request", "manifest": manifest, "sourceKeys": manifest["sourceKeys"]}
+    if damage == "request":
+        doc["requestId"] = "other"
+    if damage == "manifest":
+        doc["manifest"] = {**manifest, "extra": "different"}
+    if damage == "sources":
+        doc["sourceKeys"] = []
+    raw = json.dumps(doc).encode()
+    remote = {"url": "https://synthetic.s3.amazonaws.com/provenance", "contentType": "application/json",
+              "size": len(raw), "sha256": base64.b64encode(hashlib.sha256(raw).digest()).decode()}
+    if damage == "checksum":
+        remote["sha256"] = "incorrect"
+    if damage == "host":
+        remote["url"] = "https://evil.invalid/provenance"
+    monkeypatch.setattr(v.cloud, "configuration", lambda: {})
+    calls = []
+    def api(config, method, path, **kwargs):
+        calls.append(method)
+        return remote
+    monkeypatch.setattr(v.cloud, "api", api)
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, **kwargs):
+            assert kwargs['allow_redirects'] is False and 'headers' not in kwargs
+            return type('Response', (), {'content': raw, 'status_code': 200})()
+    monkeypatch.setattr(v.requests, "Session", Session)
+    key = "games/synthetic-game/assets/provenance/original/p.json"
+    if damage == "foreign":
+        key = key.replace('synthetic-game', 'other-game')
+    if damage:
+        with pytest.raises(click.ClickException):
+            v.compact_provenance_manifest(key, manifest, "plan", "attempt", "request")
+    else:
+        assert v.compact_provenance_manifest(key, manifest, "plan", "attempt", "request") == {**manifest, 'sourceKeys': [key]}
+        assert manifest['sourceKeys'] == doc['sourceKeys']  # Exact original plan remains unchanged.
+    assert set(calls) <= {'GET'}
+
+
 def test_download_preserves_original_and_writes_upload_metadata_without_credentials(
     setup, monkeypatch
 ):
