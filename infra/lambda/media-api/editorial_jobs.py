@@ -731,7 +731,14 @@ def publish_episode(job, result, ref, task, body):
     import episode_destination
     import browse_index
     import organization_records
-    episode, scenes = episode_destination.records(job, result, ref)
+    context = None
+    if not job.get("creation") and not job.get("selectedCharacters"):
+        context_task = read("TASKS", job["jobId"] + ":context")
+        if (not context_task or context_task.get("status") != "DONE"
+                or result.get("inputArtifacts", {}).get("context") != context_task.get("output")):
+            raise ValueError("Episode cast must use the completed context stage's exact pin")
+        context = document(context_task["output"])
+    episode, scenes = episode_destination.records(job, result, ref, context=context)
     pointer = organization_records.pointer("episode-scenes-v1", job["gameId"], "episode", episode["id"])
     current = organization_records.decode(browse_index.table().get_item(Key=pointer, ConsistentRead=True).get("Item"))
     # Safe retry after publication but before task completion. A later
