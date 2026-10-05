@@ -131,7 +131,8 @@ for(const width of [1280,390])test(`Workflow status details preserve navigation 
    if(status==='Failed'){await expect(dialog).toContainText('A detailed failure reason is not reported');await expect(dialog).toContainText('Attempts');await expect(dialog).toContainText('2');}
    if(status==='Pending'){await expect(dialog.getByRole('region',{name:'Dependencies'})).toContainText('Writing the screenplay');await expect(dialog).not.toContainText('estimated');}
    const box=await dialog.boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width+1);expect(box.y+box.height).toBeLessThanOrEqual(901);
-   await page.screenshot({path:test.info().outputPath(`workflow-status-${status}-${width}.png`)});
+   await expect(dialog).toHaveCSS('opacity','1');
+   await page.screenshot({path:test.info().outputPath(`workflow-status-${status}-${width}.png`),animations:'disabled'});
    await page.keyboard.press('Escape');await expect(dialog).not.toBeVisible();await expect(trigger).toBeFocused();await expect(page).toHaveURL(url);
  }
  await detail.getByRole('button',{name:`Failed details: ${job.title}`,exact:true}).click();
