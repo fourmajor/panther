@@ -1103,13 +1103,46 @@ def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, r
     return metadata
 
 
-def download(attempt_id, *, recover_existing=False):
+def compact_provenance_manifest(key, manifest, plan_id, attempt_id, request_id):
+    """Read and verify an immutable exact-request lineage document, never rewrite a plan."""
+    if (not isinstance(key, str) or not key.startswith(f"games/{manifest['gameId']}/assets/")
+            or any(c in key for c in ('..', '?', '#', '\\'))):
+        fail("Provenance must be an immutable same-game JSON asset.")
+    remote = cloud.api(cloud.configuration(), "GET", "/object-url", params={"key": key})
+    url = urlsplit(remote.get("url", ""))
+    if (url.scheme != "https" or not (url.hostname or "").endswith(".amazonaws.com")
+            or remote.get("contentType") != "application/json"
+            or type(remote.get("size")) is not int or not 0 < remote["size"] <= 128 * 1024):
+        fail("Invalid provenance object pin.")
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            response = session.get(remote["url"], timeout=(10, 30), allow_redirects=False)
+            raw = response.content
+            if (response.status_code != 200 or len(raw) != remote["size"]
+                    or base64.b64encode(hashlib.sha256(raw).digest()).decode() != remote.get("sha256")):
+                fail("Provenance bytes do not match the immutable pin.")
+            doc = json.loads(raw)
+    except (requests.RequestException, ValueError):
+        fail("Provenance could not be read; no generation or metadata rewrite occurred.")
+    if (not isinstance(doc, dict) or doc.get("schemaVersion") != 1
+            or doc.get("entityType") != "VideoGenerationProvenance"
+            or doc.get("planId") != plan_id or doc.get("attemptId") != attempt_id
+            or doc.get("requestId") != request_id or doc.get("manifest") != manifest
+            or doc.get("sourceKeys") != manifest["sourceKeys"]):
+        fail("Provenance must pin this exact plan, request and every original input.")
+    return {**manifest, "sourceKeys": [key]}
+
+
+def download(attempt_id, *, recover_existing=False, provenance_key=None):
     with database() as db:
         row = db.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
         if not row or row["state"] != "COMPLETED":
             fail("Only completed video attempts can be downloaded.")
         data = json.loads(row["content"])
         plan, _ = read_plan(db, row["plan_id"])
+    metadata_manifest = (compact_provenance_manifest(provenance_key, plan["manifest"],
+        row["plan_id"], attempt_id, data["requestId"]) if provenance_key else plan["manifest"])
     url = media_url(data["result"]["video"]["url"])
     folder = private_root() / "outputs"
     folder.mkdir(mode=0o700, exist_ok=True)
@@ -1159,7 +1192,7 @@ def download(attempt_id, *, recover_existing=False):
         fail("Download interrupted. Retry the download, not the generation.")
     finally:
         temporary.unlink(missing_ok=True)
-    manifest = plan["manifest"]
+    manifest = metadata_manifest
     billed = None
     try:
         event = Fal.billing_events([data["requestId"]]).get(data["requestId"])
@@ -1372,9 +1405,10 @@ def poll_command(attempt_id):
 @video.command("download")
 @click.argument("attempt_id")
 @click.option("--recover-existing", is_flag=True, help="Verify an incomplete original against provider bytes and finish metadata; never overwrite or generate.")
-def download_command(attempt_id, recover_existing):
+@click.option("--provenance-key", help="Verified same-game JSON asset pinning this exact request and all original inputs; keeps upload metadata compact.")
+def download_command(attempt_id, recover_existing, provenance_key):
     """Keep the original MP4 and upload-ready metadata privately; no generation or S3 write."""
-    click.echo(json.dumps(download(attempt_id, recover_existing=recover_existing), indent=2))
+    click.echo(json.dumps(download(attempt_id, recover_existing=recover_existing, provenance_key=provenance_key), indent=2))
 
 
 @video.command("reconcile-unavailable")

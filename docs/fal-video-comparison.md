@@ -310,6 +310,16 @@ exact checksum match, preserves the original file, and finishes missing metadata
 It never submits generation, overwrites changed bytes/metadata, or resets a completed download.
 The compact metadata ceiling leaves room within the server's encoded metadata limit.
 
+When exact source keys exceed that ceiling, first upload a private same-game JSON provenance
+asset through Panther. Its document must contain `schemaVersion: 1`,
+`entityType: VideoGenerationProvenance`, exact `planId`, `attemptId`, `requestId`, the
+unaltered `manifest`, and its complete `sourceKeys`. Retain detailed request/response evidence
+there too. Use `video download ATTEMPT --provenance-key KEY` (with `--recover-existing`
+for an incomplete retained MP4). The CLI verifies cloud-pinned JSON bytes and every identity/input
+before using that document as the upload metadata's source. It never edits the generation plan,
+changes billing, bypasses authentication or overwrites originals. Existing completed metadata
+remains immutable; this is optional compact lineage for newly finished downloads.
+
 Owner-authorized replacement models can use `panther video reconcile-rejection ATTEMPT
 --owner-approved --reason 'Owner replacement authorization'` only after a terminal production
 content-policy rejection or explicit `no_media_generated` failure has an exact, same-account,
