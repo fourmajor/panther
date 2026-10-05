@@ -14,7 +14,7 @@ function sample(id,kind,status,title,stages,extra={}) {
   const flow={schemaVersion:1,mode:kind==='editorial'?'branched':'sequence',lanes,edges,note:'Arrows show dependencies, not time remaining.'};
   return {schemaVersion:1,id:kind+'~'+id,kind,gameId:'synthetic-game',title,status,createdAt:Date.now()/1000,observedAt:Date.now()/1000,source:'durable-job',note:'Screen planning stops before paid generation.',stages,flow,activeStages:stages.filter(s=>!['done','pending'].includes(s.status)),totalStages:stages.length,completedStages:stages.filter(s=>s.status==='done').length,...extra};
 }
-async function fixture(page) {
+async function fixture(page,{summaries=false}={}) {
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-reader'}))+'.test'})));
   const running=sample('a'.repeat(64),'editorial','running','The Lanterns at Dawn',[
     {id:'context',label:'Context selection',status:'done'},
@@ -36,7 +36,7 @@ async function fixture(page) {
         const types=[...new Set(state.jobs.map(j=>j.kind))].map(kind=>{const rows=state.jobs.filter(j=>j.kind===kind);return {id:kind,name:({'session-finalization':'Session finalization',editorial:'Story & screen planning',playback:'Audio assembly',model:'3D modeling','asset-generation':'Asset generation','video-production':'Video finishing'})[kind],total:rows.length,successful:rows.filter(j=>j.status==='done').length,failed:rows.filter(j=>j.status==='failed').length,latestRunAt:Math.max(...rows.map(j=>j.createdAt))};});
         return route.fulfill({json:{types},headers});
       }
-      const kind=url.searchParams.get('type');const rows=state.jobs.filter(j=>!kind||j.kind===kind);
+      const kind=url.searchParams.get('type');const rows=state.jobs.filter(j=>!kind||j.kind===kind).map(job=>{if(!summaries)return job;const {stages,flow,...summary}=job;return summary;});
       return route.fulfill({json:{workflows:url.searchParams.get('cursor')?[sample('e'.repeat(64),kind||'model','queued','Another run',[{id:'build',label:'Prepare',status:'queued'}])]:rows,cursor:!url.searchParams.get('cursor')&&state.next?'next-page':null},headers});
     }
     const game={id:'synthetic-game',name:'The Lantern Expedition',purpose:'campaign',ruleset:null};
@@ -54,7 +54,7 @@ async function fixture(page) {
 
 
 for(const width of [1280,390]) test(`Workflow type hierarchy, exact totals and durable navigation at ${width}px`,async({page})=>{
- await page.setViewportSize({width,height:900});const state=await fixture(page);
+ await page.setViewportSize({width,height:900});const state=await fixture(page,{summaries:true});
  await page.goto('https://panther.place/games/synthetic-game/workflows');
  await expect(page.locator('.workflow-type')).toHaveCount(4);
  await expect(page.locator('.workflow-run')).toHaveCount(0);
@@ -66,7 +66,7 @@ for(const width of [1280,390]) test(`Workflow type hierarchy, exact totals and d
  await expect(page.locator('.workflow-run')).toHaveCount(1);
  await expect(page.locator('.workflow-run')).toContainText('The Lanterns at Dawn');
  await page.getByRole('button',{name:'Load more',exact:true}).click();await expect(page.locator('.workflow-run')).toHaveCount(2);
- await page.locator('.workflow-run').first().click();await expect(page).toHaveURL(/workflows\/editorial\/editorial~a+$/);
+ await page.locator('.workflow-run-link').first().click();await expect(page).toHaveURL(/workflows\/editorial\/editorial~a+$/);
  await expect(page.locator('.workflow-stages li')).toHaveCount(3);await expect(page.locator('.workflow-detail')).toContainText('Writing the screenplay');
  await page.reload();await expect(page.locator('.workflow-stages li')).toHaveCount(3);
  await page.locator('.workflow-back').click();await expect(page).toHaveURL(/workflows\/editorial$/);
@@ -95,7 +95,7 @@ for(const width of [1280,390])test(`Compact workflow rows and zoomable output ke
  const row=await type.boundingBox();expect(row.height).toBeLessThan(width<600?120:95);
  await type.click();const run=page.locator('.workflow-run');await expect(run).toHaveCount(1);
  await expect(run.locator('img')).toHaveAttribute('src',imageUrl);await expect(run.locator('svg.lucide-chevron-right')).toHaveCount(1);
- await run.click();const detail=page.locator('.workflow-detail');
+ await run.locator('.workflow-run-link').click();const detail=page.locator('.workflow-detail');
  await expect(detail.getByText('Complete',{exact:true})).toHaveCount(1);await expect(detail.locator('.workflow-stages')).toHaveCount(0);
  await expect(detail.getByText('Asset generation',{exact:true})).toHaveCount(1);await expect(detail.getByRole('button',{name:'View output',exact:true})).toHaveCount(0);
  const thumbnail=detail.getByRole('button',{name:'Preview Output',exact:true});await expect(thumbnail).toBeInViewport();await expect(thumbnail.locator('img')).toHaveAttribute('src',imageUrl);
@@ -115,6 +115,35 @@ test('A single active stage retains real animated progress without duplicating i
  expect(await detail.locator('.workflow-stage-meter span').evaluate(el=>getComputedStyle(el).animationName)).toBe('pulse');
  job.status='done';job.stages[0].status='done';job.completedStages=1;await page.reload();
  await expect(detail.getByText('Complete',{exact:true})).toHaveCount(1);await expect(detail.locator('.workflow-stage-meter')).toHaveCount(0);await expect(detail.locator('.workflow-current-stage')).toHaveCount(0);
+});
+
+for(const width of [1280,390])test(`Workflow status details preserve navigation and show actual dependencies at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});const state=await fixture(page,{summaries:true});
+ const job=state.jobs[0];job.stages[1].status='failed';job.status='failed';
+ const url=`https://panther.place/games/synthetic-game/workflows/editorial/${job.id}`;
+ await page.goto(url);
+ const detail=page.locator('.workflow-detail');
+ for(const [status,title] of [['Complete','Context selection'],['Failed','Writing the screenplay'],['Pending','Preflight review']]){
+   const trigger=detail.getByRole('button',{name:`${status} details: ${title}`,exact:true});
+   await expect(trigger).toBeInViewport();await trigger.focus();await page.keyboard.press('Enter');
+   const dialog=page.getByRole('dialog',{name:title,exact:true});await expect(dialog).toBeVisible();
+   await expect(dialog).toContainText(`${status} · Stage details`);
+   if(status==='Failed'){await expect(dialog).toContainText('A detailed failure reason is not reported');await expect(dialog).toContainText('Attempts');await expect(dialog).toContainText('2');}
+   if(status==='Pending'){await expect(dialog.getByRole('region',{name:'Dependencies'})).toContainText('Writing the screenplay');await expect(dialog).not.toContainText('estimated');}
+   const box=await dialog.boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width+1);expect(box.y+box.height).toBeLessThanOrEqual(901);
+   await expect(dialog).toHaveCSS('opacity','1');
+   await page.screenshot({path:test.info().outputPath(`workflow-status-${status}-${width}.png`),animations:'disabled'});
+   await page.keyboard.press('Escape');await expect(dialog).not.toBeVisible();await expect(trigger).toBeFocused();await expect(page).toHaveURL(url);
+ }
+ await detail.getByRole('button',{name:`Failed details: ${job.title}`,exact:true}).click();
+ await expect(page.getByRole('dialog',{name:job.title,exact:true})).toContainText('1 of 3');
+ await page.keyboard.press('Escape');
+ await page.locator('.workflow-back').click();
+ const row=page.locator('.workflow-run').first();
+ await row.getByRole('button',{name:`Failed details: ${job.title}`,exact:true}).click();
+ await expect(page.getByRole('dialog',{name:job.title,exact:true})).toBeVisible();await expect(page).toHaveURL(/workflows\/editorial$/);
+ await page.keyboard.press('Escape');await row.locator('.workflow-run-link').click();await expect(page).toHaveURL(url);
+ expect(state.reads.every(read=>!read.searchParams.has('action'))).toBe(true);
 });
 
 test('Completed screen planning remains inspectable when the independent novel branch fails',async({page})=>{

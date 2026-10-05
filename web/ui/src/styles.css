@@ -211,6 +211,17 @@
 .workflow-latest,.workflow-date {font-size:.8rem;color:var(--muted-foreground)}
 .workflow-latest {white-space:nowrap}
 .workflow-runs {margin:1rem 0}
+.workflow-run-link {display:flex;align-items:center;gap:.75rem;flex:1;min-width:0;color:inherit;text-decoration:none}
+.workflow-status-button {flex-shrink:0;font-size:.75rem!important;min-height:32px;height:32px;text-decoration:underline;text-underline-offset:3px}
+.workflow-status-dialog {max-height:calc(100dvh - 2rem);overflow-y:auto;overflow-wrap:anywhere}
+.workflow-status-facts {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.4rem 1rem;font-size:.85rem}
+.workflow-status-facts dt,.workflow-status-note {color:var(--muted-foreground)}
+.workflow-status-facts dd {margin:0}
+.workflow-status-steps {list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
+.workflow-status-steps li {display:flex;align-items:center;gap:.5rem;font-size:.85rem}
+.workflow-status-steps li>span:first-child {flex:1;min-width:0}
+.workflow-status-dialog h3 {font-size:.9rem;margin:0 0 .5rem}
+.workflow-status-note {font-size:.8rem;margin:0}
 .workflow-run strong,.workflow-run small {display:block;overflow-wrap:anywhere}
 .workflow-run strong {font-size:.95rem;font-weight:500}
 .workflow-run small {font-size:.75rem;color:var(--muted-foreground);margin-top:.3rem}
