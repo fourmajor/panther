@@ -382,6 +382,94 @@ def manifest():
     }
 
 
+@pytest.mark.parametrize("model,duration,reserve", [
+    ("veo-3.1-fast", 4, 75), ("veo-3.1-fast", 6, 113),
+    ("veo-3.1-fast", 4.0, 75),
+    ("kling-3-pro", 3, 85), ("kling-3-pro", 7, 197),
+    ("h3-max", 2.5, 75),
+])
+def test_production_quote_and_payload_use_exact_duration(setup, model, duration, reserve):
+    from panther_journal import narration as n
+    n.create_budget("test-film", "synthetic-game", "10", "9.99", "Synthetic approval", setup)
+    m = manifest()
+    m.update(schemaVersion=2, projectId="test-film")
+    shot = m["shots"][0]
+    shot.update(model=model, durationSeconds=duration, maxAttempts=1)
+    result = v.prepare(m, setup)
+    key = v.quote_key(m, shot)
+    assert result["quotes"][key]["durationSeconds"] == duration
+    assert result["quotes"][key]["reserveCents"] == reserve
+    pid = result["planId"]
+    approved = CliRunner().invoke(main, ["video", "approve", pid,
+        "--models-and-rights-approved", "--auto-topup-disabled"])
+    assert approved.exit_code == 0, approved.output
+    first = v.submit(pid, shot["id"], 1, "", setup)
+    assert v.submit(pid, shot["id"], 1, "", setup) == first
+    body = setup.posts[0][1]["json"]
+    expected = f"{int(duration)}s" if model.startswith("veo") else str(int(duration)) if model.startswith("kling") else duration
+    assert body["duration"] == expected
+    assert len(setup.posts) == 1
+    with v.database() as db:
+        assert v.reserved_for(db, "test-film") == reserve
+        assert v.totals(db)["reservationCents"] == 0
+
+
+def test_mixed_durations_pin_separate_quotes_and_all_attempts(setup):
+    from panther_journal import narration as n
+    n.create_budget("test-film", "synthetic-game", "4", "3.99", "Synthetic approval", setup)
+    m = manifest()
+    m.update(schemaVersion=2, projectId="test-film")
+    m["shots"][0].update(durationSeconds=4, maxAttempts=1)
+    m["shots"].append({**m["shots"][0], "id":"scene-long", "durationSeconds":6, "maxAttempts":2})
+    reads = []
+    original_price = setup.price
+    setup.price = lambda model: (reads.append(model), original_price(model))[1]
+    result = v.prepare(m, setup)
+    assert reads == ["veo-3.1-fast"]
+    assert set(result["quotes"]) == {"veo-3.1-fast@4s", "veo-3.1-fast@6s"}
+    assert result["worstCaseReservationUsd"] == "3.01"
+    m["shots"][1]["maxAttempts"] = 3
+    with pytest.raises(click.ClickException, match="allowance"):
+        v.prepare(m, setup)
+
+
+@pytest.mark.parametrize("model,duration", [
+    ("veo-3.1-fast", 5), ("veo-3.1-fast", 15), ("kling-3-pro", 2),
+    ("kling-3-pro", 3.5), ("h3-max", 16), ("h3-max", True),
+    ("h3-max", float("nan")), ("h3-max", float("inf")), ("seedance-2.0", 8),
+])
+def test_production_duration_fails_closed(model, duration):
+    m = manifest()
+    m.update(schemaVersion=2, projectId="test-film")
+    m["shots"][0].update(model=model, durationSeconds=duration)
+    with pytest.raises(click.ClickException):
+        v.validate_manifest(m)
+
+
+def test_legacy_comparison_duration_cannot_be_changed():
+    m = manifest()
+    m["shots"][0]["durationSeconds"] = 4
+    with pytest.raises(click.ClickException):
+        v.validate_manifest(m)
+
+
+def test_short_production_rechecks_live_price_before_reserving(setup):
+    from panther_journal import narration as n
+    n.create_budget("test-film", "synthetic-game", "10", "9", "Synthetic approval", setup)
+    m = manifest()
+    m.update(schemaVersion=2, projectId="test-film")
+    m["shots"][0].update(durationSeconds=4, maxAttempts=1)
+    pid = v.prepare(m, setup)["planId"]
+    assert CliRunner().invoke(main, ["video", "approve", pid,
+        "--models-and-rights-approved", "--auto-topup-disabled"]).exit_code == 0
+    setup.rate = Decimal("0.30")
+    with pytest.raises(click.ClickException, match="Pricing increased"):
+        v.submit(pid, "scene-veo", 1, "", setup)
+    assert not setup.posts
+    with v.database() as db:
+        assert v.reserved_for(db, "test-film") == 0
+
+
 def image_manifest(tmp_path, monkeypatch):
     def chunk(kind, data):
         return (

@@ -479,9 +479,35 @@ class Fal:
         return price
 
 
-def quote(fal, model):
+def production_duration(model, duration):
+    """Explicit supported output duration; never silently round a paid request."""
+    if type(duration) not in (int, float) or not 1 <= duration <= 15:
+        fail("Production duration must be a finite number between 1 and 15 seconds.")
+    if model.startswith("veo-3.1-fast"):
+        valid = duration in (4, 6, 8)
+    elif model.startswith("kling-3-pro"):
+        valid = duration >= 3 and float(duration).is_integer()
+    else:
+        valid = model in {"h3-max", "h3-max-image"}
+    if not valid:
+        fail("Unsupported production duration for this model; no automatic rounding or fallback.")
+    return int(duration) if model.startswith(("veo-3.1-fast", "kling-3-pro")) else duration
+
+
+def quote_key(manifest, shot):
+    return (f"{shot['model']}@{shot['durationSeconds']}s"
+            if manifest["schemaVersion"] == 2 else shot["model"])
+
+
+def shot_quote(fal, manifest, shot):
+    return quote(fal, shot["model"], duration_seconds=shot.get("durationSeconds", 8))
+
+
+def quote(fal, model, *, duration_seconds=8, _base_price=None):
+    if duration_seconds != 8:
+        production_duration(model, duration_seconds)
     profile = PROFILES[model]
-    base = fal.price(model)
+    base = fal.price(model) if _base_price is None else _base_price
     # fal pricing API returns a base, not a settings-aware binding quotation. Audio can be
     # a multiplier (Kling); use the higher reviewed rate, then reserve another 25% headroom.
     rate = max(number(profile["floor"]), base * number(profile["multiplier"]))
@@ -491,7 +517,7 @@ def quote(fal, model):
         if base != number(profile["reviewedBase"]):
             fail("Silent profile pricing changed; review settings-specific pricing before spending.")
         rate = number(profile["floor"])
-    estimate = rate * 8
+    estimate = rate * number(duration_seconds)
     details = {}
     if model in {"seedance-2.0", "seedance-2.0-image"}:
         # Fixed 16:9 720p, 8s, no reference video: fal's documented output-token formula.
@@ -507,7 +533,7 @@ def quote(fal, model):
         "quotedAt": int(time.time()),
         "source": profile["source"],
         "unit": profile.get("unit", "seconds"),
-        "durationSeconds": 8,
+        "durationSeconds": duration_seconds,
         **details,
     }
 
@@ -518,12 +544,15 @@ def validate_manifest(value):
         not isinstance(value, dict)
         or not fields <= set(value)
         or set(value) - fields - {"characterIds", "projectId"}
-        or value["schemaVersion"] != 1
+        or type(value["schemaVersion"]) is not int
+        or value["schemaVersion"] not in {1, 2}
     ):
-        fail("Expected a version-1 video comparison manifest; see docs/fal-video-comparison.md.")
+        fail("Expected a version-1 comparison or version-2 production manifest; see docs/fal-video-comparison.md.")
     identifier(value["gameId"])
     if "projectId" in value:
         identifier(value["projectId"])
+    if value["schemaVersion"] == 2 and not value.get("projectId"):
+        fail("Production durations require an existing explicitly allocated project budget.")
     if value["sessionId"] is not None:
         identifier(value["sessionId"])
     sources = value["sourceKeys"]
@@ -552,6 +581,7 @@ def validate_manifest(value):
             not isinstance(shot, dict)
             or not {"id", "model", "prompt", "maxAttempts"} <= set(shot)
             or set(shot) - {"id", "model", "prompt", "maxAttempts", "image", "endImage"}
+            - ({"durationSeconds"} if value["schemaVersion"] == 2 else set())
         ):
             fail(
                 "Each shot requires id, model, prompt and maxAttempts; arbitrary provider arguments are forbidden."
@@ -560,6 +590,8 @@ def validate_manifest(value):
         if shot["id"] in seen or shot["model"] not in PROFILES:
             fail("Duplicate shot or unsupported model profile.")
         seen.add(shot["id"])
+        if value["schemaVersion"] == 2:
+            production_duration(shot["model"], shot.get("durationSeconds"))
         if bool(PROFILES[shot["model"]].get("imageField")) != ("image" in shot):
             fail("Image profiles require exactly one pinned image; text profiles forbid it.")
         if "endImage" in shot and shot["model"] not in {"kling-3-pro-image", "kling-3-pro-image-silent"}:
@@ -626,9 +658,10 @@ def generation_duration(model, planned):
     return duration
 
 
-def payload(shot, *, duration_seconds=8):
-    if not shot['model'].startswith('seedance') and duration_seconds != generation_duration(shot['model'], duration_seconds):
-        raise ValueError('Requested duration exceeds the selected model capability')
+def payload(shot, *, duration_seconds=None):
+    duration_seconds = shot.get("durationSeconds", 8) if duration_seconds is None else duration_seconds
+    if not shot['model'].startswith('seedance'):
+        duration_seconds = production_duration(shot['model'], duration_seconds)
     body = {"prompt": fit_prompt(shot["prompt"]), "aspect_ratio": "16:9", "generate_audio": True}
     model = shot["model"].removesuffix("-silent")
     if shot["model"].endswith("-silent"):
@@ -722,9 +755,14 @@ def prepare(value, fal):
             if name in shot:
                 reference_bytes(shot[name], verify_cloud=True)
     billing = fal.billing()
-    quotes = {model: quote(fal, model) for model in {s["model"] for s in value["shots"]}}
+    # One live pricing read per endpoint, not one repeated call per short shot.
+    # Submission still refreshes independently before its money reservation.
+    prices = {model: fal.price(model) for model in {s["model"] for s in value["shots"]}}
+    quotes = {quote_key(value, s): quote(fal, s["model"],
+              duration_seconds=s.get("durationSeconds", 8), _base_price=prices[s["model"]])
+              for s in value["shots"]}
     plan = {
-        "profileVersion": 1,
+        "profileVersion": value["schemaVersion"],
         "manifest": value,
         "inputs": {
             s["id"]: {"endpoint": PROFILES[s["model"]]["endpoint"], "payload": payload(s)}
@@ -734,7 +772,7 @@ def prepare(value, fal):
         "createdAt": int(time.time()),
         "billingAccount": billing["account"],
         "worstCaseReservationCents": sum(
-            quotes[s["model"]]["reserveCents"] * s["maxAttempts"] for s in value["shots"]
+            quotes[quote_key(value, s)]["reserveCents"] * s["maxAttempts"] for s in value["shots"]
         ),
     }
     plan_id = hashlib.sha256(canonical(plan).encode()).hexdigest()
@@ -746,7 +784,7 @@ def prepare(value, fal):
             "r" * 128,
             plan_id,
             "a" * 64,
-            quotes[shot["model"]]["reserveCents"],
+            quotes[quote_key(value, shot)]["reserveCents"],
             "0" * 64,
         )
     with database() as db:
@@ -769,7 +807,8 @@ def read_plan(db, plan_id):
     plan = json.loads(row["content"])
     if (
         hashlib.sha256(canonical(plan).encode()).hexdigest() != plan_id
-        or plan.get("profileVersion") != 1
+        or plan.get("profileVersion") not in {1, 2}
+        or plan.get("profileVersion") != plan.get("manifest", {}).get("schemaVersion")
     ):
         fail("Pinned plan changed or is incompatible. Refusing to spend.")
     validate_manifest(plan["manifest"])
@@ -843,9 +882,9 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         shot = next((s for s in plan["manifest"]["shots"] if s["id"] == shot_id), None)
         if not shot or not 1 <= ordinal <= shot["maxAttempts"]:
             fail("Attempt not allowed by the pinned plan.")
-    current_quote = quote(fal, shot["model"])
+    current_quote = shot_quote(fal, plan["manifest"], shot)
     billing = fal.billing()
-    reserve = plan["quotes"][shot["model"]]["reserveCents"]
+    reserve = plan["quotes"][quote_key(plan["manifest"], shot)]["reserveCents"]
     if current_quote["reserveCents"] > reserve:
         fail("Pricing increased. Prepare and approve a new plan before spending.")
     if (
@@ -1048,6 +1087,9 @@ def upload_metadata(manifest, shot, endpoint, request_id, plan_id, attempt_id, r
             "reservedUsd": f"{reserve / 100:.2f}",
         },
     }
+    if manifest["schemaVersion"] == 2:
+        definition = next(item for item in manifest["shots"] if item["id"] == shot)
+        metadata["extra"]["requestedDurationSeconds"] = definition["durationSeconds"]
     # Leave headroom for S3's base64 encoding and Panther's authenticated metadata headers.
     if len(canonical(metadata).encode()) > 1200:
         fail(

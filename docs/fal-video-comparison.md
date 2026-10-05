@@ -265,6 +265,34 @@ the local regression suite; CI is not needed for this CLI-only change. Real veri
 check` only. No production key, prompt, game data or generated video is committed to Git.
 # Separately approved production allocations
 
+## Exact production durations (manifest version 2)
+
+Version-1 comparisons remain fixed at eight seconds, including their immutable
+plans, payloads, reservations and downloaded originals. New production manifests
+use `schemaVersion: 2`, an existing audited `projectId`, and explicit
+`durationSeconds` on every shot. No automatic rounding, model substitution,
+multi-shot expansion or paid retry is introduced.
+
+Verified against the provider schemas on 2026-10-05:
+
+- Veo 3.1 Fast: 4, 6 or 8 seconds ([schema](https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video/api)).
+- Kling 3 Pro: integer durations from 3 through 15 seconds ([schema](https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api)).
+- H3 Max: positive numeric duration, bounded here to 1–15 seconds ([schema](https://fal.ai/models/minimax/h3-max/image-to-video/api)).
+
+Seedance remains a version-1 eight-second comparison adapter. Quotes are pinned
+by model **and duration**, including per-shot cent rounding, all permitted attempts,
+the existing conservative rates and 25% headroom. Submission checks the same
+duration against refreshed pricing before reserving. A duration change invalidates
+the content hash/approval; it cannot cheapen a quote without changing the actual
+provider payload. Project caps, account binding, balance floor, uncertain-request
+blocking and idempotent submissions remain unchanged. Production downloads record
+requested duration separately from actual measured output duration.
+
+Historical version-1 executions are still their original valid comparison protocol,
+not non-compliant production requests. No asset, ledger or approval is migrated or
+rewritten into a shorter take. Preserve exact old plans for recovery. New generation
+must prepare and explicitly approve its own version-2 plan.
+
 If MP4 bytes were saved but metadata/final bookkeeping failed, use `panther video download
 ATTEMPT --recover-existing`. It redownloads only the existing provider result to verify an
 exact checksum match, preserves the original file, and finishes missing metadata/ledger fields.
