@@ -58,7 +58,11 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
 for(const width of [1280,390])test(`published raw-session cast retains AI approval gate at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{rawCast:true});
  await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
- await expect(page.locator('.scene-cast-summary')).toHaveText('Lantern Scout');
+ await page.locator('[data-scene-edit]').click();
+ const editor=page.getByRole('dialog',{name:'Edit scene',exact:true});
+ await expect(editor.getByRole('button',{name:'Remove Lantern Scout from characters',exact:true})).toBeVisible();
+ await editor.getByRole('button',{name:'Cancel',exact:true}).click();
+ await expect(editor).not.toBeVisible();
  const board=page.getByRole('region',{name:'Scene storyboard'});
  await expect(board.getByRole('button',{name:'Approve',exact:true})).toBeVisible();
  await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeDisabled();
