@@ -270,6 +270,16 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
+Production should not buy an eight-second take merely to trim it to a short shot.
+Use an explicitly approved version-2 `panther video prepare` manifest with an existing
+audited `projectId` and per-shot `durationSeconds`: Veo 4/6/8, Kling integer 3–15,
+H3 Max numeric 1–15. Select a supported duration that covers the whole approved cut;
+never silently shorten a storyboard, stretch/loop footage or change model to fit cost.
+Model-and-duration quotes retain conservative rates, 25% headroom and the original
+project ceiling. Version-1 comparisons and historical plans remain exactly eight
+seconds; do not rewrite their assets, approvals or budget history. See
+`docs/fal-video-comparison.md#exact-production-durations-manifest-version-2`.
+
 Episodes are the destination for the existing screen-planning pipeline. Each Episode owns
 ordered Scenes; each Scene owns its storyboard shots and revision history. Review AI
 storyboards inside the Scene; human-authored storyboards do not require approval. See
