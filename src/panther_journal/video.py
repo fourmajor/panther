@@ -34,6 +34,11 @@ QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
+    "veo-3.1-lite": {
+        "endpoint": "fal-ai/veo3.1/lite",
+        "floor": "0.05", "multiplier": "1",
+        "source": "https://fal.ai/models/fal-ai/veo3.1/lite",
+    },
     "veo-3.1-fast-image-silent": {
         "endpoint": "fal-ai/veo3.1/fast/image-to-video",
         "floor": "0.10", "multiplier": "1", "reviewedBase": "0.15",
@@ -483,7 +488,7 @@ def production_duration(model, duration):
     """Explicit supported output duration; never silently round a paid request."""
     if type(duration) not in (int, float) or not 1 <= duration <= 15:
         fail("Production duration must be a finite number between 1 and 15 seconds.")
-    if model.startswith("veo-3.1-fast"):
+    if model.startswith(("veo-3.1-fast", "veo-3.1-lite")):
         valid = duration in (4, 6, 8)
     elif model.startswith("kling-3-pro"):
         valid = duration >= 3 and float(duration).is_integer()
@@ -491,7 +496,7 @@ def production_duration(model, duration):
         valid = model in {"h3-max", "h3-max-image"}
     if not valid:
         fail("Unsupported production duration for this model; no automatic rounding or fallback.")
-    return int(duration) if model.startswith(("veo-3.1-fast", "kling-3-pro")) else duration
+    return int(duration) if model.startswith(("veo-3.1-fast", "veo-3.1-lite", "kling-3-pro")) else duration
 
 
 def quote_key(manifest, shot):
@@ -666,7 +671,7 @@ def payload(shot, *, duration_seconds=None):
     model = shot["model"].removesuffix("-silent")
     if shot["model"].endswith("-silent"):
         body["generate_audio"] = False
-    if model in {"veo-3.1-fast", "veo-3.1-fast-image"}:
+    if model in {"veo-3.1-fast", "veo-3.1-fast-image", "veo-3.1-lite"}:
         body.update(duration=f"{duration_seconds}s", resolution="720p", auto_fix=False)
     elif model in {"kling-3-pro", "kling-3-pro-image"}:
         body.update(duration=str(duration_seconds), shot_type="customize")
