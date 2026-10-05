@@ -393,6 +393,21 @@ test("editorial workflow has separate review stages, parallel adaptations, and n
   });
 });
 
+test("editorial context can batch-read archive tombstones without broader batch access", () => {
+  const template = mediaExplorerTemplate();
+  const policies = Object.entries(template.findResources("AWS::IAM::Policy"))
+    .filter(([id]) => id.startsWith("EditorialProcessingBroker"));
+  const statements = policies.flatMap(([, policy]) => policy.Properties.PolicyDocument.Statement);
+  const batch = statements.filter((statement: any) =>
+    [statement.Action].flat().includes("dynamodb:BatchGetItem") &&
+    JSON.stringify(statement.Resource).includes("AssetBrowseIndex"));
+  assert.equal(batch.length, 1);
+  assert.deepEqual(batch[0].Condition, {
+    "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["asset-archives-v1#*"]},
+  });
+  assert.ok(JSON.stringify(batch[0].Resource).includes("AssetBrowseIndex"));
+});
+
 test("structured game catalog is retained, on-demand and cannot mutate artwork", () => {
   const template = mediaExplorerTemplate();
   template.hasResourceProperties("AWS::Lambda::Function", {

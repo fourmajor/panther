@@ -1030,6 +1030,16 @@ def test_automatic_creative_context_ignores_technical_indexed_records(editorial,
     page = editorial.context_page("test-game", None, 9999999999)
     assert [item["kind"] for item in page["items"]] == ["game-context"]
     assert head.call_count == 1
+    # The shared page reader must perform its bounded archive lookup even for
+    # editorial context. Its deployed role needs this exact BatchGetItem access.
+    import asset_archive
+
+    key = "games/test-game/assets/game-context/original/context.json"
+    db.put_item(Item={**asset_archive.archive_key("test-game", key), "schemaVersion": 1})
+    head.reset_mock()
+    page = editorial.context_page("test-game", None, 9999999999)
+    assert page["items"] == []
+    head.assert_not_called()
 
 
 @pytest.mark.parametrize("with_transcript", [False, True])
