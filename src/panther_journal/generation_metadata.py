@@ -26,6 +26,7 @@ def fal(endpoint, request_id, billed=None):
         "minimax/h3-max/text-to-video": "MiniMax H3 Max (post-trained by fal)",
         "minimax/h3-max/image-to-video": "MiniMax H3 Max (post-trained by fal)",
         "fal-ai/veo3.1/fast": "Veo 3.1 Fast",
+        "fal-ai/veo3.1/lite": "Veo 3.1 Lite",
         "fal-ai/kling-video/v3/pro/text-to-video": "Kling 3 Pro",
         "bytedance/seedance-2.0/text-to-video": "Seedance 2.0",
         "fal-ai/veo3.1/fast/image-to-video": "Veo 3.1 Fast",
