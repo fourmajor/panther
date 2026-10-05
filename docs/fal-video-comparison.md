@@ -43,6 +43,17 @@ ledger, so agents must never use it to recover a previously established but lost
 
 ## Bounded initial profiles
 
+### Owner-directed Veo Lite comparisons
+
+`veo-3.1-lite` is a bounded text-only comparison adapter for `fal-ai/veo3.1/lite`:
+16:9, 720p, native audio, `auto_fix: false`, no references or automatic retries.
+Version 1 retains eight seconds; version 2 accepts exact 4/6/8-second durations
+under an explicitly allocated project budget. The October 5, 2026 reviewed fal
+rate is $0.05/second with audio at 720p. The guard uses the greater of this floor
+and the live per-second USD rate, then adds 25% headroom. Unknown units fail closed.
+This opt-in adapter does not change production defaults or historical plans.
+Reference: https://fal.ai/models/fal-ai/veo3.1/lite/api
+
 ### Production model selection
 
 The owner's standing production policy (2026-09-10) is:

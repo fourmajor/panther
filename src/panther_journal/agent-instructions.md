@@ -270,6 +270,11 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
+Owner-directed comparisons may use `veo-3.1-lite` (text only, 720p, native audio,
+prompt auto-fix off). It uses the same persistent guard: eight seconds in version 1,
+or exact 4/6/8 seconds in version 2 with an explicitly approved project allocation.
+It is not a production default, automatic fallback, or authorization to spend.
+
 Production should not buy an eight-second take merely to trim it to a short shot.
 Use an explicitly approved version-2 `panther video prepare` manifest with an existing
 audited `projectId` and per-shot `durationSeconds`: Veo 4/6/8, Kling integer 3–15,

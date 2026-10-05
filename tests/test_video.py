@@ -69,6 +69,26 @@ def test_silent_profiles_pin_settings_and_fail_on_price_change(
         v.quote(setup, model)
 
 
+@pytest.mark.parametrize("duration,reserve", [(4, 25), (6, 38), (8, 50)])
+def test_veo_lite_bounded_native_audio_quote_and_payload(setup, duration, reserve):
+    setup.rate = Decimal("0.05")
+    shot = {"model": "veo-3.1-lite", "prompt": "A fictional harbor.",
+            "durationSeconds": duration}
+    assert v.PROFILES[shot["model"]]["endpoint"] == "fal-ai/veo3.1/lite"
+    assert v.quote(setup, shot["model"], duration_seconds=duration)["reserveCents"] == reserve
+    assert v.payload(shot) == {"prompt": shot["prompt"], "aspect_ratio": "16:9",
+        "generate_audio": True, "duration": f"{duration}s", "resolution": "720p",
+        "auto_fix": False}
+    setup.rate = Decimal("0.06")
+    assert v.quote(setup, shot["model"], duration_seconds=duration)["reserveCents"] > reserve
+
+
+@pytest.mark.parametrize("duration", [3, 5, 9, float("nan"), True])
+def test_veo_lite_rejects_unsupported_duration(duration):
+    with pytest.raises(click.ClickException):
+        v.production_duration("veo-3.1-lite", duration)
+
+
 def test_project_spends_existing_hold_without_changing_comparison_or_narration(setup):
     from panther_journal import narration as n
 
@@ -383,6 +403,7 @@ def manifest():
 
 
 @pytest.mark.parametrize("model,duration,reserve", [
+    ("veo-3.1-lite", 4, 75),
     ("veo-3.1-fast", 4, 75), ("veo-3.1-fast", 6, 113),
     ("veo-3.1-fast", 4.0, 75),
     ("kling-3-pro", 3, 85), ("kling-3-pro", 7, 197),
