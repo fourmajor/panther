@@ -71,6 +71,8 @@ def test_silent_profiles_pin_settings_and_fail_on_price_change(
 
 @pytest.mark.parametrize("duration,reserve", [(4, 25), (6, 38), (8, 50)])
 def test_veo_lite_bounded_native_audio_quote_and_payload(setup, duration, reserve):
+    from panther_journal import generation_metadata
+    assert generation_metadata.fal("fal-ai/veo3.1/lite", "synthetic-request")["model"] == "Veo 3.1 Lite"
     setup.rate = Decimal("0.05")
     shot = {"model": "veo-3.1-lite", "prompt": "A fictional harbor.",
             "durationSeconds": duration}
