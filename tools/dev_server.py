@@ -324,8 +324,8 @@ class Store:
     def save_story_entity(self, kind, body):
         game, identity, operation = body["gameId"], body["id"], body["operationId"]
         self.game(game)
-        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardDecision", "shotSelection"} if kind == "scene" else {"sceneIds"})
-        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "sceneIds", "narration", "storyboardShots", "storyboardDecision", "shotSelection"}
+        expected_fields = {"gameId", "id", "name", "description", "expectedRevision", "operationId"} | ({"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardProposalShots", "storyboardDecision", "shotSelection"} if kind == "scene" else {"sceneIds"})
+        required_fields = expected_fields - {"description", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "sceneIds", "narration", "storyboardShots", "storyboardProposalShots", "storyboardDecision", "shotSelection"}
         if not required_fields <= set(body) <= expected_fields:
             raise ValueError("Invalid episode or scene edit")
         if kind not in ("episode", "scene") or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity) or not re.fullmatch(r"[a-f0-9]{32}", operation):
@@ -369,7 +369,7 @@ class Store:
                     record.update(planningState='ready', shotTakes={})
                 for shot in (record.get("storyboard") or {}).get("shots", []):
                     if shot["frameKey"]:
-                        self.map_asset(game, shot["frameKey"], db)
+                        self.map_asset(game, shot["frameKey"], db, storyboard=True)
                 count = db.execute("SELECT count(*) FROM records WHERE kind='scene' AND game=? AND json_extract(payload,'$.episodeId')=?", (game, episode_id)).fetchone()[0]
                 if not previous and count >= 50:
                     raise ValueError("Episode supports at most 50 scenes")
@@ -439,13 +439,13 @@ class Store:
             db.execute("INSERT INTO operations VALUES (?,?,?)", (operation, kind + ":" + payload, json.dumps(response)))
         return response
 
-    def map_asset(self, game, key, db=None):
+    def map_asset(self, game, key, db=None, *, storyboard=False):
         """Resolve a single explicitly selected local catalog record, preserving cloud rules."""
         if not isinstance(key, str) or not re.fullmatch(r"games/" + re.escape(game) + r"/assets/[a-z0-9-]+/(?:original|derived/[a-z0-9-]+|metadata)/[^/]+", key):
             raise ValueError("Choose a same-game map image")
         if db is None:
             with self.connect() as connection:
-                return self.map_asset(game, key, connection)
+                return self.map_asset(game, key, connection, storyboard=storyboard)
         row = db.execute("SELECT metadata,data FROM objects WHERE key=? AND game=? AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (key, game)).fetchone()
         if not row:
             raise ValueError("Map image is unavailable in the catalog")
@@ -455,7 +455,9 @@ class Store:
         extra = meta.get("extra") or {}
         if not isinstance(extra, dict) or not isinstance(meta.get("kind", ""), str):
             raise ValueError("Invalid map metadata")
-        if meta.get("contentType") not in {"image/png", "image/jpeg", "image/webp"} or meta.get("lineageWarning") or asset_metadata.internal(meta.get("kind", "")) or extra.get("relationshipRole") in {"processing", "intermediate", "internal"}:
+        restricted_role = extra.get("relationshipRole") in {"processing", "intermediate", "internal"}
+        prepared_frame = storyboard and meta.get("kind") == "shot-frame" and extra.get("relationshipRole") == "intermediate"
+        if meta.get("contentType") not in {"image/png", "image/jpeg", "image/webp"} or meta.get("lineageWarning") or asset_metadata.internal(meta.get("kind", "")) or (restricted_role and not prepared_frame):
             raise ValueError("Choose a finished PNG, JPEG or WebP map image")
         return meta, data
 

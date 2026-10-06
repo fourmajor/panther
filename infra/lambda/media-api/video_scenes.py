@@ -103,7 +103,7 @@ def selected_output(media, game, episode, scene, key):
     return ref["revision"], guard(db, pointer, "observed", row["observed"])
 
 
-def map_asset(media, game, key):
+def map_asset(media, game, key, *, storyboard=False):
     """Resolve one explicit image from the bounded catalog; never scan source storage."""
     if not isinstance(key, str) or not asset_library.valid_key(media, game, key):
         raise ValueError("Choose a same-game map image")
@@ -124,7 +124,8 @@ def map_asset(media, game, key):
         or value.get("contentType") not in {"image/png", "image/jpeg", "image/webp"}
         or value.get("lineageWarning")
         or asset_metadata.internal(value.get("kind", ""))
-        or extra.get("relationshipRole") in {"processing", "intermediate", "internal"}
+        or (extra.get("relationshipRole") in {"processing", "intermediate", "internal"}
+            and not (storyboard and value.get("kind") == "shot-frame" and extra.get("relationshipRole") == "intermediate"))
     ):
         raise ValueError("Choose a finished PNG, JPEG or WebP map image")
     return value, guard(db, pointer, "observed", row["observed"])
@@ -239,7 +240,7 @@ def pin_episode(game, reference):
 def save(media, body, claims, kind):
     common = {"gameId", "id", "name", "description", "expectedRevision", "operationId"}
     allowed = common | (
-        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardDecision", "shotSelection"}
+        {"episodeId", "type", "selectedOutputKey", "mapAssetKey", "generationInputs", "narration", "storyboardShots", "storyboardProposalShots", "storyboardDecision", "shotSelection"}
         if kind == "scene"
         else {"sceneIds"}
     )
@@ -285,6 +286,8 @@ def save(media, body, claims, kind):
     if kind == "episode" and previous and "production" in previous:
         record["production"] = previous["production"]
     if kind == "scene":
+        if "storyboardProposalShots" in body and not authorized(claims, "MODEL_WORKERS"):
+            return media._response(403, {"error": "Only an owner can publish an AI storyboard proposal"})
         if "storyboardDecision" in body and not authorized(claims, "MODEL_WORKERS"):
             return media._response(403, {"error": "Only an owner can approve an AI storyboard"})
         episode_storyboards.apply(record, previous, body, actor=claims["sub"])
@@ -293,7 +296,7 @@ def save(media, body, claims, kind):
             record.update(planningState='ready', shotTakes={})
         for shot in (record.get("storyboard") or {}).get("shots", []):
             if shot["frameKey"]:
-                _, frame_guard = map_asset(media, game, shot["frameKey"])
+                _, frame_guard = map_asset(media, game, shot["frameKey"], storyboard=True)
                 if frame_guard not in guards:
                     guards.append(frame_guard)
         episode = slug(media, body["episodeId"])

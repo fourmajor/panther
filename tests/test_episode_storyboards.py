@@ -56,6 +56,32 @@ def test_noop_human_save_preserves_ai_authorship_but_real_edit_is_human():
     assert human["decision"] is None and human["revision"] != ai["revision"]
 
 
+def test_replacement_proposal_resets_approval_and_takes_without_human_authorship():
+    old = boards.create(shots(), "fictional-game", origin="ai", actor="fictional-job")
+    approved = boards.decide(old, {"revision":old["revision"], "action":"approved"}, "owner")
+    previous = {"storyboard":approved,"shotTakes":{"arrival":{"assetKey":"old-take"}}}
+    changed = shots()
+    changed[0]["frameKey"] = "games/fictional-game/assets/frame/original/frame.png"
+    record = {"gameId":"fictional-game"}
+    boards.apply(record, previous, {"storyboardProposalShots":changed}, actor="fictional-editor")
+    assert record["storyboard"]["origin"] == "ai"
+    assert record["storyboard"]["decision"] is None
+    assert record["planningState"] == "needs-approval"
+    assert record["shotTakes"] == {}
+    assert previous["storyboard"] == approved
+    with pytest.raises(ValueError, match="Approve"):
+        boards.require_ready(record)
+    no_op={"gameId":"fictional-game"}
+    boards.apply(no_op, previous, {"storyboardProposalShots":shots()}, actor="fictional-editor")
+    assert no_op["storyboard"] == approved
+
+
+@pytest.mark.parametrize("other", ["storyboardShots", "storyboardDecision"])
+def test_proposal_cannot_bundle_authorship_change_or_approval(other):
+    with pytest.raises(ValueError, match="separately"):
+        boards.apply({"gameId":"fictional-game"}, None, {"storyboardProposalShots":shots(),other:[]}, actor="editor")
+
+
 @pytest.mark.parametrize(
     "change", ["duplicate", "foreign-frame", "authorship", "duration", "oversized"]
 )

@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false,takeSeconds=8,rawCast=false}={}) {
+async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=true,long=false,failed=false,take=false,takeSeconds=8,rawCast=false,replacement=false}={}) {
   const writes=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   const chapter='c'.repeat(64),jobId='d'.repeat(64),frame='games/test-game/assets/frame/original/frame.png';
   let episode={schemaVersion:1,entityType:'Episode',gameId:'test-game',id:'pilot',name:'The crossing',description:'At the gates',revision:'a'.repeat(32),sceneIds:planning?[]:['arrival'],...(planning?{production:{state:'planning',jobId}}:{})};
@@ -13,6 +13,7 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   if(rawCast)scene.generationInputs={schemaVersion:1,characterIds:['fictional-hero'],sourceKeys:[],contextKeys:[]};
   if(multi){scene.storyboard.shots[0].durationSeconds=4;scene.storyboard.shots.push({shotId:'reaction',description:'The travelers react.',camera:'Close',durationSeconds:3,frameKey:null,narration:''});}
   if(long)scene.storyboard.shots[0].durationSeconds=18;
+  if(replacement){scene.storyboard.shots.push({...scene.storyboard.shots[0],shotId:'trap',description:'Three corks release.',frameKey:'games/test-game/assets/trap-frame/original/frame.png',durationSeconds:3});scene.storyboard.shots[0].description='Four travelers enter, weapons lowered.';}
   const takes=multi||long||take?scene.storyboard.shots.map((shot,i)=>({key:`games/test-game/assets/take-${i}/original/video.webm`,contentType:'video/webm',name:`Take ${i+1}`,lastModified:'2026-01-01T00:00:00Z',metadata:{title:`Take ${i+1}`,contentType:'video/webm',extra:{relationshipRole:'finished',sceneRef:{episodeId:'pilot',sceneId:'arrival',revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId},mediaProbe:{format:{duration:String(takeSeconds)}}}}})):[];
   await page.addInitScript(()=>sessionStorage.setItem('panther.tokens',JSON.stringify({id_token:'test.'+btoa(JSON.stringify({exp:Date.now()/1000+3600,'cognito:username':'example-editor'}))+'.test'})));
   await page.route(`${origin}/**`,route=>{
@@ -42,7 +43,7 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
         body={record:scene};
       }else body={records:published?[scene]:[],cursor:null};
     }
-    if(u.pathname==='/image-links')body={images:{[frame]:{url:'https://images.example/frame.svg'}}};
+    if(u.pathname==='/image-links')body={images:Object.fromEntries(scene.storyboard.shots.filter(shot=>shot.frameKey).map(shot=>[shot.frameKey,{url:'https://images.example/frame.svg'}]))};
     if(u.pathname==='/novel')body=u.searchParams.has('id')?{chapter:{id:chapter,gameId:'test-game',title:'The crossing',markdown:'The party crossed the river.',details:{}}}:{chapters:[{id:chapter,gameId:'test-game',title:'The crossing'}],cursor:null};
     if(['/novel-stories','/novel-books'].includes(u.pathname))body={records:[],cursor:null};
     if(u.pathname==='/novel-chapter')body={id:chapter,gameId:'test-game',title:'The crossing',markdown:'The party crossed the river.',sessionId:'fictional-session',createdAt:1700000000,details:{sourceKeys:[],review:{markdown:'',uncertainties:[]}} };
@@ -55,6 +56,21 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   });
   return {writes,errors,chapter,publish(){published=true;episode={...episode,sceneIds:['arrival'],production:{state:'planned',jobId}};}};
 }
+for(const width of [1280,390])test(`replacement AI storyboard displays native frames and retains approval at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});const state=await fixture(page,{replacement:true,local:false});
+ await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
+ const board=page.getByRole('region',{name:'Scene storyboard'});
+ await expect(board).toContainText('Four travelers enter, weapons lowered.');await expect(board).toContainText('Three corks release.');
+ await expect(board.locator('img')).toHaveCount(2);
+ for(const image of await board.locator('img').all())await expect.poll(()=>image.evaluate(node=>node.complete&&node.naturalWidth>0)).toBe(true);
+ await expect(board.getByRole('button',{name:'Approve',exact:true})).toBeVisible();
+ const generate=board.getByRole('button',{name:/Generate shot/});await expect(generate).toHaveCount(2);
+ for(const button of await generate.all())await expect(button).toBeDisabled();
+ await expect(page.locator('iframe')).toHaveCount(0);
+ await expect(board.getByRole('button',{name:'Open storyboard frame for shot 1'})).toBeVisible();
+ expect(state.writes).toEqual([]);expect(state.errors).toEqual([]);
+ await page.screenshot({path:`test-results/replacement-storyboard-${width}.png`,fullPage:true,animations:'disabled'});
+});
 for(const width of [1280,390])test(`published raw-session cast retains AI approval gate at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:1000});const {writes,errors}=await fixture(page,{rawCast:true});
  await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
