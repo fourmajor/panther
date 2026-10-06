@@ -854,7 +854,7 @@ def test_pre_submit_checks_fail_closed(setup, change):
     if change == "price":
         fal.rate = Decimal("9")
     elif change == "balance":
-        fal.balance = "6.49"  # Reservation is $1.50; floor is another $5.
+        fal.balance = "1.49"  # Reservation is $1.50; no additional balance floor.
     else:
         fal.account = "different-account"
     with pytest.raises(click.ClickException):
@@ -862,6 +862,16 @@ def test_pre_submit_checks_fail_closed(setup, change):
     assert not fal.posts
     with v.database() as db:
         assert v.totals(db)["reservationCents"] == 0
+
+
+@pytest.mark.parametrize("balance", ["1.50", "1.51"])
+def test_submit_uses_prepaid_balance_without_extra_floor(setup, balance):
+    fal = setup
+    plan = approved(fal)
+    fal.balance = balance
+    result = v.submit(plan, "scene-veo", 1, "", fal)
+    assert result["state"] == "SUBMITTED"
+    assert len(fal.posts) == 1
 
 
 @pytest.mark.parametrize("bad", ["NaN", "Infinity", "-1", "not-money", True])

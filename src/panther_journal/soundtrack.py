@@ -336,9 +336,9 @@ def submit(pid, fal):
         if (
             v.has_unresolved(db)
             or p["quote"]["reserveCents"] > b["availableCents"]
-            or v.number(billing["balanceUsd"]) * 100 < b["availableCents"] + 500
+            or v.number(billing["balanceUsd"]) * 100 < b["availableCents"]
         ):
-            v.fail("Unresolved request, insufficient project allowance or balance safety floor.")
+            v.fail("Unresolved request or insufficient project allowance or credit balance.")
         db.execute(
             "INSERT INTO soundtrack_attempts VALUES (?,?,?,?,?,?)",
             (

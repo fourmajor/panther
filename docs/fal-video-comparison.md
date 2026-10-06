@@ -207,8 +207,8 @@ Preparation pins the manifest, exact provider payloads, adapter version, quotes 
 verifies their content hash on use, and requires enough remaining budget
 for **all allowed attempts**. Approval is not inferred from a preflight report or stored API key.
 Submission checks current pricing and credit balance again. Price increases require a new reviewed
-plan; a different billing account fails. A request must leave at least a **$5 provider-balance safety
-floor** after its reservation. This may stop the comparison before using all $50, intentionally.
+plan; a different billing account fails. Credit balance must cover the conservative reservation;
+the provider-balance floor is **$0**, so unused prepaid credits are not locked away.
 
 SQLite reserves the full amount **before** sending the generation POST. The local attempt key is
 derived from plan/shot/attempt. Concurrent identical commands return the same reservation; repeated
@@ -257,7 +257,7 @@ release reservations or recover blocked requests. See [generation metadata](gene
 The ledger limits **Panther's conservative reservations**, not fal's billing system. Live base prices
 are not binding maximum quotes, pricing can change during a request, and dashboard/other-device
 usage bypasses this ledger. No local tool can promise a provider-enforced account-wide hard cap.
-The prepaid balance, disabled top-ups, $5 balance floor, 25% reservation headroom and serialized
+The prepaid balance, disabled top-ups, 25% reservation headroom and serialized
 requests are layered safeguards, not permission to conceal actual overspend. Stop if balance/cost
 behavior differs from expectations; reconcile with fal before resuming. No AWS resources are needed.
 

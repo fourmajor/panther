@@ -124,7 +124,7 @@ def test_provider_changes_fail_before_post(fal, change):
     if change == "account":
         fal.account = "different-account"
     if change == "balance":
-        fal.balance = "18.48"
+        fal.balance = "13.48"  # Held video funds alone cannot also cover narration.
     with pytest.raises(click.ClickException):
         n.submit(pid, fal)
     assert not fal.posts
