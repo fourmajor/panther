@@ -245,7 +245,9 @@ def reserved_for(db, project):
         plan, _ = read_plan(db, row["plan_id"])
         if plan["manifest"].get("projectId") == project:
             held += row["held"]
-    return held - rejection_credits(db, project)
+    from panther_journal import video_settlement
+    settlement = video_settlement.audit(db, project)
+    return held - rejection_credits(db, project) - (settlement['releasedHeadroomCents'] if settlement else 0)
 
 
 def rejection_credits(db, project):
@@ -317,6 +319,10 @@ def reconcile_rejection(attempt_id, fal, reason):
 def check_budget(db, plan, amount):
     project = plan["manifest"].get("projectId")
     assert_generation_open(db, project)
+    from panther_journal import video_settlement
+    settlement = video_settlement.audit(db, project)
+    if settlement and hashlib.sha256(canonical(plan).encode()).hexdigest() in settlement['closedPlanIds']:
+        fail('This prior plan is closed by audited settlement; prepare and approve a new replacement plan.')
     if project is None:
         if reserved_for(db, None) + amount > effective_limit(db):
             fail("Plan including all retries exceeds the remaining configured budget; it cannot cover this reservation.")
@@ -1293,6 +1299,20 @@ def budget_status():
                 indent=2,
             )
         )
+
+
+@budget.command('settle-project')
+@click.argument('project')
+@click.option('--video-allowance', required=True)
+@click.option('--reason', required=True)
+@click.option('--owner-approved', is_flag=True, required=True)
+def settle_project(project, video_allowance, reason, owner_approved):
+    """Settle completed project bills and reallocate within its unchanged cap."""
+    from panther_journal import video_settlement
+    if not owner_approved:
+        fail('Explicit replacement approval required.')
+    result = video_settlement.settle(project, cents(video_allowance), reason, Fal())
+    click.echo(json.dumps({k: result[k] for k in ('projectId', 'historicalBilledCents', 'releasedHeadroomCents', 'videoAllowanceCents', 'settledAt')}, indent=2))
 
 
 @budget.command("extend")

@@ -276,6 +276,19 @@ the local regression suite; CI is not needed for this CLI-only change. Real veri
 check` only. No production key, prompt, game data or generated video is committed to Git.
 # Separately approved production allocations
 
+For an explicitly approved replacement, `panther video budget settle-project PROJECT
+--video-allowance USD --reason 'Owner replacement approval' --owner-approved` can
+settle every completed prior video request against exact same-account billing.
+The original project ceiling, allocation, plans, attempts and reservations remain
+immutable. A separate audit replaces unused headroom with rounded-up billed cents,
+closes all prior video plans to new attempts, and reallocates unused narration
+allowance within the original total. Existing narration reservations stay protected.
+Missing/foreign/ambiguous bills, outstanding requests, changed history and charges
+above the original reservation fail closed. Identical calls are idempotent; there
+is no reset, refund, comparison-budget credit, cap increase or automatic retry.
+New video plans still require exact owner approval. Keep all writers current;
+older CLI versions do not understand this audit and must not be used afterward.
+
 ## Exact production durations (manifest version 2)
 
 Version-1 comparisons remain fixed at eight seconds, including their immutable

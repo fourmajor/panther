@@ -50,6 +50,10 @@ def budget_status(db, project):
     held = db.execute(
         "SELECT COALESCE(SUM(reserved_cents),0) FROM narration_attempts WHERE project=?", (project,)
     ).fetchone()[0]
+    from panther_journal import video_settlement
+    settlement = video_settlement.audit(db, project)
+    if settlement:
+        b = {**b, 'otherHeldCents': settlement['videoAllowanceCents']}
     return {
         **b,
         "narrationReservedCents": held,
