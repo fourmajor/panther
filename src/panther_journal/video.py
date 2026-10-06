@@ -894,10 +894,10 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         fail("Pricing increased. Prepare and approve a new plan before spending.")
     if (
         billing["account"] != plan["billingAccount"]
-        or number(billing["balanceUsd"]) * 100 < reserve + 500
+        or number(billing["balanceUsd"]) * 100 < reserve
     ):
         fail(
-            "Billing account changed or credit balance cannot cover this reservation plus the $5 safety floor."
+            "Billing account changed or credit balance cannot cover this reservation."
         )
     attempt_id = hashlib.sha256(f"{plan_id}:{shot_id}:{ordinal}".encode()).hexdigest()
     endpoint = PROFILES[shot["model"]]["endpoint"]

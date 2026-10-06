@@ -90,8 +90,8 @@ explicitly approved allocations; do not create project aliases to evade an exhau
 
 fal's live price must be USD per 1,000 characters. Use the greater of its price and $0.10,
 conservatively count UTF-8 bytes, add 25% headroom, round upward to cents and reserve before POST.
-Submission refreshes price/account/balance and protects the other-media hold plus a $5 balance
-floor. This is a local conservative guard, not a binding provider quote or an account-wide cap.
+Submission refreshes price/account/balance and protects the other-media hold. The provider-balance
+floor is $0. This is a local conservative guard, not a binding provider quote or an account-wide cap.
 Keys remain in the OS credential store. Only the read-only billing client receives the admin key.
 Never buy credits, enable top-ups, run another writer from a copied ledger, or log secrets.
 

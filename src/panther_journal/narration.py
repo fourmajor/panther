@@ -302,8 +302,8 @@ def submit(pid, fal):
             v.fail("An outstanding video or narration request must be resolved first.")
         if reserve > b["availableNarrationCents"] or billing["account"] != b["billingAccount"]:
             v.fail("Project narration allowance exceeded or account changed.")
-        if v.number(billing["balanceUsd"]) * 100 < b["otherHeldCents"] + reserve + 500:
-            v.fail("Balance must protect other-media allowance plus the $5 safety floor.")
+        if v.number(billing["balanceUsd"]) * 100 < b["otherHeldCents"] + reserve:
+            v.fail("Balance must cover the reservation and protect the other-media allowance.")
         db.execute(
             "INSERT INTO narration_attempts VALUES (?,?,?,?,?,?,0)",
             (
