@@ -273,10 +273,17 @@ def handle(event, media):
     import browse_index
 
     try:
+        import asset_browser
+        if query.get('keys'):
+            records = browse_index.records(game, json.loads(query['keys']))
+            return media._response(200, {'assets': [asset_browser.card(record) for record in records] if query.get('view') == 'cards' else records, 'cursor': None})
+        if query.get('relatedKey'):
+            return media._response(200, browse_index.connections(game, query['relatedKey']))
+        selection = asset_browser.options(query) if any(field in query for field in ('characterId', 'mediaType', 'view', 'limit')) else None
         return media._response(
-            200, browse_index.page(game, query.get("section", "all"), query.get("cursor"))
+            200, browse_index.page(game, query.get("section", "all"), query.get("cursor"), **({'selection': selection} if selection else {}))
         )
     except ValueError as error:
         return media._response(400, {"error": str(error)})
-    except browse_index.IndexNotReady as error:
+    except (browse_index.IndexNotReady, RuntimeError) as error:
         return media._response(503, {"error": str(error)})

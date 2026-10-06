@@ -11,9 +11,10 @@ const sections = [
 ];
 const plainClick = event => !(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 
-export function DashboardCards({gameId,data,onNavigate,onPreview,request,onRendered}) {
+export function DashboardCards({gameId,data,onNavigate,onPreview,request,onThumbnail,onRendered}) {
   useEffect(()=>{onRendered?.();},[gameId,data,onRendered]);
   async function thumbnail(asset) {
+    if(onThumbnail)return onThumbnail(asset);
     if(asset.contentType?.startsWith('image/'))return (await request('/image-links',{}, {body:{gameId,keys:[asset.key]}})).images?.[asset.key]?.url||'';
     if(asset.contentType?.startsWith('video/')&&asset.thumbnailKey?.startsWith(`games/${gameId}/`))return (await request('/object-url',{key:asset.thumbnailKey})).url||'';
     return '';

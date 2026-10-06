@@ -13,7 +13,7 @@ function Output({assetKey,scope,gameId,onLoadOutput,onPreview,compact=false,labe
  const query=useQuery({queryKey:['workflow-output',scope,gameId,assetKey],enabled:!!assetKey&&!!onLoadOutput,queryFn:({signal})=>onLoadOutput(assetKey,{signal}),staleTime:60000,retry:false});
  const result=query.data,Icon=result?.kind==='audio'?Volume2:result?.kind==='video'?Film:File;
  const media=result?.kind==='image'||result?.thumbnail?result.url:null;
- const content=<>{media?<img src={media} alt={compact?'':label} loading="lazy"/>:result?.kind==='video'&&result.url?<video src={result.url} preload="metadata" muted aria-hidden="true"/>:<Icon size={compact?22:36}/>}</>;
+ const content=<>{media?<img src={media} alt={compact?'':label} loading="lazy"/>:<Icon size={compact?22:36}/>}</>;
  if(compact)return <span className="workflow-run-thumbnail" aria-hidden="true">{content}</span>;
  return <Button variant="outline" className="workflow-output" aria-label={`Preview ${label}`} onClick={()=>onPreview(assetKey)}><span className="workflow-output-media">{content}<ZoomIn size={18} className="workflow-output-zoom"/></span><span className="workflow-output-label">{label}</span></Button>;
 }

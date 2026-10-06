@@ -34,9 +34,12 @@ Standard lossless recording chunks and listening derivatives stay in the complet
 catalog and recording reader, not as separate Sessions cards. Matching transcript Markdown exports
 are suppressed using a bounded indexed lookup, including across page boundaries.
 
-Opening a media file still obtains a short-lived authenticated URL. Full relationship graphs and
-novel reference enrichment can page through the complete **metadata index**, not source S3 files;
-their existing 5,000-entry limit remains explicit. That graph work is not needed to list Videos.
+Opening a media file still obtains a short-lived authenticated URL. Lists request `view=cards&limit=24` and never drain cursors automatically. Optional `characterId`
+and `mediaType` filters apply to each bounded catalog page; a sparse page can still offer More.
+Cursors bind the filters and page size. Card responses exclude full generation requests and lineage.
+`keys` reads at most 60 exact same-game metadata records. `relatedKey` returns only the connected
+lineage component, with a 2 MiB response ceiling. Reverse-link discovery still reads the server's
+bounded metadata index (5,000 records maximum); it does not transfer that inventory to the browser. That graph work is not needed to list Videos.
 There is no claim that arbitrary-size relationship graphs are constant-time or that cold starts
 and network latency disappear. The file-tree browser is a separate physical-folder view.
 
@@ -150,3 +153,18 @@ expected review revision and an idempotent operation identity. A transaction che
 source chapter record/output and retains each prior review with the exact chapter reference.
 This metadata Lambda cannot change manuscripts or jobs, dispatch generation, or access S3.
 The novel reader's existing read-only permissions remain unchanged.
+
+## Video covers
+
+List cards never mount a video element or sign/download a video to find a frame. They use an
+explicit same-game `thumbnailKey` or `extra.preview.imageKey`, otherwise a format placeholder.
+Image signing is viewport-triggered, batched (at most 60 keys) and cached below the signing TTL.
+Opening a video explicitly still obtains its playback URL. Missing covers do not poll indefinitely.
+
+Prepare covers outside browsing with `panther assets video-covers --all-games --work-dir PRIVATE_DIR`.
+This audits without downloading or writing. Add `--apply` to extract a nonblank frame from the
+first ten seconds with local FFmpeg, upload an immutable `video-thumbnail`, and link the exact
+source through a version-guarded metadata migration. Source bytes and prior metadata stay intact.
+Private receipts and migration records make the operation resumable; ambiguous uploads stop for
+inspection rather than overwriting. Run this after publishing new videos and for every existing game.
+No new index version is needed: these are read-time projections over existing metadata fields.

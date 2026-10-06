@@ -597,6 +597,10 @@ only for a new collection). Retain the operation identity and arguments for exac
 collection never reclassifies its members, establishes canon or changes source provenance.
 Novel annotations can reference an existing same-game collection with a typed
 `{"type":"collection","id":"favorites"}` target; never insert an arbitrary URL into prose.
+Video covers can be prepared with `panther assets video-covers --game GAME --work-dir PRIVATE_DIR`
+(or `--all-games`). The default audits only; `--apply` uses local FFmpeg, an immutable upload and a
+version-guarded metadata migration. Run after publishing videos. Never extract frames in a page view
+or use full video files as list thumbnails. Missing covers remain honest format placeholders.
 Video cards use existing descriptions/tags/category/character IDs and optional selected
 `extra.preview.imageKey`. Never choose a poster from filename similarity or invent creator identity.
 Publish separate captions as `video-captions` WebVTT exports under the same asset identity as the

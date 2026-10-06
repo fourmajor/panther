@@ -552,3 +552,16 @@ def image_worker(work_dir, once, resume_job):
     from panther_journal.asset_generation import run_worker
 
     run_worker(work_dir, once, resume_job)
+
+
+@assets.command('video-covers')
+@click.option('--game')
+@click.option('--all-games', is_flag=True)
+@click.option('--work-dir', required=True, type=click.Path(path_type=Path))
+@click.option('--apply', is_flag=True)
+def video_covers(game, all_games, work_dir, apply):
+    """Audit/backfill real video covers with local FFmpeg and Panther authentication."""
+    if bool(game) == bool(all_games):
+        raise click.ClickException('Choose --game or --all-games')
+    from panther_journal.video_thumbnails import command
+    command(game, all_games, work_dir, apply)

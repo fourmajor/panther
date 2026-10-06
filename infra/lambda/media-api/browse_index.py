@@ -146,7 +146,7 @@ def refresh_for_maintenance(media, reference, *, write):
             time.sleep(random.uniform(0.05, 0.15) * (2 ** attempt))
 
 
-def page(game, section, cursor=None):
+def page(game, section, cursor=None, *, selection=None):
     if section not in (*SECTIONS, "sessions"):
         raise ValueError("Invalid asset section")
     if (
@@ -158,17 +158,20 @@ def page(game, section, cursor=None):
             "The catalog upgrade is being prepared. No assets have been removed; please retry shortly."
         )
     pk = partition(game, "all" if section == "sessions" else section)
-    args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": 100, "ConsistentRead": True}
+    args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": selection['limit'] if selection else 100, "ConsistentRead": True}
     if cursor:
         try:
             key = json.loads(base64.urlsafe_b64decode(cursor))
             expected = {"pk", "sk", "section"} if section == "sessions" else {"pk", "sk"}
+            if selection:
+                expected.add('selection')
             if (
                 set(key) != expected
                 or key["pk"] != pk
                 or not isinstance(key["sk"], str)
                 or section == "sessions"
                 and key["section"] != section
+                or selection and key.get('selection') != selection
             ):
                 raise ValueError()
             args["ExclusiveStartKey"] = {field: key[field] for field in ("pk", "sk")}
@@ -212,6 +215,11 @@ def page(game, section, cursor=None):
     from tag_management import project
     events = user_metadata.tag_events(game)
     assets = [project(asset, events) for asset in assets] if events else assets
+    if selection:
+        import asset_browser
+        assets = asset_browser.project(assets, selection)
+        if next_key:
+            next_key = {**next_key, 'selection': selection}
     return {
         "assets": assets,
         "cursor": base64.urlsafe_b64encode(json.dumps(next_key).encode()).decode()
@@ -219,6 +227,45 @@ def page(game, section, cursor=None):
         else None,
         "catalogVersion": VERSION,
     }
+
+
+def records(game, keys):
+    import asset_browser
+    import asset_archive
+    keys = asset_browser.valid_keys(game, keys)
+    db = table()
+    if not db.get_item(Key={'pk': f'v{VERSION}#catalog', 'sk': 'ready'}, ConsistentRead=True).get('Item'):
+        raise IndexNotReady('Asset catalog unavailable')
+    requested = {db.name: {'Keys': [{'pk': partition(game, 'all'), 'sk': key} for key in keys], 'ConsistentRead': True}}
+    result = db.meta.client.batch_get_item(RequestItems=requested)
+    if result.get('UnprocessedKeys'):
+        raise IndexNotReady('Asset metadata temporarily unavailable; try again')
+    archived = asset_archive.archived_keys(game, keys)
+    import user_metadata
+    from tag_management import project
+    events = user_metadata.tag_events(game)
+    assets = [json.loads(item['payload']) for item in result.get('Responses', {}).get(db.name, []) if item['sk'] not in archived]
+    return [project(asset, events) for asset in assets] if events else assets
+
+
+def connections(game, key):
+    import asset_browser
+    from dashboard_recent import bounded_query, MAX_ASSETS
+    import asset_archive
+    asset_browser.valid_keys(game, [key])
+    db = table()
+    if not db.get_item(Key={'pk': f'v{VERSION}#catalog', 'sk': 'ready'}, ConsistentRead=True).get('Item'):
+        raise IndexNotReady('Asset catalog unavailable')
+    rows = bounded_query(db, {'KeyConditionExpression': Key('pk').eq(partition(game, 'all')),
+                            'ConsistentRead': True, 'Limit': 100, 'ProjectionExpression': 'sk, payload'}, MAX_ASSETS)
+    archived = set()
+    for offset in range(0, len(rows), 100):
+        archived.update(asset_archive.archived_keys(game, [row['sk'] for row in rows[offset:offset + 100]]))
+    assets = [json.loads(row['payload']) for row in rows if row['sk'] not in archived]
+    import user_metadata
+    from tag_management import project
+    events = user_metadata.tag_events(game)
+    return asset_browser.related([project(asset, events) for asset in assets] if events else assets, key)
 
 
 def event_handler(event, _context):

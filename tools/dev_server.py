@@ -524,6 +524,86 @@ class Store:
         events = sorted(self.list('tag-change', game), key=lambda event: event['at'])
         return [project(asset, events) for asset in assets] if events else assets
 
+    def chapter_page(self, game, query):
+        import asset_browser
+        keys = asset_browser.valid_keys(game, json.loads(query['keys'])) if 'keys' in query else None
+        after = ''
+        if query.get('cursor'):
+            try:
+                cursor = json.loads(base64.urlsafe_b64decode(query['cursor']))
+                if cursor['gameId'] != game or not isinstance(cursor['id'], str):
+                    raise ValueError()
+                after = cursor['id']
+            except (ValueError, KeyError, TypeError):
+                raise ValueError('Invalid chapter cursor') from None
+        with self.connect() as db:
+            if keys:
+                rows = db.execute("SELECT id,payload FROM records WHERE kind='chapter' AND game=? AND json_extract(payload,'$.assetKey') IN (" + ','.join('?' for _ in keys) + ')', (game, *keys)).fetchall()
+            else:
+                rows = db.execute("SELECT id,payload FROM records WHERE kind='chapter' AND game=? AND id>? ORDER BY id LIMIT 25", (game, after)).fetchall()
+        more = not keys and len(rows) > 24
+        records = [json.loads(raw) for _, raw in (rows[:24] if not keys else rows)]
+        fields = ('id', 'gameId', 'sessionId', 'title', 'createdAt', 'publishedAt', 'publicationStatus', 'reviewStatus', 'assetKey', 'authorship', 'notice')
+        return {'chapters': [{field: record[field] for field in fields if field in record} for record in records],
+                'cursor': base64.urlsafe_b64encode(json.dumps({'gameId': game, 'id': rows[23][0]}).encode()).decode() if more else None}
+
+    def asset_records(self, game, keys):
+        import asset_browser
+        from tag_management import project
+        keys = asset_browser.valid_keys(game, keys)
+        with self.connect() as db:
+            rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? AND key IN (" + ','.join('?' for _ in keys) + ") AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (game, *keys)).fetchall()
+        assets = []
+        for key, raw, size, created in rows:
+            metadata = json.loads(raw)
+            assets.append({'key': key, 'name': key.rsplit('/', 1)[-1], 'metadata': metadata,
+                           'kind': metadata.get('kind', 'other'), 'contentType': metadata.get('contentType', 'application/octet-stream'),
+                           'sourceKeys': metadata.get('sourceKeys', []), 'size': size, 'lastModified': created})
+        events = sorted(self.list('tag-change', game), key=lambda event: event['at'])
+        return [project(asset, events) for asset in assets] if events else assets
+
+    def asset_page(self, game, query):
+        import asset_browser
+        selected = asset_browser.options(query)
+        section = query.get('section', 'all')
+        scope = {'gameId': game, 'section': section, **selected}
+        after = ''
+        if query.get('cursor'):
+            try:
+                token = json.loads(base64.urlsafe_b64decode(query['cursor']))
+                if token['scope'] != scope or not isinstance(token['key'], str):
+                    raise ValueError()
+                after = token['key']
+            except (ValueError, KeyError, TypeError):
+                raise ValueError('Invalid or foreign asset cursor') from None
+        conditions = ["game=?", "key>?", "NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)"]
+        params = [game, after]
+        mime = selected['mediaType'] or {'videos': 'video', 'audio': 'audio'}.get(section)
+        if mime:
+            conditions.append("json_extract(metadata,'$.contentType') LIKE ?")
+            params.append(mime + '/%')
+        if selected['characterId']:
+            conditions.append("EXISTS (SELECT 1 FROM json_each(objects.metadata,'$.characterIds') WHERE value=?)")
+            params.append(selected['characterId'])
+        with self.connect() as db:
+            rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE " + ' AND '.join(conditions) + " ORDER BY key LIMIT ?", (*params, selected['limit'] + 1)).fetchall()
+            assets = []
+            for key, raw, size, created in rows[:selected['limit']]:
+                metadata = json.loads(raw)
+                asset = {'key': key, 'name': key.rsplit('/', 1)[-1], 'metadata': metadata, 'contentType': metadata.get('contentType', 'application/octet-stream'), 'kind': metadata.get('kind', 'other'), 'size': size, 'lastModified': created}
+                thumbnail = db.execute("SELECT payload FROM records WHERE kind='video-thumbnail' AND id=? AND game=?", (key, game)).fetchone()
+                if thumbnail:
+                    record = json.loads(thumbnail[0])
+                    asset['thumbnailStatus'] = record['status']
+                    if record['status'] == 'READY':
+                        asset['thumbnailKey'] = record['thumbnailKey']
+                assets.append(asset)
+        cursor = base64.urlsafe_b64encode(json.dumps({'scope': scope, 'key': assets[-1]['key']}).encode()).decode() if len(rows) > selected['limit'] else None
+        from tag_management import project
+        events = sorted(self.list('tag-change', game), key=lambda event: event['at'])
+        assets = [project(asset, events) for asset in assets] if events else assets
+        return {'assets': asset_browser.project(assets, selected), 'cursor': cursor}
+
     def episode_thumbnails(self, game, episodes):
         """Poster discovery does not select a take or change playback readiness."""
         with self.connect() as db:
@@ -1383,9 +1463,19 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/character-versions":
                 result = {"schemaVersion": 2, "appearances": [], "selections": [], "activations": [], "current": None, "activationRevision": None}
             elif path == "/assets":
-                assets = store.objects(game)
-                section = q.get("section", "all")
-                result = {"assets": local_assets(assets, section), "cursor": None}
+                if q.get('keys'):
+                    import asset_browser
+                    assets = store.asset_records(game, json.loads(q['keys']))
+                    result = {'assets': [asset_browser.card(asset) for asset in assets] if q.get('view') == 'cards' else assets, 'cursor': None}
+                elif q.get('relatedKey'):
+                    import asset_browser
+                    asset_browser.valid_keys(game, [q['relatedKey']])
+                    result = asset_browser.related(store.objects(game), q['relatedKey'])
+                elif any(field in q for field in ('view', 'characterId', 'mediaType', 'limit')):
+                    result = store.asset_page(game, q)
+                else:
+                    assets = store.objects(game)
+                    result = {"assets": local_assets(assets, q.get('section', 'all')), "cursor": None}
             elif path == "/objects":
                 prefix = q["prefix"]
                 game = prefix.split("/")[1]
@@ -1427,7 +1517,7 @@ class Handler(BaseHTTPRequestHandler):
                 jobs = [item for item in store.list("transcription", game) if item.get("recordingId") == q.get("recordingId") and item.get("mode") == q.get("mode", "live")]
                 result = {"jobs": jobs, "transcriptKey": next((item.get("transcriptKey") for item in jobs if item.get("status") == "DONE"), None), **({"playback": job} if job else {})}
             elif path == "/novel":
-                result = {"chapters": store.list("chapter", game), "cursor": None}
+                result = store.chapter_page(game, q)
             elif path == "/tags":
                 result = store.tags(game)
             elif path == "/novel-review":

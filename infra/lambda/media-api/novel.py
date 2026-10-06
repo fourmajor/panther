@@ -1,6 +1,7 @@
 """Read-only, game-scoped projection of completed novel stages; never modifies artifacts."""
 
 import re
+import json
 from datetime import datetime
 import time
 
@@ -140,7 +141,7 @@ def handler(event, _context):
             )
         if event.get("routeKey") != "GET /novel":
             return jobs.response(404, {"error": "Unknown operation"})
-        page = browse_index.page(game, "novels", q.get("cursor"))
+        page = {"assets": browse_index.records(game, json.loads(q["keys"])), "cursor": None} if "keys" in q else browse_index.page(game, "novels", q.get("cursor"))
         summaries = [
             a["novel"] for a in page["assets"] if a.get("novel", {}).get("state") == "available"
         ]
