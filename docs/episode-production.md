@@ -78,7 +78,18 @@ Only an authenticated owner can approve an AI revision. Human-authored storyboar
 require no approval. A no-op save preserves AI authorship and its pending decision.
 A real human edit creates a new human-authored revision in the same Scene history.
 The request body cannot declare its own authorship or copy another revision's
-approval. AI approval never authorizes an unseen script revision, automatic paid
+approval. The owner-only `storyboardProposalShots` operation explicitly publishes
+AI-authored replacements instead of passing them through the human-edit path.
+Use `panther videos propose-storyboard PRIVATE_JSON` with the guarded scene envelope
+(`gameId`, `episodeId`, `id`, `name`, optional `description`, exact `expectedRevision`,
+retained `operationId`, and normalized `storyboardProposalShots`). Each shot keeps
+its stable ID, direction, camera, duration, narration and immutable `frameKey`.
+An identical proposal is a no-op; changed proposals clear the current decision and
+take selections while preserving immutable scene history and original media.
+Prepared `shot-frame` intermediates are accepted only as storyboard frames, not maps
+or finished footage. The UI uses the existing native shot cards and review controls;
+a PDF export is not the storyboard's storage or approval surface.
+AI approval never authorizes an unseen script revision, automatic paid
 retry, provider fallback or additional budget.
 
 Planning does not fabricate footage, speech or an assembled master. Existing

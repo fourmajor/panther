@@ -1,5 +1,13 @@
 # Panther agent instructions
 
+Publish AI-authored replacement scene storyboards with `panther videos
+propose-storyboard PRIVATE_JSON`, not the human `storyboardShots` edit path.
+Use the exact scene revision and retain the operation ID for identical retries.
+New frames and directions belong in the owned scene's native storyboard view;
+PDFs are optional exports only. Changed proposals require a new exact owner
+approval and preserve scene/asset history. This operation never generates video.
+See `docs/episode-production.md` for the guarded envelope.
+
 Inspect reported processing with `panther workflows list --game GAME`, or the
 web app’s Workflows section. See `docs/workflow-workshop.md` for repeatable
 historical indexing and imports of genuine local checkpoints. Status reporting

@@ -1,6 +1,7 @@
 """Read-only access to historical TV organization through Panther sign-in."""
 
 import json
+from pathlib import Path
 
 import click
 
@@ -34,3 +35,21 @@ def listing(kind):
 def register(group):
     for command in [listing("series"), listing("legacy-episodes"), listing("episodes")]:
         group.add_command(command)
+    group.add_command(propose_storyboard)
+
+
+@click.command("propose-storyboard")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def propose_storyboard(file):
+    """Publish a guarded scene-owned AI proposal; never approve it or generate video."""
+    try:
+        if file.stat().st_size > 64 * 1024:
+            raise ValueError("Proposal is too large")
+        body = json.loads(file.read_text("utf-8"))
+        required = {"gameId", "episodeId", "id", "name", "expectedRevision", "operationId", "storyboardProposalShots"}
+        if not isinstance(body, dict) or not required <= set(body) <= required | {"description"}:
+            raise ValueError("Use a guarded scene envelope with storyboardProposalShots")
+    except (ValueError, OSError) as error:
+        raise click.ClickException(str(error)) from error
+    result = cloud.api(cloud.configuration(), "POST", "/scenes", json=body)
+    click.echo(json.dumps(result, indent=2))

@@ -113,6 +113,8 @@ def state(board):
 
 def apply(record, previous, body, *, actor):
     """Preserve production facts across unrelated scene edits and take selections."""
+    if "storyboardProposalShots" in body and ("storyboardShots" in body or "storyboardDecision" in body):
+        raise ValueError("Publish an AI proposal separately from edits or approval")
     for field in ("storyboard", "narration", "productionSource", "shotTakes"):
         if field in (previous or {}):
             record[field] = copy.deepcopy(previous[field])
@@ -124,6 +126,11 @@ def apply(record, previous, body, *, actor):
         record["storyboard"] = human_edit(
             body["storyboardShots"], record["gameId"], record.get("storyboard"), actor
         )
+    if "storyboardProposalShots" in body:
+        proposed = normalize(body["storyboardProposalShots"], record["gameId"])
+        board = record.get("storyboard")
+        if not board or board["origin"] != "ai" or board["shots"] != proposed:
+            record["storyboard"] = create(proposed, record["gameId"], origin="ai", actor=actor)
     if "storyboardDecision" in body:
         if "storyboardShots" in body:
             raise ValueError("Save the storyboard before reviewing its exact revision")
