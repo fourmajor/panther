@@ -220,6 +220,7 @@ async function previewFixture(page) {
     overview:'A patient navigator who charts the harbor and keeps careful records.',thumbnailAssetKey:portrait}}}}));
   await page.route(`${api}/object-url*`,route=>route.fulfill({headers,json:{key:new URL(route.request().url()).searchParams.get('key'),
     url:'https://images.example/portrait.png',size:png.length,contentType:'image/png',expiresIn:300}}));
+  // An unrelated chart row must not become a chapter summary during exact-key lookup.
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[{key:chart,name:'map.png',kind:'map',contentType:'image/png',size:png.length,
     metadata:{title:'Harbor chart',characterIds:['mira'],extra:{preview:{schemaVersion:1,summary:'A chart of the harbor, its shoals and marked approaches.'}}},sourceKeys:[]}],cursor:null}}));
   await page.route(`${api}/novel-chapter*`,route=>{

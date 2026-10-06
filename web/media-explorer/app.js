@@ -2905,7 +2905,7 @@ async function assetPage(gameId, parameters={}) {
 async function assetRecords(gameId, keys) {
   const unique=[...new Set(keys.filter(key=>typeof key==='string'&&key.startsWith(`games/${gameId}/assets/`)))];
   const records=[];
-  for(let offset=0;offset<unique.length;offset+=60){const page=await api('/assets',{gameId,keys:JSON.stringify(unique.slice(offset,offset+60))});records.push(...page.assets);}
+  for(let offset=0;offset<unique.length;offset+=60){const requested=unique.slice(offset,offset+60),page=await api('/assets',{gameId,keys:JSON.stringify(requested)});if(!Array.isArray(page.assets))throw new Error('Asset metadata unavailable');records.push(...page.assets.filter(asset=>requested.includes(asset.key)));}
   return records;
 }
 async function relatedAssets(gameId,key) {
