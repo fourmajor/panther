@@ -445,7 +445,7 @@ async function api(path, parameters = {}, options = {}) {
   const sensitive = /(?:notifications|live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
-    staleTime: path === '/object-url' ? 240_000 : sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
+    staleTime: path === '/object-url' && parameters.download !== 'true' ? 240_000 : sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
 }
 
 // Only images enter the thumbnail path. Batch signing also shares URLs between views.
@@ -1650,7 +1650,7 @@ async function loadCharacterAssets(gameId, characterId, epoch, cursor=null) {
       const image=mime.startsWith('image/')||/\.(png|jpe?g|webp|gif|avif|svg)$/i.test(filename),video=mime.startsWith('video/')||/\.(mp4|webm|mov)$/i.test(filename);
       const indicator=document.createElement('span');indicator.className='character-reference-format';indicator.textContent=video?(asset.metadata?.extra?.episodeRef?'Episode':'Video'):image?'Image':mime.startsWith('audio/')?'Audio':mime.startsWith('text/')?'Text':/\.pdf$/i.test(filename)?'PDF':'3D';frame.append(indicator);
       if(video){const play=document.createElement('span');play.className='character-video-play';play.setAttribute('aria-hidden','true');play.textContent='▶';frame.append(play);const seconds=Number(asset.metadata?.extra?.mediaProbe?.format?.duration??asset.metadata?.extra?.mediaProbe?.duration??asset.durationSeconds);if(Number.isFinite(seconds)&&seconds>0){const duration=document.createElement('span');duration.className='character-video-duration';duration.textContent=`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;frame.append(duration);}}
-      if(image||video&&(asset.thumbnailKey||asset.metadata?.extra?.preview?.imageKey)){const media=document.createElement('img');media.alt='';media.loading='lazy';media.hidden=true;frame.prepend(media);previews.push({asset,media,indicator});}
+      if(image||video&&(asset.thumbnailKey||asset.metadata?.extra?.preview?.imageKey)){const media=document.createElement('img');media.alt='';media.hidden=true;frame.prepend(media);previews.push({asset,media,indicator});}
       li.append(link);list.append(li);
     }
     // Signing and downloading start only as an image enters the viewport.
@@ -2856,7 +2856,7 @@ async function loadNovel(chapterId, epoch, previous={}) {
       .filter(m=>m?.target?.type==="collection" && (!m.target.gameId || m.target.gameId===gameId) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(m.target.id)).map(m=>m.target.id))];
     const collectionReferences=(async()=>{const records=[];for(let offset=0;offset<collectionIds.length;offset+=8){if(!current())return records;const batch=await Promise.all(collectionIds.slice(offset,offset+8).map(id=>api("/video-collections",{gameId,id,metadataOnly:"true"}).then(r=>r.collection).catch(()=>null)));records.push(...batch.filter(Boolean));}return records;})();
     const mentionedAssets=(chapter.readerReferences?.schemaVersion===1&&chapter.readerReferences.mentions?.length<=200?chapter.readerReferences.mentions:[]).filter(mention=>mention?.target?.type==='asset'&&(!mention.target.gameId||mention.target.gameId===gameId)).map(mention=>mention.target.key);
-    void Promise.all([relatedAssets(gameId,chapter.details?.artifact?.key),assetRecords(gameId,mentionedAssets),collectionReferences]).then(([connected,mentioned,collections]) => {
+    void Promise.all([relatedAssets(gameId,chapter.details?.artifact?.key||chapter.assetKey),assetRecords(gameId,mentionedAssets),collectionReferences]).then(([connected,mentioned,collections]) => {
       const assets=[...new Map([...connected,...mentioned].map(asset=>[asset.key,asset])).values()];
       if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters,collections));
     }).catch(() => {
