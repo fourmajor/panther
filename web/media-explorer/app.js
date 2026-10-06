@@ -2287,12 +2287,6 @@ async function novelOrganization(gameId, current, previous={}) {
     if(!Array.isArray(page.records))throw new Error('The book library could not be read');
     result[type]=page.records;result[type+'Cursor']=page.cursor;
   }
-  // Resolve explicit parents, rather than draining unrelated library pages.
-  for(const id of new Set(result.books.map(book=>book.storyId))) {
-    if(result.stories.some(story=>story.id===id))continue;
-    const page=await api('/novel-stories',{gameId,id});if(!current())return null;
-    if(page.record)result.stories.push(page.record);
-  }
   return result;
 }
 
@@ -2307,7 +2301,7 @@ function bookCard(book, story, byKey, current) {
   const content = document.createElement("div");
   const heading = document.createElement("h2"); heading.append(bookLink(book.title,book));
   const meta = document.createElement("p"); meta.className = "eyebrow";
-  meta.textContent = `${story?.title || "Story unavailable"} · ${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
+  meta.textContent = `${story?.title ? story.title + " · " : ""}${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
   const synopsis = document.createElement("p"); synopsis.textContent = book.synopsis || "No synopsis provided.";
   const details = document.createElement("p"); details.textContent = [...(book.tags || []),book.authorCredit,
     `${book.volumes.length} volume${book.volumes.length === 1 ? "" : "s"}`,`Revision ${book.revision.slice(0,8)}`].filter(Boolean).join(" · ");
@@ -2778,6 +2772,7 @@ async function loadNovel(chapterId, epoch, previous={}) {
       if(!current())return;
       if(!selectedBook || selectedBook.id!==bookId || selectedBook.gameId!==gameId || selectedBook.revision!==bookRevision)throw new Error("Book revision unavailable");}
     if(selectedBook){
+      if(!organization.stories.some(story=>story.id===selectedBook.storyId)){const parent=await api('/novel-stories',{gameId,id:selectedBook.storyId});if(!current())return;if(parent.record)organization.stories.push(parent.record);}
       const keys=selectedBook.volumes.flatMap(volume=>volume.chapterKeys).filter(key=>!byKey.has(key));
       for(let offset=0;offset<keys.length;offset+=60){const pinned=await api('/novel',{gameId,keys:JSON.stringify(keys.slice(offset,offset+60))});if(!current())return;for(const chapter of pinned.chapters){byKey.set(chapter.assetKey,chapter);chapters.push(chapter);}}
     }
@@ -2806,7 +2801,7 @@ async function loadNovel(chapterId, epoch, previous={}) {
       for(const story of organization.stories){const books=organization.books.filter(b=>b.storyId===story.id).sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
         const section=document.createElement("section"), heading=document.createElement("h2"), synopsis=document.createElement("p");heading.textContent=story.title;synopsis.textContent=story.synopsis;section.append(heading,synopsis);
         for(const book of books)section.append(bookCard(book,story,byKey,current));if(!books.length){const empty=document.createElement("p");empty.textContent="No books organized yet.";section.append(empty);}novel.list.append(section);}
-      if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
+      for(const book of organization.books.filter(book=>!organization.stories.some(story=>story.id===book.storyId)))novel.list.append(bookCard(book,null,byKey,current));
       if(ordered.length&&organization.stories.length){const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters";novel.list.append(sourceHeading);}
       novel.status.hidden = true;
       novel.status.textContent = "";
@@ -2822,7 +2817,7 @@ async function loadNovel(chapterId, epoch, previous={}) {
       for(const type of ['chapters','stories','books']){
         const next=type==='chapters'?cursor:organization[type+'Cursor'];if(!next)continue;
         const more=document.createElement('button');more.type='button';more.textContent=`More ${type}`;window.PantherUI.styleButton(more,'outline');
-        more.onclick=async()=>{more.disabled=true;try{const result=await api(type==='chapters'?'/novel':`/novel-${type}`,{gameId,cursor:next});if(!current())return;
+        more.onclick=async()=>{more.disabled=true;try{const result=await api(type==='chapters'?'/novel':`/novel-${type}`,{gameId,cursor:next});if(!current())return;if(result.cursor===next)throw new Error('Pagination did not progress. Loaded records are still available.');
           const snapshot={chapters,cursor,organization};if(type==='chapters'){snapshot.chapters=[...chapters,...result.chapters];snapshot.cursor=result.cursor;}else{snapshot.organization={...organization,[type]:[...organization[type],...result.records],[type+'Cursor']:result.cursor};}
           await loadNovel(null,epoch,snapshot);
         }catch(error){novel.status.hidden=false;novel.status.textContent=error.message;}finally{more.disabled=false;}};novel.list.append(more);
@@ -2860,7 +2855,9 @@ async function loadNovel(chapterId, epoch, previous={}) {
     const collectionIds=[...new Set((chapter.readerReferences?.schemaVersion===1 && Array.isArray(chapter.readerReferences.mentions) && chapter.readerReferences.mentions.length<=200 ? chapter.readerReferences.mentions : [])
       .filter(m=>m?.target?.type==="collection" && (!m.target.gameId || m.target.gameId===gameId) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(m.target.id)).map(m=>m.target.id))];
     const collectionReferences=(async()=>{const records=[];for(let offset=0;offset<collectionIds.length;offset+=8){if(!current())return records;const batch=await Promise.all(collectionIds.slice(offset,offset+8).map(id=>api("/video-collections",{gameId,id,metadataOnly:"true"}).then(r=>r.collection).catch(()=>null)));records.push(...batch.filter(Boolean));}return records;})();
-    void Promise.all([relatedAssets(gameId,chapter.details?.artifact?.key),collectionReferences]).then(([assets,collections]) => {
+    const mentionedAssets=(chapter.readerReferences?.schemaVersion===1&&chapter.readerReferences.mentions?.length<=200?chapter.readerReferences.mentions:[]).filter(mention=>mention?.target?.type==='asset'&&(!mention.target.gameId||mention.target.gameId===gameId)).map(mention=>mention.target.key);
+    void Promise.all([relatedAssets(gameId,chapter.details?.artifact?.key),assetRecords(gameId,mentionedAssets),collectionReferences]).then(([connected,mentioned,collections]) => {
+      const assets=[...new Map([...connected,...mentioned].map(asset=>[asset.key,asset])).values()];
       if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters,collections));
     }).catch(() => {
       if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Reload the page to try again."; }
