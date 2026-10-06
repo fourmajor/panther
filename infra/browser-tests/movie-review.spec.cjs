@@ -64,7 +64,8 @@ for(const width of [1280,390])test(`replacement AI storyboard displays native fr
  await expect(board.locator('img')).toHaveCount(2);
  for(const image of await board.locator('img').all())await expect.poll(()=>image.evaluate(node=>node.complete&&node.naturalWidth>0)).toBe(true);
  await expect(board.getByRole('button',{name:'Approve',exact:true})).toBeVisible();
- await expect(board.getByRole('button',{name:/Generate shot/})).toHaveCount(0);
+ const generate=board.getByRole('button',{name:/Generate shot/});await expect(generate).toHaveCount(2);
+ for(const button of await generate.all())await expect(button).toBeDisabled();
  await expect(page.locator('iframe')).toHaveCount(0);
  await expect(board.getByRole('button',{name:'Open storyboard frame for shot 1'})).toBeVisible();
  expect(state.writes).toEqual([]);expect(state.errors).toEqual([]);
