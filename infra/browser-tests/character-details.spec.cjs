@@ -268,7 +268,7 @@ for(const width of [1280,390])test(`character previews use one bounded page and 
  await page.goto(`https://panther.place/games/${gameId}/characters/${characterId}`);
  const gallery=page.locator('#character-assets-list');await expect(gallery.locator('li')).toHaveCount(24);
  expect(pages).toHaveLength(1);expect(pages[0]).toMatchObject({gameId,characterId,view:'cards',limit:'24'});
- await expect(gallery.locator('video')).toHaveCount(0);expect(videoRequests).toEqual([]);
+ await expect(gallery.locator('video')).toHaveCount(0);await expect(gallery.locator('.character-video-play svg')).toHaveCount(24);expect(videoRequests).toEqual([]);
  expect(signatures.flat().filter(key=>key.includes('/cover-')).length).toBeLessThan(12);
  const more=page.getByRole('button',{name:'More assets',exact:true});await more.scrollIntoViewIfNeeded();await expect(more).toBeInViewport();await more.click();await expect(gallery.locator('li')).toHaveCount(48);
  expect(pages).toHaveLength(2);expect(pages[1].cursor).toBe('page-2');expect(videoRequests).toEqual([]);
