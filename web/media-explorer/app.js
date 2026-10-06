@@ -2285,7 +2285,7 @@ async function novelOrganization(gameId, current, previous={}) {
     if(result[type])continue;
     const page=await api(`/novel-${type}`,{gameId});if(!current())return null;
     if(!Array.isArray(page.records))throw new Error('The book library could not be read');
-    result[type]=page.records;result[type+'Cursor']=page.cursor;
+    result[type]=[...page.records];result[type+'Cursor']=page.cursor;
   }
   return result;
 }
@@ -2746,7 +2746,7 @@ async function loadNovel(chapterId, epoch, previous={}) {
 
   document.getElementById("manual-chapter-edit")?.remove();
   document.getElementById("chapter-create-episode")?.remove();
-  renderEditorialComposer("novel",epoch);
+  if(!previous.chapters)renderEditorialComposer("novel",epoch);
   const composer = document.getElementById("editorial-novel-composer");
   composer.hidden=Boolean(chapterId);
   const create = document.querySelector("#novel .explorer-heading [data-generation-action]");

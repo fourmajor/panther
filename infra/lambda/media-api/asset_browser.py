@@ -44,14 +44,15 @@ def card(asset):
     metadata = asset.get('metadata', {})
     extra = metadata.get('extra', {})
     result = {key: asset[key] for key in ('key', 'name', 'size', 'contentType', 'kind', 'lastModified',
-                                         'thumbnailStatus', 'durationSeconds') if key in asset}
+                                         'thumbnailStatus', 'durationSeconds', 'lineageWarning') if key in asset}
     thumbnail = cover_key(asset)
     if thumbnail:
         result['thumbnailKey'] = thumbnail
     result['metadata'] = {key: metadata[key] for key in ('title', 'category', 'tags', 'characterIds') if key in metadata}
     result['metadata']['extra'] = {key: extra[key] for key in ('version', 'relationshipRole', 'sceneRef',
-        'storyboardShotRef', 'episodeRef', 'assetType', 'sceneAssembly') if key in extra}
-    duration = extra.get('mediaProbe', {}).get('format', {}).get('duration')
+        'storyboardShotRef', 'episodeRef', 'assetType', 'sceneAssembly', 'recordingPart') if key in extra}
+    probe = extra.get('mediaProbe', {})
+    duration = probe.get('format', {}).get('duration', probe.get('duration'))
     if duration is not None:
         result['metadata']['extra']['mediaProbe'] = {'format': {'duration': duration}}
     return result
@@ -84,7 +85,7 @@ def related(assets, key):
         playback = asset.get('playback', {})
         refs.extend(playback.get(field) for field in ('recordingKey', 'audioKey') if playback.get(field))
         paired = asset['key'].rsplit('.', 1)[0] + ('.json' if asset['key'].endswith('.md') else '.md')
-        if by_key.get(paired, {}).get('kind') == asset.get('kind'):
+        if asset['key'].endswith(('.md', '.json')) and asset.get('kind') and by_key.get(paired, {}).get('kind') == asset['kind']:
             refs.append(paired)
         directory = asset['key'].rsplit('/', 1)[0]
         for ref in refs:

@@ -553,12 +553,17 @@ class Store:
         keys = asset_browser.valid_keys(game, keys)
         with self.connect() as db:
             rows = db.execute("SELECT key,metadata,length(data),created FROM objects WHERE game=? AND key IN (" + ','.join('?' for _ in keys) + ") AND NOT EXISTS (SELECT 1 FROM records WHERE kind='asset-deletion' AND id=objects.key)", (game, *keys)).fetchall()
+            thumbnails = {key: json.loads(raw) for key, raw in db.execute("SELECT id,payload FROM records WHERE kind='video-thumbnail' AND game=? AND id IN (" + ','.join('?' for _ in keys) + ')', (game, *keys))}
         assets = []
         for key, raw, size, created in rows:
             metadata = json.loads(raw)
             assets.append({'key': key, 'name': key.rsplit('/', 1)[-1], 'metadata': metadata,
                            'kind': metadata.get('kind', 'other'), 'contentType': metadata.get('contentType', 'application/octet-stream'),
                            'sourceKeys': metadata.get('sourceKeys', []), 'size': size, 'lastModified': created})
+        for asset in assets:
+            thumbnail = thumbnails.get(asset['key'], {})
+            if thumbnail.get('status') == 'READY':
+                asset['thumbnailKey'] = thumbnail['thumbnailKey']
         events = sorted(self.list('tag-change', game), key=lambda event: event['at'])
         return [project(asset, events) for asset in assets] if events else assets
 

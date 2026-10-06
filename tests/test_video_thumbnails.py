@@ -1,4 +1,6 @@
 import json
+import shutil
+from pathlib import Path
 from click.testing import CliRunner
 from panther_journal.asset_migrations import assets
 from panther_journal import video_thumbnails as covers
@@ -49,3 +51,33 @@ def test_cover_download_rejects_foreign_urls_and_unpinned_sources(tmp_path):
         covers.download({'url': 'https://example.test/video'}, tmp_path / 'source')
     with pytest.raises(ValueError, match='pinned'):
         covers.download({'url': 'https://bucket.s3.amazonaws.com/video', 'size': 1}, tmp_path / 'source')
+
+
+def test_cover_replay_reads_current_source_before_repeating_upload(monkeypatch, tmp_path):
+    calls = []
+    def api(config, method, path, **kwargs):
+        calls.append(path)
+        return {'metadata': {'extra': {'preview': {'imageKey': 'games/example/assets/cover/original/frame.jpg'}}}}
+    monkeypatch.setattr(covers.cloud, 'api', api)
+    assert covers.prepare({}, 'example', {'key': 'games/example/assets/video/original/take.mp4'}, tmp_path) == {'status': 'already-covered'}
+    assert calls == ['/object-url']
+
+
+@pytest.mark.skipif(not shutil.which('ffmpeg'), reason='Requires FFmpeg')
+def test_real_cover_extraction_produces_a_small_image(tmp_path):
+    import subprocess
+    from PIL import Image
+    source = tmp_path / 'synthetic.mp4'
+    subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=1280x720:d=1', '-c:v', 'mpeg4', str(source)], check=True, timeout=30)
+    frame, timestamp = covers.extract(source, tmp_path)
+    with Image.open(frame) as image:
+        assert image.size == (640, 360)
+        assert image.getpixel((320, 180))[2] > 200
+    assert timestamp == .25
+    assert frame.stat().st_size < 100_000
+
+
+def test_cover_command_cannot_write_game_data_inside_git():
+    result = CliRunner().invoke(assets, ['video-covers', '--game', 'example', '--work-dir', str(Path(__file__).parents[1])])
+    assert result.exit_code == 1
+    assert 'outside Git' in result.output

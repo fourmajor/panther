@@ -33,7 +33,7 @@ def extract(source, folder):
     return frames[0], .25
 
 
-def download(asset, destination):
+def _download(asset, destination):
     target = urlparse(asset['url'])
     if target.scheme != 'https' or not (target.hostname or '').endswith('.amazonaws.com'):
         raise ValueError('Invalid video download destination')
@@ -41,7 +41,8 @@ def download(asset, destination):
         raise ValueError('Video requires a pinned version and a size below 1 GiB')
     digest, size = hashlib.sha256(), 0
     with requests.get(asset['url'], stream=True, timeout=(15, 300), allow_redirects=False) as response:
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise ValueError(f'Video download rejected (HTTP {response.status_code})')
         with destination.open('xb') as output:
             for chunk in response.iter_content(1024 * 1024):
                 size += len(chunk)
@@ -54,10 +55,20 @@ def download(asset, destination):
     return digest.hexdigest()
 
 
+def download(asset, destination):
+    try:
+        return _download(asset, destination)
+    except requests.RequestException:
+        raise ValueError('Video transfer interrupted; retain the partial file for inspection') from None
+
+
 def prepare(config, game, asset, root):
     """Upload an immutable image, then link it with a version-guarded metadata migration."""
     key = asset['key']
     signed = cloud.api(config, 'GET', '/object-url', params={'key': key})
+    existing = signed.get('metadata', {}).get('extra', {}).get('preview', {}).get('imageKey')
+    if isinstance(existing, str) and existing.startswith(f'games/{game}/assets/') and existing.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.avif')):
+        return {'status': 'already-covered'}
     folder = root / hashlib.sha256((key + ':' + signed['versionId']).encode()).hexdigest()
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     source = folder / ('source' + Path(key).suffix)
@@ -86,6 +97,8 @@ def prepare(config, game, asset, root):
             cloud.upload.callback(file=frame, game=game, asset=identity, kind='video-thumbnail', metadata=metadata_file, new_version_of=None, as_json=True)
         uploaded = json.loads(result.getvalue())
         receipt.write_text(json.dumps(uploaded))
+    if not uploaded['key'].startswith(f'games/{game}/assets/') or not uploaded['key'].lower().endswith('.jpg'):
+        raise ValueError('Invalid cover upload receipt')
     details = copy.deepcopy(current['metadata'])
     details.setdefault('extra', {}).setdefault('preview', {}).update(schemaVersion=1, imageKey=uploaded['key'])
     request = {'schemaVersion': 1, 'key': key, 'expectedVersionId': current['versionId'],
@@ -99,6 +112,9 @@ def prepare(config, game, asset, root):
 
 def command(game, all_games, work_dir, apply):
     import os
+    work_dir = work_dir.expanduser().resolve()
+    if work_dir in {Path.home(), Path('/')} or any((parent / '.git').exists() for parent in (work_dir, *work_dir.parents)):
+        raise click.ClickException('Cover files belong in a dedicated private directory outside Git')
     os.umask(0o077)
     config = cloud.configuration()
     games = cloud.api(config, 'GET', '/games')['games'] if all_games else [{'id': cloud.slug(game)}]

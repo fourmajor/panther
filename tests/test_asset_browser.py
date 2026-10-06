@@ -34,3 +34,9 @@ def test_lookup_keys_cannot_cross_games_or_be_unbounded(browser):
         browser.valid_keys('example', ['games/other/assets/video/original/movie.mp4'])
     with pytest.raises(ValueError):
         browser.valid_keys('example', ['games/example/assets/video/original/movie.mp4']*61)
+
+
+def test_card_keeps_recorded_duration_without_full_probe_or_generation(browser):
+    asset = {'key': 'games/example/assets/video/original/take.mp4', 'metadata': {'extra': {'mediaProbe': {'duration': 13.5, 'streams': [{'large': 'details'}]}, 'generation': {'prompt': 'private request'}}}}
+    card = browser.card(asset)
+    assert card['metadata']['extra'] == {'mediaProbe': {'format': {'duration': 13.5}}}
