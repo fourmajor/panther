@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {MODEL_VIEWER_BUNDLE_PATH}=require('../dist/lib/panther-media-explorer-stack');
 const origin='https://panther.place',api='https://test.execute-api.us-west-2.amazonaws.com';
 const headers={'access-control-allow-origin':origin,'access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'};
-async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=false,long=false,failed=false,take=false,takeSeconds=8,rawCast=false,replacement=false}={}) {
+async function fixture(page,{human=false,conflict=false,planning=false,multi=false,local=true,long=false,failed=false,take=false,takeSeconds=8,rawCast=false,replacement=false}={}) {
   const writes=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   const chapter='c'.repeat(64),jobId='d'.repeat(64),frame='games/test-game/assets/frame/original/frame.png';
   let episode={schemaVersion:1,entityType:'Episode',gameId:'test-game',id:'pilot',name:'The crossing',description:'At the gates',revision:'a'.repeat(32),sceneIds:planning?[]:['arrival'],...(planning?{production:{state:'planning',jobId}}:{})};
@@ -57,15 +57,14 @@ async function fixture(page,{human=false,conflict=false,planning=false,multi=fal
   return {writes,errors,chapter,publish(){published=true;episode={...episode,sceneIds:['arrival'],production:{state:'planned',jobId}};}};
 }
 for(const width of [1280,390])test(`replacement AI storyboard displays native frames and retains approval at ${width}px`,async({page})=>{
- await page.setViewportSize({width,height:1000});const state=await fixture(page,{replacement:true});
+ await page.setViewportSize({width,height:1000});const state=await fixture(page,{replacement:true,local:false});
  await page.goto(`${origin}/games/test-game/episodes/pilot/scenes/arrival`);
  const board=page.getByRole('region',{name:'Scene storyboard'});
  await expect(board).toContainText('Four travelers enter, weapons lowered.');await expect(board).toContainText('Three corks release.');
  await expect(board.locator('img')).toHaveCount(2);
- for(const image of await board.locator('img').all())expect(await image.evaluate(node=>node.complete&&node.naturalWidth>0)).toBe(true);
+ for(const image of await board.locator('img').all())await expect.poll(()=>image.evaluate(node=>node.complete&&node.naturalWidth>0)).toBe(true);
  await expect(board.getByRole('button',{name:'Approve',exact:true})).toBeVisible();
- await expect(board.getByRole('button',{name:'Generate shot 1',exact:true})).toBeDisabled();
- await expect(board.getByRole('button',{name:'Generate shot 2',exact:true})).toBeDisabled();
+ await expect(board.getByRole('button',{name:/Generate shot/})).toHaveCount(0);
  await expect(page.locator('iframe')).toHaveCount(0);
  await expect(board.getByRole('button',{name:'Open storyboard frame for shot 1'})).toBeVisible();
  expect(state.writes).toEqual([]);expect(state.errors).toEqual([]);

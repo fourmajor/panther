@@ -1,4 +1,4 @@
-"""Read-only access to historical TV organization through Panther sign-in."""
+"""Read video organization and explicitly publish guarded AI storyboard proposals."""
 
 import json
 from pathlib import Path
