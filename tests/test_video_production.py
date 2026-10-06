@@ -433,6 +433,9 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
             "extra",
         }
         assert meta["extra"]["generation"]["cost"] == {"status": "subscription"}
+        meta["extra"]["version"] = {
+            "schemaVersion": 1, "seriesId": "synthetic-series", "number": 1
+        }
         assets[key] = {
             "sha256": base64.b64encode(bytes.fromhex(p.digest(file))).decode(),
             "size": file.stat().st_size,

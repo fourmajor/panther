@@ -1202,7 +1202,13 @@ def publish_locked(folder, *, retain_oversize_master_locally=False):
             existing = cloud.api(config, "GET", "/object-url", params={"key": key})
         if existing.get("sha256") != checksum or existing.get("size") != path.stat().st_size:
             raise click.ClickException("Published asset conflicts with local output; no overwrite")
-        if any(existing.get("metadata", {}).get(k) != v for k, v in meta.items()):
+        stored_metadata = dict(existing.get("metadata", {}))
+        stored_extra = dict(stored_metadata.get("extra", {}))
+        # Semantic versions are assigned by the authenticated upload service,
+        # not supplied by this immutable publication package.
+        stored_extra.pop("version", None)
+        stored_metadata["extra"] = stored_extra
+        if any(stored_metadata.get(k) != v for k, v in meta.items()):
             raise click.ClickException("Published metadata conflicts with the production contract")
         published[name] = key
         if name == "provenance":
