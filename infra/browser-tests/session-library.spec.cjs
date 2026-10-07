@@ -67,6 +67,9 @@ for(const width of [1280,390])test(`Sessions opens readable original and correct
  });
  await page.goto(`${origin}/games/test-game/sessions`);
  const card=page.locator('.session-card');await expect(card).toHaveCount(1);
+ const transcriptLinks=[card.getByRole('link',{name:'Original transcript',exact:true}),card.getByRole('link',{name:'Corrected transcript',exact:true})];
+ const linkBoxes=[];for(const link of transcriptLinks){await expect(link).toBeInViewport();linkBoxes.push(await link.boundingBox());expect(await link.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}
+ expect(linkBoxes[1].x>=linkBoxes[0].x+linkBoxes[0].width+8||linkBoxes[1].y>=linkBoxes[0].y+linkBoxes[0].height).toBe(true);
  await card.getByRole('link',{name:'Corrected transcript',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
  await page.getByRole('button',{name:'Retry preview',exact:true}).click();
