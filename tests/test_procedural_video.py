@@ -76,6 +76,13 @@ def test_scene_identity_and_animation_guards(change):
         video.validate_scene(value, 3, ["knight"])
 
 
+def test_nonfinite_scene_data_is_rejected():
+    value = design()
+    value["objects"][0]["position"][0] = float("nan")
+    with pytest.raises(ValueError, match="Nonfinite"):
+        video.validate_scene(value, 3, ["knight"])
+
+
 def test_ready_queue_only_uses_completed_preflight(monkeypatch):
     from panther_journal import character_details
     def api(_config, _method, endpoint, **_kw):
