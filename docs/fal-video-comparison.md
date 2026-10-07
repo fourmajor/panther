@@ -40,6 +40,12 @@ Explicit `budget settle-project` can settle a later completed replacement throug
 hash-linked audit revision after verifying every request's exact bill. It preserves the original
 allocation, earlier audits, attempts and total cap; it cannot release ambiguous bills or reopen
 closed plans. Repeated identical settlement is idempotent. This is not additional spending approval.
+When the owner explicitly raises a session/project ceiling, `panther narration budget-extend
+PROJECT --expected-cap OLD --cap NEW --video-allowance AMOUNT --reason 'EXPLICIT APPROVAL'
+--owner-approved` records one additive extension. The original allocation and bills stay immutable;
+the extension verifies account, expected cap, existing allowances and unresolved requests. It does
+not buy credits, change top-ups or extend the separate lifetime comparison ceiling. Missing or
+corrupt extension evidence fails closed. A second differing extension is unsupported.
 Repeated `budget init` does not reset reservations. There is no reset, arbitrary increase-limit, refund or
 alternate-state-directory command. Keep this directory backed up privately. Do not delete it or
 run a second independent copy on another laptop; that defeats a local-only budget. Migration must

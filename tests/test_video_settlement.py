@@ -115,3 +115,33 @@ def test_subsequent_completed_replacement_settles_additively(setup, monkeypatch)
         db.execute("UPDATE video_project_settlement_revisions SET content='{}'")
         with pytest.raises(click.ClickException, match='history changed'):
             s.audit(db, 'test-film')
+
+
+def test_explicit_extension_preserves_allocation_settlement_and_cap_guards(setup, monkeypatch):  # noqa: F811
+    completed(setup, monkeypatch)
+    s.settle('test-film', 999, 'Replacement approval', setup)
+    with v.database() as db:
+        original = db.execute('SELECT content FROM narration_budgets').fetchone()[0]
+        settlement = db.execute('SELECT content FROM video_project_settlements').fetchone()[0]
+    extension = n.extend_project('test-film', 1000, 1100, 1099, 'Owner approved $11', setup)
+    assert n.extend_project('test-film', 1000, 1100, 1099, 'Owner approved $11', setup) == extension
+    with pytest.raises(click.ClickException, match='different approval'):
+        n.extend_project('test-film', 1100, 1200, 1199, 'Another extension', setup)
+    with v.database() as db:
+        assert db.execute('SELECT content FROM narration_budgets').fetchone()[0] == original
+        assert db.execute('SELECT content FROM video_project_settlements').fetchone()[0] == settlement
+        budget = n.budget_status(db, 'test-film')
+        assert budget['capCents'] == 1100 and budget['availableVideoCents'] == 1048
+        assert s.audit(db, 'test-film')['historicalBilledCents'] == 51
+        db.execute("UPDATE project_budget_extensions SET content='{}'")
+        with pytest.raises(click.ClickException, match='extension audit'):
+            n.budget_status(db, 'test-film')
+
+
+@pytest.mark.parametrize('expected,cap,allowance', [(999,1100,1099),(1000,1000,999),(1000,1100,1100),(1000,1100,500)])
+def test_invalid_extensions_never_change_allocation(setup, monkeypatch, expected, cap, allowance):  # noqa: F811
+    completed(setup, monkeypatch)
+    with pytest.raises(click.ClickException):
+        n.extend_project('test-film', expected, cap, allowance, 'Explicit approval', setup)
+    with v.database() as db:
+        assert n.budget_status(db, 'test-film')['capCents'] == 1000
