@@ -86,7 +86,7 @@ be repeated with a fresh report: source data is untouched and writes are conditi
 Maintenance retries a concurrent index/transaction guard at most four times with short jittered
 backoff. Each attempt rereads current source data and the index revision; stale transactions are
 never replayed. Exhausted contention still fails the page and blocks activation.
-Do not activate a partial migration manually. The projection schema is versioned (`v3` keys);
+Do not activate a partial migration manually. The projection schema is versioned (`v5` keys);
 future schema changes require another full migration. There is no old S3-scan read fallback.
 Older readiness/verification markers cannot authorize v5. Repeat the full dry-run/apply/verify
 sequence for this upgrade; old projection rows may remain as unused history, never a read fallback.

@@ -345,7 +345,7 @@ for(const width of [1280,390])test(`Finished capture integrates one transcript a
  const key='games/test-game/assets/final/original/transcript.json';
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/assets*',route=>route.fulfill({headers:{'access-control-allow-origin':origin},json:{assets:[{key,name:'transcript.json',kind:'raw-transcript',contentType:'application/json',lastModified:'2026-10-03T12:00:00Z',metadata:{sessionId}}],cursor:null}}));
  await page.evaluate(async()=>{await window.PantherUI.invalidate(apiScope(),['/assets'],state.gameId);await loadLibrary('sessions',routeEpoch);});
- const card=page.locator('.session-card');await expect(card).toHaveCount(1);await expect(card.getByRole('link',{name:'Transcript',exact:true})).toHaveCount(1);await expect(card.locator('audio')).toHaveCount(1);
+ const card=page.locator('.session-card');await expect(card).toHaveCount(1);await expect(card.getByRole('link',{name:'Original transcript',exact:true})).toHaveCount(1);await expect(card.locator('audio')).toHaveCount(1);
  await expect(page.locator('#room-audio-status')).toBeHidden();await expect(page.locator('#room-final-status')).toBeHidden();await expect(page.locator('.explorer-heading').getByRole('button',{name:'View transcript',exact:true})).toHaveCount(0);
  const download=card.getByRole('button',{name:'Download audio',exact:true});await expect(download).toHaveCount(1);await expect(download).toBeInViewport();const player=await card.locator('audio').boundingBox(),action=await download.boundingBox();expect(Math.abs(player.y+player.height/2-action.y-action.height/2)).toBeLessThan(3);
  expect(await download.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -355,7 +355,7 @@ for(const width of [1280,390])test(`Finished capture integrates one transcript a
   await page.locator('#primary-nav a[data-section="novel"]').click();
   await expect(page.locator('#novel')).toBeVisible();await expect(page.locator('#primary-nav a[data-section="novel"]')).toHaveAttribute('aria-current','page');
   await expect(page.locator('#room-audio')).toHaveCount(1);await expect(page.locator('#room-result-name')).toHaveCount(1);
-  await page.locator('#primary-nav a[data-section="sessions"]').click();await expect(card.locator('audio')).toHaveCount(1);await expect(card.getByRole('link',{name:'Transcript',exact:true})).toHaveCount(1);
+  await page.locator('#primary-nav a[data-section="sessions"]').click();await expect(card.locator('audio')).toHaveCount(1);await expect(card.getByRole('link',{name:'Original transcript',exact:true})).toHaveCount(1);
  }
  expect(errors).toEqual([]);
  expect(await page.locator('#primary-nav').evaluate(nav=>getComputedStyle(nav).borderTopWidth)).toBe('0px');
