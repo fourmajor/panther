@@ -363,6 +363,13 @@ def test_cli_schema_and_invalid_inputs(tmp_path):
     assert "explicitly complete" in result.output
 
 
+def test_preparation_review_scope_is_not_footage_certification():
+    scope = p.review_scope('composition-preparation')
+    assert 'not-visible' in scope and 'contradictions' in scope
+    assert 'never certifies motion' in scope
+    assert 'missing temporal evidence must not be treated as a pass' in p.review_scope('shot-review')
+
+
 def test_preparation_selects_profiles_and_never_approves(tmp_path):
     plan = p.Production.model_validate(manifest())
     folder, result = p.execute(
