@@ -46,6 +46,10 @@ def validate_audit(db, project, data):
     if not original or json.loads(original['content']) != data.get('originalAllocation'):
         v.fail('Project settlement no longer matches its immutable allocation.')
     budget = data['originalAllocation']
+    from panther_journal import narration
+    extension = narration.project_extension(db, project, budget)
+    if extension:
+        budget = {**budget, 'capCents': extension['capCents']}
     if (data.get('schemaVersion') != 1 or data.get('projectId') != project
             or not isinstance(data.get('ownerAuthorization'), str) or not data['ownerAuthorization'].strip()
             or type(data.get('settledAt')) is not int or data['settledAt'] <= 0
