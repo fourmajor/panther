@@ -393,7 +393,8 @@ def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):
 
 
 @pytest.mark.usefixtures("caption_delivery")
-def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch):
+@pytest.mark.parametrize("revision", [False, True])
+def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch, revision):
     monkeypatch.setattr(p.cloud, "configuration", lambda: {})
     assets = {
         r.key: {
@@ -402,6 +403,11 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         }
         for r in p.references(media)
     }
+    previous = f"games/{media.gameId}/assets/previous-film/original/browser.mp4"
+    if revision:
+        assets[previous] = {"sha256": "prior-checksum", "size": 123, "kind": "tv-episode",
+                            "metadata": {"extra": {"version": {"schemaVersion": 1,
+                                "seriesId": "synthetic-series", "number": 1}}}}
 
     def api(config, method, route, *, params=None, json=None):
         if route == "/workflow-progress":
@@ -436,6 +442,9 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         meta["extra"]["version"] = {
             "schemaVersion": 1, "seriesId": "synthetic-series", "number": 1
         }
+        if kw.get("new_version_of"):
+            assert file.name == "browser.mp4" and kw["new_version_of"] == previous
+            meta["extra"]["version"].update(number=2, previousKey=previous)
         assets[key] = {
             "sha256": base64.b64encode(bytes.fromhex(p.digest(file))).decode(),
             "size": file.stat().st_size,
@@ -443,9 +452,14 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         }
 
     monkeypatch.setattr(p.cloud.upload, "callback", upload)
-    published = p.publish(folder)
+    for invalid in ["games/other/assets/film/original/browser.mp4", previous.replace(".mp4", ".json")]:
+        with pytest.raises(click.ClickException, match="same-game MP4"):
+            p.publish(folder, new_version_of=invalid)
+        assert uploads == []
+    options = {"new_version_of": previous} if revision else {}
+    published = p.publish(folder, **options)
     assert len(uploads) == 10
-    assert published == p.publish(folder)
+    assert published == p.publish(folder, **options)
     assert len(uploads) == 10
     assert assets[published["browser"]]["metadata"]["sourceKeys"] == [published["provenance"]]
     assert (
@@ -455,10 +469,18 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
     doc = json.loads((folder / "publication" / "production.json").read_text())
     assert str(tmp_path) not in json.dumps(doc)
     assert media.shots[0].clip.key in doc["sourceKeys"]
+    if revision:
+        assert assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] == previous
+        with pytest.raises(click.ClickException, match="predecessor changed"):
+            p.publish(folder)
+        assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] = "wrong"
+        with pytest.raises(click.ClickException, match="pinned predecessor"):
+            p.publish(folder, **options)
+        assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] = previous
     assert doc["manifest"]["shots"][0]["captions"][0]["text"] == "Synthetic test"
     assets[published["browser"]]["metadata"]["category"] = "canonical-source"
     with pytest.raises(click.ClickException, match="metadata conflicts"):
-        p.publish(folder)
+        p.publish(folder, **options)
 
 
 @pytest.mark.usefixtures("caption_delivery")
