@@ -369,6 +369,20 @@ REVIEW_SCHEMA = obj(
 )
 
 
+def review_scope(stage):
+    if stage == 'composition-preparation':
+        return (
+            'This is PRE-GENERATION composition preparation, not footage certification. '
+            'Assess whether the visible starting pose, objects and requested action are compatible. '
+            'Do not fail or mark uncertainty solely because future footage or a closing frame does not exist yet. '
+            'For an unobservable temporal claim use not-visible and explicitly require post-generation verification. '
+            'Actual starting-frame/action contradictions, ambiguous attachments, wrong identity, '
+            'or uncertainty about the supplied composition still fail or block preparation. '
+            'Passing preparation never certifies motion, closing continuity or sound. '
+        )
+    return 'This is generated-footage review: missing temporal evidence must not be treated as a pass. '
+
+
 def review(folder, images, data):
     write_json(folder / "schema.json", REVIEW_SCHEMA)
     command = [
@@ -411,7 +425,7 @@ def review(folder, images, data):
         "Do not cut dialogue/caption/sound cues, change identity, fabricate repair or request generation. "
         "Zero trims and neutral grade (0,1,1) if improvement is uncertain, during preparation or final review. "
         "Failures that require regeneration remain explicit working-draft notes. Explain actual changes in reason.\n"
-        + REVIEW_GUIDANCE + "\n"
+        + review_scope(data.get('stage')) + REVIEW_GUIDANCE + "\n"
         + json.dumps(data, ensure_ascii=False)
     )
     write_json(folder / "review-input.json", data)
