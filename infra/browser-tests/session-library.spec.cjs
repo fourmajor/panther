@@ -55,6 +55,33 @@ async function fixture(page) {
   });
 }
 
+for(const width of [1280,390])test(`Sessions opens readable original and corrected transcripts with retry at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await fixture(page);
+ await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:assets.filter(a=>[raw,corrected].includes(a.key)),cursor:null}}));
+ let failures=1;
+ await page.route(`${api}/asset-document*`,route=>{
+  if(failures-- > 0)return route.fulfill({headers,status:502,json:{error:'Transcript preview temporarily unavailable'}});
+  const key=new URL(route.request().url()).searchParams.get('key');
+  const transcript={entityType:'PlayerTranscript',players:[{id:'alex',name:'Alex'}],segments:[{start:0,end:2,playerId:'alex',text:key===raw?'The lanturn.':'The lantern.'}]};
+  return route.fulfill({headers,json:{...assets.find(a=>a.key===key),document:key===raw?transcript:{entityType:'EditorialArtifact',stage:'corrected-transcript',payload:{transcript}}}});
+ });
+ await page.goto(`${origin}/games/test-game/sessions`);
+ const card=page.locator('.session-card');await expect(card).toHaveCount(1);
+ await card.getByRole('link',{name:'Corrected transcript',exact:true}).click();
+ await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
+ await page.getByRole('button',{name:'Retry preview',exact:true}).click();
+ await expect(page.locator('.transcript-segment')).toContainText('The lantern.');
+ await expect(page.locator('.transcript-segment')).toContainText('Alex');
+ const download=page.waitForEvent('download');await page.getByRole('button',{name:'Download text',exact:true}).click();
+ const saved=await download;expect(saved.suggestedFilename()).toMatch(/\.txt$/);
+ expect(fs.readFileSync(await saved.path(),'utf8')).toContain('Alex\nThe lantern.');
+ await page.screenshot({path:test.info().outputPath(`readable-transcript-${width}.png`),animations:'disabled'});
+ await page.getByRole('button',{name:'Close preview'}).click();
+ await card.getByRole('link',{name:'Original transcript',exact:true}).click();
+ await expect(page.locator('.transcript-segment')).toContainText('The lanturn.');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});
+
 for(const width of [1280,390])test(`episode-owned scenes can be created without finished clips at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});await fixture(page);const episodes=[],scenes=[],writes=[];
  await page.route(`${api}/episodes*`,route=>{if(route.request().method()==='POST'){const body=route.request().postDataJSON();writes.push(body);const record={...body,revision:'a'.repeat(32),position:0};episodes.push(record);return route.fulfill({headers,json:{record}});}return route.fulfill({headers,json:{records:episodes,cursor:null}});});
@@ -300,7 +327,7 @@ for(const width of [1280,390]) test(`audio, transcripts, lineage and readable mo
   await page.getByRole('button',{name:'Close preview'}).click();
   await page.locator('#primary-nav').getByRole('link',{name:'Sessions',exact:true}).click();
   await expect(page.locator('.session-card')).toHaveCount(1);
-  await page.getByRole('link',{name:'Transcript',exact:true}).click();
+  await page.getByRole('link',{name:'Original transcript',exact:true}).click();
   await expect(page.locator('.transcript-segment').first()).toContainText('0:00–0:02 · Alex');
   await expect(page.locator('.transcript-segment').first()).toContainText('The lanturn.');
   await expect(page.locator('.transcript-segment').last()).toContainText('0:02–0:04');
@@ -579,11 +606,11 @@ for(const width of [1280,390]) test(`One session card contains recording, transc
  await expect(card.getByRole('heading',{name:'The river crossing',exact:true})).toBeVisible();
  await expect(card).not.toContainText('1:15');await expect(card).toContainText('Oct 3, 2026');await expect(card).not.toContainText('session-one');
  await expect(page.locator('#library-list')).not.toContainText('Unassigned session');await expect(page.locator('#library-list')).not.toContainText('Generated speech');
- await expect(card.getByRole('button',{name:'Download audio',exact:true})).toBeVisible();await expect(card.getByRole('link',{name:'Recording',exact:true})).toHaveCount(0);await expect(card.getByRole('link',{name:'Transcript',exact:true})).toBeVisible();
+ await expect(card.getByRole('button',{name:'Download audio',exact:true})).toBeVisible();await expect(card.getByRole('link',{name:'Recording',exact:true})).toHaveCount(0);await expect(card.getByRole('link',{name:'Original transcript',exact:true})).toBeVisible();
  await expect(card.locator('audio')).toBeVisible();await expect(card.locator('audio')).toHaveAttribute('src',/playback-v1/);
- await expect(card).toContainText('The travelers crossed the river.');await expect(card.getByRole('button',{name:'Summary',exact:true})).toHaveCount(0);await expect(card.getByRole('link',{name:'Transcript',exact:true})).toHaveCount(1);
+ await expect(card).toContainText('The travelers crossed the river.');await expect(card.getByRole('button',{name:'Summary',exact:true})).toHaveCount(0);await expect(card.getByRole('link',{name:'Original transcript',exact:true})).toHaveCount(1);
  const audioBox=await card.locator('audio').boundingBox(),downloadBox=await card.getByRole('button',{name:'Download audio',exact:true}).boundingBox();expect(Math.abs((audioBox.y+audioBox.height/2)-(downloadBox.y+downloadBox.height/2))).toBeLessThan(3);
- const titleBox=await card.getByRole('heading').boundingBox(),transcriptBox=await card.getByRole('link',{name:'Transcript',exact:true}).boundingBox();expect(audioBox.y).toBeGreaterThan(titleBox.y);expect(transcriptBox.y).toBeGreaterThan(audioBox.y);
+ const titleBox=await card.getByRole('heading').boundingBox(),transcriptBox=await card.getByRole('link',{name:'Original transcript',exact:true}).boundingBox();expect(audioBox.y).toBeGreaterThan(titleBox.y);expect(transcriptBox.y).toBeGreaterThan(audioBox.y);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  await page.screenshot({path:test.info().outputPath(`unified-session-${width}.png`),fullPage:true});
 });

@@ -1,4 +1,4 @@
-"""Version-4 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
+"""Version-5 materialized browsing catalog. S3 remains authoritative; never scan on reads."""
 
 import base64
 import json
@@ -13,8 +13,8 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 from asset_views import session_asset
 
-SECTIONS = ("all", "audio", "transcripts", "videos", "novels")
-VERSION = 4
+SECTIONS = ("all", "audio", "transcripts", "videos", "novels", "sessions")
+VERSION = 5
 
 
 class IndexNotReady(RuntimeError):
@@ -35,6 +35,8 @@ def partition(game, section):
 
 def sections(asset):
     result = {"all"}
+    if session_asset(asset):
+        result.add("sessions")
     mime, name, kind = asset["contentType"], asset["name"].lower(), asset["kind"]
     source_chunk = kind == "recording" and re.fullmatch(r"part-\d{4}\.flac", name)
     listening_derivative = kind in {"recording-playback", "recording-playback-manifest"}
@@ -118,7 +120,7 @@ def refresh(media, reference, *, write=True):
         else:
             operations.append({"Delete": {"TableName": db.name, "Key": encode(key)}})
     # Tag vocabulary changes in the same transaction as their source projection.
-    # Five section rows plus at most twenty unique tags remain within the bounded envelope.
+    # Six section rows plus at most twenty unique tags remain within the bounded envelope.
     import user_metadata
 
     operations.extend(user_metadata.tag_operations(db.name, game, asset, encode))
@@ -147,7 +149,7 @@ def refresh_for_maintenance(media, reference, *, write):
 
 
 def page(game, section, cursor=None):
-    if section not in (*SECTIONS, "sessions"):
+    if section not in SECTIONS:
         raise ValueError("Invalid asset section")
     if (
         not table()
@@ -157,18 +159,16 @@ def page(game, section, cursor=None):
         raise IndexNotReady(
             "The catalog upgrade is being prepared. No assets have been removed; please retry shortly."
         )
-    pk = partition(game, "all" if section == "sessions" else section)
+    pk = partition(game, section)
     args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": 100, "ConsistentRead": True}
     if cursor:
         try:
             key = json.loads(base64.urlsafe_b64decode(cursor))
-            expected = {"pk", "sk", "section"} if section == "sessions" else {"pk", "sk"}
+            expected = {"pk", "sk"}
             if (
                 set(key) != expected
                 or key["pk"] != pk
                 or not isinstance(key["sk"], str)
-                or section == "sessions"
-                and key["section"] != section
             ):
                 raise ValueError()
             args["ExclusiveStartKey"] = {field: key[field] for field in ("pk", "sk")}
@@ -184,10 +184,6 @@ def page(game, section, cursor=None):
         for item in result.get("Items", [])
         if item["sk"] not in archived
     ]
-    if section == "sessions":
-        assets = [asset for asset in assets if session_asset(asset)]
-        if next_key:
-            next_key = {**next_key, "section": section}
     if section in {"transcripts", "sessions"}:
 
         def unpaired(asset):
