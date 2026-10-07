@@ -1,5 +1,6 @@
 """Audited completion settlement; immutable bills replace unused project headroom."""
 
+import hashlib
 import json
 import time
 
@@ -25,6 +26,22 @@ def audit(db, project):
     if not row:
         return None
     data = json.loads(row['content'])
+    validate_audit(db, project, data)
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='video_project_settlement_revisions'").fetchone():
+        for revision in db.execute('SELECT * FROM video_project_settlement_revisions WHERE project=? ORDER BY ordinal', (project,)):
+            candidate = json.loads(revision['content'])
+            if candidate.get('previousHash') != hashlib.sha256(v.canonical(data).encode()).hexdigest():
+                v.fail('Settlement history changed; refusing to spend.')
+            if not set(data['closedPlanIds']) <= set(candidate.get('closedPlanIds', [])):
+                v.fail('Settlement revision lost historical plans.')
+            if any(a not in candidate.get('attempts', []) for a in data['attempts']):
+                v.fail('Settlement revision lost historical attempts.')
+            validate_audit(db, project, candidate)
+            data = candidate
+    return data
+
+
+def validate_audit(db, project, data):
     original = db.execute('SELECT content FROM narration_budgets WHERE id=?', (project,)).fetchone()
     if not original or json.loads(original['content']) != data.get('originalAllocation'):
         v.fail('Project settlement no longer matches its immutable allocation.')
@@ -81,9 +98,10 @@ def settle(project, allowance, reason, fal):
         n.schema(db)
         prior_audit = audit(db, project)
         if prior_audit:
-            if prior_audit['videoAllowanceCents'] != allowance or prior_audit['ownerAuthorization'] != reason.strip():
-                v.fail('Settlement already exists with different approval facts.')
-            return prior_audit
+            if snapshot(db, project) == (prior_audit['closedPlanIds'], prior_audit['attempts']):
+                if prior_audit['videoAllowanceCents'] != allowance or prior_audit['ownerAuthorization'] != reason.strip():
+                    v.fail('Settlement already exists with different approval facts.')
+                return prior_audit
         v.assert_generation_open(db, project)
         if v.has_unresolved(db):
             v.fail('Resolve outstanding submissions before settlement.')
@@ -115,9 +133,16 @@ def settle(project, allowance, reason, fal):
                 closedPlanIds=plans, attempts=attempts, billingEvents=events,
                 historicalBilledCents=billed, releasedHeadroomCents=released,
                 videoAllowanceCents=allowance, ownerAuthorization=reason.strip(), settledAt=int(time.time()))
+    if prior_audit:
+        data['previousHash'] = hashlib.sha256(v.canonical(prior_audit).encode()).hexdigest()
     with v.database() as db:
-        if v.has_unresolved(db) or snapshot(db, project) != (plans, attempts):
+        if v.has_unresolved(db) or snapshot(db, project) != (plans, attempts) or audit(db, project) != prior_audit:
             v.fail('Project changed during billing verification.')
         db.execute('CREATE TABLE IF NOT EXISTS video_project_settlements (project TEXT PRIMARY KEY, content TEXT NOT NULL)')
-        db.execute('INSERT INTO video_project_settlements VALUES (?,?)', (project, v.canonical(data)))
+        if prior_audit:
+            db.execute('CREATE TABLE IF NOT EXISTS video_project_settlement_revisions (project TEXT NOT NULL, ordinal INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY(project,ordinal))')
+            ordinal = db.execute('SELECT COALESCE(MAX(ordinal),0)+1 FROM video_project_settlement_revisions WHERE project=?', (project,)).fetchone()[0]
+            db.execute('INSERT INTO video_project_settlement_revisions VALUES (?,?,?)', (project, ordinal, v.canonical(data)))
+        else:
+            db.execute('INSERT INTO video_project_settlements VALUES (?,?)', (project, v.canonical(data)))
         return audit(db, project)

@@ -82,3 +82,36 @@ def test_settlement_detects_changed_evidence_and_allocation(setup, monkeypatch):
         db.execute('UPDATE attempts SET content=? WHERE id=?', (json.dumps(value), a['attemptId']))
         with pytest.raises(click.ClickException, match='changed'):
             v.reserved_for(db, 'test-film')
+
+
+def test_subsequent_completed_replacement_settles_additively(setup, monkeypatch):  # noqa: F811
+    completed(setup, monkeypatch)
+    first = s.settle('test-film', 999, 'First replacement approved', setup)
+    with v.database() as db:
+        original = db.execute('SELECT content FROM video_project_settlements').fetchone()[0]
+    request = setup.request
+    def distinct_request(method, url, **kwargs):
+        return {k: val.replace('synthetic-request', 'replacement-request') if isinstance(val, str) else val
+                for k, val in request(method, url, **kwargs).items()}
+    monkeypatch.setattr(setup, 'request', distinct_request)
+    value = manifest()
+    value['projectId'] = 'test-film'
+    value['shots'][0]['prompt'] += ' New replacement.'
+    value['shots'][0]['maxAttempts'] = 1
+    pid = v.prepare(value, setup)['planId']
+    assert CliRunner().invoke(main, ['video', 'approve', pid, '--models-and-rights-approved', '--auto-topup-disabled']).exit_code == 0
+    attempt = v.submit(pid, 'scene-veo', 1, '', setup)
+    v.update_attempt(attempt['attemptId'], 'COMPLETED', {})
+    event = {'endpoint': v.PROFILES['veo-3.1-fast']['endpoint'], 'amount': '0.504'}
+    monkeypatch.setattr(setup, 'billing_events', lambda ids: {i: event for i in ids})
+    second = s.settle('test-film', 999, 'Second replacement approved', setup)
+    assert second['historicalBilledCents'] == 102
+    assert second['historicalBilledCents'] > first['historicalBilledCents']
+    assert s.settle('test-film', 999, 'Second replacement approved', setup) == second
+    with v.database() as db:
+        assert db.execute('SELECT content FROM video_project_settlements').fetchone()[0] == original
+        assert v.reserved_for(db, 'test-film') == 102
+        assert n.budget_status(db, 'test-film')['capCents'] == 1000
+        db.execute("UPDATE video_project_settlement_revisions SET content='{}'")
+        with pytest.raises(click.ClickException, match='history changed'):
+            s.audit(db, 'test-film')

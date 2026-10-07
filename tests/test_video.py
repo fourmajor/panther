@@ -1240,7 +1240,7 @@ def test_seedance_token_quote_fixed_payload_and_durable_budget(setup):
 def test_plan_integrity_and_adapter_settings_are_pinned(setup, monkeypatch):
     fal = setup
     plan = approved(fal)
-    monkeypatch.setattr(v, "payload", lambda shot: {"duration": "600s"})
+    monkeypatch.setattr(v, "payload", lambda shot, **kwargs: {"duration": "600s"})
     with pytest.raises(click.ClickException, match="adapter changed"):
         v.submit(plan, "scene-veo", 1, "", fal)
     with v.database() as db:
@@ -1252,6 +1252,25 @@ def test_plan_integrity_and_adapter_settings_are_pinned(setup, monkeypatch):
     with pytest.raises(click.ClickException, match="Pinned plan changed"):
         v.submit(plan, "scene-veo", 1, "", fal)
     assert not fal.posts
+
+
+def test_historical_prompt_policy_does_not_block_audit_but_blocks_new_spend(setup, monkeypatch):
+    from panther_journal import film_prompt_policy
+    value = manifest()
+    value['shots'][0]['prompt'] = 'No people in this insert. Match the same adult faces.'
+    with monkeypatch.context() as historical:
+        historical.setattr(film_prompt_policy, 'prompt_blockers', lambda text: [])
+        plan_id = v.prepare(value, setup)['planId']
+    result = CliRunner().invoke(main, ['video', 'approve', plan_id,
+                                     '--models-and-rights-approved', '--auto-topup-disabled'])
+    assert result.exit_code == 0, result.output
+    with v.database() as db:
+        plan, _ = v.read_plan(db, plan_id)
+        assert plan['manifest'] == value
+        assert v.totals(db)['reservedLifetimeUsd'] == '0.00'
+    with pytest.raises(click.ClickException, match='Empty insert'):
+        v.submit(plan_id, 'scene-veo', 1, '', setup)
+    assert not setup.posts
 
 
 @pytest.mark.parametrize(

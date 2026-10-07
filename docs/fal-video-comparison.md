@@ -34,6 +34,12 @@ panther video budget status
 
 State lives in `~/Library/Application Support/Panther/video-comparison/` outside Git: one private
 SQLite ledger with full-sync transactions for all plans/attempts, plus original downloads.
+Historical pinned plans remain readable for billing and provenance even when newer creative
+prompt safeguards would reject them. New submissions still enforce current prompt policy.
+Explicit `budget settle-project` can settle a later completed replacement through an additive,
+hash-linked audit revision after verifying every request's exact bill. It preserves the original
+allocation, earlier audits, attempts and total cap; it cannot release ambiguous bills or reopen
+closed plans. Repeated identical settlement is idempotent. This is not additional spending approval.
 Repeated `budget init` does not reset reservations. There is no reset, arbitrary increase-limit, refund or
 alternate-state-directory command. Keep this directory backed up privately. Do not delete it or
 run a second independent copy on another laptop; that defeats a local-only budget. Migration must
