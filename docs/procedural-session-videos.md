@@ -35,6 +35,13 @@ rendered shot receives an independent frame-sampled visual review. Failed/uncert
 reviews block publication and preserve evidence rather than silently retrying indefinitely.
 Technical decode, length/checksum and browser HTTP range checks are separate gates.
 Successful outputs use ordinary immutable asset storage/version records and exact Inputs.
+The detailed renderer outputs 1920×1080 at 24 fps, using procedural material surfaces,
+connected miniature actors, explicit hair/hat/weapon features and local lighting. More
+geometry or pixels is not a substitute for faithful action and composition. Inspect
+representative start/middle/end frames before a full detail render and preserve each
+refinement's inputs/evidence. Per-shot receipts record actual render/encoding/technical
+verification wall time; direction and visual review are excluded and reported separately.
+Do not report a benchmark extrapolation as measured full-film completion time.
 
 ## Automatic owned-compute worker
 

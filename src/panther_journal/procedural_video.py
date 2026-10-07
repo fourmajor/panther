@@ -36,7 +36,7 @@ OBJECT = record({
     "position": VECTOR, "rotation": VECTOR, "scale": VECTOR,
     "points": {"type": "array", "items": VECTOR, "maxItems": 80},
     "characterId": {"type": "string", "maxLength": 60},
-    "features": {"type": "array", "items": {"type": "string", "enum": ["tricorn", "feather", "long-hair", "short-hair", "shield", "sword", "rapier", "staff", "cloak"]}, "maxItems": 8},
+    "features": {"type": "array", "items": {"type": "string", "enum": ["tricorn", "feather", "long-hair", "short-hair", "curly-hair", "red-hair", "shield", "sword", "rapier", "staff", "cloak"]}, "maxItems": 10},
     "keyframes": {"type": "array", "items": KEYFRAME, "maxItems": 40},
 })
 SHOT_SCHEMA = record({
@@ -115,7 +115,7 @@ def source_plan(value, source_key):
                       "characterIds": [a["characterId"] for a in s.get("appearances", [])]})
     if len(shots) > 40 or len({s["id"] for s in shots}) != len(shots) or sum(s["duration"] for s in shots) > 600:
         raise ValueError("Unsupported or duplicate procedural shots")
-    return {"schemaVersion": 1, "rendererVersion": "1d", "entityType": "ProceduralFilmSource", "gameId": game,
+    return {"schemaVersion": 1, "rendererVersion": "2-detail-c", "entityType": "ProceduralFilmSource", "gameId": game,
             "sessionId": value["sessionId"], "title": value["title"], "sourceKeys": [source_key],
             "sceneIds": list(dict.fromkeys(s["sceneId"] for s in shots)), "shots": shots,
             "edition": "procedural", "style": "animated miniature diorama"}
@@ -186,10 +186,13 @@ def render_shot(folder, design, shot):
             raise ValueError("Procedural clip changed")
         return output
     blender = str(model_workflow.native_blender())
+    started = time.monotonic()
     production.run_tool([blender, "--background", "--threads", "6", "--disable-autoexec", "--python-exit-code", "1", "--python", procedural_blender.__file__, "--", str(manifest), str(folder)], folder, "build-render", timeout=7200)
     production.ffmpeg(folder, "encode", ["-framerate", 24, "-i", folder / "frames/%06d.png", "-c:v", "libx264", "-crf", 18, "-pix_fmt", "yuv420p", "-movflags", "+faststart", output])
     production.ffmpeg(folder, "decode", [*production.input_args(output), "-f", "null", "-"])
-    write_json(receipt, {"sha256": production.digest(output), "size": output.stat().st_size, "duration": shot["duration"]})
+    write_json(receipt, {"sha256": production.digest(output), "size": output.stat().st_size, "duration": shot["duration"],
+        "renderWallSeconds": round(time.monotonic()-started, 3),
+        "timingScope": "Blender build/render, encode and technical decode for this invocation; excludes direction and visual review"})
     return output
 
 
@@ -284,6 +287,10 @@ def finish(folder, source):
         "sound": "Original procedural score; no spoken dialogue, narration or voice cloning",
         "modelInferenceForRendering": False, "planning": "Subscription-backed Codex; model unknown; remote inference"}
     result["sceneDesigns"] = {s["id"]: json.loads((folder / s["id"] / "scene.json").read_text()) for s in source["shots"]}
+    timings = [json.loads((folder / s["id"] / "rendered.json").read_text()).get("renderWallSeconds") for s in source["shots"]]
+    result["renderTimings"] = {"shots": dict(zip(result["shotIds"], timings, strict=True)),
+        "totalRecordedSeconds": sum(timings) if all(t is not None for t in timings) else None,
+        "scope": "Sum of recorded per-shot render invocations, not total editorial/review elapsed time"}
     result["reviewEvidence"] = {
         "shots": {s["id"]: json.loads((folder / s["id"] / "review/review.json").read_text()) for s in source["shots"]},
         "assembled": final,

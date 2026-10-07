@@ -60,6 +60,12 @@ def test_no_executable_or_external_asset_fields():
         video.validate_scene(value, 3, ["knight"])
 
 
+def test_detailed_hair_features_remain_data_only():
+    value = design()
+    value["objects"][0]["features"] += ["curly-hair", "red-hair"]
+    assert video.validate_scene(value, 3, ["knight"]) == value
+
+
 @pytest.mark.parametrize("change", ["foreign-cast", "duplicate", "past-end", "negative-scale"])
 def test_scene_identity_and_animation_guards(change):
     value = design()
