@@ -67,13 +67,11 @@ def test_video_handoff_keeps_exact_appearance_when_composer_omits_it(tmp_path):
     assert json.loads(response.calls[0]['input'])['scene'] == scene
 
 
-def test_overlarge_continuity_is_fitted_without_losing_original(tmp_path):
+def test_overlarge_continuity_fails_without_truncating_original(tmp_path):
     store = Store(tmp_path / 'private.sqlite')
     response = Responses({'renderPrompt': 'Example', 'visibleCharacterIds': ['example'], 'sourceFacts': [], 'uncertainties': []})
-    value, _ = video_prompt(store, {'gameId': 'fictional', 'prompt': 'Example', 'characterContext': [{'id': 'example', 'name': 'Example', 'details': {'overview': 'x' * 4000}}]}, tmp_path, verified, SimpleNamespace(responses=response))
-    assert len(value['renderPrompt']) <= 2300
-    assert 'Action: Example' in value['renderPrompt']
-    assert value['promptFitting']['truncated']
+    with pytest.raises(ValueError, match='provider limit'):
+        video_prompt(store, {'gameId': 'fictional', 'prompt': 'Example', 'characterContext': [{'id': 'example', 'name': 'Example', 'details': {'overview': 'x' * 4000}}]}, tmp_path, verified, SimpleNamespace(responses=response))
     assert json.loads(response.calls[0]['input'])['characters'][0]['details']['overview'] == 'x' * 4000
     assert len(response.calls) == 1
 
@@ -88,7 +86,7 @@ def test_insert_uses_only_visible_cast_and_keeps_game_style(tmp_path):
         tmp_path, verified, SimpleNamespace(responses=response))
     assert 'Photorealistic live-action' in value['renderPrompt']
     assert 'Absent' not in value['renderPrompt'] and 'Red armor' not in value['renderPrompt']
-    assert 'Approved camera: Locked close-up' in value['renderPrompt']
+    assert 'Camera: Locked close-up' in value['renderPrompt']
     assert value['schemaVersion'] == 2 and value['visibleCharacterIds'] == ['hero']
 
 

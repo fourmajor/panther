@@ -27,10 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from panther_journal import cloud, generation_metadata as generation, model_workflow as local
 from panther_journal import video
 from panther_journal import workflows as workshop
+from panther_journal.film_prompt_policy import REVIEW_GUIDANCE, prompt_blockers
 from panther_journal.audio_storage import flush_file, lock, write_json
 from panther_journal.editorial import obj, array, TEXT
 
-VERSION = 1
+VERSION = 2
 ROLES = ("native-mix", "dialogue", "music", "effects", "ambience")
 CHECKS = (
     "face",
@@ -410,6 +411,7 @@ def review(folder, images, data):
         "Do not cut dialogue/caption/sound cues, change identity, fabricate repair or request generation. "
         "Zero trims and neutral grade (0,1,1) if improvement is uncertain, during preparation or final review. "
         "Failures that require regeneration remain explicit working-draft notes. Explain actual changes in reason.\n"
+        + REVIEW_GUIDANCE + "\n"
         + json.dumps(data, ensure_ascii=False)
     )
     write_json(folder / "review-input.json", data)
@@ -479,8 +481,10 @@ def model_for(shot):
 
 def prepare(plan, folder, refs, reviewer=review):
     """Inspect prepared compositions against immutable selected appearances; never generate images."""
-    shots, reports = [], []
+    shots, reports, blockers = [], [], []
     for shot in plan.shots:
+        shot_blockers = prompt_blockers(shot.prompt)
+        blockers.extend({"shotId": shot.id, "reason": reason} for reason in shot_blockers)
         images = [Path(refs[a.reference.key]["path"]) for a in shot.appearances]
         for ref in (shot.startImage, shot.endImage):
             if ref:
@@ -488,7 +492,7 @@ def prepare(plan, folder, refs, reviewer=review):
                 images.append(Path(refs[ref.key]["path"]))
         work = folder / shot.id
         work.mkdir()
-        if images:
+        if not shot_blockers:
             report = reviewer(
                 work,
                 images,
@@ -515,14 +519,17 @@ def prepare(plan, folder, refs, reviewer=review):
         "sourceKeys": sorted(set(plan.sourceKeys + [r.key for r in references(plan)])),
         "shots": shots,
     }
-    video.validate_manifest(manifest)
-    write_json(folder / "generation-manifest.json", manifest)
-    ready = all(
+    ready = not blockers and all(
         c["status"] not in ("fail", "uncertain") for r in reports for c in r["report"]["checks"]
     )
+    if ready:
+        video.validate_manifest(manifest)
+    # Preserve rejected preparation evidence, never an executable paid request.
+    write_json(folder / ("generation-manifest.json" if ready else "blocked-generation-candidate.json"), manifest)
     result = {
         "status": "PREPARED" if ready else "PREPARATION_WORKING_DRAFT",
         "reports": reports,
+        "blockers": blockers,
         "generationApproved": False,
         "generation": generation.subscription(),
     }
@@ -1115,15 +1122,15 @@ def package(folder, result, *, retain_oversize_master_locally=False):
     return plan, [("provenance", doc, "video-production", "intermediate"), *files]
 
 
-def publish(folder, *, retain_oversize_master_locally=False, new_version_of=None):
+def publish(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False):
     """Revalidate checkpoints and use Panther's ordinary immutable upload protocol."""
     folder = private(folder)
     with lock(folder, "publication.lock"):
         return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally,
-                              new_version_of=new_version_of)
+                              new_version_of=new_version_of, allow_working_draft=allow_working_draft)
 
 
-def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_of=None):
+def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False):
     receipt = json.loads((folder / "result-sha256.json").read_text())
     if receipt != {
         "sha256": digest(folder / "result.json"),
@@ -1155,6 +1162,8 @@ def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_
         raise click.ClickException("Production identity does not match its checkpoint directory")
     if result.get("sourceVerification") != "panther":
         raise click.ClickException("Synthetic/unverified production runs cannot be published")
+    if result.get("visualReviewPassed") is not True and not allow_working_draft:
+        raise click.ClickException("Visual quality review failed. Preserve the local draft; --allow-working-draft is only for explicitly requested diagnostic publication, not final delivery.")
     plan, files = package(folder, result, retain_oversize_master_locally=retain_oversize_master_locally)
     config = cloud.configuration()
     intent_path = folder / "publication" / "version-intent.json"
@@ -1321,7 +1330,8 @@ def worker(inbox, work_dir, once):
 @click.option("--retain-oversize-master-locally", is_flag=True,
               help="Explicitly retain a master over the upload limit locally; publish browser video and remaining outputs unchanged.")
 @click.option("--new-version-of", help="Publish the browser movie as an immutable revision of this same-game MP4.")
-def publish_command(run_directory, retain_oversize_master_locally, new_version_of):
+@click.option("--allow-working-draft", is_flag=True, help="Explicit diagnostic publication of failed visual QC; never quality approval.")
+def publish_command(run_directory, retain_oversize_master_locally, new_version_of, allow_working_draft):
     """Upload verified final assets, stems and provenance through Panther, keeping originals."""
     click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally,
-                                 new_version_of=new_version_of), indent=2))
+                                 new_version_of=new_version_of, allow_working_draft=allow_working_draft), indent=2))

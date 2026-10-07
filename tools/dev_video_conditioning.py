@@ -30,7 +30,10 @@ def condition(store, job, model, body, verifier):
         body['reference_image_urls'] = references
         if not frame:
             body['aspect_ratio'] = '16:9'
-        bindings = [f"Image {i + 1} supplies only {item['name']}'s identity, costume and equipment." for i, item in enumerate(labels)]
+        from panther_journal.film_prompt_policy import h3_reference_prompt
+        body['prompt'] = h3_reference_prompt(body['prompt'], [item['name'] for item in labels],
+                                             first_frame=bool(body.get('image_url')))
+        return endpoint, body, labels
     elif model.startswith('veo-3.1-fast'):
         if frame:
             # This I2V endpoint has no independent identity-image field. The

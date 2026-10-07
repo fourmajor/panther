@@ -150,6 +150,10 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             if standalone and job.get('visualStyle'):
                 prompt += '\nVisual style: ' + job['visualStyle'].replace('-', ' ')
             shot = {'model': model, 'prompt': prompt}
+            from panther_journal.film_prompt_policy import prompt_blockers
+            blockers = prompt_blockers(prompt)
+            if blockers:
+                raise ValueError('Repair the exact shot prompt before generation: ' + '; '.join(blockers))
             body = v.payload(shot, duration_seconds=job.get('generationDurationSeconds', 8))
             if standalone:
                 options = job.get('inputs', {})
@@ -183,7 +187,9 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             endpoint, body, visual_references = condition(store, job, model, body, verified)
             job['visualReferences'] = visual_references
             original_prompt = body['prompt']
-            body['prompt'] = v.fit_prompt(original_prompt)
+            blockers = prompt_blockers(original_prompt)
+            if blockers:
+                raise ValueError('Repair the exact shot prompt before generation: ' + '; '.join(blockers))
             job['promptFitting'] = {'originalPrompt': prompt, 'conditionedPrompt': original_prompt, 'submittedCharacters': len(body['prompt']), 'truncated': body['prompt'] != original_prompt or len(prompt) > 2500}
             retain(folder / 'request.json', json.dumps({'endpoint': endpoint, 'payload': body, 'sceneRef': ref}, ensure_ascii=False).encode())
             job.update(status='RUNNING', dispatchStarted=now(), model=model, endpoint=endpoint, message=None)
