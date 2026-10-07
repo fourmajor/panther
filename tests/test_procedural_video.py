@@ -83,6 +83,17 @@ def test_nonfinite_scene_data_is_rejected():
         video.validate_scene(value, 3, ["knight"])
 
 
+@pytest.mark.parametrize("field", ["camera", "lighting"])
+def test_nonfinite_camera_and_lighting_rejected(field):
+    value = design()
+    if field == "camera":
+        value[field]["position"][0] = float("nan")
+    else:
+        value[field]["power"] = float("nan")
+    with pytest.raises(ValueError, match="Nonfinite"):
+        video.validate_scene(value, 3, ["knight"])
+
+
 def test_ready_queue_only_uses_completed_preflight(monkeypatch):
     from panther_journal import character_details
     def api(_config, _method, endpoint, **_kw):
@@ -91,8 +102,20 @@ def test_ready_queue_only_uses_completed_preflight(monkeypatch):
         return {"tasks": [{"stage": "video-generation-packets", "status": "DONE", "output": {"key": "pin"}},
                           {"stage": "video-preflight", "status": "RUNNING"}]}
     monkeypatch.setattr(video.cloud, "api", api)
-    monkeypatch.setattr(character_details, "pages", lambda *_a: [{"status": "READY_FOR_VIDEO_DISCUSSION", "episodeDestination": True, "jobId": "job"}])
+    monkeypatch.setattr(character_details, "pages", lambda *_a: [{"status": "READY_FOR_VIDEO_DISCUSSION", "episodeDestination": True, "jobId": "job", "raw": {"key": "raw"}, "createdAt": 10}])
     assert list(video.ready_sources({})) == []
+
+
+def test_queue_activation_and_terminal_cache_skip_historical_work(monkeypatch):
+    from panther_journal import character_details
+    def api(_config, _method, endpoint, **_kw):
+        if endpoint == "/games":
+            return {"games": [{"id": "sample-game"}]}
+        pytest.fail("Must not request already handled/historical jobs")
+    monkeypatch.setattr(video.cloud, "api", api)
+    monkeypatch.setattr(character_details, "pages", lambda *_a: [{"status": "READY_FOR_VIDEO_DISCUSSION", "episodeDestination": True, "jobId": "job", "createdAt": 10, "raw": {"key": "raw"}}])
+    assert list(video.ready_sources({}, completed_after=11)) == []
+    assert list(video.ready_sources({}, completed_jobs={"job": "done"})) == []
 
 
 def test_publication_verifies_immutable_source_before_render(tmp_path, monkeypatch):

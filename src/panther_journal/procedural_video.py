@@ -49,6 +49,11 @@ SHOT_SCHEMA = record({
 
 def validate_scene(value, duration, characters):
     validate(value, SHOT_SCHEMA)
+    camera = value["camera"]
+    scalars = [camera["lens"], value["lighting"]["power"]]
+    vectors = [camera[name] for name in ("position", "target", "endPosition")]
+    if not all(math.isfinite(n) for n in scalars + [n for v in vectors for n in v]):
+        raise ValueError("Nonfinite scene camera or lighting")
     objects = value["objects"]
     if len({o["id"] for o in objects}) != len(objects):
         raise ValueError("Duplicate procedural object identity")
@@ -110,7 +115,7 @@ def source_plan(value, source_key):
                       "characterIds": [a["characterId"] for a in s.get("appearances", [])]})
     if len(shots) > 40 or len({s["id"] for s in shots}) != len(shots) or sum(s["duration"] for s in shots) > 600:
         raise ValueError("Unsupported or duplicate procedural shots")
-    return {"schemaVersion": 1, "rendererVersion": "1c", "entityType": "ProceduralFilmSource", "gameId": game,
+    return {"schemaVersion": 1, "rendererVersion": "1d", "entityType": "ProceduralFilmSource", "gameId": game,
             "sessionId": value["sessionId"], "title": value["title"], "sourceKeys": [source_key],
             "sceneIds": list(dict.fromkeys(s["sceneId"] for s in shots)), "shots": shots,
             "edition": "procedural", "style": "animated miniature diorama"}
@@ -144,7 +149,7 @@ def compile_shot(folder, source, shot):
         "An actor primitive builds a stylized humanoid with connected head/body/limbs, cloak, selected hair/hat/weapons; "
         "its local z height is 2 units, origin is its centre one unit above its feet, and it faces -Y. "
         "For standing actors on floor z=0 use position z=1. Use actor scale around [1,1,1]. Its color is clothing. "
-        "Objects support keyed world position, Euler-radian rotation, scale; interpolation is linear. "
+        "Objects support keyed world position, Euler-radian rotation, scale with Blender's eased interpolation. "
         "Animate actions immediately with at least three keys for acting subjects, not just camera movement. "
         "Props must remain distinct and physically attached unless explicitly released. Effects use emissive curves/spheres, "
         "not humanoids. Add practical warm lights via lighting. Do not change the source action/order/cast. "
@@ -239,7 +244,7 @@ def finish(folder, source):
         if not report_file.exists():
             images = production.sheets(clip, 0, shot["duration"], review_dir, "sheet")
             report = production.review(review_dir, images, {"stage": "procedural-shot-review", "shot": shot,
-                "style": source["style"], "identityScope": "Intentionally abstract animated miniatures, not photorealistic likenesses. Verify distinct cast, stable features/colors/owned weapons, actual action and props. The model-film's photorealistic wording is source direction, not this edition's style requirement.",
+                "style": source["style"], "identityScope": "Intentionally abstract animated miniatures, not photorealistic likenesses. Verify distinct cast, stable features/colors/owned weapons, actual visible action and props. The model-film's photorealistic wording is source direction, not this edition's style requirement. Selected shot.duration is authoritative for this edited companion, not any longer original prompt duration. This edition has mathematical music, no dialogue, narration or lip sync; do not score absent speech as a visual failure. Still flag missing visible story actions or genuinely uncertain sampled visual evidence. Audio is not supplied or perceptually reviewed.",
                 "design": json.loads((target / "scene.json").read_text())})
         else:
             report = json.loads(report_file.read_text())
@@ -279,6 +284,13 @@ def finish(folder, source):
         "sound": "Original procedural score; no spoken dialogue, narration or voice cloning",
         "modelInferenceForRendering": False, "planning": "Subscription-backed Codex; model unknown; remote inference"}
     result["sceneDesigns"] = {s["id"]: json.loads((folder / s["id"] / "scene.json").read_text()) for s in source["shots"]}
+    result["reviewEvidence"] = {
+        "shots": {s["id"]: json.loads((folder / s["id"] / "review/review.json").read_text()) for s in source["shots"]},
+        "assembled": final,
+        "assembledSamplingFps": 2,
+    }
+    if (folder / "design-reuse.json").exists():
+        result["designReuse"] = json.loads((folder / "design-reuse.json").read_text())
     write_json(result_file, result)
     return result
 
@@ -380,25 +392,28 @@ def execute(source, work_dir, *, publish_result=False):
             raise
 
 
-def ready_sources(config):
+def ready_sources(config, *, completed_after=0, completed_jobs=()):
     """Bounded catalog pages, not S3 scans. Completed packets are the durable queue."""
     from panther_journal.character_details import pages
     for game in cloud.api(config, "GET", "/games")["games"]:
         game_id = game["id"]
         for job in pages(config, "/editorial-jobs", {"gameId": game_id}, "jobs"):
-            if job.get("status") != "READY_FOR_VIDEO_DISCUSSION" or not job.get("episodeDestination"):
+            if (job.get("status") != "READY_FOR_VIDEO_DISCUSSION" or not job.get("episodeDestination")
+                    or job["jobId"] in completed_jobs or float(job.get("createdAt", 0)) < completed_after
+                    or not (job.get("raw") or job.get("rawSources"))):
                 continue
             detail = cloud.api(config, "GET", "/editorial-jobs", params={"jobId": job["jobId"]})
             tasks = {t["stage"]: t for t in detail["tasks"]}
             task = tasks.get("video-generation-packets", {})
             if tasks.get("video-preflight", {}).get("status") == "DONE" and task.get("status") == "DONE":
-                yield task["output"]
+                yield {**task["output"], "jobId": job["jobId"]}
 
 
 @click.command("procedural-worker")
 @click.option("--work-dir", type=click.Path(path_type=Path), required=True)
+@click.option("--completed-after", type=click.FloatRange(min=0), required=True, help="Explicit job-creation activation boundary (UTC Unix timestamp).")
 @click.option("--once", is_flag=True)
-def worker(work_dir, once):
+def worker(work_dir, completed_after, once):
     """Automatically render complete session plans on owned compute, with no paid generation."""
     root = production.private(work_dir)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -407,16 +422,22 @@ def worker(work_dir, once):
     with lock(root, "worker.lock"):
         while True:
             config = cloud.configuration()
-            for ref in ready_sources(config):
+            registry_file = root / "completed-jobs.json"
+            registry = json.loads(registry_file.read_text()) if registry_file.exists() else {}
+            for ref in ready_sources(config, completed_after=completed_after, completed_jobs=registry):
                 file = inputs / (hashlib.sha256(ref["key"].encode()).hexdigest() + ".json")
                 model_workflow.download(config, ref, file)
                 source = source_plan(json.loads(file.read_text()), ref["key"])
                 identity = hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest()
                 target = root / identity
                 if (target / "published.json").exists() or (target / "blocked.json").exists():
+                    registry[ref["jobId"]] = {"runId": identity, "state": "published" if (target / "published.json").exists() else "blocked"}
+                    write_json(registry_file, registry, replace=True)
                     continue
                 try:
                     execute(source, root, publish_result=True)
+                    registry[ref["jobId"]] = {"runId": identity, "state": "published"}
+                    write_json(registry_file, registry, replace=True)
                 except model_workflow.Deferred:
                     return
                 except (click.ClickException, ValueError):

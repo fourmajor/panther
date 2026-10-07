@@ -457,6 +457,9 @@ def test_encrypted_session_rotates_without_plaintext_on_disk(monkeypatch, tmp_pa
 def test_encrypted_session_rejects_shared_directory(tmp_path):
     shared_dir = tmp_path / "shared"
     shared_dir.mkdir(mode=0o755)
+    # Other private-workflow tests set a restrictive process umask. Exercise
+    # actual shared permissions, independently of test ordering.
+    shared_dir.chmod(0o755)
     store = EncryptedSessionStore(str(shared_dir / "session.cred"))
     with pytest.raises(Exception, match="private"):
         store.set_password("panther.place/cli", "session", "synthetic")

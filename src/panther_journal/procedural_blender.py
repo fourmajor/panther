@@ -99,12 +99,13 @@ def build(value, folder):
             plume = primitive("sphere", "Vertical feather", (.12, .04, 2.32), (.12, .065, .58), (.85, .8, .65), root)
             plume.rotation_euler.y = -.2
         if "shield" in features:
-            shield = primitive("cylinder", "Left shield", (-.45, -.18, 1), (.62, .62, .1), (.12, .18, .24), root)
+            shield = primitive("cylinder", "Left shield", (.45, -.18, 1), (.62, .62, .1), (.12, .18, .24), root)
             shield.rotation_euler.x = math.pi/2
         for weapon in set(features) & {"sword", "rapier", "staff"}:
-            primitive("cylinder", "Right " + weapon, (.39, -.05, 1.43), (.035 if weapon == "rapier" else .065, .035, 1.4), (.62, .67, .73), root)
+            # Facing -Y: anatomical right is -X, not screen-right +X.
+            primitive("cylinder", "Right " + weapon, (-.39, -.05, 1.43), (.035 if weapon == "rapier" else .065, .035, 1.4), (.62, .67, .73), root)
             if weapon != "staff":
-                primitive("box", "Weapon guard", (.39, -.05, .91), (.25, .09, .045), (.7, .48, .12), root)
+                primitive("box", "Weapon guard", (-.39, -.05, .91), (.25, .09, .045), (.7, .48, .12), root)
         # Actor origin is its centre, one unit above its feet, like other primitives.
         for child in root.children:
             child.location.z -= 1

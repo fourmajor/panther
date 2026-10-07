@@ -39,13 +39,16 @@ Successful outputs use ordinary immutable asset storage/version records and exac
 ## Automatic owned-compute worker
 
 ```sh
-panther videos procedural-worker --work-dir PRIVATE_DIRECTORY --once
+panther videos procedural-worker --work-dir PRIVATE_DIRECTORY --completed-after UTC_UNIX_TIMESTAMP --once
 ```
 
 The durable queue is completed, canonical session generation packets with a completed
 video-preflight stage. Discovery uses bounded per-game API pages, never an S3 scan or
 recording quiet period. No branch runs on an incomplete recording. A missing laptop,
 subscription login or Blender delays processing; it does not invent successful footage.
+The explicit job-creation activation boundary prevents unexpectedly rendering historical
+experiments; the installer pins its installation time. Backfill desired historical films
+explicitly with `render-procedural`. Prompt-only projects are not completed sessions.
 Published and blocked source revisions are not replayed. Subscription deferrals retain
 checkpoints. The worker cannot submit model videos or approve a storyboard.
 

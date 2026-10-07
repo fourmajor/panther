@@ -9,14 +9,15 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 LABEL = "place.panther.editorial-worker"
 
 
-def service_definition(release, state, home, worker="editorial"):
+def service_definition(release, state, home, worker="editorial", completed_after=0):
     if worker not in {"editorial", "procedural"}:
         raise ValueError("Unknown owned-compute worker")
-    return {
+    definition = {
         "Label": LABEL if worker == "editorial" else "place.panther.procedural-worker",
         "ProgramArguments": [
             str(release / "venv/bin/panther"),
@@ -39,6 +40,9 @@ def service_definition(release, state, home, worker="editorial"):
         "StandardOutPath": str(state / "worker.log"),
         "StandardErrorPath": str(state / "worker-error.log"),
     }
+    if worker == "procedural":
+        definition["ProgramArguments"] += ["--completed-after", str(completed_after)]
+    return definition
 
 
 def install(repo, state, start, worker="editorial"):
@@ -87,7 +91,7 @@ def install(repo, state, start, worker="editorial"):
     if plist.exists():
         raise SystemExit("Existing service retained; inspect before replacement")
     with plist.open("xb") as stream:
-        plistlib.dump(service_definition(release, state, Path.home(), worker), stream)
+        plistlib.dump(service_definition(release, state, Path.home(), worker, time.time()), stream)
     if start:
         subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)], check=True)
     print(json.dumps({"commit": sha, "state": str(state), "plist": str(plist), "started": start}))

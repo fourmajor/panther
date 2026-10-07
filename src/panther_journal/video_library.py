@@ -11,7 +11,7 @@ from panther_journal import cloud
 
 @click.group()
 def videos():
-    """Browse/save private video collections; never start generation."""
+    """Browse films, save collections, and render reviewed procedural companions."""
 
 
 from panther_journal.tv_library import register as register_tv  # noqa: E402
