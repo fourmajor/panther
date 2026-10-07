@@ -2114,7 +2114,9 @@ async function previewFile(file, {preserveDialog=false, returnFocus=null} = {}) 
     }
   } catch (error) {
     if (epoch !== previewEpoch) return;
-    elements.previewBody.textContent = error.message;
+    const message=document.createElement('p');message.textContent=error.message;message.setAttribute('role','alert');
+    const retry=document.createElement('button');retry.type='button';retry.textContent='Retry preview';retry.className='quiet-button';window.PantherUI.styleButton(retry,'outline');retry.onclick=()=>void previewFile(file,{preserveDialog,returnFocus});
+    elements.previewBody.replaceChildren(message,retry);
     document.getElementById("asset-links").textContent = "Connections unavailable. Close and reopen the asset to retry.";
   }
 }
@@ -3351,7 +3353,10 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       const parsedDate=new Date(date||NaN),dateLabel=!Number.isNaN(parsedDate.valueOf())?parsedDate.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}):'';
       meta.textContent=[group.querySelector('h2').textContent.includes(dateLabel)?'':dateLabel,!audio&&Number.isFinite(duration)&&duration>=0?timestamp(duration):'',names.join(', ')].filter(Boolean).join(' · ');if(meta.textContent)group.append(meta);
       const links=document.createElement('div');links.className='session-asset-links';
-      const transcript=transcripts.find(asset=>asset.kind==='raw-transcript')||transcripts[0];if(transcript){const link=assetLink(transcript,'Transcript');link.className='session-transcript-link';links.append(link);}
+      const latest=values=>[...values].sort((a,b)=>b.lastModified.localeCompare(a.lastModified)||a.key.localeCompare(b.key))[0];
+      const original=latest(transcripts.filter(asset=>['transcript','raw-transcript'].includes(asset.kind)));
+      const corrected=latest(transcripts.filter(asset=>['corrected-transcript','edited-transcript'].includes(asset.kind)));
+      for(const [transcript,label] of [[original,'Original transcript'],[corrected,'Corrected transcript']])if(transcript){const link=assetLink(transcript,label);link.className='session-transcript-link';links.append(link);}
       group.append(links);
       if(audio&&!(roomCapture?.draft?.sessionId===id&&!document.getElementById('room-result').hidden)){const player=document.createElement('audio');player.className='session-library-audio';player.controls=true;player.preload='none';player.setAttribute('aria-label','Session recording');sessionPlaybackRow(group,player,audio.key,current);void api('/object-url',{key:audio.key}).then(signed=>{if(current()&&player.isConnected)player.src=signed.url;}).catch(()=>{if(player.isConnected)player.remove();});}
       const raw=transcripts.find(asset=>asset.kind==='raw-transcript')||transcripts[0];
@@ -3582,6 +3587,8 @@ function renderStructuredAsset(asset, epoch) {
   const transcript = ["PlayerTranscript", "BrowserTranscript"].includes(doc.entityType) ? doc : ["corrected-transcript", "edited-transcript"].includes(doc.stage) ? doc.payload?.transcript : null;
   if (transcript && Array.isArray(transcript.segments)) {
     const people = new Map((transcript.players || []).map(p => [p.id, p.name]));
+    const textDownload=document.createElement('button');textDownload.type='button';textDownload.className='quiet-button';textDownload.textContent='Download text';window.PantherUI.styleButton(textDownload,'outline');
+    textDownload.onclick=()=>{const text=transcript.segments.map(segment=>`${timestamp(segment.start)}–${timestamp(segment.end)} · ${people.get(segment.playerId)||'Unidentified speaker'}\n${typeof segment.text==='string'?segment.text:'[Missing text]'}`).join('\n\n');const url=URL.createObjectURL(new Blob([text+'\n'],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=asset.key.split('/').at(-1).replace(/\.json$/,'.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};host.append(textDownload);
     const bundle=transcript.entityType==='EditorialTranscriptBundle';
     const navigation = bundle ? {
       add(line,segment) {if(sameGameKey(segment.sourceKey)){const source=assetLink({key:segment.sourceKey},'Source transcript');line.append(source);}},
@@ -3590,7 +3597,7 @@ function renderStructuredAsset(asset, epoch) {
     for (const segment of transcript.segments) {
       const line = document.createElement("section"); line.className = "transcript-segment";
       const heading = document.createElement("h3"), text = document.createElement("p");
-      heading.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)}${people.get(segment.playerId) ? ` · ${people.get(segment.playerId)}` : ""}`;
+      heading.textContent = `${timestamp(segment.start)}–${timestamp(segment.end)} · ${people.get(segment.playerId)||'Unidentified speaker'}`;
       text.textContent = typeof segment.text === "string" ? segment.text : "[Missing text]";
       line.append(heading, text);
       navigation.add(line, segment);
