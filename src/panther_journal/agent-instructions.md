@@ -1,5 +1,14 @@
 # Panther agent instructions
 
+Film preparation follows `docs/ai-film-production.md`. Keep the continuity bible as review
+context, not provider prose repeated across shots. Use only the cast/props/effects actually
+visible in this shot and preserve its approved action without clipping. Use model-specific
+prompt structure (H3's audiovisual fields and frame alignment are not generic prose).
+Inspect source takes before continuing a batch after a systemic defect. Failed preparation
+does not emit an executable manifest; failed visual QC blocks ordinary movie publication.
+`--allow-working-draft` is an explicit diagnostic publication choice, not final delivery or
+authority for another paid generation. Previous takes and versions remain immutable.
+
 Publish AI-authored replacement scene storyboards with `panther videos
 propose-storyboard PRIVATE_JSON`, not the human `storyboardShots` edit path.
 Use the exact scene revision and retain the operation ID for identical retries.

@@ -6,7 +6,7 @@ from io import BytesIO
 import os
 from dev_playback_worker import retain
 from panther_journal.editorial import reading_transcript
-from panther_journal.video import fit_prompt
+from panther_journal.film_prompt_policy import REVIEW_GUIDANCE, motion_prompt
 
 
 def request(folder, name, instructions, data, schema, client=None, images=None):
@@ -149,7 +149,8 @@ def video_prompt(store, job, folder, verifier, client=None):
         'A map shot animates the actual cartographic image, preserving geography/labels and its existing visual treatment, '
         'not a live-action landscape. Check map-frame fidelity against that map treatment, not the game live-action character style. '
         'sourceFacts cite exact sourceKey and zero-based segmentIndex from transcripts; return [] without transcript facts. '
-        'Do not infer speaker identities or add modern clothing/props. Preserve uncertainty. Do not invent missing setting facts.',
+        'Do not infer speaker identities or add modern clothing/props. Preserve uncertainty. Do not invent missing setting facts. '
+        + REVIEW_GUIDANCE,
         {'direction': job['prompt'], 'model': job.get('model'), 'generationDurationSeconds': job.get('generationDurationSeconds'), 'sceneType': job.get('sceneType'),
          'characters': characters, 'shot': shots[0] if shots else None, 'scene': scene,
          'visualStyle': style, 'transcripts': transcripts, 'contexts': contexts}, schema, client, images)
@@ -165,28 +166,25 @@ def video_prompt(store, job, folder, verifier, client=None):
         raise ValueError('Prepare a matching starting frame before generating: ' + str(value.get('reason', 'Frame differs from the approved shot'))[:300])
     if value.get('renderable') is not True:
         raise ValueError('Split this storyboard shot before generating: ' + str(value.get('reason', 'Action is too complex'))[:300])
-    lines = []
+    # Keep approved action/camera complete, rather than relying on a shorter AI paraphrase.
+    rendered = dict(direction)
     if shots:
+        rendered['action'] = shots[0]['description']
         if shots[0].get('durationSeconds'):
             duration = min(shots[0]['durationSeconds'], job.get('generationDurationSeconds') or shots[0]['durationSeconds'])
-            lines.append(f"Complete the approved sequence within {duration} seconds; hold the ending for remaining take time.")
-        lines.append('Approved action: ' + fit_prompt(shots[0]['description'], 650))
+            rendered['action'] = f"Complete the approved sequence within {duration} seconds; hold the ending for remaining take time. " + rendered['action']
         if shots[0].get('camera'):
-            lines.append('Approved camera: ' + fit_prompt(shots[0]['camera'], 180))
-    if style:
-        lines.append(fit_prompt(style, 250))
-    for character in characters:
-        if character['id'] in selected:
-            details = character.get('details', {})
-            lines.append(character['name'] + ': ' + fit_prompt(str(details.get('subtitle') or '') + '. ' + str(details.get('overview') or ''), 120))
-    lines.extend(field.title() + ': ' + fit_prompt(direction[field], 120) for field in fields if direction[field].strip())
-    original_prompt = '\n'.join(lines)
-    prompt = fit_prompt(original_prompt, 2300)
+            rendered['camera'] = shots[0]['camera']
+    if not frame:
+        profiles = [character['name'] + ': ' + str(character.get('details', {}).get('subtitle') or '')
+                    + '. ' + str(character.get('details', {}).get('overview') or '')
+                    for character in characters if character['id'] in selected]
+        rendered['blocking'] = ' '.join(profiles + [rendered['blocking']])
+        rendered['setting'] = ' '.join([style, rendered['setting']]).strip()
+    # Frames carry style and appearance. Do not reappend a scene-wide cast to I2V.
+    prompt = motion_prompt(job.get('model', ''), rendered, first_frame=bool(frame))
     value.update(schemaVersion=2, renderPrompt=prompt, visualStyle=style_id,
-                 promptFitting={'assembledPrompt': original_prompt, 'submittedCharacters': len(prompt),
-                                'truncated': prompt != original_prompt or any(len(direction[field]) > 120 for field in fields)
-                                or any(len(str(character.get('details', {}).get('overview', ''))) > 120 for character in characters if character['id'] in selected)
-                                or any(len(shot['description']) > 650 or len(shot.get('camera', '')) > 180 for shot in shots)})
+                 promptFitting={'assembledPrompt': prompt, 'submittedCharacters': len(prompt), 'truncated': False})
     for fact in value.get('sourceFacts', []):
         doc = transcripts.get(fact.get('sourceKey'))
         if not doc or type(fact.get('segmentIndex')) is not int or not 0 <= fact['segmentIndex'] < len(doc['segments']) or not isinstance(fact.get('fact'), str) or not fact['fact'].strip():

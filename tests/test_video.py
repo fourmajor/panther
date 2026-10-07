@@ -1426,7 +1426,6 @@ def test_provider_prompt_is_bounded_without_modifying_original():
     from panther_journal.video import payload
     shot = {'model': 'h3-max', 'prompt': 'Visible action. ' + 'detail ' * 1000}
     original = shot['prompt']
-    body = payload(shot)
-    assert len(body['prompt']) <= 2500
-    assert body['prompt'].startswith('Visible action.')
+    with pytest.raises(click.ClickException, match='provider limit'):
+        payload(shot)
     assert shot['prompt'] == original

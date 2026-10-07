@@ -1,4 +1,10 @@
-# Local video production, version 1
+# Local video production, version 2
+
+Follow the researched [AI film production method](ai-film-production.md). Preparation now audits
+shot-specific prompt/frame consistency and retains failed candidates without an executable
+generation manifest. Finishing preserves diagnostic drafts, but ordinary publication blocks failed
+visual QC. `--allow-working-draft` is for explicitly requested diagnostic publication, not delivery.
+Earlier immutable version-1 runs and already-published media remain unchanged.
 
 Panther now **executes** a separate finishing workflow after footage selection. This is not a
 new paid-generation state in the transcript/editorial Step Function. The owner’s laptop runs

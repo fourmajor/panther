@@ -324,6 +324,31 @@ def test_unresolved_continuity_is_working_draft_not_owner_gate(media, tmp_path):
     assert Path(result["delivery"]["browser"]).exists()
 
 
+def test_failed_qc_cannot_be_published_as_ordinary_delivery(media, tmp_path, monkeypatch):
+    def reviewer(*args):
+        value = report()
+        value['checks'][0].update(status='fail', evidence='Synthetic identity drift')
+        return value
+    monkeypatch.setattr(p.cloud, 'configuration', lambda: {})
+    monkeypatch.setattr(p.cloud, 'api', lambda config, method, route, params: {
+        'sha256': base64.b64encode(bytes.fromhex(p.digest(Path(next(r for r in p.references(media) if r.key == params['key']).path)))).decode(),
+        'size': Path(next(r for r in p.references(media) if r.key == params['key']).path).stat().st_size,
+    })
+    folder, _ = p.execute_observed(media, tmp_path / 'runs', reviewer=reviewer)
+    monkeypatch.setattr(p.cloud.upload, 'callback', lambda **kw: pytest.fail('Uploaded failed movie'))
+    with pytest.raises(click.ClickException, match='Visual quality review failed'):
+        p.publish(folder)
+
+
+def test_contradictory_preparation_preserves_evidence_not_executable_manifest(tmp_path):
+    data = manifest()
+    data['shots'][0]['prompt'] = 'No people in this insert. Match the same adult faces.'
+    folder, result = p.execute(p.Production.model_validate(data), tmp_path / 'runs', mode='prepare', verify_cloud=False)
+    assert result['status'] == 'PREPARATION_WORKING_DRAFT' and result['blockers']
+    assert list(folder.glob('preparation/*/blocked-generation-candidate.json'))
+    assert not list(folder.glob('preparation/*/generation-manifest.json'))
+
+
 def test_cli_schema_and_invalid_inputs(tmp_path):
     result = CliRunner().invoke(main, ["video", "production", "schema"])
     assert result.exit_code == 0
@@ -345,7 +370,7 @@ def test_preparation_selects_profiles_and_never_approves(tmp_path):
         tmp_path / "runs",
         mode="prepare",
         verify_cloud=False,
-        reviewer=lambda *a: pytest.fail("No images to review"),
+        reviewer=lambda *a: report(),
     )
     assert result["generationApproved"] is False
     generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
@@ -386,7 +411,8 @@ def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):
     )
     assert result["status"] == "PREPARATION_WORKING_DRAFT"
     assert not result["generationApproved"]
-    generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
+    assert not list(folder.glob("preparation/*/generation-manifest.json"))
+    generated = json.loads(next(folder.glob("preparation/*/blocked-generation-candidate.json")).read_text())
     assert generated["shots"][0]["model"] == "kling-3-pro-image"
     assert generated["shots"][0]["endImage"]["sha256"] == frame.sha256
     assert calls[0]["stage"] == "composition-preparation"

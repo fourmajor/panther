@@ -601,6 +601,10 @@ def validate_manifest(value):
         if shot["id"] in seen or shot["model"] not in PROFILES:
             fail("Duplicate shot or unsupported model profile.")
         seen.add(shot["id"])
+        from panther_journal.film_prompt_policy import prompt_blockers
+        blockers = prompt_blockers(shot["prompt"])
+        if blockers:
+            fail("Shot prompt needs repair: " + "; ".join(blockers))
         if value["schemaVersion"] == 2:
             production_duration(shot["model"], shot.get("durationSeconds"))
         if bool(PROFILES[shot["model"]].get("imageField")) != ("image" in shot):
@@ -670,6 +674,10 @@ def generation_duration(model, planned):
 
 
 def payload(shot, *, duration_seconds=None):
+    from panther_journal.film_prompt_policy import prompt_blockers
+    blockers = prompt_blockers(shot['prompt'])
+    if blockers:
+        fail('Shot prompt needs repair: ' + '; '.join(blockers))
     duration_seconds = shot.get("durationSeconds", 8) if duration_seconds is None else duration_seconds
     if not shot['model'].startswith('seedance'):
         duration_seconds = production_duration(shot['model'], duration_seconds)
