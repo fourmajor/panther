@@ -1962,7 +1962,7 @@ async function uploadGameAsset(gameId,request){
 function drawAssetLibrary(epoch){
   const host=document.getElementById('assets-library'),gameId=state.gameId;host.hidden=false;
   window.PantherUI.mountAssetsLibrary?.(host,{actionsHost:document.querySelector('#explorer .explorer-heading'),...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,browseFilesHref:gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`),onBrowseFiles:event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`));},hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
-    onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
+    onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onRetry:()=>void loadAssetLibrary(epoch,assetListing.pages?assetListing.cursor:null),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
     onThumbnail:async asset=>{const resolved=await api('/object-url',{key:asset.key});if(resolved.contentType?.startsWith('video/')){const key=resolved.thumbnailKey||asset.thumbnailKey;return key?(await api('/object-url',{key})).url:'';}return resolved.url;},
     onDelete:async(asset,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/delete',{},{body:{gameId,key:asset.key,sha256:source.sha256,operationId}});if(result.deleted!==true||result.key!==asset.key)throw new Error('Deletion could not be confirmed.');await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=assetListing.assets.filter(item=>item.key!==asset.key);drawAssetLibrary(epoch);}},
     onCapabilities:config.development===true?()=>api('/generation-capabilities'):undefined,
@@ -3358,7 +3358,15 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       const corrected=latest(transcripts.filter(asset=>['corrected-transcript','edited-transcript'].includes(asset.kind)));
       for(const [transcript,label] of [[original,'Original transcript'],[corrected,'Corrected transcript']])if(transcript){const link=assetLink(transcript,label);link.className='session-transcript-link';links.append(link);}
       group.append(links);
-      if(audio&&!(roomCapture?.draft?.sessionId===id&&!document.getElementById('room-result').hidden)){const player=document.createElement('audio');player.className='session-library-audio';player.controls=true;player.preload='none';player.setAttribute('aria-label','Session recording');sessionPlaybackRow(group,player,audio.key,current);void api('/object-url',{key:audio.key}).then(signed=>{if(current()&&player.isConnected)player.src=signed.url;}).catch(()=>{if(player.isConnected)player.remove();});}
+      if(audio&&!(roomCapture?.draft?.sessionId===id&&!document.getElementById('room-result').hidden)){
+        const player=document.createElement('audio');player.className='session-library-audio';player.controls=true;player.preload='none';player.setAttribute('aria-label','Session recording');
+        const row=sessionPlaybackRow(group,player,audio.key,current),recovery=document.createElement('div');row.append(recovery);
+        const load=async()=>{
+          if(!current()||!player.isConnected)return;recovery.replaceChildren();player.hidden=true;
+          try{const signed=await api('/object-url',{key:audio.key});if(!current()||!player.isConnected)return;player.src=signed.url;player.hidden=false;attachMediaRecovery(player,audio.key,()=>current()&&player.isConnected);}
+          catch(error){if(!current()||!player.isConnected)return;const message=document.createElement('p');message.setAttribute('role','alert');message.textContent=`Recording could not load: ${error.message}`;const retry=document.createElement('button');retry.type='button';retry.textContent='Retry recording';window.PantherUI.styleButton(retry,'outline');retry.onclick=()=>void load();recovery.replaceChildren(message,retry);}
+        };void load();
+      }
       const raw=transcripts.find(asset=>asset.kind==='raw-transcript')||transcripts[0];
       if(raw){const summary=document.createElement('div');summary.className='session-summary-host';group.append(summary);window.PantherUI.mountSessionSummary(summary,{scope:apiScope(),gameId,sourceKey:raw.key,onLoad:({signal})=>api('/transcript-summaries',{gameId,key:raw.key},{signal})});}
     }
@@ -3375,7 +3383,14 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       if (!selected.length) status.textContent = `No ${section} to display in these entries. More entries are available.`;
     }
   } catch (error) {
-    if (current()) status.textContent = section === "videos" ? (error.status===403?"You cannot access finished videos in this game.":`Finished videos unavailable: ${error.message}`) : `${error.message}. Reload the page to try again.`;
+    if (current()) {
+      status.hidden=false;
+      const message=document.createElement('span');message.setAttribute('role','alert');
+      message.textContent=section==='videos'?(error.status===403?'You cannot access finished videos in this game.':`Finished videos unavailable: ${error.message}`):error.message;
+      const retry=document.createElement('button');retry.type='button';retry.textContent=section==='videos'?'Retry video assets':'Retry sessions';window.PantherUI.styleButton(retry,'outline');
+      retry.onclick=()=>{retry.disabled=true;void loadLibrary(section,epoch,previousAssets,cursor);};
+      status.replaceChildren(message,document.createTextNode(' '),retry);
+    }
   }
 }
 
@@ -3671,7 +3686,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
     if(!key){audioStatus.textContent='Audio is not available for this transcript.';return;}
     const signed=await api('/object-url',{key});if(!current())return;audio.hidden=false;audio.src=signed.url;audio.addEventListener('loadedmetadata',ready);if(audio.readyState>=1)ready();audioStatus.hidden=true;audioStatus.replaceChildren();attachMediaRecovery(audio,key,current);
   }catch{if(current())audioStatus.textContent='Audio could not load. Close and reopen the transcript to try again.';}})();
-  return {add(line,segment){lines.push({line,search:`${people.get(segment.playerId)||''} ${segment.text||''}`.toLocaleLowerCase()});const heading=line.querySelector('h3'),button=document.createElement('button');button.type='button';button.className='quiet-button transcript-seek';button.dataset.buttonVariant='ghost';button.textContent=`${timestamp(segment.start)}–${timestamp(segment.end)}`;button.setAttribute('aria-label',`Play audio from ${timestamp(segment.start)}`);button.disabled=true;button.onclick=()=>void seek(segment.start);heading.replaceChildren(button);const name=people.get(segment.playerId);if(name)heading.append(document.createTextNode(` · ${name}`));seeks.push({button,start:segment.start});if(duration!==null)ready();},finish:update};
+  return {add(line,segment){const name=people.get(segment.playerId)||'Unidentified speaker';lines.push({line,search:`${name} ${segment.text||''}`.toLocaleLowerCase()});const heading=line.querySelector('h3'),button=document.createElement('button');button.type='button';button.className='quiet-button transcript-seek';button.dataset.buttonVariant='ghost';button.textContent=`${timestamp(segment.start)}–${timestamp(segment.end)}`;button.setAttribute('aria-label',`Play audio from ${timestamp(segment.start)}`);button.disabled=true;button.onclick=()=>void seek(segment.start);heading.replaceChildren(button,document.createTextNode(` · ${name}`));seeks.push({button,start:segment.start});if(duration!==null)ready();},finish:update};
 }
 
 document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });

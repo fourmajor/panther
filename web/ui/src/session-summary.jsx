@@ -7,7 +7,7 @@ export function SessionSummary({scope,gameId,sourceKey,onLoad}){
  const query=useQuery({queryKey:['session-summary',scope,gameId,sourceKey],queryFn:({signal})=>onLoad({signal}),staleTime:60000,refetchInterval:query=>['QUEUED','GENERATING'].includes(query.state.data?.status)?5000:false});
  const text=query.data?.summary?.summary;
  if(query.isPending)return <div className="session-summary-loading" aria-label="Loading summary"/>;
- if(query.error)return <p className="session-summary-error">Summary unavailable.</p>;
+ if(query.error)return <div className="session-summary-error"><p role="alert">Summary unavailable.</p><Button variant="outline" size="sm" onClick={()=>query.refetch()}>Retry summary</Button></div>;
  if(!text)return null;
  const shortened=text.length>220;
  return <p className="session-summary-text">{expanded||!shortened?text:`${text.slice(0,220).replace(/\s+\S*$/,'')}…`}{shortened&&<Button variant="link" size="sm" className="session-summary-more" onClick={()=>setExpanded(!expanded)} aria-expanded={expanded}>{expanded?'Less':'More'}</Button>}</p>;
