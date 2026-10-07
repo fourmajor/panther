@@ -13,13 +13,15 @@ import tempfile
 LABEL = "place.panther.editorial-worker"
 
 
-def service_definition(release, state, home):
+def service_definition(release, state, home, worker="editorial"):
+    if worker not in {"editorial", "procedural"}:
+        raise ValueError("Unknown owned-compute worker")
     return {
-        "Label": LABEL,
+        "Label": LABEL if worker == "editorial" else "place.panther.procedural-worker",
         "ProgramArguments": [
             str(release / "venv/bin/panther"),
-            "editorial",
-            "worker",
+            "editorial" if worker == "editorial" else "videos",
+            "worker" if worker == "editorial" else "procedural-worker",
             "--work-dir",
             str(state / "jobs"),
             "--once",
@@ -31,7 +33,7 @@ def service_definition(release, state, home):
             "PYTHONUNBUFFERED": "1",
         },
         "RunAtLoad": True,
-        "StartInterval": 60,
+        "StartInterval": 60 if worker == "editorial" else 300,
         "ProcessType": "Background",
         "Umask": 0o077,
         "StandardOutPath": str(state / "worker.log"),
@@ -39,7 +41,7 @@ def service_definition(release, state, home):
     }
 
 
-def install(repo, state, start):
+def install(repo, state, start, worker="editorial"):
     if sys.platform != "darwin":
         raise SystemExit("This installer is for macOS")
     repo, state = repo.resolve(), state.resolve()
@@ -59,7 +61,8 @@ def install(repo, state, start):
         or output("rev-parse", "origin/main") != sha
     ):
         raise SystemExit("Install only clean merged main matching fetched origin/main")
-    service = f"gui/{os.getuid()}/{LABEL}"
+    label = LABEL if worker == "editorial" else "place.panther.procedural-worker"
+    service = f"gui/{os.getuid()}/{label}"
     if subprocess.run(["launchctl", "print", service], capture_output=True).returncode == 0:
         raise SystemExit("Worker is already loaded; stop it explicitly before upgrading")
     os.umask(0o077)
@@ -79,12 +82,12 @@ def install(repo, state, start):
     subprocess.run(
         [str(release / "venv/bin/python"), "-m", "pip", "install", str(snapshot)], check=True
     )
-    plist = (Path.home() / "Library/LaunchAgents" if start else state) / f"{LABEL}.plist"
+    plist = (Path.home() / "Library/LaunchAgents" if start else state) / f"{label}.plist"
     plist.parent.mkdir(parents=True, exist_ok=True)
     if plist.exists():
         raise SystemExit("Existing service retained; inspect before replacement")
     with plist.open("xb") as stream:
-        plistlib.dump(service_definition(release, state, Path.home()), stream)
+        plistlib.dump(service_definition(release, state, Path.home(), worker), stream)
     if start:
         subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)], check=True)
     print(json.dumps({"commit": sha, "state": str(state), "plist": str(plist), "started": start}))
@@ -93,11 +96,13 @@ def install(repo, state, start):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--worker", choices=["editorial", "procedural"], default="editorial")
     parser.add_argument(
         "--state-dir",
         type=Path,
-        default=Path.home() / "Library/Application Support/Panther/editorial-worker",
+        default=None,
     )
     parser.add_argument("--start", action="store_true")
     args = parser.parse_args()
-    install(args.repo, args.state_dir, args.start)
+    state = args.state_dir or Path.home() / f"Library/Application Support/Panther/{args.worker}-worker"
+    install(args.repo, state, args.start, args.worker)

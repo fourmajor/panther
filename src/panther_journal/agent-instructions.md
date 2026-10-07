@@ -883,6 +883,14 @@ Never invent capture timestamps, speakers or character associations to satisfy a
 
 ## Completed session automation
 
+Completed sessions default to both procedural and model-generated film editions with the
+same ordered scenes. Use `panther videos render-procedural` for an exact completed film
+manifest or the pinned `procedural-worker` for completed canonical session packets; see
+`docs/procedural-session-videos.md`. Preserve separate immutable editions and actual review
+evidence. Procedural rendering has no image/video-model inference, but its scene direction
+uses subscription-backed AI. Never call it photorealistic, voice-cloned or quality-passed
+without evidence. Model generation still requires exact storyboard approval and budget guards.
+
 After verified recording-set completion, the configured owned-compute session worker preserves
 raw ASR, creates separate conservative enrolled-player annotations, and commits the editorial
 pipeline. Follow Session finalization and Story & screen planning in Workflows. Novel completion
