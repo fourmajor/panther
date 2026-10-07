@@ -1115,14 +1115,15 @@ def package(folder, result, *, retain_oversize_master_locally=False):
     return plan, [("provenance", doc, "video-production", "intermediate"), *files]
 
 
-def publish(folder, *, retain_oversize_master_locally=False):
+def publish(folder, *, retain_oversize_master_locally=False, new_version_of=None):
     """Revalidate checkpoints and use Panther's ordinary immutable upload protocol."""
     folder = private(folder)
     with lock(folder, "publication.lock"):
-        return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally)
+        return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally,
+                              new_version_of=new_version_of)
 
 
-def publish_locked(folder, *, retain_oversize_master_locally=False):
+def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_of=None):
     receipt = json.loads((folder / "result-sha256.json").read_text())
     if receipt != {
         "sha256": digest(folder / "result.json"),
@@ -1156,6 +1157,26 @@ def publish_locked(folder, *, retain_oversize_master_locally=False):
         raise click.ClickException("Synthetic/unverified production runs cannot be published")
     plan, files = package(folder, result, retain_oversize_master_locally=retain_oversize_master_locally)
     config = cloud.configuration()
+    intent_path = folder / "publication" / "version-intent.json"
+    intent = {"browserPreviousKey": new_version_of}
+    if intent_path.exists():
+        if json.loads(intent_path.read_text()) != intent:
+            raise click.ClickException("Publication version predecessor changed")
+    else:
+        if new_version_of:
+            if (not new_version_of.startswith(f"games/{plan.gameId}/assets/")
+                    or "/../" in new_version_of or not new_version_of.endswith(".mp4")):
+                raise click.ClickException("Movie predecessor must be a same-game MP4 asset")
+            # Ordinary upload still validates exact kind/family and assigns the next version.
+            prior = cloud.api(config, "GET", "/object-url", params={"key": new_version_of})
+            version = prior.get("metadata", {}).get("extra", {}).get("version", {})
+            if (prior.get("kind") != "tv-episode" or version.get("schemaVersion") != 1
+                    or not isinstance(version.get("seriesId"), str)
+                    or not isinstance(version.get("number"), int) or version["number"] < 1):
+                raise click.ClickException("Movie predecessor lacks a compatible semantic version")
+            if any((folder / "publication").glob("*.metadata.json")):
+                raise click.ClickException("Cannot change version family after publication began")
+        write_json(intent_path, intent)
     sources, published = [], {}
     for name, path, kind, role in files:
         if path.is_symlink() or folder not in path.resolve().parents:
@@ -1198,12 +1219,16 @@ def publish_locked(folder, *, retain_oversize_master_locally=False):
                 kind=kind,
                 metadata=metadata_path,
                 as_json=True,
+                **({"new_version_of": new_version_of} if name == "browser" and new_version_of else {}),
             )
             existing = cloud.api(config, "GET", "/object-url", params={"key": key})
         if existing.get("sha256") != checksum or existing.get("size") != path.stat().st_size:
             raise click.ClickException("Published asset conflicts with local output; no overwrite")
         stored_metadata = dict(existing.get("metadata", {}))
         stored_extra = dict(stored_metadata.get("extra", {}))
+        if (name == "browser" and new_version_of
+                and stored_extra.get("version", {}).get("previousKey") != new_version_of):
+            raise click.ClickException("Published browser version conflicts with its pinned predecessor")
         # Semantic versions are assigned by the authenticated upload service,
         # not supplied by this immutable publication package.
         stored_extra.pop("version", None)
@@ -1295,6 +1320,8 @@ def worker(inbox, work_dir, once):
 @click.argument("run_directory", type=click.Path(exists=True, path_type=Path))
 @click.option("--retain-oversize-master-locally", is_flag=True,
               help="Explicitly retain a master over the upload limit locally; publish browser video and remaining outputs unchanged.")
-def publish_command(run_directory, retain_oversize_master_locally):
+@click.option("--new-version-of", help="Publish the browser movie as an immutable revision of this same-game MP4.")
+def publish_command(run_directory, retain_oversize_master_locally, new_version_of):
     """Upload verified final assets, stems and provenance through Panther, keeping originals."""
-    click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally), indent=2))
+    click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally,
+                                 new_version_of=new_version_of), indent=2))
