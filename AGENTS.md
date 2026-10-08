@@ -157,6 +157,14 @@
 
 ## Editorial workflows
 
+- Every completed session defaults to two separate movie editions: procedural and
+  model-generated, sharing the same ordered scenes/storyboard source. Preserve both
+  editions and previous revisions; one is not a replacement for the other. Procedural
+  rendering uses trusted local code, editable scenes and actual motion, with independent
+  visual and technical review before publication. See `docs/procedural-session-videos.md`.
+  This default never waives exact storyboard approval, session budgets, paid-retry rules,
+  authentication or video quality gates for the model-generated edition.
+
 - Completed recording sets automatically enter the owned-compute session finalization workflow
   in `docs/session-automation.md`, then the corrected-transcript, novel and screen-planning branches.
   Paid session video generation must wait for owner approval of the exact script/storyboard.
