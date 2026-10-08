@@ -443,6 +443,13 @@ def upload_one(config, file, record, kind, *, source_keys=None):
     elif kind in {"raw-transcript", "transcript"}:
         # The original transcript retains the model checksum. Do not infer its model version.
         creation = generation.local("whisper.cpp", method="ai")
+        paired = file if file.suffix == '.json' else file.with_suffix('.json')
+        if paired.is_file():
+            evidence = json.loads(paired.read_text())
+            if evidence.get('speakerMethod') == 'enrolled-voice-session-reconciliation-v1':
+                creation = generation.local('pyannote.audio', method='ai')
+                creation['model'] = 'pyannote-community-1'
+                creation['evidence'] = 'Session-wide diarization/profile checksum pins in the paired transcript'
     elif kind == "recording":
         # Imports may have been captured elsewhere; a local upload does not establish origin.
         capture = json.loads((file.parent / "capture.json").read_text()) if (file.parent / "capture.json").is_file() else {}
