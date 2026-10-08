@@ -16,6 +16,8 @@ to make a test fixture look functional.
 | I can record safely, close its dialog, and reopen the controls. | `browser-recording`: synthetic capture, no physical microphone or paid provider calls. |
 | I can find both original and corrected session transcripts. | `session-library`, real uploaded transcript in `end-user-audit`. |
 | I can read, search and download text without reading JSON. | `session-library`, `end-user-audit`; unidentified speech is explicitly labeled and searchable. |
+| A direct transcript link opens even while library thumbnails load. | `end-user-audit`: real 3,052-segment upload, twelve synthetic portraits, gateway 503/429 responses, readable viewer and complete text download. Browser GETs are bounded to three concurrent requests, with opened previews prioritized. |
+| Temporary gateway throttling recovers without repeating a paid operation. | `data-layer` and `end-user-audit`: GET-only bounded retries; upload POST failures remain one request and require explicit user retry. |
 | A failed session listing does not force me to reload the application. | `end-user-audit`: in-place retry of the exact listing request. |
 | A playback request failure does not silently erase the recording. | `end-user-audit`: visible error, retained download, explicit playback retry. |
 | A transient summary failure does not hide the transcript. | `end-user-audit`: read-only retry; no generation POST. |

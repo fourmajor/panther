@@ -58,7 +58,8 @@ async function fixture(page) {
 for(const width of [1280,390])test(`Sessions opens readable original and corrected transcripts with retry at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});await fixture(page);
  await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:assets.filter(a=>[raw,corrected].includes(a.key)),cursor:null}}));
- let failures=1;
+ // Exhaust the bounded GET recovery before exercising the explicit user retry.
+ let failures=3;
  await page.route(`${api}/asset-document*`,route=>{
   if(failures-- > 0)return route.fulfill({headers,status:502,json:{error:'Transcript preview temporarily unavailable'}});
   const key=new URL(route.request().url()).searchParams.get('key');

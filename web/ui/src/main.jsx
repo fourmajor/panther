@@ -147,7 +147,7 @@ export function mountMediaBrowser(host, props) {
   if (!mediaRoots.has(host)) mediaRoots.set(host, createRoot(host));
   mediaRoots.get(host).render(<QueryClientProvider client={client}><MediaBrowser {...props} /></QueryClientProvider>);
 }
-export { queryClient, query, invalidate, revalidate, clear } from "./data-layer.js";
+export { queryClient, query, invalidate, revalidate, clear, readRequest } from "./data-layer.js";
 export function syncGameSelector() {
   const native = document.getElementById("game-selector");
   const host = document.getElementById("game-select-root");

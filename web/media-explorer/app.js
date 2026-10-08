@@ -408,7 +408,7 @@ async function apiRequest(path, parameters = {}, options = {}) {
   }
   const body = await response.json();
   if (!response.ok) {
-    const error = new Error(body.error || "The media service could not be reached.");
+    const error = new Error(body.error || ([429,502,503,504].includes(response.status)?"Panther is temporarily busy. Please retry in a moment.":body.message || `This request failed (${response.status}). Please retry.`));
     error.status = response.status; throw error;
   }
   return body;
@@ -445,7 +445,7 @@ async function api(path, parameters = {}, options = {}) {
   const sensitive = /(?:notifications|live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
-    staleTime: sensitive ? 0 : 60_000, fetcher: () => apiRequest(path, parameters, options) });
+    staleTime: sensitive ? 0 : 60_000, fetcher: () => window.PantherUI.readRequest(()=>apiRequest(path, parameters, options),{priority:options.priority||0}) });
 }
 
 let foregroundRefresh = null;
@@ -2075,7 +2075,7 @@ async function previewFile(file, {preserveDialog=false, returnFocus=null} = {}) 
   if (!elements.previewDialog.open) elements.previewDialog.showModal();
 
   try {
-    const result = await api("/object-url", { key: file.key });
+    const result = await api("/object-url", { key: file.key }, {priority:1});
     if (epoch !== previewEpoch) return;
     elements.previewTitle.textContent=result.metadata?.title||file.name;
 
@@ -2095,7 +2095,7 @@ async function previewFile(file, {preserveDialog=false, returnFocus=null} = {}) 
     if (result.contentType.startsWith("video/")) configureVideoPreview({...result,key:assetRef},elements.previewBody.firstChild,epoch);
     void renderAssetLinks(assetRef, epoch, {...result,key:assetRef,name:result.filename||file.name,kind:result.kind||'unknown',sourceKeys:result.metadata?.sourceKeys||[]});
     if (structured) {
-      const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef});
+      const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef}, {priority:1});
       if (epoch !== previewEpoch) return;
       renderStructuredAsset(detail, epoch);
     } else if (markdown) {
