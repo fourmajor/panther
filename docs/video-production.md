@@ -1,10 +1,13 @@
-# Local video production, version 2
+# Local video production, version 3
 
 Follow the researched [AI film production method](ai-film-production.md). Preparation now audits
 shot-specific prompt/frame consistency and retains failed candidates without an executable
 generation manifest. Finishing preserves diagnostic drafts, but ordinary publication blocks failed
 visual QC. `--allow-working-draft` is for explicitly requested diagnostic publication, not delivery.
-Earlier immutable version-1 runs and already-published media remain unchanged.
+Earlier immutable runs and already-published media remain unchanged. Version 3 samples the final
+assembly at four frames per second, like source selections, and supplies their actual reviews as
+attributed evidence. Neither prior reviews nor denser sampling are automatic quality passes.
+See the [delivery retrospective](video-production-lessons.md).
 
 Panther now **executes** a separate finishing workflow after footage selection. This is not a
 new paid-generation state in the transcript/editorial Step Function. The owner’s laptop runs
@@ -16,6 +19,9 @@ resource, idle cloud polling, API-key inference, voice cloning or automatic paid
 1. **Prepare shots:** select immutable appearance references, a complete starting composition and
    optionally an ending frame. Review the actual plates against the references, blocking, costume,
    prop/weapon hand, camera and continuity brief. Produce an **unapproved** generation manifest.
+   Inspect `soundPlan`: supplied cue counts, muted shots and retained native mixes. Captions are
+   not dialogue; a native mix does not guarantee speech. Show intended words/speakers and omitted
+   sound components before asking for storyboard approval, not after generation.
 2. **Generate/select elsewhere:** use the existing separately approved `panther video` budget guard.
    Preserve every provider original and exact generation metadata. Attach selected uploaded takes
    to the production manifest. Only explicitly `complete: true` manifests can start finishing.
@@ -58,6 +64,13 @@ cloud master link is created. Preserve the run directory in durable private stor
 not enable multipart uploads or lower the master quality.
 
 ## Sound and review honesty
+
+An explicit owner decision to accept an exact imperfect cut can be recorded with
+`production publish RUN_DIRECTORY --owner-acceptance "Owner accepts this exact cut with its known defects"`.
+Use this only after that human instruction, never as an autonomous retry or quality override.
+It pins the acceptance reason to publication, preserves failed AI findings and source checksums,
+and records `ownerAcceptedFinal` separately from `aiVisualReviewPassed`. It cannot be combined
+with diagnostic `--allow-working-draft`. Ordinary publication still blocks failed visual review.
 
 A generator's soundtrack is a **native mix**, not isolated dialogue/music/effects. This workflow
 does not pretend channel splitting can recover stems, remove only a laugh track from mixed speech,

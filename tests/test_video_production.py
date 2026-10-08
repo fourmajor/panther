@@ -221,6 +221,10 @@ def test_real_finishing_and_idempotency(media, tmp_path):
     def reviewer(folder, images, data):
         assert all(image.exists() for image in images)
         calls.append(data["stage"])
+        if data["stage"] == "finished-sequence":
+            assert data["samplingFps"] == 4
+            assert data["timeline"][0]["selectedFootageReview"]["checks"]
+            assert "not automatic passes" in data["reviewPurpose"]
         return report(trimStart=0.5, trimEnd=0.25)
 
     original = p.digest(Path(media.shots[0].clip.path))
@@ -380,6 +384,11 @@ def test_preparation_selects_profiles_and_never_approves(tmp_path):
         reviewer=lambda *a: report(),
     )
     assert result["generationApproved"] is False
+    sound = result["soundPlan"]
+    assert sound["mutedShots"] == ["one"]
+    assert sound["nativeMixedShots"] == []
+    assert sound["suppliedCueCounts"] == dict(dialogue=0, music=0, effects=0, ambience=0)
+    assert "Captions are not spoken dialogue" in sound["notice"]
     generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
     assert generated["shots"][0]["model"] == "veo-3.1-fast"
     assert generated["shots"][0]["maxAttempts"] == 1
@@ -425,9 +434,21 @@ def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):
     assert calls[0]["stage"] == "composition-preparation"
 
 
+@pytest.mark.parametrize("reason", ["", "   ", "x" * 241, 123])
+def test_owner_acceptance_requires_explicit_bounded_reason(tmp_path, reason):
+    with pytest.raises(click.ClickException, match="explicit reason"):
+        p.publish_locked(tmp_path, owner_acceptance=reason)
+
+
+def test_owner_acceptance_is_not_diagnostic_publication(tmp_path):
+    with pytest.raises(click.ClickException, match="separate decisions"):
+        p.publish_locked(tmp_path, owner_acceptance="Owner accepted exact cut", allow_working_draft=True)
+
+
 @pytest.mark.usefixtures("caption_delivery")
 @pytest.mark.parametrize("revision", [False, True])
-def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch, revision):
+@pytest.mark.parametrize("owner_acceptance", [None, "Owner explicitly accepts this exact imperfect cut."])
+def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch, revision, owner_acceptance):
     monkeypatch.setattr(p.cloud, "configuration", lambda: {})
     assets = {
         r.key: {
@@ -452,7 +473,14 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         return assets[params["key"]]
 
     monkeypatch.setattr(p.cloud, "api", api)
-    folder, result = p.execute(media, tmp_path / "verified-runs", reviewer=lambda *a: report())
+    def reviewer(*args):
+        value = report()
+        if owner_acceptance and args[2].get("stage") == "finished-sequence":
+            value["checks"][0]["status"] = "fail"
+        return value
+
+    folder, result = p.execute(media, tmp_path / "verified-runs", reviewer=reviewer)
+    original_result = p.digest(folder / "result.json")
     uploads = []
 
     def upload(**kw):
@@ -487,14 +515,25 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
     monkeypatch.setattr(p.cloud.upload, "callback", upload)
     for invalid in ["games/other/assets/film/original/browser.mp4", previous.replace(".mp4", ".json")]:
         with pytest.raises(click.ClickException, match="same-game MP4"):
-            p.publish(folder, new_version_of=invalid)
+            p.publish(folder, new_version_of=invalid, owner_acceptance=owner_acceptance)
         assert uploads == []
     options = {"new_version_of": previous} if revision else {}
+    if owner_acceptance:
+        with pytest.raises(click.ClickException, match="Visual quality review failed"):
+            p.publish(folder, **options)
+        assert uploads == []
+        options["owner_acceptance"] = owner_acceptance
     published = p.publish(folder, **options)
     assert len(uploads) == 10
     assert published == p.publish(folder, **options)
     assert len(uploads) == 10
     assert assets[published["browser"]]["metadata"]["sourceKeys"] == [published["provenance"]]
+    if owner_acceptance:
+        assert assets[published["browser"]]["metadata"]["extra"]["ownerAcceptedFinal"] is True
+        assert assets[published["browser"]]["metadata"]["extra"]["aiVisualReviewPassed"] is False
+        assert p.digest(folder / "result.json") == original_result
+        with pytest.raises(click.ClickException, match="predecessor changed"):
+            p.publish(folder, **{**options, "owner_acceptance": "A different acceptance"})
     assert (
         assets[published["stem-dialogue"]]["metadata"]["extra"]["relationshipRole"]
         == "intermediate"
@@ -504,7 +543,7 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
     assert media.shots[0].clip.key in doc["sourceKeys"]
     if revision:
         assert assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] == previous
-        with pytest.raises(click.ClickException, match="predecessor changed"):
+        with pytest.raises(click.ClickException, match="Visual quality review failed" if owner_acceptance else "predecessor changed"):
             p.publish(folder)
         assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] = "wrong"
         with pytest.raises(click.ClickException, match="pinned predecessor"):
