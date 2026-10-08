@@ -21,6 +21,24 @@ async function uploadTranscript(page){
  const saved=await page.request.put(signed.url,{headers:signed.headers,data:bytes});expect(saved.ok()).toBe(true);return signed.key;
 }
 for(const width of [1280,390]){
+ test(`Direct transcript links survive thumbnail contention and gateway throttling at ${width}px`,async({page},testInfo)=>{
+  test.setTimeout(90000);await page.setViewportSize({width,height:900});
+  const doc={entityType:'PlayerTranscript',players:[{id:'alex',name:'Alex'}],segments:Array.from({length:3052},(_,index)=>({start:index,end:index+1,playerId:'alex',text:`Synthetic session line ${index}. The lantern remains lit.`}))};
+  async function upload(id,kind,filename,type,bytes){const response=await page.request.post(origin+'/uploads',{headers,data:{gameId:'preview-campaign',assetId:id,kind,filename,size:bytes.length,contentType:type,sha256:crypto.createHash('sha256').update(bytes).digest('base64'),metadata:{title:id,category:'reference'}}});expect(response.ok()).toBe(true);const signed=await response.json();expect((await page.request.put(signed.url,{headers:signed.headers,data:bytes})).ok()).toBe(true);return signed.key;}
+  const key=await upload('audit-long-transcript','raw-transcript','raw.json','application/json',Buffer.from(JSON.stringify(doc)));
+  const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
+  for(let index=0;index<12;index++)await upload(`portrait-${index}`,'portrait','portrait.png','image/png',pixel);
+  let active=0,peak=0,signedCalls=0,documentCalls=0;
+  await page.route('**/object-url?**',async route=>{active++;peak=Math.max(peak,active);try{await new Promise(resolve=>setTimeout(resolve,80));if(new URL(route.request().url()).searchParams.get('key')===key&&++signedCalls<=2)return await route.fulfill({status:503,json:{message:'Service Unavailable'}});await route.fulfill({response:await route.fetch()});}finally{active--;}});
+  await page.route('**/asset-document?**',async route=>{documentCalls++;if(documentCalls===1)return route.fulfill({status:429,json:{message:'Too Many Requests'}});return route.fulfill({response:await route.fetch()});});
+  await page.goto(origin+'/games/preview-campaign/assets?asset='+encodeURIComponent(key));
+  await expect(page.locator('.transcript-segment')).toHaveCount(3052);await expect(page.getByRole('alert')).toHaveCount(0);expect(signedCalls).toBe(3);expect(documentCalls).toBe(2);expect(peak).toBeLessThanOrEqual(3);
+  const downloaded=page.waitForEvent('download');await page.getByRole('button',{name:'Download text',exact:true}).click();expect(fs.readFileSync(await (await downloaded).path(),'utf8')).toContain('Synthetic session line 3051.');await page.screenshot({path:testInfo.outputPath(`direct-transcript-${width}.png`),animations:'disabled'});
+ });
+ test(`Upload gateway failures never automatically repeat a mutation at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});let calls=0;await page.route('**/uploads',route=>{calls++;return route.fulfill({status:503,json:{message:'Service Unavailable'}});});
+  await page.goto(origin+'/games/preview-campaign/assets');await page.getByRole('button',{name:'Upload',exact:true}).click();const form=page.getByRole('form',{name:'Upload asset'});await form.getByLabel('File',{exact:true}).setInputFiles({name:'gate.txt',mimeType:'text/plain',buffer:Buffer.from('The gate.')});await form.getByRole('button',{name:'Upload asset',exact:true}).click();await expect(form.getByRole('alert')).toContainText('temporarily busy');await new Promise(resolve=>setTimeout(resolve,1600));expect(calls).toBe(1);
+ });
  test(`Real user can create, find, read and revisit campaign content at ${width}px`,async({page},testInfo)=>{
   test.setTimeout(90000);await page.setViewportSize({width,height:900});const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(origin+'/games/preview-campaign/characters');await page.getByRole('button',{name:'Create Character',exact:true}).click();await page.locator('#character-create-form').getByLabel('Character name').fill('River Scout');await page.getByRole('button',{name:'Create Character',exact:true}).click();await expect(page.locator('#character-name')).toHaveText('River Scout');const characterUrl=page.url();await page.reload();await expect(page.locator('#character-name')).toHaveText('River Scout');
