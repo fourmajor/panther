@@ -339,3 +339,24 @@ def test_sessions_excludes_generated_speech_and_includes_explicit_recording_play
         index.refresh(None, current['key'])
     monkeypatch.setattr(library, 'describe', lambda *_: pytest.fail('Sessions cannot read source storage'))
     assert index.page('example', 'sessions')['assets'] == values[1:]
+
+
+def test_compact_filtered_pages_remain_bounded_and_cursor_bound(index, monkeypatch):
+    import asset_browser
+    import user_metadata
+    monkeypatch.setattr(user_metadata, 'tag_events', lambda _: [])
+    for number in range(30):
+        item = asset(number)
+        item['metadata'].update(characterIds=['hero'], title=f'Take {number}')
+        item['metadata']['extra']['generation'] = {'prompt': 'large prompt ' * 1000}
+        index.table().put_item(Item={'pk': index.partition('example', 'all'), 'sk': item['key'], 'payload': json.dumps(item)})
+    selected = asset_browser.options({'characterId': 'hero', 'view': 'cards', 'limit': '24'})
+    first = index.page('example', 'all', selection=selected)
+    assert len(first['assets']) == 24
+    assert first['cursor']
+    assert len(json.dumps(first).encode()) < 20_000
+    assert all('generation' not in row['metadata']['extra'] for row in first['assets'])
+    second = index.page('example', 'all', first['cursor'], selection=selected)
+    assert len(second['assets']) == 6
+    with pytest.raises(ValueError):
+        index.page('example', 'all', first['cursor'], selection={**selected, 'characterId': 'other'})

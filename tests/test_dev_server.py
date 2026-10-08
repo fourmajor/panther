@@ -812,3 +812,38 @@ def test_shot_requests_and_cut_selection_pin_only_current_storyboard(tmp_path):
     accepted = store.submit_scene_render({**render, 'revision': dialogue['revision'], 'shotId': 'arrival', 'prompt': 'Direction ' * 1000, 'operationId': uuid.uuid4().hex})
     assert accepted['model'] == 'h3-max' and accepted['generationDurationSeconds'] == 15
     assert accepted['prompt'] == ('Direction ' * 1000).strip()
+
+
+def test_character_asset_sql_page_does_not_transfer_video_or_large_metadata(tmp_path):
+    import json
+    store = dev.Store(tmp_path / 'bounded.sqlite')
+    with store.connect() as db:
+        for number in range(70):
+            metadata = {'kind': 'video', 'contentType': 'video/mp4', 'characterIds': ['hero' if number < 30 else 'other'],
+                        'extra': {'generation': {'prompt': 'private large request '*1000}}}
+            db.execute('INSERT INTO objects VALUES (?,?,?,?,?)',
+                       (f'games/example/assets/video-{number:03d}/original/take.mp4', 'example', json.dumps(metadata), b'video bytes', '2026-01-01'))
+    query = {'characterId': 'hero', 'view': 'cards', 'limit': '24'}
+    first = store.asset_page('example', query)
+    assert len(first['assets']) == 24
+    assert first['cursor']
+    assert len(json.dumps(first)) < 15000
+    second = store.asset_page('example', {**query, 'cursor': first['cursor']})
+    assert len(second['assets']) == 6
+    assert not second['cursor']
+    with pytest.raises(ValueError, match='cursor'):
+        store.asset_page('example', {**query, 'characterId': 'other', 'cursor': first['cursor']})
+
+
+def test_chapter_list_pages_exclude_manuscript_and_foreign_cursors(tmp_path):
+    store = dev.Store(tmp_path / 'chapters.sqlite')
+    for number in range(30):
+        record = {'id': f'{number:064x}', 'gameId': 'example', 'title': f'Chapter {number}', 'sessionId': f'session-{number}', 'markdown': 'large prose '*10000, 'details': {'private': 'request'}}
+        store.put('chapter', record['id'], record, 'example')
+    page = store.chapter_page('example', {})
+    assert len(page['chapters']) == 24
+    assert len(str(page)) < 5000
+    assert 'markdown' not in page['chapters'][0]
+    assert len(store.chapter_page('example', {'cursor': page['cursor']})['chapters']) == 6
+    with pytest.raises(ValueError, match='cursor'):
+        store.chapter_page('other', {'cursor': page['cursor']})

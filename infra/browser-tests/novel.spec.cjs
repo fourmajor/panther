@@ -33,11 +33,11 @@ async function fixture(page) {
     if(url.pathname==='/characters') body={characters:[]};
     if(['/novel-stories','/novel-books'].includes(url.pathname)) body={records:[],cursor:null};
     if(url.pathname==='/novel-illustrations') return route.fulfill({status:404,headers,json:{error:'No artwork selected'}});
-    if(url.pathname==='/novel') body={chapters:gameId==='campaign-a'?(url.searchParams.get('cursor')?[chapters[2]]:chapters.slice(0,2)):[],cursor:gameId==='campaign-a'&&!url.searchParams.get('cursor')?'next':null};
+    if(url.pathname==='/novel') body={chapters:gameId==='campaign-a'?chapters:[],cursor:null};
     if(url.pathname==='/novel-chapter') {
       const chapter=chapters.find(c=>c.id===url.searchParams.get('chapterId'));
       if(!chapter || gameId!=='campaign-a') return route.fulfill({status:404,json:{error:'Chapter not found'},headers});
-      body={...chapter,markdown:'The door opened into a room of **amber light**.\n\n*Someone had been here before.*\n\n'+Array(12).fill('Rain traced the tall windows. Beyond them, a quiet harbor held its breath.').join('\n\n'),details:{review:{markdown:'Editorial audit: synthetic private note.',uncertainties:['Uncertain spelling']},revisionHistory:[{revision:1}],sourceKeys:[],rawReference:null,artifact:{},workflowVersion:2}};
+      body={...chapter,markdown:'The door opened into a room of **amber light**.\n\n*Someone had been here before.*\n\n'+Array(12).fill('Rain traced the tall windows. Beyond them, a quiet harbor held its breath.').join('\n\n'),details:{review:{markdown:'Editorial audit: synthetic private note.',uncertainties:['Uncertain spelling']},revisionHistory:[{revision:1}],sourceKeys:[],rawReference:null,artifact:{key:chapter.assetKey},workflowVersion:2}};
     }
     return route.fulfill({json:body,headers});
   });
@@ -84,13 +84,15 @@ test('draft illustrations and image failures never hide or alter the manuscript'
   await expect(page.locator('#novel-prose')).toHaveText('The complete chapter.');
 });
 
-test('repeated chapter cursor fails without showing a partial library', async({page})=>{
+test('repeated chapter cursor stops explicit pagination and preserves loaded records', async({page})=>{
   await fixture(page);
   let requests=0;
   await page.route(`${api}/novel?*`,route=>{requests++;return route.fulfill({headers,json:{chapters:[chapters[0]],cursor:'stuck'}});});
   await page.goto(`${origin}/games/campaign-a/novel`);
-  await expect(page.locator('#novel-status')).toContainText('No partial list is shown');
-  await expect(page.locator('#novel-list')).toBeEmpty();
+  await expect(page.locator('.novel-card[data-chapter-id]')).toHaveCount(1);expect(requests).toBe(1);
+  await page.getByRole('button',{name:'More chapters',exact:true}).click();
+  await expect(page.locator('#novel-status')).toContainText('Pagination did not progress');
+  await expect(page.locator('.novel-card[data-chapter-id]')).toHaveCount(1);
   expect(requests).toBe(2);
 });
 
@@ -218,6 +220,7 @@ async function previewFixture(page) {
     overview:'A patient navigator who charts the harbor and keeps careful records.',thumbnailAssetKey:portrait}}}}));
   await page.route(`${api}/object-url*`,route=>route.fulfill({headers,json:{key:new URL(route.request().url()).searchParams.get('key'),
     url:'https://images.example/portrait.png',size:png.length,contentType:'image/png',expiresIn:300}}));
+  // An unrelated chart row must not become a chapter summary during exact-key lookup.
   await page.route(`${api}/assets*`,route=>route.fulfill({headers,json:{assets:[{key:chart,name:'map.png',kind:'map',contentType:'image/png',size:png.length,
     metadata:{title:'Harbor chart',characterIds:['mira'],extra:{preview:{schemaVersion:1,summary:'A chart of the harbor, its shoals and marked approaches.'}}},sourceKeys:[]}],cursor:null}}));
   await page.route(`${api}/novel-chapter*`,route=>{

@@ -445,7 +445,25 @@ async function api(path, parameters = {}, options = {}) {
   const sensitive = /(?:notifications|live|transcriptions|transcript-summaries|jobs|renders|generation-capabilities|asset-generation|workflows|object-url|image-links)/.test(path);
   const sortedParameters = Object.fromEntries(Object.entries(parameters).sort(([a], [b]) => a.localeCompare(b)));
   return window.PantherUI.query({ scope, path, parameters: sortedParameters,
-    staleTime: sensitive ? 0 : 60_000, fetcher: () => window.PantherUI.readRequest(()=>apiRequest(path, parameters, options),{priority:options.priority||0}) });
+    staleTime: path === '/object-url' && parameters.download !== 'true' ? 240_000 : sensitive ? 0 : 60_000, fetcher: () => window.PantherUI.readRequest(()=>apiRequest(path, parameters, options),{priority:options.priority||0}) });
+}
+
+// Only images enter the thumbnail path. Batch signing also shares URLs between views.
+const imageLinkBatches=new Map();
+function imageLink(gameId,key) {
+  if(typeof key!=='string'||!key.startsWith(`games/${gameId}/assets/`)||! /\.(png|jpe?g|webp|avif|gif|svg)$/i.test(key))return Promise.resolve('');
+  const scope=apiScope();
+  return window.PantherUI.query({scope,path:'/image-links',parameters:{gameId,key},staleTime:240_000,fetcher:()=>new Promise((resolve,reject)=>{
+    const id=JSON.stringify([scope,gameId]);let batch=imageLinkBatches.get(id);
+    if(!batch){batch=[];imageLinkBatches.set(id,batch);setTimeout(async()=>{imageLinkBatches.delete(id);
+      for(let offset=0;offset<batch.length;offset+=60){const group=batch.slice(offset,offset+60);try{if(!state.tokens||apiScope()!==scope)throw new Error('Account changed');const result=await api('/image-links',{},{body:{gameId,keys:group.map(item=>item.key)}});for(const item of group)item.resolve(result.images?.[item.key]?.url||'');}catch(error){for(const item of group)item.reject(error);}}
+    },0);}
+    batch.push({key,resolve,reject});
+  })});
+}
+function thumbnailUrl(gameId,asset) {
+  const video=asset.contentType?.startsWith('video/')||/\.(mp4|webm|mov|m4v)$/i.test(asset.key);
+  return imageLink(gameId,video?(asset.thumbnailKey||asset.metadata?.extra?.preview?.imageKey):(asset.contentType?.startsWith('image/')||/\.(png|jpe?g|webp|avif|gif|svg)$/i.test(asset.key))?asset.key:null);
 }
 
 let foregroundRefresh = null;
@@ -767,7 +785,7 @@ document.addEventListener('panther-interface-changed',()=>renderWorkspaceHome())
 function drawDashboardCards(data) {
   const gameId=state.gameId;
   window.PantherUI.mountDashboardCards(document.getElementById('dashboard-sections'),{
-    gameId,data,request:api,onNavigate:navigate,
+    gameId,data,onThumbnail:asset=>thumbnailUrl(gameId,asset),request:api,onNavigate:navigate,
     onPreview:item=>void previewFile({key:item.key,name:item.title||item.metadata?.title||item.name,size:item.size}),
     onRendered:renderWorkspaceHome,
   });
@@ -1399,13 +1417,16 @@ async function loadCharacterFacts(gameId, characterId, epoch) {
       const none = document.createElement("option"); none.value = ""; none.textContent = "No thumbnail"; cover.append(none);
       if (record.details.thumbnailAssetKey) {const selected = document.createElement("option"); selected.value = record.details.thumbnailAssetKey; selected.textContent = "Current selected thumbnail"; cover.append(selected);}
       cover.value = record.details.thumbnailAssetKey || ""; coverWrap.append(cover); const uploadPortrait=document.createElement("button");uploadPortrait.type="button";uploadPortrait.className="quiet-button";uploadPortrait.textContent="Upload Portrait";uploadPortrait.onclick=()=>document.getElementById("character-portrait-file").click();form.append(coverWrap,uploadPortrait);
-      void allAssets(gameId).then(assets=>{if (!current() || !cover.isConnected) return;
+      const addPortraitOptions=page=>{const assets=page.assets;if (!current() || !cover.isConnected) return;
         connectionAssets = assets.filter(a=>a.metadata?.extra?.relationshipRole === "finished" || a.metadata?.category === "reference");
         for(const row of connectionRows) if(row.type.value === "Asset")populateTargets(row);
         for (const asset of assets) if (asset.contentType?.startsWith("image/") && asset.metadata?.characterIds?.includes(characterId) && ![...cover.options].some(o=>o.value===asset.key)) {
           const option = document.createElement("option"); option.value = asset.key; option.textContent = asset.metadata.title || asset.name; cover.append(option);
         }
-      }).catch(()=>{if (cover.isConnected) connectionHelp.textContent += " Thumbnail inventory could not be loaded; existing selection remains available.";});
+        document.getElementById('character-cover-more')?.remove();
+        if(page.cursor){const more=document.createElement('button');more.type='button';more.id='character-cover-more';more.textContent='More portraits';window.PantherUI.styleButton(more,'outline');more.onclick=()=>{more.disabled=true;void assetPage(gameId,{characterId,mediaType:'image',cursor:page.cursor}).then(addPortraitOptions).catch(()=>{more.disabled=false;connectionHelp.textContent='Portraits could not be loaded.';});};coverWrap.after(more);}
+      };
+      void assetPage(gameId,{characterId,mediaType:'image'}).then(addPortraitOptions).catch(()=>{if (cover.isConnected) connectionHelp.textContent += " Thumbnail inventory could not be loaded; existing selection remains available.";});
 
       const buttons = document.createElement("div"), save = document.createElement("button"), cancel = document.createElement("button"), status = document.createElement("p");
       buttons.className = "model-control-row"; save.type = "submit"; save.className = "primary-button"; save.textContent = "Save changes";
@@ -1488,7 +1509,7 @@ function drawCharacterGeneration(gameId,characterId,epoch) {
   for(const [id,portrait] of [['character-portrait-progress',true],['character-assets-progress',false]]) {
     window.PantherUI.mountCharacterGenerationJobs(document.getElementById(id),{gameId,jobs:jobs.filter(job=>Boolean(job.selectAsPortrait)===portrait),
       onGenerationStatus:async job=>{const updated=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,updated);if(current())updateCharacterPortraitGenerating(gameId,characterId);return updated;},
-      onPublished:async job=>{if(characterCompletedJobs.has(job.jobId))return;characterCompletedJobs.add(job.jobId);assetIndex=null;await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(!current())return;await loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);if(job.selectAsPortrait&&job.portraitAssigned===false)document.getElementById('character-portrait-status').textContent=job.assignmentMessage||'Portrait saved in Assets. The profile changed while it was generating.';drawCharacterGeneration(gameId,characterId,epoch);},
+      onPublished:async job=>{if(characterCompletedJobs.has(job.jobId))return;characterCompletedJobs.add(job.jobId);await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(!current())return;await loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);if(job.selectAsPortrait&&job.portraitAssigned===false)document.getElementById('character-portrait-status').textContent=job.assignmentMessage||'Portrait saved in Assets. The profile changed while it was generating.';drawCharacterGeneration(gameId,characterId,epoch);},
       onOpen:asset=>void previewFile({key:asset.key,name:asset.title||asset.name||'Asset'})});
   }
   updateCharacterPortraitGenerating(gameId,characterId);
@@ -1499,12 +1520,13 @@ async function openCharacterAssetComposer(gameId,characterId,epoch,mode,selectAs
   if(!record||record.characterId!==characterId){status.textContent='Wait for the profile to load.';return;}
   try {
     const options=await api('/asset-generation',{gameId,view:'options'});
-    const assets=await allAssets(gameId);if(epoch!==routeEpoch)return;
-    window.PantherUI.mountAssetCreateForm(host,{gameId,mode,submissionScope:selectAsPortrait?"official-portrait":"character-assets",initialCharacterId:characterId,initialType:selectAsPortrait?'portrait':'image',characters:state.gameDetail.characters,generationTypes:options.generationTypes||[],imageAssets:assets.filter(asset=>(asset.contentType||'').startsWith('image/')),
+    let imagePage=mode==='generate'?await assetPage(gameId,{mediaType:'image'}):{assets:[],cursor:null};const assets=[...imagePage.assets];if(epoch!==routeEpoch)return;
+    const draw=()=>window.PantherUI.mountAssetCreateForm(host,{gameId,mode,submissionScope:selectAsPortrait?"official-portrait":"character-assets",initialCharacterId:characterId,initialType:selectAsPortrait?'portrait':'image',characters:state.gameDetail.characters,generationTypes:options.generationTypes||[],imageAssets:assets.filter(asset=>(asset.contentType||'').startsWith('image/')),hasMoreAssets:Boolean(imagePage.cursor),onMoreAssets:async()=>{imagePage=await assetPage(gameId,{mediaType:'image',cursor:imagePage.cursor});if(epoch!==routeEpoch)return;assets.push(...imagePage.assets);draw();},
       onClose:()=>window.PantherUI.unmountAssetCreateForm(host),
       onUpload:request=>uploadGameAsset(gameId,{...request,characterId}),
       onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request,characterId,...(selectAsPortrait&&request.type==='portrait'?{selectAsPortrait:true}:{})}});assetGenerationJobs.set(job.jobId,job);return job;},
-      onComplete:async result=>{window.PantherUI.unmountAssetCreateForm(host);assetIndex=null;await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(epoch!==routeEpoch)return;drawCharacterGeneration(gameId,characterId,epoch);if(result?.status==='PUBLISHED')void loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);}});
+      onComplete:async result=>{window.PantherUI.unmountAssetCreateForm(host);await window.PantherUI.invalidate(apiScope(),['/assets','/characters','/character-details','/character-details/history','/dashboard-recent'],gameId);if(epoch!==routeEpoch)return;drawCharacterGeneration(gameId,characterId,epoch);if(result?.status==='PUBLISHED')void loadCharacterFacts(gameId,characterId,epoch);void loadCharacterAssets(gameId,characterId,epoch);}});
+    draw();
   }catch(error){if(epoch===routeEpoch)status.textContent=error.message;}
 }
 
@@ -1525,7 +1547,7 @@ async function uploadCharacterPortrait(gameId,characterId,file,epoch,setThumbnai
     if(setThumbnail)await api("/character-details",{},{body:{gameId,characterId,name:record.name,mode:"edit",details,expectedRevision:record.revision,expectedSourceHash:null,operationId,reason:"Uploaded profile portrait",dryRun:false}});
     if(epoch!==routeEpoch)return;
     if(setThumbnail){const portrait=document.getElementById("character-portrait-only");portrait.src=verified.url;portrait.alt=`Portrait of ${record.name}`;portrait.hidden=false;document.getElementById("character-portrait-empty").hidden=true;}
-    assetIndex=null;await window.PantherUI.invalidate(apiScope(),["/assets","/characters","/character-details","/character-details/history","/dashboard-recent"],gameId);
+    await window.PantherUI.invalidate(apiScope(),["/assets","/characters","/character-details","/character-details/history","/dashboard-recent"],gameId);
     await loadCharacterFacts(gameId,characterId,epoch);if(!document.getElementById("character-assets").hidden)void loadCharacterAssets(gameId,characterId,epoch);status.textContent="";
   }catch(error){if(epoch===routeEpoch)status.textContent=error.message;}
   finally{if(epoch===routeEpoch)button.disabled=false;}
@@ -1547,7 +1569,8 @@ async function loadCharacter(gameId, characterId) {
   document.getElementById("character-assets-upload").onclick=()=>void openCharacterAssetComposer(gameId,characterId,epoch,"upload");
   document.getElementById("character-assets-generate").onclick=()=>void openCharacterAssetComposer(gameId,characterId,epoch,"generate");
   drawCharacterGeneration(gameId,characterId,epoch);
-  void (async()=>{let cursor=null;for(let pageIndex=0;pageIndex<100;pageIndex++){const page=await api("/asset-generation",{gameId,characterId,cursor});if(epoch!==routeEpoch)return;for(const job of page.jobs||[])assetGenerationJobs.set(job.jobId,job);drawCharacterGeneration(gameId,characterId,epoch);cursor=page.cursor;if(!cursor)return;}throw new Error('Older generation progress could not be loaded.');})().catch(error=>{if(epoch===routeEpoch)document.getElementById('character-portrait-status').textContent=error.message;});
+  const loadJobs=async cursor=>{const page=await api('/asset-generation',{gameId,characterId,cursor});if(epoch!==routeEpoch)return;for(const job of page.jobs||[])assetGenerationJobs.set(job.jobId,job);drawCharacterGeneration(gameId,characterId,epoch);document.getElementById('character-jobs-more')?.remove();if(page.cursor){const more=document.createElement('button');more.id='character-jobs-more';more.type='button';more.textContent='Older generation requests';window.PantherUI.styleButton(more,'outline');more.onclick=()=>{more.disabled=true;void loadJobs(page.cursor).catch(error=>{more.disabled=false;portraitStatus.textContent=error.message;});};document.getElementById('character-assets-progress').after(more);}};
+  void loadJobs(null).catch(error=>{if(epoch===routeEpoch)portraitStatus.textContent=error.message;});
   document.getElementById("character-portrait-generate").onclick=()=>generateCharacterPortrait(gameId,characterId,epoch);
   const portraitGenerators=[document.getElementById("character-portrait-generate"),...document.querySelectorAll('[data-character-generate]')];for(const button of portraitGenerators){button.disabled=false;button.title="";delete button.dataset.generationAvailable;}updateCharacterPortraitGenerating(gameId,characterId);
   if(config.development===true)void api('/generation-capabilities').then(capabilities=>{if(epoch!==routeEpoch)return;for(const button of portraitGenerators){button.dataset.generationAvailable=String(capabilities.images!==false);button.disabled=capabilities.images===false;button.title=button.disabled?'Image generation is unavailable':'';}updateCharacterPortraitGenerating(gameId,characterId);}).catch(()=>{if(epoch===routeEpoch)for(const button of portraitGenerators){button.dataset.generationAvailable='false';button.disabled=true;button.title='Image generation is unavailable';}});
@@ -1604,13 +1627,16 @@ function characterReferenceTitle(asset) {
   const name=(asset.name||asset.key.split('/').at(-1)).replace(/\.[^.]+$/,'').replace(/[-_][a-f0-9]{16,}$/i,'').replace(/[-_]+/g,' ').trim();
   return name?name.charAt(0).toUpperCase()+name.slice(1):'Reference';
 }
-async function loadCharacterAssets(gameId, characterId, epoch) {
+const characterPreviewObservers=new Set();
+async function loadCharacterAssets(gameId, characterId, epoch, cursor=null) {
   const status = document.getElementById("character-assets-status"),list=document.getElementById("character-assets-list");
   const current=()=>epoch===routeEpoch&&gameId===state.gameId&&state.tokens;
   try {
-    const matching=characterReferenceAssets(await allAssets(gameId),characterId);
+    const page=await api('/assets',{gameId,section:'all',characterId,view:'cards',limit:24,cursor});
+    const matching=characterReferenceAssets(page.assets,characterId);
     if(!current())return;
-    list.replaceChildren();list.classList.add('character-reference-gallery');
+    if(!cursor){for(const observer of characterPreviewObservers)observer.disconnect();characterPreviewObservers.clear();list.replaceChildren();}list.classList.add('character-reference-gallery');
+    document.getElementById('character-assets-more')?.remove();
     const previews=[];
     for(const asset of matching){
       const title=characterReferenceTitle(asset),li=document.createElement('li'),link=document.createElement('a'),frame=document.createElement('span'),label=document.createElement('span');
@@ -1623,26 +1649,20 @@ async function loadCharacterAssets(gameId, characterId, epoch) {
       const mime=asset.contentType||'',filename=asset.name||asset.key.split('/').at(-1);
       const image=mime.startsWith('image/')||/\.(png|jpe?g|webp|gif|avif|svg)$/i.test(filename),video=mime.startsWith('video/')||/\.(mp4|webm|mov)$/i.test(filename);
       const indicator=document.createElement('span');indicator.className='character-reference-format';indicator.textContent=video?(asset.metadata?.extra?.episodeRef?'Episode':'Video'):image?'Image':mime.startsWith('audio/')?'Audio':mime.startsWith('text/')?'Text':/\.pdf$/i.test(filename)?'PDF':'3D';frame.append(indicator);
-      if(video){const play=document.createElement('span');play.className='character-video-play';play.setAttribute('aria-hidden','true');play.textContent='▶';frame.append(play);const seconds=Number(asset.metadata?.extra?.mediaProbe?.format?.duration??asset.metadata?.extra?.mediaProbe?.duration??asset.durationSeconds);if(Number.isFinite(seconds)&&seconds>0){const duration=document.createElement('span');duration.className='character-video-duration';duration.textContent=`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;frame.append(duration);}}
-      if(image||video){const media=document.createElement(video?'video':'img');if(image){media.alt='';media.loading='lazy';}else{media.muted=true;media.playsInline=true;media.preload='metadata';media.setAttribute('aria-hidden','true');media.addEventListener('loadedmetadata',()=>{if(!frame.querySelector('.character-video-duration')&&Number.isFinite(media.duration)&&media.duration>0){const duration=document.createElement('span');duration.className='character-video-duration';duration.textContent=`${Math.floor(media.duration/60)}:${String(Math.floor(media.duration%60)).padStart(2,'0')}`;frame.append(duration);}},{once:true});}media.hidden=true;frame.prepend(media);previews.push({asset,media,indicator,image});}
+      if(video){indicator.classList.add('character-reference-format-overlay');const play=document.createElement('span');play.className='character-video-play';play.setAttribute('aria-hidden','true');frame.append(play);window.PantherUI.mountIcon(play,'play');const seconds=Number(asset.metadata?.extra?.mediaProbe?.format?.duration??asset.metadata?.extra?.mediaProbe?.duration??asset.durationSeconds);if(Number.isFinite(seconds)&&seconds>0){const duration=document.createElement('span');duration.className='character-video-duration';duration.textContent=`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;frame.append(duration);}}
+      if(image||video&&(asset.thumbnailKey||asset.metadata?.extra?.preview?.imageKey)){const media=document.createElement('img');media.alt='';media.hidden=true;frame.prepend(media);previews.push({asset,media,indicator});}
       li.append(link);list.append(li);
     }
-    // Resolve a bounded batch first; older APIs and newly uploaded assets may lack image-links entries.
-    for(let offset=0;offset<previews.length;offset+=20){
-      const batch=previews.slice(offset,offset+20);let links={};
-      try{const keys=batch.filter(item=>item.image).map(item=>item.asset.key);if(keys.length)links=(await api('/image-links',{},{body:{gameId,keys}})).images||{};}catch{}
-      if(!current())return;
-      await Promise.allSettled(batch.map(async({asset,media,indicator})=>{
-        let url=links[asset.key]?.url;
-        if(!url){try{const resolved=await api('/object-url',{key:asset.key});const thumbnail=resolved.thumbnailKey||asset.thumbnailKey;if(media.tagName==='VIDEO'&&thumbnail){const image=document.createElement('img');image.alt='';image.loading='lazy';media.replaceWith(image);media=image;url=(await api('/object-url',{key:thumbnail})).url;}else url=resolved.url;}catch{return;}}
-        if(!current()||!url)return;
-        const ready=()=>{if(current()){media.hidden=false;indicator.classList.add('character-reference-format-overlay');}};
-        media.addEventListener(media.tagName==='VIDEO'?'loadeddata':'load',ready,{once:true});
-        media.addEventListener('error',()=>{media.hidden=true;indicator.classList.remove('character-reference-format-overlay');},{once:true});media.src=url;media.hidden=false;
-      }));
-    }
+    // Signing and downloading start only as an image enters the viewport.
+    const reveal=async({asset,media,indicator})=>{try{const url=await thumbnailUrl(gameId,asset);if(!current()||!media.isConnected||!url)return;
+      media.addEventListener('load',()=>{media.hidden=false;indicator.classList.add('character-reference-format-overlay');},{once:true});
+      media.src=url;
+    }catch{/* The format placeholder remains usable. */}};
+    if(typeof IntersectionObserver==='undefined')previews.forEach(item=>void reveal(item));
+    else {const items=new Map(previews.map(item=>[item.media.parentElement,item]));const observer=new IntersectionObserver(entries=>{if(!current()||!list.isConnected){observer.disconnect();characterPreviewObservers.delete(observer);return;}for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);void reveal(items.get(entry.target));}},{rootMargin:'160px'});characterPreviewObservers.add(observer);for(const item of previews)observer.observe(item.media.parentElement);}
     if(!current())return;
-    status.textContent='';const empty=document.getElementById('character-reference-empty');empty.hidden=Boolean(matching.length);empty.textContent=matching.length?'':'No assets yet.';
+    if(page.cursor){const more=document.createElement('button');more.id='character-assets-more';more.type='button';more.textContent='More assets';window.PantherUI.styleButton(more,'outline');more.onclick=()=>{more.disabled=true;void loadCharacterAssets(gameId,characterId,epoch,page.cursor).finally(()=>{more.disabled=false;});};list.after(more);}
+    status.textContent='';const empty=document.getElementById('character-reference-empty');empty.hidden=Boolean(list.children.length)||Boolean(page.cursor);empty.textContent='No assets yet.';
   }catch(error){if(current())status.textContent=error.message;}
 }
 
@@ -1955,7 +1975,7 @@ async function uploadGameAsset(gameId,request){
     let existing=null;try{existing=await api('/object-url',{key:signed.key});}catch(error){if(error.status!==404)throw error;}
     if(!existing){const headers={...signed.headers};delete headers['Content-Length'];delete headers['content-length'];const response=await fetch(signed.url,{method:'PUT',headers,body:pending.bytes,signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('Upload could not finish. Retry to continue.');existing=await api('/object-url',{key:signed.key});}
     if(existing.sha256!==pending.body.sha256||existing.size!==pending.body.size)throw new Error('Uploaded file verification failed. The original was not replaced.');
-    const asset=describeResolvedAsset(existing);assetUploads.delete(request.operationId);await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;
+    const asset=describeResolvedAsset(existing);assetUploads.delete(request.operationId);await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);
     if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets.filter(item=>item.key!==asset.key)];drawAssetLibrary(routeEpoch);}return asset;
   }catch(error){if(error.status===400)assetUploads.delete(request.operationId);if(error instanceof TypeError)throw new Error('Upload interrupted. Your file is still selected; retry to continue.');throw error;}
 }
@@ -1963,27 +1983,26 @@ function drawAssetLibrary(epoch){
   const host=document.getElementById('assets-library'),gameId=state.gameId;host.hidden=false;
   window.PantherUI.mountAssetsLibrary?.(host,{actionsHost:document.querySelector('#explorer .explorer-heading'),...assetListing,assets:assetListing.assets.map(asset=>({...asset,title:asset.metadata?.title||asset.title||asset.name,tags:asset.metadata?.tags||asset.tags||[]})),gameId,browseFilesHref:gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`),onBrowseFiles:event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();navigate(gamePath('assets')+'?folder='+encodeURIComponent(`games/${gameId}/`));},hasMore:Boolean(assetListing.cursor),initialJobs:[...assetGenerationJobs.values()].filter(job=>job.gameId===gameId&&job.status!=='PUBLISHED'),
     onMore:()=>void loadAssetLibrary(epoch,assetListing.cursor),onRetry:()=>void loadAssetLibrary(epoch,assetListing.pages?assetListing.cursor:null),onOpen:asset=>void previewFile({key:asset.key,name:asset.metadata?.title||asset.title||asset.name||asset.key.split('/').at(-1)}),
-    onThumbnail:async asset=>{const resolved=await api('/object-url',{key:asset.key});if(resolved.contentType?.startsWith('video/')){const key=resolved.thumbnailKey||asset.thumbnailKey;return key?(await api('/object-url',{key})).url:'';}return resolved.url;},
-    onDelete:async(asset,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/delete',{},{body:{gameId,key:asset.key,sha256:source.sha256,operationId}});if(result.deleted!==true||result.key!==asset.key)throw new Error('Deletion could not be confirmed.');await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=assetListing.assets.filter(item=>item.key!==asset.key);drawAssetLibrary(epoch);}},
+    onThumbnail:asset=>thumbnailUrl(gameId,asset),
+    onDelete:async(asset,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/delete',{},{body:{gameId,key:asset.key,sha256:source.sha256,operationId}});if(result.deleted!==true||result.key!==asset.key)throw new Error('Deletion could not be confirmed.');await window.PantherUI.invalidate(apiScope(),['/assets','/objects','/dashboard-recent'],gameId);if(assetListing.gameId===gameId){assetListing.assets=assetListing.assets.filter(item=>item.key!==asset.key);drawAssetLibrary(epoch);}},
     onCapabilities:config.development===true?()=>api('/generation-capabilities'):undefined,
     onGenerationOptions:()=>api('/asset-generation',{gameId,view:'options'}),
-    onRename:async(asset,title,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/rename',{},{body:{gameId,key:asset.key,title,sha256:source.sha256,operationId}});await window.PantherUI.invalidate(apiScope(),['/assets','/object-url','/asset-document','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId)assetListing.assets=assetListing.assets.map(item=>item.key===asset.key?result.asset:item);return result.asset;},
+    onRename:async(asset,title,operationId)=>{const source=await api('/object-url',{key:asset.key});const result=await api('/assets/rename',{},{body:{gameId,key:asset.key,title,sha256:source.sha256,operationId}});await window.PantherUI.invalidate(apiScope(),['/assets','/object-url','/asset-document','/dashboard-recent'],gameId);if(assetListing.gameId===gameId)assetListing.assets=assetListing.assets.map(item=>item.key===asset.key?result.asset:item);return result.asset;},
     onCharacters:cursor=>api('/characters',{gameId,cursor:typeof cursor==='string'?cursor:null}),
     onTags:()=>api('/tags',{gameId}),
     onUpload:request=>uploadGameAsset(gameId,request),
     onGenerate:async request=>{const job=await api('/asset-generation',{},{body:{gameId,...request}});assetGenerationJobs.set(job.jobId,job);return job;},
-    onGenerationStatus:async job=>{const result=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,result);if(result.status==='PUBLISHED'&&result.assetKey&&!assetListing.assets.some(asset=>asset.key===result.assetKey)){const asset=describeResolvedAsset(await api('/object-url',{key:result.assetKey}));await window.PantherUI.invalidate(apiScope(),['/assets','/dashboard-recent'],gameId);assetIndex=null;if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets];drawAssetLibrary(epoch);}}return result;}});
+    onGenerationStatus:async job=>{const result=await api('/asset-generation',{gameId,jobId:job.jobId});assetGenerationJobs.set(job.jobId,result);if(result.status==='PUBLISHED'&&result.assetKey&&!assetListing.assets.some(asset=>asset.key===result.assetKey)){const asset=describeResolvedAsset(await api('/object-url',{key:result.assetKey}));await window.PantherUI.invalidate(apiScope(),['/assets','/dashboard-recent'],gameId);if(assetListing.gameId===gameId){assetListing.assets=[asset,...assetListing.assets];drawAssetLibrary(epoch);}}return result;}});
 }
 async function loadAssetLibrary(epoch,cursor=null){
   const gameId=state.gameId,current=()=>epoch===routeEpoch&&state.gameId===gameId;
   if(assetListing.gameId!==gameId)assetListing={gameId,assets:[],cursor:null,loading:false,error:'',pages:0};
   assetListing.loading=true;assetListing.error='';drawAssetLibrary(epoch);
   const jobsRequest=!cursor?api('/asset-generation',{gameId}).catch(()=>null):Promise.resolve(null);
-  try{const [result,jobs]=await Promise.all([api('/assets',{gameId,section:'all',cursor}),jobsRequest]);if(!current())return;if(!Array.isArray(result.assets))throw new Error('Assets are temporarily unavailable.');
+  try{const [result,jobs]=await Promise.all([api('/assets',{gameId,section:'all',cursor,view:'cards',limit:24}),jobsRequest]);if(!current())return;if(!Array.isArray(result.assets))throw new Error('Assets are temporarily unavailable.');
     for(const job of jobs?.jobs||[])assetGenerationJobs.set(job.jobId,job);
     const assets=cursor?[...assetListing.assets,...result.assets]:result.assets;assetListing={gameId,assets:[...new Map(assets.map(asset=>[asset.key,asset])).values()],cursor:result.cursor||null,loading:false,error:'',pages:cursor?assetListing.pages+1:1};drawAssetLibrary(epoch);
-    const missing=(jobs?.jobs||[]).filter(job=>job.status==='PUBLISHED'&&sameGameKey(job.assetKey)&&!assetListing.assets.some(asset=>asset.key===job.assetKey));
-    const resolved=await Promise.allSettled(missing.map(job=>api('/object-url',{key:job.assetKey})));if(!current())return;for(const result of resolved)if(result.status==='fulfilled'){const asset=describeResolvedAsset(result.value);if(!assetListing.assets.some(existing=>existing.key===asset.key))assetListing.assets.push(asset);}if(resolved.length)drawAssetLibrary(epoch);
+
   }catch(error){if(current()){assetListing.loading=false;assetListing.error=error.message;drawAssetLibrary(epoch);}}
 }
 function drawMediaBrowser() {
@@ -2262,21 +2281,15 @@ async function chapterReview(chapter,current){
   window.PantherUI.mountChapterReview(novel.review,{scope:apiScope(),gameId,chapterId:chapter.id,onLoad:()=>api('/novel-review',{gameId,chapterId:chapter.id}),onSave:async body=>{const result=await api('/novel-review',{},{body});await window.PantherUI.invalidate(apiScope(),['/novel-review'],gameId);return result;}});
 }
 
-async function novelOrganization(gameId, current) {
-  const results = [];
-  for (const type of ["stories", "books"]) {
-    const records = [], seen = new Set(); let cursor;
-    do {
-      const page = await api(`/novel-${type}`, {gameId,cursor});
-      if (!current()) return null;
-      if (!Array.isArray(page.records)) throw new Error("The book library could not be read completely");
-      records.push(...page.records); cursor = page.cursor;
-      if (records.length > 5000 || seen.size >= 200 || (cursor && seen.has(cursor))) throw new Error("The book library exceeds its bounded reader limit or returned a repeated cursor");
-      if (cursor) seen.add(cursor);
-    } while (cursor);
-    results.push(records);
+async function novelOrganization(gameId, current, previous={}) {
+  const result={...previous};
+  for(const type of ['stories','books']) {
+    if(result[type])continue;
+    const page=await api(`/novel-${type}`,{gameId});if(!current())return null;
+    if(!Array.isArray(page.records))throw new Error('The book library could not be read');
+    result[type]=[...page.records];result[type+'Cursor']=page.cursor;
   }
-  return {stories:results[0],books:results[1]};
+  return result;
 }
 
 function bookLink(title, book, chapterId) {
@@ -2290,7 +2303,7 @@ function bookCard(book, story, byKey, current) {
   const content = document.createElement("div");
   const heading = document.createElement("h2"); heading.append(bookLink(book.title,book));
   const meta = document.createElement("p"); meta.className = "eyebrow";
-  meta.textContent = `${story?.title || "Story unavailable"} · ${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
+  meta.textContent = `${story?.title ? story.title + " · " : ""}${book.status === "approved" ? "Approved private selection" : "Private draft"}`;
   const synopsis = document.createElement("p"); synopsis.textContent = book.synopsis || "No synopsis provided.";
   const details = document.createElement("p"); details.textContent = [...(book.tags || []),book.authorCredit,
     `${book.volumes.length} volume${book.volumes.length === 1 ? "" : "s"}`,`Revision ${book.revision.slice(0,8)}`].filter(Boolean).join(" · ");
@@ -2493,7 +2506,7 @@ async function narrativePreviewData(target, gameId) {
   const cacheKey = JSON.stringify([gameId, target]);
   const cached = narrativePreviewCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 60000) return cached.value;
-  const localAssets = await allAssets(gameId);
+
   const metadataPreview = metadata => metadata?.extra?.preview?.schemaVersion === 1 ? metadata.extra.preview : {};
   let title, summary = "", source = "description", imageKey, imageLabel = "Preview image", asset;
   if (target.type === "character") {
@@ -2505,13 +2518,8 @@ async function narrativePreviewData(target, gameId) {
     imageKey = details?.thumbnailAssetKey;
     imageLabel = `Portrait of ${title}`;
     if (!summary) { summary = `${title} is a character in this game. No description has been recorded yet.`; source = "metadata"; }
-    if (!imageKey) {
-      // Only an explicitly associated portrait; never infer identity from appearance or filename.
-      const portraits = localAssets.filter(a => a.kind === "portrait" && a.metadata?.characterIds?.includes(target.id));
-      if (portraits.length === 1) { imageKey = portraits[0].key; imageLabel = `Associated portrait of ${title}`; }
-    }
   } else if (target.type === "asset") {
-    asset = localAssets.find(a => a.key === target.key);
+    asset = (await assetRecords(gameId,[target.key]))[0];
     if (!asset) throw new Error("Linked asset is unavailable");
     title = asset.metadata?.title || asset.name;
     const supplied = metadataPreview(asset.metadata);
@@ -2535,7 +2543,7 @@ async function narrativePreviewData(target, gameId) {
   } else if (target.type === "chapter") {
     const chapter = await api("/novel-chapter", {gameId, chapterId: target.id});
     title = chapter.title; summary = previewText(chapter.markdown); source = "excerpt";
-    asset = localAssets.find(a => a.kind === "novel-chapter" && a.metadata?.extra?.jobId === target.id);
+    asset = (await assetRecords(gameId,[chapter.details?.artifact?.key||chapter.assetKey]))[0];
     const supplied = metadataPreview(asset?.metadata);
     if (previewText(supplied.summary)) { summary = previewText(supplied.summary); source = "description"; }
     imageKey = supplied.imageKey;
@@ -2673,7 +2681,7 @@ function chapterDetails(chapter, versions) {
   const creation = document.createElement("section"); creation.className = "generation-details";
   showLoading(sources, "Finding the chapter’s source assets…");
   const gameId = state.gameId, epoch = routeEpoch;
-  void allAssets(gameId).then(assets => {
+  void relatedAssets(gameId,chapter.details.artifact?.key).then(assets => {
     if (epoch !== routeEpoch || state.gameId !== gameId || currentChapter !== chapter || !state.tokens) return;
     sources.replaceChildren();
     const key = chapter.details.artifact?.key;
@@ -2693,10 +2701,10 @@ function manualChapterEditor(previous = null) {
   const gameId=state.gameId,epoch=routeEpoch;
   manualChapterOpen=true;syncNovelEmptyState();
   window.PantherUI.openChapterEditor({previous,gameId,scope:apiScope(),
-    onLoadReferences:async()=>{
-      const assets=await allAssets(gameId),seen=new Set();
+    onLoadReferences:async cursor=>{
+      const page=await assetPage(gameId,{cursor}),assets=page.assets,seen=new Set();
       const internal=asset=>['processing','intermediate','internal'].includes(asset.metadata?.extra?.relationshipRole)||asset.metadata?.extra?.recordingPart||/recording-(chunk|part|checkpoint|manifest)|generation-plan|review-report|provenance/.test(asset.kind||'')||/\/part-\d+\.(flac|wav|webm)$/.test(asset.key);
-      return assets.filter(asset=>!asset.lineageWarning&&!internal(asset)&&(asset.metadata?.extra?.relationshipRole==='finished'||/^(audio|video|image)\//.test(asset.contentType||'')||['transcript','raw-transcript','corrected-transcript','edited-transcript','novel-chapter','document','game-context','map','portrait','model-3d'].includes(asset.kind))).filter(asset=>{if(seen.has(asset.key))return false;if(/\.md$/.test(asset.key)&&assets.some(other=>other.key===asset.key.slice(0,-3)+'.json'&&other.kind===asset.kind))return false;seen.add(asset.key);return true;}).map(asset=>({id:asset.key,name:asset.metadata?.title||asset.name}));
+      return {cursor:page.cursor,references:assets.filter(asset=>!asset.lineageWarning&&!internal(asset)&&(asset.metadata?.extra?.relationshipRole==='finished'||/^(audio|video|image)\//.test(asset.contentType||'')||['transcript','raw-transcript','corrected-transcript','edited-transcript','novel-chapter','document','game-context','map','portrait','model-3d'].includes(asset.kind))).filter(asset=>{if(seen.has(asset.key))return false;if(/\.md$/.test(asset.key)&&assets.some(other=>other.key===asset.key.slice(0,-3)+'.json'&&other.kind===asset.kind))return false;seen.add(asset.key);return true;}).map(asset=>({id:asset.key,name:asset.metadata?.title||asset.name}))};
     },onSave:payload=>api('/novel-chapters',{}, {body:payload}),
     onClose:()=>{manualChapterOpen=false;syncNovelEmptyState();},
     onComplete:result=>{if(epoch===routeEpoch&&gameId===state.gameId)navigate(`${gamePath('novel')}/${result.chapterId}`);}
@@ -2735,12 +2743,12 @@ function renderNovelEmptyState() {
   empty.append(heading,purpose,actions,examples);novel.list.append(empty);syncNovelEmptyState();
 }
 
-async function loadNovel(chapterId, epoch) {
+async function loadNovel(chapterId, epoch, previous={}) {
   document.querySelector("#novel > .explorer-heading").hidden = Boolean(chapterId);
 
   document.getElementById("manual-chapter-edit")?.remove();
   document.getElementById("chapter-create-episode")?.remove();
-  renderEditorialComposer("novel",epoch);
+  if(!previous.chapters)renderEditorialComposer("novel",epoch);
   const composer = document.getElementById("editorial-novel-composer");
   composer.hidden=Boolean(chapterId);
   const create = document.querySelector("#novel .explorer-heading [data-generation-action]");
@@ -2750,32 +2758,26 @@ async function loadNovel(chapterId, epoch) {
   const loading = showLoading(novel.status, "Fetching the chapter list…");
   novel.status.hidden = false;
   try {
-    const chapters = [];
-    let cursor;
-    const seenCursors = new Set();
-    do {
-      const page = await api("/novel", {gameId, cursor});
-      if (!current()) return;
-      chapters.push(...page.chapters);
-      loading.update(`Found ${chapters.length} chapters · fetching remaining editions…`);
-      cursor = page.cursor;
-      if (chapters.length > 5000 || seenCursors.size >= 200 || (cursor && seenCursors.has(cursor))) {
-        throw new Error("The chapter library could not be loaded completely. No partial list is shown; refresh to retry.");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-    loading.update("Reading story and book organization…");
-    const organization = await novelOrganization(gameId,current);
-    if (!organization || !current()) return;
+    const page=previous.chapters?{chapters:previous.chapters,cursor:previous.cursor}:await api('/novel',{gameId});
+    if(!current())return;
+    const chapters=[...page.chapters], cursor=page.cursor;
+    const organization=await novelOrganization(gameId,current,previous.organization);
+    if(!organization||!current())return;
+    novel.list.replaceChildren();
     const byKey = new Map(chapters.filter(c=>c.assetKey).map(c=>[c.assetKey,c]));
     const bookId = new URLSearchParams(location.search).get("book");
     let selectedBook = bookId ? organization.books.find(b=>b.id===bookId) : null;
-    if (bookId && !selectedBook) throw new Error("The selected book is unavailable");
+    if(bookId&&!selectedBook){selectedBook=(await api('/novel-books',{gameId,id:bookId})).record;if(!current())return;if(!selectedBook)throw new Error('The selected book is unavailable');}
     const bookRevision = new URLSearchParams(location.search).get("bookRevision");
     if(bookRevision){if(!bookId || !/^[a-f0-9]{32}$/.test(bookRevision))throw new Error("Invalid book revision");
       selectedBook=(await api("/novel-books",{gameId,id:bookId,revision:bookRevision})).record;
       if(!current())return;
       if(!selectedBook || selectedBook.id!==bookId || selectedBook.gameId!==gameId || selectedBook.revision!==bookRevision)throw new Error("Book revision unavailable");}
+    if(selectedBook){
+      if(!organization.stories.some(story=>story.id===selectedBook.storyId)){const parent=await api('/novel-stories',{gameId,id:selectedBook.storyId});if(!current())return;if(parent.record)organization.stories.push(parent.record);}
+      const keys=selectedBook.volumes.flatMap(volume=>volume.chapterKeys).filter(key=>!byKey.has(key));
+      for(let offset=0;offset<keys.length;offset+=60){const pinned=await api('/novel',{gameId,keys:JSON.stringify(keys.slice(offset,offset+60))});if(!current())return;for(const chapter of pinned.chapters){byKey.set(chapter.assetKey,chapter);chapters.push(chapter);}}
+    }
     currentNovelBook = selectedBook;
     // A session can have multiple immutable editions; only the latest appears in the TOC.
     chapters.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
@@ -2801,7 +2803,7 @@ async function loadNovel(chapterId, epoch) {
       for(const story of organization.stories){const books=organization.books.filter(b=>b.storyId===story.id).sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id));
         const section=document.createElement("section"), heading=document.createElement("h2"), synopsis=document.createElement("p");heading.textContent=story.title;synopsis.textContent=story.synopsis;section.append(heading,synopsis);
         for(const book of books)section.append(bookCard(book,story,byKey,current));if(!books.length){const empty=document.createElement("p");empty.textContent="No books organized yet.";section.append(empty);}novel.list.append(section);}
-      if(organization.books.some(b=>!organization.stories.some(s=>s.id===b.storyId)))throw new Error("A book's parent story is unavailable; no incomplete library is shown");
+      for(const book of organization.books.filter(book=>!organization.stories.some(story=>story.id===book.storyId)))novel.list.append(bookCard(book,null,byKey,current));
       if(ordered.length&&organization.stories.length){const sourceHeading=document.createElement("h2");sourceHeading.textContent="Session chapters";novel.list.append(sourceHeading);}
       novel.status.hidden = true;
       novel.status.textContent = "";
@@ -2813,6 +2815,14 @@ async function loadNovel(chapterId, epoch) {
         const title = document.createElement("h2"); title.append(novelLink(chapter.title, chapter.id));card.dataset.chapterId=chapter.id;
         const meta = document.createElement("p"); meta.textContent = `${chapterDate(chapter)}${chapter.publicationStatus === "accepted-with-notes" ? " · Working draft" : ""}`;
         card.append(number, title, meta); novel.list.append(card);
+      }
+      for(const type of ['chapters','stories','books']){
+        const next=type==='chapters'?cursor:organization[type+'Cursor'];if(!next)continue;
+        const more=document.createElement('button');more.type='button';more.textContent=`More ${type}`;window.PantherUI.styleButton(more,'outline');
+        more.onclick=async()=>{more.disabled=true;try{const result=await api(type==='chapters'?'/novel':`/novel-${type}`,{gameId,cursor:next});if(!current())return;if(result.cursor===next)throw new Error('Pagination did not progress. Loaded records are still available.');
+          const snapshot={chapters,cursor,organization};if(type==='chapters'){snapshot.chapters=[...chapters,...result.chapters];snapshot.cursor=result.cursor;}else{snapshot.organization={...organization,[type]:[...organization[type],...result.records],[type+'Cursor']:result.cursor};}
+          await loadNovel(null,epoch,snapshot);
+        }catch(error){novel.status.hidden=false;novel.status.textContent=error.message;}finally{more.disabled=false;}};novel.list.append(more);
       }
       void novelCovers(gameId,current);
       return;
@@ -2847,7 +2857,9 @@ async function loadNovel(chapterId, epoch) {
     const collectionIds=[...new Set((chapter.readerReferences?.schemaVersion===1 && Array.isArray(chapter.readerReferences.mentions) && chapter.readerReferences.mentions.length<=200 ? chapter.readerReferences.mentions : [])
       .filter(m=>m?.target?.type==="collection" && (!m.target.gameId || m.target.gameId===gameId) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(m.target.id)).map(m=>m.target.id))];
     const collectionReferences=(async()=>{const records=[];for(let offset=0;offset<collectionIds.length;offset+=8){if(!current())return records;const batch=await Promise.all(collectionIds.slice(offset,offset+8).map(id=>api("/video-collections",{gameId,id,metadataOnly:"true"}).then(r=>r.collection).catch(()=>null)));records.push(...batch.filter(Boolean));}return records;})();
-    void Promise.all([allAssets(gameId),collectionReferences]).then(([assets,collections]) => {
+    const mentionedAssets=(chapter.readerReferences?.schemaVersion===1&&chapter.readerReferences.mentions?.length<=200?chapter.readerReferences.mentions:[]).filter(mention=>mention?.target?.type==='asset'&&(!mention.target.gameId||mention.target.gameId===gameId)).map(mention=>mention.target.key);
+    void Promise.all([relatedAssets(gameId,chapter.details?.artifact?.key||chapter.assetKey),assetRecords(gameId,mentionedAssets),collectionReferences]).then(([connected,mentioned,collections]) => {
+      const assets=[...new Map([...connected,...mentioned].map(asset=>[asset.key,asset])).values()];
       if (current()) proseMarkdown(novel.prose, chapter.markdown, narrativeReferences(chapter, assets, chapters,collections));
     }).catch(() => {
       if (current()) { novel.status.hidden = false; novel.status.textContent = "Some asset links could not be loaded. The story is available; Reload the page to try again."; }
@@ -2864,7 +2876,6 @@ async function loadNovel(chapterId, epoch) {
   }
 }
 
-let assetIndex = null;
 function sameGameKey(key) {
   return typeof key === "string" && key.startsWith(`games/${state.gameId}/assets/`)
     && !key.split("/").includes("..") && !/[\x00-\x1f]/.test(key);
@@ -2883,34 +2894,25 @@ function clearLibrary() {
   document.getElementById("library-list").hidden = false;
   document.getElementById("library-status").hidden = false;
   if (!state.tokens) {
-    assetIndex = null; videoPlaylist = null;
+    videoPlaylist = null;
     videoLibraryView = {gameId:null,search:"",tags:[],characters:[],collection:""};
   }
 }
 
-async function allAssets(gameId, onProgress = () => {}, section = "all") {
-  if (assetIndex?.gameId === gameId && assetIndex.section === section) {
-    const entry = assetIndex; entry.listeners.add(onProgress); onProgress(entry.count);
-    try { return await entry.promise; } finally { entry.listeners.delete(onProgress); }
-  }
-  const entry = {gameId, section, count:0, listeners:new Set([onProgress])};
-  entry.promise = (async () => {
-    const assets = []; let cursor = null; const seen = new Set();
-    do {
-      const page = await api("/assets", {gameId, cursor, section});
-      if (!Array.isArray(page.assets)) throw new Error("Asset catalog unavailable");
-      assets.push(...page.assets);
-      entry.count = assets.length;
-      for (const listener of entry.listeners) listener(entry.count);
-      if (assets.length > 5000) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
-      cursor = page.cursor;
-      if (cursor && (seen.has(cursor) || seen.size >= 200)) throw new Error("Catalog exceeds this reader's limit; incomplete results are not displayed.");
-      if (cursor) seen.add(cursor);
-    } while (cursor);
-    return assets;
-  })().catch(error => { if (assetIndex === entry) assetIndex = null; throw error; });
-  assetIndex = entry;
-  try { return await entry.promise; } finally { entry.listeners.delete(onProgress); }
+async function assetPage(gameId, parameters={}) {
+  const page=await api('/assets',{gameId,section:'all',view:'cards',limit:24,...parameters});
+  if(!Array.isArray(page.assets))throw new Error('Asset catalog unavailable');
+  return page;
+}
+async function assetRecords(gameId, keys) {
+  const unique=[...new Set(keys.filter(key=>typeof key==='string'&&key.startsWith(`games/${gameId}/assets/`)))];
+  const records=[];
+  for(let offset=0;offset<unique.length;offset+=60){const requested=unique.slice(offset,offset+60),page=await api('/assets',{gameId,keys:JSON.stringify(requested)});if(!Array.isArray(page.assets))throw new Error('Asset metadata unavailable');records.push(...page.assets.filter(asset=>requested.includes(asset.key)));}
+  return records;
+}
+async function relatedAssets(gameId,key) {
+  if(!key)return [];
+  return (await api('/assets',{gameId,relatedKey:key})).assets;
 }
 
 function assetLink(asset, label) {
@@ -3137,7 +3139,7 @@ function renderEpisodeWorkspace(epoch) {
     if(!scene.storyboard)openSceneVideoComposer({...scene,host:composer},epoch,saved=>{const index=scenes.findIndex(item=>item.id===saved.id);if(index>=0)scenes[index]=saved;if(selectedScene?.id===saved.id){selectedScene=saved;previewOutputKey=saved.selectedOutputKey||null;}drawScenes();drawOutputs();drawPlayback();});
     const storyboard=document.createElement('div');storyboard.dataset.sceneStoryboard='true';sceneDetail.append(storyboard);
     window.PantherUI.mountSceneStoryboard(storyboard,{scene,scope:apiScope(),
-      onLoadTakes:cursor=>api('/assets',{gameId,section:'videos',cursor}),onLoadVideo:key=>api('/object-url',{key}),onGenerateShot:async shot=>{const inputs=scene.generationInputs||{};const job=await api('/editorial-jobs',{},{body:{gameId,creation:{schemaVersion:2,target:'video',brief:[shot.description,shot.camera].filter(Boolean).join('\n'),characterIds:inputs.characterIds||[],sourceKeys:inputs.sourceKeys||[],contextKeys:inputs.contextKeys||[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.id,revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId}}}});await showEditorialProgress(job.jobId,work,gameId,'video');},
+      onLoadTakes:cursor=>api('/assets',{gameId,section:'videos',cursor,view:'cards',limit:24}),onLoadVideo:key=>api('/object-url',{key}),onGenerateShot:async shot=>{const inputs=scene.generationInputs||{};const job=await api('/editorial-jobs',{},{body:{gameId,creation:{schemaVersion:2,target:'video',brief:[shot.description,shot.camera].filter(Boolean).join('\n'),characterIds:inputs.characterIds||[],sourceKeys:inputs.sourceKeys||[],contextKeys:inputs.contextKeys||[],sceneRef:{episodeId:scene.episodeId,sceneId:scene.id,revision:scene.revision},storyboardShotRef:{revision:scene.storyboard.revision,shotId:shot.shotId}}}});await showEditorialProgress(job.jobId,work,gameId,'video');},
       ...(config.development===true?{onLoadJobs:()=>api('/scene-renders',{gameId,episodeId:scene.episodeId,sceneId:scene.id}),onGenerateShot:shot=>{const inputs=scene.generationInputs||{};return api('/scene-renders',{},{body:{gameId,episodeId:scene.episodeId,sceneId:scene.id,revision:scene.revision,shotId:shot.shotId,prompt:[shot.description,shot.camera].filter(Boolean).join('\n'),characterIds:inputs.characterIds||[],sourceKeys:inputs.sourceKeys||[],contextKeys:inputs.contextKeys||[],operationId:crypto.randomUUID().replaceAll('-','')}});},onAssemble:()=>openLocalGeneration('Scene assembly','/scene-assemblies',{gameId,episodeId:scene.episodeId,sceneId:scene.id,revision:scene.revision},async job=>{if(!current())return;const latest=await api('/scenes',{gameId,episodeId:scene.episodeId,id:scene.id});if(latest.record?.revision!==job.composition.sceneRef.revision)return;const saved=await api('/scenes',{},{body:{gameId,id:scene.id,episodeId:scene.episodeId,name:latest.record.name,description:latest.record.description||'',type:latest.record.type,expectedRevision:latest.record.revision,selectedOutputKey:job.outputKey,operationId:crypto.randomUUID().replaceAll('-','')}});if(current()){scenes[scenes.findIndex(item=>item.id===scene.id)]=saved.record;chooseScene(saved.record);drawPlayback();}})}:{}),onLoadFrames:keys=>api('/image-links',{},{body:{gameId,keys}}),onOpenFrame:key=>previewFile({key,name:'Storyboard frame',contentType:'image/png'}),onSave:async changes=>{
       const response=await api('/scenes',{},{body:{gameId,id:scene.id,episodeId:scene.episodeId,name:scene.name,description:scene.description||'',type:scene.type||'general',expectedRevision:scene.revision,operationId:crypto.randomUUID().replaceAll('-',''),...changes}});
       await window.PantherUI.invalidate(apiScope(),['/scenes','/episode-composition'],gameId);
@@ -3205,7 +3207,7 @@ function configureVideoPreview(asset, video, epoch) {
   video.pantherCleanup=()=>{video.pantherCaptionController?.abort();if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=null;};
   void(async()=>{
     try {
-      const assets=await allAssets(gameId);if(!current())return;
+      const assets=await relatedAssets(gameId,asset.key);if(!current())return;
       const directory=asset.key.slice(0,asset.key.lastIndexOf("/")+1);
       const tracks=assets.filter(a=>a.kind==="video-captions" && a.key.endsWith(".vtt") && sameGameKey(a.key)
         && (a.key.slice(0,a.key.lastIndexOf("/")+1)===directory || asset.sourceKeys?.includes(a.key) || a.sourceKeys?.includes(asset.key)));
@@ -3499,7 +3501,7 @@ async function renderAssetLinks(key, epoch, resolved = null) {
   const current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
   if (!sameGameKey(key)) { host.textContent = "Connections are available for game assets."; return; }
   try {
-    const assets = [...await allAssets(gameId)];
+    const assets = [...await relatedAssets(gameId,key)];
     if (!current()) return;
     // A resolved file is already an asset. Catalog pages project metadata and may omit
     // raw recording parts; their absence must not invalidate an existing file.
@@ -3586,6 +3588,7 @@ function attachMediaRecovery(audio, key, current) {
     if(attempts>=1){warning.textContent="Playback unavailable. You can download the original.";warning.hidden=false;return;}
     recovering=true;attempts++;const position=audio.currentTime, resume=!audio.paused;waiting();
     try {
+      await window.PantherUI.invalidate(apiScope(),["/object-url"],state.gameId);
       const result=await api("/object-url",{key});if(!current())return;
       audio.src=result.url;
       audio.addEventListener("loadedmetadata",()=>{if(current()){audio.currentTime=position;if(resume)void audio.play().catch(()=>{});}},{once:true});
@@ -3626,7 +3629,7 @@ function renderStructuredAsset(asset, epoch) {
     const gameId = state.gameId, current = () => epoch === previewEpoch && gameId === state.gameId && state.tokens;
     void (async () => {
       try {
-        const assets = await allAssets(gameId);
+        const assets = await relatedAssets(gameId,asset.key);
         if (!current()) return;
         const copies = assets.filter(a => a.playback?.recordingKey === asset.key && sameGameKey(a.playback.audioKey)
           && assets.some(file => file.key === a.playback.audioKey && file.kind === "recording-playback"));
@@ -3676,7 +3679,7 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   const ready=()=>{if(!current())return;duration=Number.isFinite(audio.duration)&&audio.duration>0?audio.duration:null;seeks.forEach(({button,start})=>{button.disabled=duration===null||!Number.isFinite(start)||start<0||start>=duration;});};
   const seek=async seconds=>{if(!current()||duration===null||!Number.isFinite(seconds)||seconds<0||seconds>=duration)return;try{audio.currentTime=seconds;await audio.play();}catch{if(current()){audioStatus.hidden=false;audioStatus.textContent='Playback could not start. Use the audio controls to try again.';}}};
   void(async()=>{try{
-    const assets=[...await allAssets(gameId)];if(!current())return;if(!assets.some(item=>item.key===asset.key))assets.push(asset);
+    const assets=[...await relatedAssets(gameId,asset.key)];if(!current())return;if(!assets.some(item=>item.key===asset.key))assets.push(asset);
     const index=new Map(assets.map(item=>[item.key,item])),visited=new Set(),pending=[asset.key,...(asset.sourceKeys||[]),...(asset.metadata?.sourceKeys||[])];
     while(pending.length){const key=pending.pop();if(visited.has(key)||!sameGameKey(key))continue;visited.add(key);pending.push(...(index.get(key)?.sourceKeys||[]));}
     const copies=assets.filter(item=>item.playback&&visited.has(item.playback.recordingKey)&&sameGameKey(item.playback.audioKey)&&index.has(item.playback.audioKey));
@@ -3689,8 +3692,8 @@ function transcriptNavigation(host, asset, transcript, epoch, people) {
   return {add(line,segment){const name=people.get(segment.playerId)||'Unidentified speaker';lines.push({line,search:`${name} ${segment.text||''}`.toLocaleLowerCase()});const heading=line.querySelector('h3'),button=document.createElement('button');button.type='button';button.className='quiet-button transcript-seek';button.dataset.buttonVariant='ghost';button.textContent=`${timestamp(segment.start)}–${timestamp(segment.end)}`;button.setAttribute('aria-label',`Play audio from ${timestamp(segment.start)}`);button.disabled=true;button.onclick=()=>void seek(segment.start);heading.replaceChildren(button,document.createTextNode(` · ${name}`));seeks.push({button,start:segment.start});if(duration!==null)ready();},finish:update};
 }
 
-document.getElementById("library-refresh").addEventListener("click", () => { assetIndex = null; void renderRoute(); });
-novel.refresh.addEventListener("click", () => { assetIndex = null; void renderRoute(); });
+document.getElementById("library-refresh").addEventListener("click", () => { void renderRoute(); });
+novel.refresh.addEventListener("click", () => { void renderRoute(); });
 document.getElementById("character-create").addEventListener("click", createCharacter);
 novel.back.addEventListener("click", () => navigate(gamePath("novel") + (currentNovelBook ? `?book=${encodeURIComponent(currentNovelBook.id)}&bookRevision=${encodeURIComponent(currentNovelBook.revision)}` : "")));
 [novel.download,novel["show-details"]].forEach(button=>window.PantherUI.styleButton(button,"ghost"));
@@ -3705,7 +3708,7 @@ novel.download.addEventListener("click", () => {
 
 elements.login.addEventListener("click", login);
 elements.logout.addEventListener("click", logout);
-elements.refresh.addEventListener("click", () => { assetIndex = null; return loadPrefix(state.currentPrefix); });
+elements.refresh.addEventListener("click", () => { return loadPrefix(state.currentPrefix); });
 elements.loadMore.addEventListener("click", () => loadPrefix(state.currentPrefix, state.nextCursor));
 elements.previewClose.addEventListener("click", closePreview);
 elements.previewDialog.addEventListener("click", (event) => {
@@ -4764,10 +4767,10 @@ const workshop = (() => {
         },
         onLoadOutput: async (key, {signal}) => {
           if(!key.startsWith(`games/${gameId}/`))throw new Error('This output belongs to another game.');
-          const asset=await api('/object-url',{key},{signal});
+          const {assets:[asset]}=await api('/assets',{gameId,keys:JSON.stringify([key]),view:'cards'},{signal});if(!asset)throw new Error('Output metadata unavailable');
           const contentType=asset.contentType||'', title=asset.metadata?.title||'Generated asset';
-          if(contentType.startsWith('image/'))return {url:asset.url,kind:'image',title,contentType};
-          if(contentType.startsWith('video/')){const thumbnail=asset.thumbnailKey;if(thumbnail?.startsWith(`games/${gameId}/`)){const image=await api('/object-url',{key:thumbnail},{signal});return {url:image.url,kind:'video',title,contentType,thumbnail:true};}return {url:asset.url,kind:'video',title,contentType};}
+          if(contentType.startsWith('image/'))return {url:await thumbnailUrl(gameId,asset),kind:'image',title,contentType};
+          if(contentType.startsWith('video/'))return {url:await thumbnailUrl(gameId,asset),kind:'video',title,contentType,thumbnail:Boolean(asset.thumbnailKey)};
           return {kind:contentType.startsWith('audio/')?'audio':'document',title,contentType};
         },
         onNavigate: href => navigate(href),

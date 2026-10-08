@@ -5,6 +5,7 @@ import json
 from decimal import Decimal
 import math
 import re
+import asset_browser
 
 from boto3.dynamodb.conditions import Key
 import browse_index
@@ -235,7 +236,7 @@ def recent(catalog, game):
             "title": title,
             "contentType": asset.get("contentType"),
             "kind": kind,
-            "thumbnailKey": asset.get("thumbnailKey"),
+            "thumbnailKey": asset_browser.cover_key(asset),
             "durationSeconds": metadata.get("extra", {}).get("mediaProbe", {}).get("format", {}).get("duration", metadata.get("extra", {}).get("mediaProbe", {}).get("duration")),
             "lastModified": date_value(asset.get("lastModified")),
         }

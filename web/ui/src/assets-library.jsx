@@ -29,7 +29,7 @@ export function AssetThumbnail({asset,onThumbnail,gameId,className=""}) {
     observer.observe(host.current);
     return()=>observer.disconnect();
   },[asset.key,image,video]);
-  const preview=useQuery({queryKey:['asset-thumbnail',gameId,asset.key],queryFn:()=>onThumbnail(asset),enabled:(image||video)&&visible&&!asset.previewUrl&&Boolean(onThumbnail),staleTime:240000,retry:false,refetchInterval:query=>video&&!query.state.data&&!query.state.error?3000:false});
+  const preview=useQuery({queryKey:['asset-thumbnail',gameId,asset.key],queryFn:()=>onThumbnail(asset),enabled:(image||video)&&visible&&!asset.previewUrl&&Boolean(onThumbnail),staleTime:240000,retry:false});
   const url=asset.previewUrl||preview.data||'';
   const duration=video?assetVideoDuration(asset):null;
   return <span ref={host} className={`assets-card-image ${className}`}>{url&&url!==failedUrl?<img src={url} alt="" loading="lazy" onError={()=>setFailedUrl(url)}/>:<Icon size={32} aria-hidden="true"/>}{video&&<><span className="assets-video-play" aria-hidden="true"><Play size={22} fill="currentColor"/></span>{duration!==null&&<span className="assets-video-duration" aria-hidden="true" title={`Duration ${Math.floor(duration/60)} minutes ${Math.floor(duration%60)} seconds`}>{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}</>}</span>;
