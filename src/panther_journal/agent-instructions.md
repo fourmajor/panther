@@ -332,6 +332,13 @@ mark it complete only once every selected take and sound/caption source exists a
 `production run`/the local inbox worker performs sampled continuity review, bounded edit/grade,
 fresh re-review, independent sound stems/mix, captions, master/browser export and final sequence QC.
 `production publish` uses Panther uploads, not AWS credentials. Keep all originals and run history.
+Preparation exposes `soundPlan`; disclose supplied dialogue/music/effects/ambience and muted or
+native-mixed shots before approval. Captions do not create speech. Never silently omit requested
+dialogue or presume native audio will supply it.
+Only after the owner explicitly accepts the exact imperfect cut as final, use `--owner-acceptance`
+with the decision reason. This pins the decision without changing failed AI findings or granting
+retry/spending authority. Ordinary failed-QC publication remains blocked; diagnostic publication
+and owner-accepted final are separate decisions. Preserve earlier editions.
 Native generator sound is one mixed track, never pretend it is isolated dialogue/music/effects.
 Mute it or preserve it explicitly; replacement stems require genuine sources and rights notes.
 Keep unresolved defects as working-draft notes. Sampled visual reviews and technical audio checks

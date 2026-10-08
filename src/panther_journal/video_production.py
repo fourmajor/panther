@@ -31,7 +31,7 @@ from panther_journal.film_prompt_policy import REVIEW_GUIDANCE, prompt_blockers
 from panther_journal.audio_storage import flush_file, lock, write_json
 from panther_journal.editorial import obj, array, TEXT
 
-VERSION = 2
+VERSION = 3
 ROLES = ("native-mix", "dialogue", "music", "effects", "ambience")
 CHECKS = (
     "face",
@@ -545,6 +545,15 @@ def prepare(plan, folder, refs, reviewer=review):
         "reports": reports,
         "blockers": blockers,
         "generationApproved": False,
+        "soundPlan": {
+            "nativeMixedShots": [s.id for s in plan.shots if s.nativeAudio == "keep-mixed"],
+            "mutedShots": [s.id for s in plan.shots if s.nativeAudio == "mute"],
+            "suppliedCueCounts": {
+                role: sum(c.role == role for s in plan.shots for c in s.sounds)
+                for role in ("dialogue", "music", "effects", "ambience")
+            },
+            "notice": "Captions are not spoken dialogue. Native mixed audio does not guarantee speech, music or effects; inspect the approved prompts and supplied audio before generation.",
+        },
         "generation": generation.subscription(),
     }
     write_json(folder / "preparation.json", result)
@@ -1012,7 +1021,7 @@ def execute_observed(plan, root, *, mode="finish", verify_cloud=True, reviewer=r
         def final_review(d):
             images, offset, mapping = [], 0, []
             for shot, edit in zip(plan.shots, edits, strict=True):
-                frames = sheets(delivery["browser"], offset, edit["duration"], d, shot.id, fps=1)
+                frames = sheets(delivery["browser"], offset, edit["duration"], d, shot.id, fps=4)
                 images.extend(frames)
                 mapping.append(
                     {
@@ -1022,6 +1031,7 @@ def execute_observed(plan, root, *, mode="finish", verify_cloud=True, reviewer=r
                         "sheets": len(frames),
                         "continuity": shot.continuity,
                         "sceneId": shot.sceneId,
+                        "selectedFootageReview": edit["rereview"],
                     }
                 )
                 offset += edit["duration"]
@@ -1030,7 +1040,8 @@ def execute_observed(plan, root, *, mode="finish", verify_cloud=True, reviewer=r
                 images,
                 {
                     "stage": "finished-sequence",
-                    "samplingFps": 1,
+                    "samplingFps": 4,
+                    "reviewPurpose": "Review cross-shot continuity in the actual delivery. Use the selected footage reviews as attributed evidence, not automatic passes. Do not infer a missing required beat from a coarse overview when denser temporal evidence is supplied. Distinguish insufficient evidence from a positively observed defect; never invent a repair or audio perception.",
                     "timeline": mapping,
                     "soundQc": sound,
                     "deliveryQc": delivery,
@@ -1136,15 +1147,20 @@ def package(folder, result, *, retain_oversize_master_locally=False):
     return plan, [("provenance", doc, "video-production", "intermediate"), *files]
 
 
-def publish(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False):
+def publish(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False, owner_acceptance=None):
     """Revalidate checkpoints and use Panther's ordinary immutable upload protocol."""
     folder = private(folder)
     with lock(folder, "publication.lock"):
         return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally,
-                              new_version_of=new_version_of, allow_working_draft=allow_working_draft)
+                              new_version_of=new_version_of, allow_working_draft=allow_working_draft, owner_acceptance=owner_acceptance)
 
 
-def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False):
+def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False, owner_acceptance=None):
+    if owner_acceptance is not None:
+        if not isinstance(owner_acceptance, str) or not owner_acceptance.strip() or len(owner_acceptance) > 240:
+            raise click.ClickException("Owner acceptance needs an explicit reason of 1–240 characters")
+        if allow_working_draft:
+            raise click.ClickException("Diagnostic publication and owner-accepted final are separate decisions")
     receipt = json.loads((folder / "result-sha256.json").read_text())
     if receipt != {
         "sha256": digest(folder / "result.json"),
@@ -1176,12 +1192,14 @@ def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_
         raise click.ClickException("Production identity does not match its checkpoint directory")
     if result.get("sourceVerification") != "panther":
         raise click.ClickException("Synthetic/unverified production runs cannot be published")
-    if result.get("visualReviewPassed") is not True and not allow_working_draft:
+    if result.get("visualReviewPassed") is not True and not allow_working_draft and owner_acceptance is None:
         raise click.ClickException("Visual quality review failed. Preserve the local draft; --allow-working-draft is only for explicitly requested diagnostic publication, not final delivery.")
     plan, files = package(folder, result, retain_oversize_master_locally=retain_oversize_master_locally)
     config = cloud.configuration()
     intent_path = folder / "publication" / "version-intent.json"
     intent = {"browserPreviousKey": new_version_of}
+    if owner_acceptance is not None:
+        intent["ownerAcceptance"] = owner_acceptance
     if intent_path.exists():
         if json.loads(intent_path.read_text()) != intent:
             raise click.ClickException("Publication version predecessor changed")
@@ -1224,6 +1242,9 @@ def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_
         }
         if plan.sessionId:
             meta["sessionId"] = plan.sessionId
+        if owner_acceptance is not None:
+            meta["extra"].update(ownerAcceptedFinal=True, ownerAcceptanceReason=owner_acceptance,
+                                 aiVisualReviewPassed=result.get("visualReviewPassed") is True)
         metadata_path = folder / "publication" / f"{name}.metadata.json"
         if not metadata_path.exists():
             write_json(metadata_path, meta)
@@ -1345,7 +1366,8 @@ def worker(inbox, work_dir, once):
               help="Explicitly retain a master over the upload limit locally; publish browser video and remaining outputs unchanged.")
 @click.option("--new-version-of", help="Publish the browser movie as an immutable revision of this same-game MP4.")
 @click.option("--allow-working-draft", is_flag=True, help="Explicit diagnostic publication of failed visual QC; never quality approval.")
-def publish_command(run_directory, retain_oversize_master_locally, new_version_of, allow_working_draft):
+@click.option("--owner-acceptance", help="Only after explicit owner acceptance of this exact cut as final: record the reason without changing AI review findings.")
+def publish_command(run_directory, retain_oversize_master_locally, new_version_of, allow_working_draft, owner_acceptance):
     """Upload verified final assets, stems and provenance through Panther, keeping originals."""
     click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally,
-                                 new_version_of=new_version_of, allow_working_draft=allow_working_draft), indent=2))
+                                 new_version_of=new_version_of, allow_working_draft=allow_working_draft, owner_acceptance=owner_acceptance), indent=2))
