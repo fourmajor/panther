@@ -75,6 +75,8 @@ def build(value, folder):
             bevel.width, bevel.segments = .04, 2
         return obj
 
+    walking_rigs = []
+
     def actor(item):
         root = bpy.data.objects.new(item["id"], None)
         scene.collection.objects.link(root)
@@ -98,10 +100,16 @@ def build(value, folder):
         for x in (-.14,.14):
             lapel=primitive("box", "Coat lapel", (x,-.17,1.3), (.075,.045,.32), [min(1,c*1.3+.025) for c in color],root,surface="cloth")
             lapel.rotation_euler.y = -.3 if x < 0 else .3
+        legs = []
         for x in (-.19, .19):
-            primitive("cylinder", "Boot", (x, 0, .3), (.19, .22, .55), dark, root)
-            primitive("sphere", "Boot toe", (x,-.07,.09), (.22,.35,.17), dark,root)
-            primitive("torus", "Boot cuff", (x,0,.51), (.23,.27,.25),(.10,.065,.035),root)
+            joint = bpy.data.objects.new("Hip joint", None)
+            scene.collection.objects.link(joint)
+            joint.parent, joint.location = root, (x, 0, .66)
+            primitive("cylinder", "Trouser leg", (0,0,-.11), (.19,.22,.3), color, joint, surface="cloth")
+            primitive("cylinder", "Boot", (0, 0, -.36), (.19, .22, .55), dark, joint)
+            primitive("sphere", "Boot toe", (0,-.07,-.57), (.22,.35,.17), dark,joint)
+            primitive("torus", "Boot cuff", (0,0,-.15), (.23,.27,.25),(.10,.065,.035),joint)
+            legs.append(joint)
         for x in (-.37, .37):
             primitive("sphere", "Shoulder", (x*.82, 0, 1.4), (.25, .28, .28), color, root)
             primitive("cylinder", "Arm", (x, -.02, 1.14), (.16, .18, .62), color, root)
@@ -162,6 +170,8 @@ def build(value, folder):
         # Actor origin is its centre, one unit above its feet, like other primitives.
         for child in root.children:
             child.location.z -= 1
+        if "walk" in features:
+            walking_rigs.append((root, legs))
         return root
 
     for item in value["scene"]["objects"]:
@@ -185,6 +195,21 @@ def build(value, folder):
             frame = 1 + round(key["time"] * value["fps"])
             for path in ("location", "rotation_euler", "scale"):
                 obj.keyframe_insert(data_path=path, frame=frame)
+
+    # Bake trusted joint animation from actual root travel. Stationary actors do not
+    # walk in place; separate hips keep the boots connected throughout the stride.
+    for root, legs in walking_rigs:
+        distance, previous = 0, None
+        for frame in range(scene.frame_start, scene.frame_end + 1):
+            scene.frame_set(frame)
+            position = root.location.copy()
+            movement = (position - previous).length if previous is not None else 0
+            distance += movement
+            angle = .32 * math.sin(distance * math.tau / .8) if movement > .00001 else 0
+            for joint, sign in zip(legs, (-1, 1), strict=True):
+                joint.rotation_euler.x = sign * angle
+                joint.keyframe_insert(data_path="rotation_euler", frame=frame)
+            previous = position
 
     camera = value["scene"]["camera"]
     bpy.ops.object.camera_add(location=camera["position"])

@@ -12,7 +12,7 @@ import time
 import wave
 
 import click
-from jsonschema import validate
+from jsonschema import validate, ValidationError
 
 from panther_journal import cloud, model_workflow, video_production as production
 from panther_journal.audio_storage import lock, write_json
@@ -36,7 +36,7 @@ OBJECT = record({
     "position": VECTOR, "rotation": VECTOR, "scale": VECTOR,
     "points": {"type": "array", "items": VECTOR, "maxItems": 80},
     "characterId": {"type": "string", "maxLength": 60},
-    "features": {"type": "array", "items": {"type": "string", "enum": ["tricorn", "feather", "long-hair", "short-hair", "curly-hair", "red-hair", "shield", "sword", "rapier", "staff", "cloak"]}, "maxItems": 10},
+    "features": {"type": "array", "items": {"type": "string", "enum": ["tricorn", "feather", "long-hair", "short-hair", "curly-hair", "red-hair", "shield", "sword", "rapier", "staff", "cloak", "walk"]}, "maxItems": 10},
     "keyframes": {"type": "array", "items": KEYFRAME, "maxItems": 40},
 })
 SHOT_SCHEMA = record({
@@ -79,8 +79,11 @@ def validate_scene(value, duration, characters):
     return value
 
 
-def source_plan(value, source_key):
+def source_plan(value, source_key, *, source_sha256=None):
     """One shared ordered scene/shot list; never derive story facts from video pixels."""
+    source_sha256 = source_sha256 or hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    if len(source_sha256) != 64 or any(c not in '0123456789abcdef' for c in source_sha256):
+        raise ValueError("Invalid immutable source checksum")
     if value.get("entityType") == "VideoProductionResult":
         value = value["manifest"]
     if value.get("entityType") == "EditorialArtifact":
@@ -108,20 +111,27 @@ def source_plan(value, source_key):
     shots = []
     for s in value["shots"]:
         duration = s["outSeconds"] - s.get("inSeconds", 0)
-        if not math.isfinite(duration) or not 0 < duration <= 30:
-            raise ValueError("Procedural shots must be 0–30 seconds")
+        if not math.isfinite(duration) or not 1 / 24 <= duration <= 30:
+            raise ValueError("Procedural shots must be at least one frame and at most 30 seconds")
         shots.append({"id": cloud.slug(s["id"]), "sceneId": cloud.slug(s["sceneId"]),
                       "duration": duration, "direction": s["prompt"] + "\n" + s["continuity"],
                       "characterIds": [a["characterId"] for a in s.get("appearances", [])]})
     if len(shots) > 40 or len({s["id"] for s in shots}) != len(shots) or sum(s["duration"] for s in shots) > 600:
         raise ValueError("Unsupported or duplicate procedural shots")
-    return {"schemaVersion": 1, "rendererVersion": "2-detail-c", "entityType": "ProceduralFilmSource", "gameId": game,
+    if any(s['id'] in {'review-assembly', 'publication'} for s in shots):
+        raise ValueError("Shot identity conflicts with a workflow stage")
+    from panther_journal import procedural_blender
+    implementation = hashlib.sha256(Path(__file__).read_bytes() + Path(procedural_blender.__file__).read_bytes()
+        + Path(production.__file__).read_bytes()).hexdigest()
+    return {"schemaVersion": 1, "rendererVersion": "4-reviewed-revisions", "implementationSha256": implementation,
+            "entityType": "ProceduralFilmSource", "gameId": game,
             "sessionId": value["sessionId"], "title": value["title"], "sourceKeys": [source_key],
+            "sourceSha256": source_sha256,
             "sceneIds": list(dict.fromkeys(s["sceneId"] for s in shots)), "shots": shots,
             "edition": "procedural", "style": "animated miniature diorama"}
 
 
-def compile_shot(folder, source, shot):
+def compile_shot(folder, source, shot, *, previous=None):
     """Subscription-backed direction -> bounded data, never AI-authored executable code."""
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     schema, output = folder / "schema-v1b.json", folder / "scene.json"
@@ -134,13 +144,16 @@ def compile_shot(folder, source, shot):
         inputs = json.loads(input_file.read_text())
     else:
         bible = {}
-        for saved in sorted(folder.parent.glob("*/scene.json")):
+        film_root = folder.parents[2] if folder.parent.name == 'attempts' else folder.parent
+        for saved in sorted(film_root.glob("*/attempts/*/scene.json")):
             if saved.parent != folder and not saved.is_symlink():
                 previous = json.loads(saved.read_text())
                 for obj in previous["objects"]:
                     if obj["shape"] == "actor":
                         bible.setdefault(obj["characterId"], {"color": obj["color"], "features": obj["features"]})
         inputs = {"film": source, "selectedShot": shot, "castDesign": bible}
+        if previous is not None:
+            inputs['previousAttempt'] = previous
         write_json(input_file, inputs)
     prompt = (
         "Create a beautiful animated miniature diorama in Blender using the required declarative JSON. "
@@ -150,6 +163,8 @@ def compile_shot(folder, source, shot):
         "its local z height is 2 units, origin is its centre one unit above its feet, and it faces -Y. "
         "For standing actors on floor z=0 use position z=1. Use actor scale around [1,1,1]. Its color is clothing. "
         "Objects support keyed world position, Euler-radian rotation, scale with Blender's eased interpolation. "
+        "Use the walk feature on walking actors: trusted hip joints alternate the connected legs as the actor travels. "
+        "Root travel without walk depicts sliding, not walking. Other limb actions are not supported; disclose them rather than inventing capability. "
         "Animate actions immediately with at least three keys for acting subjects, not just camera movement. "
         "Props must remain distinct and physically attached unless explicitly released. Effects use emissive curves/spheres, "
         "not humanoids. Add practical warm lights via lighting. Do not change the source action/order/cast. "
@@ -157,6 +172,9 @@ def compile_shot(folder, source, shot):
         "Only actors need characterId; other objects use empty string. Stable ids and consistent character colors "
         "across all shots. Preserve supplied castDesign colors/features; it is the previously rendered miniature design. "
         "Use a readable composition with feet grounded and vertical hats/feathers inside the intended frame. "
+        "Keep acting subjects visible: foreground walls/gates must not hide the requested action. "
+        "If previousAttempt is supplied, revise the actual scene to correct its review failures. "
+        "Preserve the immutable story, cast and order; do not explain away defects or repeat a rejected design. "
         "All required fields are mandatory.\n"
         + json.dumps(inputs, separators=(",", ":"))
     )
@@ -184,16 +202,29 @@ def render_shot(folder, design, shot):
     if receipt.exists():
         if production.digest(output) != json.loads(receipt.read_text())["sha256"]:
             raise ValueError("Procedural clip changed")
+        verify_clip(output, folder, shot['duration'])
         return output
     blender = str(model_workflow.native_blender())
     started = time.monotonic()
     production.run_tool([blender, "--background", "--threads", "6", "--disable-autoexec", "--python-exit-code", "1", "--python", procedural_blender.__file__, "--", str(manifest), str(folder)], folder, "build-render", timeout=7200)
     production.ffmpeg(folder, "encode", ["-framerate", 24, "-i", folder / "frames/%06d.png", "-c:v", "libx264", "-crf", 18, "-pix_fmt", "yuv420p", "-movflags", "+faststart", output])
     production.ffmpeg(folder, "decode", [*production.input_args(output), "-f", "null", "-"])
-    write_json(receipt, {"sha256": production.digest(output), "size": output.stat().st_size, "duration": shot["duration"],
+    duration = verify_clip(output, folder, shot['duration'])
+    write_json(receipt, {"sha256": production.digest(output), "size": output.stat().st_size, "duration": duration,
         "renderWallSeconds": round(time.monotonic()-started, 3),
         "timingScope": "Blender build/render, encode and technical decode for this invocation; excludes direction and visual review"})
     return output
+
+
+def verify_clip(path, folder, expected):
+    """Validate actual encoded duration, including resumed render checkpoints."""
+    facts = production.probe(path, folder)
+    duration = float(facts['format']['duration'])
+    videos = [s for s in facts['streams'] if s['codec_type'] == 'video']
+    if (not math.isfinite(duration) or abs(duration - expected) > 1 / 24 + .01
+            or len(videos) != 1 or videos[0]['width'] != 1920 or videos[0]['height'] != 1080):
+        raise ValueError('Procedural clip does not match the selected duration or delivery dimensions')
+    return duration
 
 
 def soundtrack(folder, source):
@@ -227,31 +258,89 @@ def soundtrack(folder, source):
     return path
 
 
+def review_shot(target, source, shot):
+    directory = target / 'review'
+    directory.mkdir(exist_ok=True, mode=0o700)
+    report_file = directory / 'review.json'
+    if report_file.exists():
+        report = json.loads(report_file.read_text())
+    else:
+        images = production.sheets(target / 'clip.mp4', 0, shot['duration'], directory, 'sheet')
+        report = production.review(directory, images, {'stage': 'procedural-shot-review', 'shot': shot,
+            'style': source['style'], 'identityScope': 'Abstract miniature likenesses are intentional. Check distinct cast, stable clothing, weapon ownership and visible requested action. Only this shot is supplied; adjacent cuts belong to final-film review. No dialogue, narration or audio is supplied.',
+            'design': json.loads((target / 'scene.json').read_text())})
+    production.validate_review(report)
+    return report
+
+
+def selected_target(folder, shot):
+    root = folder / shot['id']
+    selection = json.loads((root / 'selected.json').read_text())
+    attempt = selection['attempt']
+    if type(attempt) is not int or not 1 <= attempt <= 3:
+        raise ValueError('Invalid procedural take selection')
+    target = root / 'attempts' / f'{attempt:02d}'
+    if (production.digest(target / 'clip.mp4') != selection['sha256']
+            or production.digest(target / 'review/review.json') != selection['reviewSha256']):
+        raise ValueError('Selected procedural take or review changed')
+    return target
+
+
+def execute_shot(folder, source, shot):
+    root = folder / shot['id']
+    root.mkdir(exist_ok=True, mode=0o700)
+    if (root / 'selected.json').exists():
+        target = selected_target(folder, shot)
+        design = compile_shot(target, source, shot)
+        render_shot(target, design, shot)
+        return target
+    previous = None
+    for attempt in range(1, 4):
+        target = root / 'attempts' / f'{attempt:02d}'
+        target.mkdir(parents=True, exist_ok=True, mode=0o700)
+        failure = target / 'failed.json'
+        if failure.exists():
+            previous = json.loads(failure.read_text())
+            continue
+        try:
+            design = compile_shot(target, source, shot, previous=previous)
+            clip = render_shot(target, design, shot)
+            review = review_shot(target, source, shot)
+            if any(c['status'] in {'fail', 'uncertain'} for c in review['checks']):
+                previous = {'design': design, 'review': review}
+                write_json(failure, previous)
+                continue
+        except (ValueError, ValidationError) as error:
+            previous = {'validationError': str(error)[:1000]}
+            write_json(failure, previous)
+            continue
+        write_json(root / 'selected.json', {'attempt': attempt, 'sha256': production.digest(clip),
+            'reviewSha256': production.digest(target / 'review/review.json')})
+        return target
+    raise click.ClickException('Three procedural direction candidates failed review; all evidence retained, no publication')
+
+
 def finish(folder, source):
     """Review every actual rendered shot before complete, continuous delivery."""
     result_file = folder / "result.json"
     if result_file.exists():
         result = json.loads(result_file.read_text())
-        if production.digest(folder / "movie.mp4") != result["sha256"]:
+        if result['source'] != source or production.digest(folder / "movie.mp4") != result["sha256"]:
             raise ValueError("Completed procedural movie changed")
+        for shot in source['shots']:
+            target = selected_target(folder, shot)
+            verify_clip(target / 'clip.mp4', target, shot['duration'])
+            if json.loads((folder / shot['id'] / 'selected.json').read_text()) != result['selectedTakes'][shot['id']]:
+                raise ValueError('Completed procedural take selection changed')
         return result
-    clips = []
+    clips, durations = [], []
     for shot in source["shots"]:
-        target = folder / shot["id"]
+        target = selected_target(folder, shot)
         clip = target / "clip.mp4"
         if not (target / "rendered.json").exists() or production.digest(clip) != json.loads((target / "rendered.json").read_text())["sha256"]:
             raise ValueError("A procedural render is missing or changed")
-        review_dir = target / "review"
-        review_dir.mkdir(exist_ok=True, mode=0o700)
-        report_file = review_dir / "review.json"
-        if not report_file.exists():
-            images = production.sheets(clip, 0, shot["duration"], review_dir, "sheet")
-            report = production.review(review_dir, images, {"stage": "procedural-shot-review", "shot": shot,
-                "style": source["style"], "identityScope": "Intentionally abstract animated miniatures, not photorealistic likenesses. Verify distinct cast, stable features/colors/owned weapons, actual visible action and props. The model-film's photorealistic wording is source direction, not this edition's style requirement. Selected shot.duration is authoritative for this edited companion, not any longer original prompt duration. This edition has mathematical music, no dialogue, narration or lip sync; do not score absent speech as a visual failure. Still flag missing visible story actions or genuinely uncertain sampled visual evidence. Audio is not supplied or perceptually reviewed.",
-                "design": json.loads((target / "scene.json").read_text())})
-        else:
-            report = json.loads(report_file.read_text())
-            production.validate_review(report)
+        durations.append(verify_clip(clip, target, shot['duration']))
+        report = review_shot(target, source, shot)
         if any(c["status"] in {"fail", "uncertain"} for c in report["checks"]):
             raise click.ClickException("Procedural visual review failed; preserve render, revise a new version before publication")
         clips.append(clip)
@@ -261,11 +350,13 @@ def finish(folder, source):
             stream.write("".join(f"file '{clip.relative_to(folder)}'\n" for clip in clips))
     movie = folder / "movie.mp4"
     if not movie.exists():
+        timed_source = {**source, 'shots': [{**shot, 'duration': duration}
+            for shot, duration in zip(source['shots'], durations, strict=True)]}
         production.ffmpeg(folder, "assemble", ["-f", "concat", "-safe", 1, "-i", playlist,
-            "-i", soundtrack(folder, source), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", movie])
+            "-i", soundtrack(folder, timed_source), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", movie])
     production.ffmpeg(folder, "full-decode", [*production.input_args(movie), "-f", "null", "-"])
     actual = float(production.probe(movie, folder)["format"]["duration"])
-    expected = sum(s["duration"] for s in source["shots"])
+    expected = sum(durations)
     if abs(actual-expected) > .2:
         raise ValueError("Procedural movie duration does not match the complete shot list")
     final_dir = folder / "final-review"
@@ -283,16 +374,22 @@ def finish(folder, source):
     result = {"schemaVersion": 1, "entityType": "ProceduralFilmResult", "source": source,
         "sceneIds": source["sceneIds"], "shotIds": [s["id"] for s in source["shots"]],
         "durationSeconds": actual, "size": movie.stat().st_size, "sha256": production.digest(movie),
+        "plannedDurationSeconds": sum(s['duration'] for s in source['shots']),
         "visualReview": "All shots independently reviewed at 4 sampled frames/second; not exhaustive motion or audio perception",
         "sound": "Original procedural score; no spoken dialogue, narration or voice cloning",
         "modelInferenceForRendering": False, "planning": "Subscription-backed Codex; model unknown; remote inference"}
-    result["sceneDesigns"] = {s["id"]: json.loads((folder / s["id"] / "scene.json").read_text()) for s in source["shots"]}
-    timings = [json.loads((folder / s["id"] / "rendered.json").read_text()).get("renderWallSeconds") for s in source["shots"]]
+    result["sceneDesigns"] = {s["id"]: json.loads((selected_target(folder, s) / "scene.json").read_text()) for s in source["shots"]}
+    result['selectedTakes'] = {s['id']: json.loads((folder / s['id'] / 'selected.json').read_text()) for s in source['shots']}
+    timings = [json.loads((selected_target(folder, s) / "rendered.json").read_text()).get("renderWallSeconds") for s in source["shots"]]
+    attempts = {s['id']: {p.parent.name: json.loads(p.read_text()).get('renderWallSeconds')
+        for p in sorted((folder / s['id']).glob('attempts/*/rendered.json'))} for s in source['shots']}
+    recorded = [t for shot_attempts in attempts.values() for t in shot_attempts.values()]
     result["renderTimings"] = {"shots": dict(zip(result["shotIds"], timings, strict=True)),
-        "totalRecordedSeconds": sum(timings) if all(t is not None for t in timings) else None,
-        "scope": "Sum of recorded per-shot render invocations, not total editorial/review elapsed time"}
+        'attempts': attempts,
+        "totalRecordedSeconds": sum(recorded) if all(t is not None for t in recorded) else None,
+        "scope": "Recorded completed render invocations, including rejected candidates; excludes unrecorded interruptions and editorial/review elapsed time"}
     result["reviewEvidence"] = {
-        "shots": {s["id"]: json.loads((folder / s["id"] / "review/review.json").read_text()) for s in source["shots"]},
+        "shots": {s["id"]: json.loads((selected_target(folder, s) / "review/review.json").read_text()) for s in source["shots"]},
         "assembled": final,
         "assembledSamplingFps": 2,
     }
@@ -348,7 +445,7 @@ def publish(folder, source):
 def render(file, source_key, work_dir, publish_result):
     """Render all shared scenes locally. Subscription direction, no video/image inference."""
     original = json.loads(file.read_text())
-    source = source_plan(original, source_key)
+    source = source_plan(original, source_key, source_sha256=production.digest(file))
     remote = cloud.api(cloud.configuration(), "GET", "/object-url", params={"key": source_key})
     if remote["size"] != file.stat().st_size or remote["sha256"] != base64.b64encode(hashlib.sha256(file.read_bytes()).digest()).decode():
         raise click.ClickException("Production file does not match the immutable Panther source")
@@ -375,10 +472,8 @@ def execute(source, work_dir, *, publish_result=False):
         report.enter()
         try:
             for shot in source["shots"]:
-                target = folder / shot["id"]
                 report.stage(shot["id"], "running")
-                design = compile_shot(target, source, shot)
-                render_shot(target, design, shot)
+                execute_shot(folder, source, shot)
                 report.stage(shot["id"], "done")
                 click.echo(f"Rendered {shot['id']} ({shot['duration']} seconds)")
             report.stage("review-assembly", "running")
@@ -433,8 +528,17 @@ def worker(work_dir, completed_after, once):
             registry = json.loads(registry_file.read_text()) if registry_file.exists() else {}
             for ref in ready_sources(config, completed_after=completed_after, completed_jobs=registry):
                 file = inputs / (hashlib.sha256(ref["key"].encode()).hexdigest() + ".json")
-                model_workflow.download(config, ref, file)
-                source = source_plan(json.loads(file.read_text()), ref["key"])
+                try:
+                    model_workflow.download(config, ref, file)
+                    source = source_plan(json.loads(file.read_text()), ref["key"], source_sha256=production.digest(file))
+                except (ValueError, KeyError, TypeError, AttributeError) as error:
+                    failure = inputs / (file.stem + '-blocked.json')
+                    if not failure.exists():
+                        write_json(failure, {'reference': ref, 'message': str(error)[:600]})
+                    registry[ref['jobId']] = {'state': 'blocked', 'evidence': failure.name}
+                    write_json(registry_file, registry, replace=True)
+                    click.echo('Invalid procedural source retained; continuing with other jobs.', err=True)
+                    continue
                 identity = hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest()
                 target = root / identity
                 if (target / "published.json").exists() or (target / "blocked.json").exists():

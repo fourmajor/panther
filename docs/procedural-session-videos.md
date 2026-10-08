@@ -31,8 +31,11 @@ No generic still-pan slideshow or incomplete scene subset is a completed procedu
 The source/compiler contract rejects foreign cast, duplicate IDs, unsupported scripts,
 out-of-range transforms, reordered keys and missing/unowned packet shots. Source hashes
 identify retained render revisions; earlier failed candidates remain untouched. Each
-rendered shot receives an independent frame-sampled visual review. Failed/uncertain
-reviews block publication and preserve evidence rather than silently retrying indefinitely.
+rendered shot receives an independent frame-sampled visual review. Up to three separate
+direction candidates can correct visual or structural failures using the previous review.
+Each retains its design, frames, editable scene, clip and review. A checksum-pinned selection
+identifies the accepted candidate; exhaustion blocks publication. These are local renders
+and subscription-backed direction revisions, never paid model retries.
 Technical decode, length/checksum and browser HTTP range checks are separate gates.
 Successful outputs use ordinary immutable asset storage/version records and exact Inputs.
 The detailed renderer outputs 1920×1080 at 24 fps, using procedural material surfaces,
@@ -42,6 +45,13 @@ representative start/middle/end frames before a full detail render and preserve 
 refinement's inputs/evidence. Per-shot receipts record actual render/encoding/technical
 verification wall time; direction and visual review are excluded and reported separately.
 Do not report a benchmark extrapolation as measured full-film completion time.
+The renderer includes explicit connected-leg walking animation driven by actor travel.
+Other articulated actions remain limited and must pass visual review rather than being
+described as capabilities the renderer lacks. Every clip's measured duration and dimensions
+are verified, including resumed takes. Music follows the encoded frame-rounded timeline.
+The full immutable source checksum participates in the run identity, including source
+evidence not present in the extracted shot list. Malformed queued sources retain a private
+failure record without preventing other eligible jobs from being processed.
 
 ## Automatic owned-compute worker
 
