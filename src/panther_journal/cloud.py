@@ -522,6 +522,7 @@ def register(group):
     from panther_journal.speaker_profiles import enroll
     from panther_journal.live_finalize import finish_live
     from panther_journal.session_worker import automation
+    from panther_journal.session_speakers import command as reconcile_speakers
 
     group.add_command(model)
     group.add_command(share)
@@ -545,5 +546,6 @@ def register(group):
     recording.add_command(enroll)
     recording.add_command(finish_live)
     recording.add_command(automation)
+    recording.add_command(reconcile_speakers)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)
