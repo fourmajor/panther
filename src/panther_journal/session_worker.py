@@ -267,6 +267,16 @@ def process(job, options, root):
         report.stage("preserve-raw-transcript", "running")
         report.stage("match-players", "running")
         record, paths = transcript(folder, job, options, target / "recognition", report)
+        # Chunk matches are provisional. Use stable session-wide groups before
+        # publishing the final attributed version and starting adaptations.
+        report.stage("match-players", "running")
+        from panther_journal.session_speakers import command as reconcile_speakers
+        reconciled = reconcile_speakers.callback(
+            transcript=paths[-1] / (paths[-1].name + '.json'), folder=folder,
+            profiles=Path(options['speakerProfiles']), work_dir=target / 'session-speakers',
+            runtime=Path(options['speakerRuntime']), model=Path(options['speakerModel']), device='mps')
+        paths.append(reconciled)
+        report.stage("match-players", "done")
         report.stage("publish-transcripts", "running")
         config = cloud.configuration()
         raw_key = None

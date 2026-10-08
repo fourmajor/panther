@@ -34,6 +34,18 @@ panther video budget status
 
 State lives in `~/Library/Application Support/Panther/video-comparison/` outside Git: one private
 SQLite ledger with full-sync transactions for all plans/attempts, plus original downloads.
+Historical pinned plans remain readable for billing and provenance even when newer creative
+prompt safeguards would reject them. New submissions still enforce current prompt policy.
+Explicit `budget settle-project` can settle a later completed replacement through an additive,
+hash-linked audit revision after verifying every request's exact bill. It preserves the original
+allocation, earlier audits, attempts and total cap; it cannot release ambiguous bills or reopen
+closed plans. Repeated identical settlement is idempotent. This is not additional spending approval.
+When the owner explicitly raises a session/project ceiling, `panther narration budget-extend
+PROJECT --expected-cap OLD --cap NEW --video-allowance AMOUNT --reason 'EXPLICIT APPROVAL'
+--owner-approved` records one additive extension. The original allocation and bills stay immutable;
+the extension verifies account, expected cap, existing allowances and unresolved requests. It does
+not buy credits, change top-ups or extend the separate lifetime comparison ceiling. Missing or
+corrupt extension evidence fails closed. A second differing extension is unsupported.
 Repeated `budget init` does not reset reservations. There is no reset, arbitrary increase-limit, refund or
 alternate-state-directory command. Keep this directory backed up privately. Do not delete it or
 run a second independent copy on another laptop; that defeats a local-only budget. Migration must
@@ -275,6 +287,19 @@ Tests use synthetic data and fake provider responses only. Run `pytest -q tests/
 the local regression suite; CI is not needed for this CLI-only change. Real verification uses `video
 check` only. No production key, prompt, game data or generated video is committed to Git.
 # Separately approved production allocations
+
+For an explicitly approved replacement, `panther video budget settle-project PROJECT
+--video-allowance USD --reason 'Owner replacement approval' --owner-approved` can
+settle every completed prior video request against exact same-account billing.
+The original project ceiling, allocation, plans, attempts and reservations remain
+immutable. A separate audit replaces unused headroom with rounded-up billed cents,
+closes all prior video plans to new attempts, and reallocates unused narration
+allowance within the original total. Existing narration reservations stay protected.
+Missing/foreign/ambiguous bills, outstanding requests, changed history and charges
+above the original reservation fail closed. Identical calls are idempotent; there
+is no reset, refund, comparison-budget credit, cap increase or automatic retry.
+New video plans still require exact owner approval. Keep all writers current;
+older CLI versions do not understand this audit and must not be used afterward.
 
 ## Exact production durations (manifest version 2)
 

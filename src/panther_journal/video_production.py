@@ -27,10 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from panther_journal import cloud, generation_metadata as generation, model_workflow as local
 from panther_journal import video
 from panther_journal import workflows as workshop
+from panther_journal.film_prompt_policy import REVIEW_GUIDANCE, prompt_blockers
 from panther_journal.audio_storage import flush_file, lock, write_json
 from panther_journal.editorial import obj, array, TEXT
 
-VERSION = 1
+VERSION = 2
 ROLES = ("native-mix", "dialogue", "music", "effects", "ambience")
 CHECKS = (
     "face",
@@ -368,6 +369,20 @@ REVIEW_SCHEMA = obj(
 )
 
 
+def review_scope(stage):
+    if stage == 'composition-preparation':
+        return (
+            'This is PRE-GENERATION composition preparation, not footage certification. '
+            'Assess whether the visible starting pose, objects and requested action are compatible. '
+            'Do not fail or mark uncertainty solely because future footage or a closing frame does not exist yet. '
+            'For an unobservable temporal claim use not-visible and explicitly require post-generation verification. '
+            'Actual starting-frame/action contradictions, ambiguous attachments, wrong identity, '
+            'or uncertainty about the supplied composition still fail or block preparation. '
+            'Passing preparation never certifies motion, closing continuity or sound. '
+        )
+    return 'This is generated-footage review: missing temporal evidence must not be treated as a pass. '
+
+
 def review(folder, images, data):
     write_json(folder / "schema.json", REVIEW_SCHEMA)
     command = [
@@ -410,6 +425,7 @@ def review(folder, images, data):
         "Do not cut dialogue/caption/sound cues, change identity, fabricate repair or request generation. "
         "Zero trims and neutral grade (0,1,1) if improvement is uncertain, during preparation or final review. "
         "Failures that require regeneration remain explicit working-draft notes. Explain actual changes in reason.\n"
+        + review_scope(data.get('stage')) + REVIEW_GUIDANCE + "\n"
         + json.dumps(data, ensure_ascii=False)
     )
     write_json(folder / "review-input.json", data)
@@ -479,8 +495,10 @@ def model_for(shot):
 
 def prepare(plan, folder, refs, reviewer=review):
     """Inspect prepared compositions against immutable selected appearances; never generate images."""
-    shots, reports = [], []
+    shots, reports, blockers = [], [], []
     for shot in plan.shots:
+        shot_blockers = prompt_blockers(shot.prompt)
+        blockers.extend({"shotId": shot.id, "reason": reason} for reason in shot_blockers)
         images = [Path(refs[a.reference.key]["path"]) for a in shot.appearances]
         for ref in (shot.startImage, shot.endImage):
             if ref:
@@ -488,7 +506,7 @@ def prepare(plan, folder, refs, reviewer=review):
                 images.append(Path(refs[ref.key]["path"]))
         work = folder / shot.id
         work.mkdir()
-        if images:
+        if not shot_blockers:
             report = reviewer(
                 work,
                 images,
@@ -515,14 +533,17 @@ def prepare(plan, folder, refs, reviewer=review):
         "sourceKeys": sorted(set(plan.sourceKeys + [r.key for r in references(plan)])),
         "shots": shots,
     }
-    video.validate_manifest(manifest)
-    write_json(folder / "generation-manifest.json", manifest)
-    ready = all(
+    ready = not blockers and all(
         c["status"] not in ("fail", "uncertain") for r in reports for c in r["report"]["checks"]
     )
+    if ready:
+        video.validate_manifest(manifest)
+    # Preserve rejected preparation evidence, never an executable paid request.
+    write_json(folder / ("generation-manifest.json" if ready else "blocked-generation-candidate.json"), manifest)
     result = {
         "status": "PREPARED" if ready else "PREPARATION_WORKING_DRAFT",
         "reports": reports,
+        "blockers": blockers,
         "generationApproved": False,
         "generation": generation.subscription(),
     }
@@ -1115,14 +1136,15 @@ def package(folder, result, *, retain_oversize_master_locally=False):
     return plan, [("provenance", doc, "video-production", "intermediate"), *files]
 
 
-def publish(folder, *, retain_oversize_master_locally=False):
+def publish(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False):
     """Revalidate checkpoints and use Panther's ordinary immutable upload protocol."""
     folder = private(folder)
     with lock(folder, "publication.lock"):
-        return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally)
+        return publish_locked(folder, retain_oversize_master_locally=retain_oversize_master_locally,
+                              new_version_of=new_version_of, allow_working_draft=allow_working_draft)
 
 
-def publish_locked(folder, *, retain_oversize_master_locally=False):
+def publish_locked(folder, *, retain_oversize_master_locally=False, new_version_of=None, allow_working_draft=False):
     receipt = json.loads((folder / "result-sha256.json").read_text())
     if receipt != {
         "sha256": digest(folder / "result.json"),
@@ -1154,8 +1176,30 @@ def publish_locked(folder, *, retain_oversize_master_locally=False):
         raise click.ClickException("Production identity does not match its checkpoint directory")
     if result.get("sourceVerification") != "panther":
         raise click.ClickException("Synthetic/unverified production runs cannot be published")
+    if result.get("visualReviewPassed") is not True and not allow_working_draft:
+        raise click.ClickException("Visual quality review failed. Preserve the local draft; --allow-working-draft is only for explicitly requested diagnostic publication, not final delivery.")
     plan, files = package(folder, result, retain_oversize_master_locally=retain_oversize_master_locally)
     config = cloud.configuration()
+    intent_path = folder / "publication" / "version-intent.json"
+    intent = {"browserPreviousKey": new_version_of}
+    if intent_path.exists():
+        if json.loads(intent_path.read_text()) != intent:
+            raise click.ClickException("Publication version predecessor changed")
+    else:
+        if new_version_of:
+            if (not new_version_of.startswith(f"games/{plan.gameId}/assets/")
+                    or "/../" in new_version_of or not new_version_of.endswith(".mp4")):
+                raise click.ClickException("Movie predecessor must be a same-game MP4 asset")
+            # Ordinary upload still validates exact kind/family and assigns the next version.
+            prior = cloud.api(config, "GET", "/object-url", params={"key": new_version_of})
+            version = prior.get("metadata", {}).get("extra", {}).get("version", {})
+            if (prior.get("kind") != "tv-episode" or version.get("schemaVersion") != 1
+                    or not isinstance(version.get("seriesId"), str)
+                    or not isinstance(version.get("number"), int) or version["number"] < 1):
+                raise click.ClickException("Movie predecessor lacks a compatible semantic version")
+            if any((folder / "publication").glob("*.metadata.json")):
+                raise click.ClickException("Cannot change version family after publication began")
+        write_json(intent_path, intent)
     sources, published = [], {}
     for name, path, kind, role in files:
         if path.is_symlink() or folder not in path.resolve().parents:
@@ -1198,12 +1242,16 @@ def publish_locked(folder, *, retain_oversize_master_locally=False):
                 kind=kind,
                 metadata=metadata_path,
                 as_json=True,
+                **({"new_version_of": new_version_of} if name == "browser" and new_version_of else {}),
             )
             existing = cloud.api(config, "GET", "/object-url", params={"key": key})
         if existing.get("sha256") != checksum or existing.get("size") != path.stat().st_size:
             raise click.ClickException("Published asset conflicts with local output; no overwrite")
         stored_metadata = dict(existing.get("metadata", {}))
         stored_extra = dict(stored_metadata.get("extra", {}))
+        if (name == "browser" and new_version_of
+                and stored_extra.get("version", {}).get("previousKey") != new_version_of):
+            raise click.ClickException("Published browser version conflicts with its pinned predecessor")
         # Semantic versions are assigned by the authenticated upload service,
         # not supplied by this immutable publication package.
         stored_extra.pop("version", None)
@@ -1295,6 +1343,9 @@ def worker(inbox, work_dir, once):
 @click.argument("run_directory", type=click.Path(exists=True, path_type=Path))
 @click.option("--retain-oversize-master-locally", is_flag=True,
               help="Explicitly retain a master over the upload limit locally; publish browser video and remaining outputs unchanged.")
-def publish_command(run_directory, retain_oversize_master_locally):
+@click.option("--new-version-of", help="Publish the browser movie as an immutable revision of this same-game MP4.")
+@click.option("--allow-working-draft", is_flag=True, help="Explicit diagnostic publication of failed visual QC; never quality approval.")
+def publish_command(run_directory, retain_oversize_master_locally, new_version_of, allow_working_draft):
     """Upload verified final assets, stems and provenance through Panther, keeping originals."""
-    click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally), indent=2))
+    click.echo(json.dumps(publish(run_directory, retain_oversize_master_locally=retain_oversize_master_locally,
+                                 new_version_of=new_version_of, allow_working_draft=allow_working_draft), indent=2))

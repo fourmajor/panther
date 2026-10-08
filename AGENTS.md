@@ -178,6 +178,11 @@
   owner-approved total by protecting the other-media allowance in the local budget ledger.
 
 - Video production uses the separate completed-manifest local workflow in `docs/video-production.md`.
+  Follow `docs/ai-film-production.md` for source-backed preparation and quality gates. Keep the
+  continuity bible separate from shot-specific provider prose; never inject offscreen cast or later
+  effects into inserts/openings/aftermath. Preserve approved action without silent prompt clipping.
+  Failed visual QC must not be delivered as a completed movie. Diagnostic draft publication requires
+  explicit purpose; it is not a repair, approval or authorization for paid retries.
   Pin selected appearance revisions and prepared shot frames; review generated footage for face,
   costume, weapon-hand, prop, motion and cross-shot continuity. Preserve the original take and
   actual edit/review history. Keep dialogue/music/effects/ambience independently editable when

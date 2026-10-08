@@ -1,4 +1,10 @@
-# Local video production, version 1
+# Local video production, version 2
+
+Follow the researched [AI film production method](ai-film-production.md). Preparation now audits
+shot-specific prompt/frame consistency and retains failed candidates without an executable
+generation manifest. Finishing preserves diagnostic drafts, but ordinary publication blocks failed
+visual QC. `--allow-working-draft` is for explicitly requested diagnostic publication, not delivery.
+Earlier immutable version-1 runs and already-published media remain unchanged.
 
 Panther now **executes** a separate finishing workflow after footage selection. This is not a
 new paid-generation state in the transcript/editorial Step Function. The owner’s laptop runs
@@ -78,6 +84,13 @@ panther video production publish /private/path/video-jobs/RUN_ID
 # Optional local queue: process only explicitly completed manifests, not individual arriving files.
 panther video production worker --inbox /private/path/video-inbox --work-dir /private/path/video-jobs
 ```
+
+For an approved replacement, pass `--new-version-of SAME_GAME_PRIOR_BROWSER_MP4_KEY`
+to publication. Only the browser movie joins that semantic version family; master,
+stems and provenance remain new immutable related outputs. The predecessor is pinned
+before any upload, unchanged resumes are idempotent, and a different predecessor
+fails closed. Source lineage stays distinct from version history. This never overwrites
+the earlier movie or authorizes another paid generation.
 
 The worker is a local inbox workflow, **not a deployed AWS event subscription**. Put a manifest in
 the inbox atomically after all declared selected inputs have been uploaded and downloaded locally.

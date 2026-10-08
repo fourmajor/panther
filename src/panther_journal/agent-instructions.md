@@ -1,5 +1,22 @@
 # Panther agent instructions
 
+Film preparation follows `docs/ai-film-production.md`. Keep the continuity bible as review
+context, not provider prose repeated across shots. Use only the cast/props/effects actually
+visible in this shot and preserve its approved action without clipping. Use model-specific
+prompt structure (H3's audiovisual fields and frame alignment are not generic prose).
+Inspect source takes before continuing a batch after a systemic defect. Failed preparation
+does not emit an executable manifest; failed visual QC blocks ordinary movie publication.
+`--allow-working-draft` is an explicit diagnostic publication choice, not final delivery or
+authority for another paid generation. Previous takes and versions remain immutable.
+
+Publish AI-authored replacement scene storyboards with `panther videos
+propose-storyboard PRIVATE_JSON`, not the human `storyboardShots` edit path.
+Use the exact scene revision and retain the operation ID for identical retries.
+New frames and directions belong in the owned scene's native storyboard view;
+PDFs are optional exports only. Changed proposals require a new exact owner
+approval and preserve scene/asset history. This operation never generates video.
+See `docs/episode-production.md` for the guarded envelope.
+
 Inspect reported processing with `panther workflows list --game GAME`, or the
 web app’s Workflows section. See `docs/workflow-workshop.md` for repeatable
 historical indexing and imports of genuine local checkpoints. Status reporting
@@ -456,6 +473,9 @@ use local `recording diarize` and a confirmed anonymous-speaker-label to player-
 `recording attribute`. Confirm names by listening to introductions; never infer identities from
 character dialogue, cluster numbering, or another run. Unknown and overlapping speech stays
 unassigned. Keep table chatter and mark speech context separately. Preserve every earlier version.
+For previously enrolled players, `recording reconcile-speakers` performs offline session-wide
+matching and writes a new candidate without changing text. Inspect actual coverage and identity
+evidence before publishing through `upload --new-version-of`; never lower gates simply to fill names.
 See `docs/local-audio.md` for setup, consent, evaluation, and current conservative alignment limits.
 
 Asset references use `games/<game-id>/assets/<asset-id>/original/<filename>`.
@@ -871,7 +891,8 @@ Never invent capture timestamps, speakers or character associations to satisfy a
 ## Completed session automation
 
 After verified recording-set completion, the configured owned-compute session worker preserves
-raw ASR, creates separate conservative enrolled-player annotations, and commits the editorial
+raw ASR, preserves provisional chunk annotations, reconciles stable session-wide enrolled-player
+groups into a separate final attributed candidate, and commits the editorial
 pipeline. Follow Session finalization and Story & screen planning in Workflows. Novel completion
 is automatic; video preparation stops for approval of the exact script/storyboard. The standing
 session ceiling is $10 with the established fal models, not automatic spending permission or

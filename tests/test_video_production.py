@@ -324,6 +324,31 @@ def test_unresolved_continuity_is_working_draft_not_owner_gate(media, tmp_path):
     assert Path(result["delivery"]["browser"]).exists()
 
 
+def test_failed_qc_cannot_be_published_as_ordinary_delivery(media, tmp_path, monkeypatch):
+    def reviewer(*args):
+        value = report()
+        value['checks'][0].update(status='fail', evidence='Synthetic identity drift')
+        return value
+    monkeypatch.setattr(p.cloud, 'configuration', lambda: {})
+    monkeypatch.setattr(p.cloud, 'api', lambda config, method, route, params: {
+        'sha256': base64.b64encode(bytes.fromhex(p.digest(Path(next(r for r in p.references(media) if r.key == params['key']).path)))).decode(),
+        'size': Path(next(r for r in p.references(media) if r.key == params['key']).path).stat().st_size,
+    })
+    folder, _ = p.execute_observed(media, tmp_path / 'runs', reviewer=reviewer)
+    monkeypatch.setattr(p.cloud.upload, 'callback', lambda **kw: pytest.fail('Uploaded failed movie'))
+    with pytest.raises(click.ClickException, match='Visual quality review failed'):
+        p.publish(folder)
+
+
+def test_contradictory_preparation_preserves_evidence_not_executable_manifest(tmp_path):
+    data = manifest()
+    data['shots'][0]['prompt'] = 'No people in this insert. Match the same adult faces.'
+    folder, result = p.execute(p.Production.model_validate(data), tmp_path / 'runs', mode='prepare', verify_cloud=False)
+    assert result['status'] == 'PREPARATION_WORKING_DRAFT' and result['blockers']
+    assert list(folder.glob('preparation/*/blocked-generation-candidate.json'))
+    assert not list(folder.glob('preparation/*/generation-manifest.json'))
+
+
 def test_cli_schema_and_invalid_inputs(tmp_path):
     result = CliRunner().invoke(main, ["video", "production", "schema"])
     assert result.exit_code == 0
@@ -338,6 +363,13 @@ def test_cli_schema_and_invalid_inputs(tmp_path):
     assert "explicitly complete" in result.output
 
 
+def test_preparation_review_scope_is_not_footage_certification():
+    scope = p.review_scope('composition-preparation')
+    assert 'not-visible' in scope and 'contradictions' in scope
+    assert 'never certifies motion' in scope
+    assert 'missing temporal evidence must not be treated as a pass' in p.review_scope('shot-review')
+
+
 def test_preparation_selects_profiles_and_never_approves(tmp_path):
     plan = p.Production.model_validate(manifest())
     folder, result = p.execute(
@@ -345,7 +377,7 @@ def test_preparation_selects_profiles_and_never_approves(tmp_path):
         tmp_path / "runs",
         mode="prepare",
         verify_cloud=False,
-        reviewer=lambda *a: pytest.fail("No images to review"),
+        reviewer=lambda *a: report(),
     )
     assert result["generationApproved"] is False
     generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
@@ -386,14 +418,16 @@ def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):
     )
     assert result["status"] == "PREPARATION_WORKING_DRAFT"
     assert not result["generationApproved"]
-    generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
+    assert not list(folder.glob("preparation/*/generation-manifest.json"))
+    generated = json.loads(next(folder.glob("preparation/*/blocked-generation-candidate.json")).read_text())
     assert generated["shots"][0]["model"] == "kling-3-pro-image"
     assert generated["shots"][0]["endImage"]["sha256"] == frame.sha256
     assert calls[0]["stage"] == "composition-preparation"
 
 
 @pytest.mark.usefixtures("caption_delivery")
-def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch):
+@pytest.mark.parametrize("revision", [False, True])
+def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeypatch, revision):
     monkeypatch.setattr(p.cloud, "configuration", lambda: {})
     assets = {
         r.key: {
@@ -402,6 +436,11 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         }
         for r in p.references(media)
     }
+    previous = f"games/{media.gameId}/assets/previous-film/original/browser.mp4"
+    if revision:
+        assets[previous] = {"sha256": "prior-checksum", "size": 123, "kind": "tv-episode",
+                            "metadata": {"extra": {"version": {"schemaVersion": 1,
+                                "seriesId": "synthetic-series", "number": 1}}}}
 
     def api(config, method, route, *, params=None, json=None):
         if route == "/workflow-progress":
@@ -436,6 +475,9 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         meta["extra"]["version"] = {
             "schemaVersion": 1, "seriesId": "synthetic-series", "number": 1
         }
+        if kw.get("new_version_of"):
+            assert file.name == "browser.mp4" and kw["new_version_of"] == previous
+            meta["extra"]["version"].update(number=2, previousKey=previous)
         assets[key] = {
             "sha256": base64.b64encode(bytes.fromhex(p.digest(file))).decode(),
             "size": file.stat().st_size,
@@ -443,9 +485,14 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
         }
 
     monkeypatch.setattr(p.cloud.upload, "callback", upload)
-    published = p.publish(folder)
+    for invalid in ["games/other/assets/film/original/browser.mp4", previous.replace(".mp4", ".json")]:
+        with pytest.raises(click.ClickException, match="same-game MP4"):
+            p.publish(folder, new_version_of=invalid)
+        assert uploads == []
+    options = {"new_version_of": previous} if revision else {}
+    published = p.publish(folder, **options)
     assert len(uploads) == 10
-    assert published == p.publish(folder)
+    assert published == p.publish(folder, **options)
     assert len(uploads) == 10
     assert assets[published["browser"]]["metadata"]["sourceKeys"] == [published["provenance"]]
     assert (
@@ -455,10 +502,18 @@ def test_publish_uses_verified_sources_and_is_retryable(media, tmp_path, monkeyp
     doc = json.loads((folder / "publication" / "production.json").read_text())
     assert str(tmp_path) not in json.dumps(doc)
     assert media.shots[0].clip.key in doc["sourceKeys"]
+    if revision:
+        assert assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] == previous
+        with pytest.raises(click.ClickException, match="predecessor changed"):
+            p.publish(folder)
+        assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] = "wrong"
+        with pytest.raises(click.ClickException, match="pinned predecessor"):
+            p.publish(folder, **options)
+        assets[published["browser"]]["metadata"]["extra"]["version"]["previousKey"] = previous
     assert doc["manifest"]["shots"][0]["captions"][0]["text"] == "Synthetic test"
     assets[published["browser"]]["metadata"]["category"] = "canonical-source"
     with pytest.raises(click.ClickException, match="metadata conflicts"):
-        p.publish(folder)
+        p.publish(folder, **options)
 
 
 @pytest.mark.usefixtures("caption_delivery")

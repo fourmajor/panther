@@ -33,6 +33,26 @@ def schema(db):
     )
 
 
+def project_extension(db, project, original):
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='project_budget_extensions'").fetchone():
+        return None
+    row = db.execute('SELECT content FROM project_budget_extensions WHERE project=?', (project,)).fetchone()
+    if not row:
+        return None
+    data = json.loads(row['content'])
+    if (data.get('schemaVersion') != 1 or data.get('projectId') != project
+            or data.get('originalAllocation') != original
+            or data.get('fromCapCents') != original['capCents']
+            or type(data.get('capCents')) is not int
+            or not original['capCents'] < data['capCents'] <= 100000
+            or type(data.get('videoAllowanceCents')) is not int
+            or not 0 <= data['videoAllowanceCents'] < data['capCents']
+            or not isinstance(data.get('ownerAuthorization'), str) or not data['ownerAuthorization'].strip()
+            or type(data.get('approvedAt')) is not int):
+        v.fail('Invalid project budget extension audit; refusing to spend.')
+    return data
+
+
 def budget_status(db, project):
     row = db.execute("SELECT content FROM narration_budgets WHERE id=?", (project,)).fetchone()
     if not row:
@@ -47,9 +67,22 @@ def budget_status(db, project):
         or not 0 <= b["otherHeldCents"] < b["capCents"] <= 100000
     ):
         v.fail("Invalid project budget audit; refusing to spend.")
+    extension = project_extension(db, project, b)
     held = db.execute(
         "SELECT COALESCE(SUM(reserved_cents),0) FROM narration_attempts WHERE project=?", (project,)
     ).fetchone()[0]
+    from panther_journal import video_settlement
+    settlement = video_settlement.audit(db, project)
+    if settlement:
+        b = {**b, 'otherHeldCents': settlement['videoAllowanceCents']}
+    if extension:
+        b = {**b, 'capCents': extension['capCents'],
+             'otherHeldCents': max(b['otherHeldCents'], extension['videoAllowanceCents'])}
+    # Historical conservative reservations can exceed remaining allocation until
+    # exact billing reconciliation. Reading that history must remain possible;
+    # only a new extension must reject an allowance that invades held speech.
+    if extension and held + b['otherHeldCents'] > b['capCents']:
+        v.fail('Budget extension would invade reserved narration allowance.')
     return {
         **b,
         "narrationReservedCents": held,
@@ -58,6 +91,38 @@ def budget_status(db, project):
         "videoZeroChargeCreditsCents": v.rejection_credits(db, project),
         "availableVideoCents": max(0, b["otherHeldCents"] - v.reserved_for(db, project)),
     }
+
+
+def extend_project(project, expected_cap, cap, allowance, reason, fal):
+    if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1000:
+        v.fail('Explicit owner budget extension approval required.')
+    with v.database() as db:
+        schema(db)
+        budget = budget_status(db, project)
+        original = json.loads(db.execute('SELECT content FROM narration_budgets WHERE id=?', (project,)).fetchone()[0])
+        facts = dict(schemaVersion=1, projectId=project, originalAllocation=original,
+                     fromCapCents=expected_cap, capCents=cap, videoAllowanceCents=allowance,
+                     ownerAuthorization=reason.strip())
+        existing = project_extension(db, project, original)
+        if existing:
+            if {k: val for k, val in existing.items() if k != 'approvedAt'} != facts:
+                v.fail('Project extension already exists with different approval facts.')
+            return existing
+        if (expected_cap != budget['capCents'] or not expected_cap < cap <= 100000
+                or not budget['otherHeldCents'] <= allowance < cap
+                or allowance + budget['narrationReservedCents'] > cap):
+            v.fail('Extension must preserve existing allocation and protected media within an increased cap.')
+        if v.has_unresolved(db):
+            v.fail('Resolve outstanding submissions before extending the project.')
+    if fal.billing()['account'] != original['billingAccount']:
+        v.fail('Billing account changed.')
+    data = {**facts, 'approvedAt': int(time.time())}
+    with v.database() as db:
+        if budget_status(db, project) != budget or v.has_unresolved(db):
+            v.fail('Project changed during extension verification.')
+        db.execute('CREATE TABLE IF NOT EXISTS project_budget_extensions (project TEXT PRIMARY KEY, content TEXT NOT NULL)')
+        db.execute('INSERT INTO project_budget_extensions VALUES (?,?)', (project, v.canonical(data)))
+        return project_extension(db, project, original)
 
 
 def create_budget(project, game, cap, other, reason, fal):
@@ -543,6 +608,22 @@ def budget_command(project):
     with v.database() as db:
         schema(db)
         click.echo(json.dumps(budget_status(db, project), indent=2))
+
+
+@narration.command('budget-extend')
+@click.argument('project')
+@click.option('--expected-cap', required=True)
+@click.option('--cap', required=True)
+@click.option('--video-allowance', required=True)
+@click.option('--reason', required=True)
+@click.option('--owner-approved', is_flag=True, required=True)
+def budget_extend(project, expected_cap, cap, video_allowance, reason, owner_approved):
+    """One explicit audited project extension; never credits, top-ups or a ledger reset."""
+    if not owner_approved:
+        v.fail('Explicit owner approval required.')
+    result = extend_project(project, v.cents(expected_cap), v.cents(cap),
+                            v.cents(video_allowance), reason, v.Fal())
+    click.echo(json.dumps({k: result[k] for k in ('projectId', 'fromCapCents', 'capCents', 'videoAllowanceCents', 'approvedAt')}, indent=2))
 
 
 @narration.command("prepare")

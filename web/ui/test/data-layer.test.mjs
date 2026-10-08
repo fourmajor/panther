@@ -1,7 +1,22 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { query, clear, invalidate, revalidate, queryClient } from "../src/data-layer.js";
+import { query, clear, invalidate, revalidate, queryClient,createReadScheduler } from "../src/data-layer.js";
 afterEach(clear);
+test("read scheduler bounds concurrency and prioritizes an opened document",async()=>{
+ const schedule=createReadScheduler({limit:2}),releases=[],started=[];
+ const work=id=>schedule(()=>new Promise(resolve=>{started.push(id);releases.push(resolve);}));
+ const first=work('a'),second=work('b'),background=work('thumbnail');
+ const opened=schedule(async()=>{started.push('document');return 'read';},{priority:1});
+ assert.deepEqual(started,['a','b']);releases.shift()();await first;await opened;
+ assert.deepEqual(started,['a','b','document','thumbnail']);
+ releases.shift()();releases.shift()();await Promise.all([second,background]);
+});
+test("transient GET errors retry only twice; permanent failures are not retried",async()=>{
+ const schedule=createReadScheduler({wait:async()=>{}});let calls=0;
+ assert.equal(await schedule(async()=>{calls++;if(calls<3)throw Object.assign(new Error('busy'),{status:503});return 'document';}),'document');assert.equal(calls,3);
+ calls=0;await assert.rejects(schedule(async()=>{calls++;throw Object.assign(new Error('busy'),{status:429});}));assert.equal(calls,3);
+ calls=0;await assert.rejects(schedule(async()=>{calls++;throw Object.assign(new Error('denied'),{status:403});}));assert.equal(calls,1);
+});
 test("concurrent reads deduplicate and warm navigation avoids another request", async () => {
   let calls = 0;
   const input = { scope: "fictional-reader", path: "/characters", parameters: { gameId: "campaign-a" }, fetcher: async () => { calls++; return { characters: [] }; } };

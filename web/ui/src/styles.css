@@ -286,7 +286,7 @@
 .session-group.session-card {display:block;grid-template-columns:none;gap:0;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);padding:1rem;margin:0 0 .75rem}
 .session-card>h2 {font-size:1.1rem;margin:0 0 .35rem;line-height:1.4}
 .session-card>.session-asset-meta {font-size:.8rem;color:var(--muted-foreground);margin:0 0 .6rem}
-.session-card>.session-asset-links {display:block;margin:.6rem 0 0}
+.session-card>.session-asset-links {display:flex;flex-wrap:wrap;gap:.5rem 1rem;margin:.6rem 0 0}
 .session-card>.session-asset-links:empty {display:none}
 .session-card>.session-asset-links a,.session-card #room-final-link {color:var(--panther-accent);font-size:.85rem;text-decoration:none}
 .session-card a:hover {text-decoration:underline}

@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--speakers", type=int)
+    parser.add_argument("--device", choices=['cpu', 'mps'], default='cpu')
     args = parser.parse_args()
     if not args.model.is_dir() or args.output.exists():
         raise SystemExit("Use an existing local model directory and a new output file.")
@@ -94,6 +95,12 @@ def run(args, progress):
     progress.completed_stages.append('decoding')
     progress.update('loading-model', force=True)
     pipeline = Pipeline.from_pretrained(args.model.resolve())
+    if args.device == 'mps':
+        if not torch.backends.mps.is_available():
+            raise RuntimeError('Requested MPS device is unavailable')
+        pipeline.to(torch.device('mps'))
+        pipeline.segmentation_batch_size = 8
+        pipeline.embedding_batch_size = 8
     options = {"num_speakers": args.speakers} if args.speakers else {}
     progress.update('segmentation', force=True)
     result = pipeline({"waveform": waveform, "sample_rate": 16000}, hook=progress, **options)
@@ -118,7 +125,18 @@ def run(args, progress):
         "modelFiles": model_hashes,
         "requestedSpeakers": args.speakers,
         "turns": turns,
+        "inferenceDevice": args.device,
     }
+    # Private recognition evidence, never a voice-synthesis profile. Keep the
+    # pipeline's session-wide label order paired with its aggregate embeddings.
+    if hasattr(result, 'speaker_embeddings'):
+        labels = result.speaker_diarization.labels()
+        if len(labels) != len(result.speaker_embeddings):
+            raise ValueError('Session speaker embedding labels differ')
+        document['embeddings'] = {
+            label: result.speaker_embeddings[index].tolist()
+            for index, label in enumerate(labels)
+        }
     with args.output.open("x") as stream:
         json.dump(document, stream, indent=2, allow_nan=False)
     progress.update('complete', state='complete', force=True)

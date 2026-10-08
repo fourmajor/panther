@@ -171,7 +171,7 @@ def test_initialize_character_profile_is_roster_bound_and_create_only(catalog, m
     browse = boto3.resource("dynamodb").Table("test-catalog-assets")
     browse.put_item(
         Item={
-            "pk": "v4#test-game#all",
+            "pk": "v5#test-game#all",
             "sk": portrait,
             "observed": 1,
             "payload": json.dumps(

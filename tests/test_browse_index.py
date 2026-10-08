@@ -24,7 +24,7 @@ def index(monkeypatch):
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
             AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST")
-        module.table().put_item(Item={"pk": "v4#catalog", "sk": "ready"})
+        module.table().put_item(Item={"pk": "v5#catalog", "sk": "ready"})
         yield module
 
 
@@ -192,7 +192,7 @@ def test_backfill_dry_run_apply_verify(index, monkeypatch):
 
 
 def test_initial_cutover_fails_closed(index):
-    index.table().delete_item(Key={"pk": "v4#catalog", "sk": "ready"})
+    index.table().delete_item(Key={"pk": "v5#catalog", "sk": "ready"})
     index.table().put_item(Item={"pk": "v1#catalog", "sk": "ready"})
     index.table().put_item(Item={"pk": "v2#catalog", "sk": "ready"})
     with pytest.raises(index.IndexNotReady):
@@ -226,7 +226,7 @@ def test_chunks_and_exports_dont_become_duplicate_listing_cards(index, monkeypat
     assert index.page("example", "transcripts")["assets"] == [current]
 
 
-def test_sessions_union_uses_existing_catalog_partition_and_hides_internal_parts(index, monkeypatch):
+def test_sessions_dedicated_partition_hides_internal_parts(index, monkeypatch):
     library = importlib.import_module("asset_library")
     values = [
         {**asset(1), "kind": "recording", "name": "session.flac", "contentType": "audio/flac"},
@@ -242,17 +242,18 @@ def test_sessions_union_uses_existing_catalog_partition_and_hides_internal_parts
         index.refresh(None, current["key"])
     monkeypatch.setattr(library, "describe", lambda *_: pytest.fail("Sessions must not read source storage"))
     assert index.page("example", "sessions")["assets"] == values[:3]
-    assert "sessions" not in index.SECTIONS
+    assert "sessions" in index.SECTIONS
 
 
-def test_sessions_sparse_bounded_pages_keep_cursor_and_scope(index):
+def test_sessions_bounded_pages_keep_cursor_and_scope(index):
     import base64
     for i in range(105):
-        current = {**asset(i), "kind": "raw-transcript" if i == 104 else "portrait", "contentType": "application/json"}
-        index.table().put_item(Item={"pk": index.partition("example", "all"), "sk": f"{i:03d}", "payload": json.dumps(current)})
+        current = {**asset(i), "kind": "raw-transcript", "contentType": "application/json"}
+        for section in ('all', 'sessions'):
+            index.table().put_item(Item={"pk": index.partition("example", section), "sk": f"{i:03d}", "payload": json.dumps(current)})
     first = index.page("example", "sessions")
-    assert first["assets"] == [] and first["cursor"]
-    assert len(index.page("example", "sessions", first["cursor"])["assets"]) == 1
+    assert len(first["assets"]) == 100 and first["cursor"]
+    assert len(index.page("example", "sessions", first["cursor"])["assets"]) == 5
     with pytest.raises(ValueError):
         index.page("example", "all", first["cursor"])
     all_cursor = index.page("example", "all")["cursor"]
@@ -261,7 +262,21 @@ def test_sessions_sparse_bounded_pages_keep_cursor_and_scope(index):
     with pytest.raises(ValueError):
         index.page("other", "sessions", first["cursor"])
     cursor = json.loads(base64.urlsafe_b64decode(first["cursor"]))
-    assert cursor["section"] == "sessions" and cursor["pk"] == index.partition("example", "all")
+    assert cursor["pk"] == index.partition("example", "sessions")
+
+
+def test_sessions_not_hidden_by_hundreds_of_unrelated_assets(index, monkeypatch):
+    library = importlib.import_module('asset_library')
+    for i in range(130):
+        current = asset(i, 'portrait', 'image/png')
+        monkeypatch.setattr(library, 'describe', lambda *_, value=current: value)
+        index.refresh(None, current['key'])
+    transcript = {**asset(999), 'kind': 'raw-transcript', 'name': 'transcript.json', 'contentType': 'application/json'}
+    monkeypatch.setattr(library, 'describe', lambda *_: transcript)
+    index.refresh(None, transcript['key'])
+    monkeypatch.setattr(library, 'describe', lambda *_: pytest.fail('No source scans on reads'))
+    assert index.page('example', 'sessions')['assets'] == [transcript]
+    assert index.page('example', 'sessions')['cursor'] is None
 
 
 def test_sessions_suppresses_paired_transcript_export(index, monkeypatch):

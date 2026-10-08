@@ -245,7 +245,9 @@ def reserved_for(db, project):
         plan, _ = read_plan(db, row["plan_id"])
         if plan["manifest"].get("projectId") == project:
             held += row["held"]
-    return held - rejection_credits(db, project)
+    from panther_journal import video_settlement
+    settlement = video_settlement.audit(db, project)
+    return held - rejection_credits(db, project) - (settlement['releasedHeadroomCents'] if settlement else 0)
 
 
 def rejection_credits(db, project):
@@ -317,6 +319,10 @@ def reconcile_rejection(attempt_id, fal, reason):
 def check_budget(db, plan, amount):
     project = plan["manifest"].get("projectId")
     assert_generation_open(db, project)
+    from panther_journal import video_settlement
+    settlement = video_settlement.audit(db, project)
+    if settlement and hashlib.sha256(canonical(plan).encode()).hexdigest() in settlement['closedPlanIds']:
+        fail('This prior plan is closed by audited settlement; prepare and approve a new replacement plan.')
     if project is None:
         if reserved_for(db, None) + amount > effective_limit(db):
             fail("Plan including all retries exceeds the remaining configured budget; it cannot cover this reservation.")
@@ -543,7 +549,7 @@ def quote(fal, model, *, duration_seconds=8, _base_price=None):
     }
 
 
-def validate_manifest(value):
+def validate_manifest(value, *, check_prompt_policy=True):
     fields = {"schemaVersion", "gameId", "sessionId", "sourceKeys", "shots"}
     if (
         not isinstance(value, dict)
@@ -595,6 +601,10 @@ def validate_manifest(value):
         if shot["id"] in seen or shot["model"] not in PROFILES:
             fail("Duplicate shot or unsupported model profile.")
         seen.add(shot["id"])
+        from panther_journal.film_prompt_policy import prompt_blockers
+        blockers = prompt_blockers(shot["prompt"]) if check_prompt_policy else []
+        if blockers:
+            fail("Shot prompt needs repair: " + "; ".join(blockers))
         if value["schemaVersion"] == 2:
             production_duration(shot["model"], shot.get("durationSeconds"))
         if bool(PROFILES[shot["model"]].get("imageField")) != ("image" in shot):
@@ -663,7 +673,11 @@ def generation_duration(model, planned):
     return duration
 
 
-def payload(shot, *, duration_seconds=None):
+def payload(shot, *, duration_seconds=None, check_prompt_policy=True):
+    from panther_journal.film_prompt_policy import prompt_blockers
+    blockers = prompt_blockers(shot['prompt']) if check_prompt_policy else []
+    if blockers:
+        fail('Shot prompt needs repair: ' + '; '.join(blockers))
     duration_seconds = shot.get("durationSeconds", 8) if duration_seconds is None else duration_seconds
     if not shot['model'].startswith('seedance'):
         duration_seconds = production_duration(shot['model'], duration_seconds)
@@ -816,11 +830,13 @@ def read_plan(db, plan_id):
         or plan.get("profileVersion") != plan.get("manifest", {}).get("schemaVersion")
     ):
         fail("Pinned plan changed or is incompatible. Refusing to spend.")
-    validate_manifest(plan["manifest"])
+    # Immutable historical evidence remains readable under newer creative policy.
+    # Actual new submission still validates the current policy below.
+    validate_manifest(plan["manifest"], check_prompt_policy=False)
     for shot in plan["manifest"]["shots"]:
         if plan["inputs"][shot["id"]] != {
             "endpoint": PROFILES[shot["model"]]["endpoint"],
-            "payload": payload(shot),
+            "payload": payload(shot, check_prompt_policy=False),
         }:
             fail("Model adapter changed. Prepare and approve a new plan.")
     return plan, bool(row["approved"])
@@ -887,6 +903,7 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         shot = next((s for s in plan["manifest"]["shots"] if s["id"] == shot_id), None)
         if not shot or not 1 <= ordinal <= shot["maxAttempts"]:
             fail("Attempt not allowed by the pinned plan.")
+        payload(shot)  # Current creative safeguards apply before any new paid request.
     current_quote = shot_quote(fal, plan["manifest"], shot)
     billing = fal.billing()
     reserve = plan["quotes"][quote_key(plan["manifest"], shot)]["reserveCents"]
@@ -1293,6 +1310,20 @@ def budget_status():
                 indent=2,
             )
         )
+
+
+@budget.command('settle-project')
+@click.argument('project')
+@click.option('--video-allowance', required=True)
+@click.option('--reason', required=True)
+@click.option('--owner-approved', is_flag=True, required=True)
+def settle_project(project, video_allowance, reason, owner_approved):
+    """Settle completed project bills and reallocate within its unchanged cap."""
+    from panther_journal import video_settlement
+    if not owner_approved:
+        fail('Explicit replacement approval required.')
+    result = video_settlement.settle(project, cents(video_allowance), reason, Fal())
+    click.echo(json.dumps({k: result[k] for k in ('projectId', 'historicalBilledCents', 'releasedHeadroomCents', 'videoAllowanceCents', 'settledAt')}, indent=2))
 
 
 @budget.command("extend")
