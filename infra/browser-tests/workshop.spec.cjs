@@ -83,10 +83,12 @@ test('Incomplete type aggregates show an honest error instead of partial totals'
 
 for(const width of [1280,390])test(`Compact workflow rows and zoomable output keep a single run status at ${width}px`,async({page})=>{
  await page.setViewportSize({width,height:900});const state=await fixture(page);
- const key='games/synthetic-game/content/shared/images/map/original/map.png';
+ const key='games/synthetic-game/assets/map/original/map.png';
  const output=sample('f'.repeat(64),'asset-generation','done','The riverside map',[{id:'generate',label:'Asset generation',status:'done',outputKey:key}]);
  state.jobs=[output];
  const imageUrl='https://synthetic.example/map.png';
+ await page.route('**/assets?**',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{assets:[{key,contentType:'image/png',metadata:{title:'The riverside map'}}],cursor:null}}));
+ await page.route('**/image-links',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{images:{[key]:{url:imageUrl}}}}));
  await page.route('https://test.execute-api.us-west-2.amazonaws.com/object-url*',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{key,url:imageUrl,contentType:'image/png',size:250,metadata:{title:'The riverside map'}}}));
  await page.route(imageUrl,route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" fill="#304c42"/><path d="M210 0Q400 180 250 400" fill="none" stroke="#84b4c4" stroke-width="65"/><circle cx="470" cy="220" r="20" fill="#e9ba59"/></svg>'}));
  await page.goto('https://panther.place/games/synthetic-game/workflows');

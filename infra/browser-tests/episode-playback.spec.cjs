@@ -239,3 +239,13 @@ test('map scenes can narrate before rendering their video',async({page,context})
  await page.route('**/narration-voices**',route=>route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:{voices:[{id:'examplevoice123',name:'Storyteller'}]}}));let body;await page.route('**/narration-jobs**',route=>{if(route.request().method()==='POST')body=route.request().postDataJSON();return route.fulfill({headers:{'access-control-allow-origin':'https://panther.place'},json:body?{jobId:'map-narration',status:'QUEUED'}:{jobs:[]}});});
  await page.locator('[data-scene-narration]').click();const dialog=page.getByRole('dialog',{name:'Video Narration',exact:true});await dialog.getByLabel('Narration text').fill('The party arrives at the gates.');await dialog.getByRole('combobox',{name:'Voice',exact:true}).click();await page.getByRole('option',{name:'Storyteller',exact:true}).click();await dialog.getByRole('button',{name:'Generate Narration',exact:true}).click();await expect.poll(()=>body).toBeTruthy();expect(body.sourceKeys).toEqual([control.scenes[0].mapAssetKey]);expect(body.sceneId).toBe('gate');
 });
+
+for(const width of [1280,390])test(`a storyboard shot with no takes shows Generate without an empty selector at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});await fixture(page,context);
+ await page.evaluate(()=>{
+  const host=document.createElement('section');host.id='empty-shot-test';document.querySelector('main').replaceChildren(host);
+  window.PantherUI.mountSceneStoryboard(host,{scope:'synthetic-empty-shot',scene:{gameId:'test-game',episodeId:'arrival',id:'empty',shotTakes:{},storyboard:{origin:'human',revision:'a'.repeat(32),shots:[{shotId:'first',description:'An empty synthetic shot',camera:'',durationSeconds:8}]}},onSave:async()=>{},onLoadTakes:async()=>({assets:[],cursor:null}),onLoadFrames:async()=>({images:{}}),onGenerateShot:async()=>{host.dataset.generated='true';}});
+ });
+ const host=page.locator('#empty-shot-test');await expect(host.getByRole('button',{name:'Generate shot 1',exact:true})).toBeVisible();await expect(host.getByRole('combobox',{name:'Take for shot 1',exact:true})).toHaveCount(0);
+ await host.getByRole('button',{name:'Generate shot 1',exact:true}).click();await expect(host).toHaveAttribute('data-generated','true');
+});

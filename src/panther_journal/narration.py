@@ -78,7 +78,10 @@ def budget_status(db, project):
     if extension:
         b = {**b, 'capCents': extension['capCents'],
              'otherHeldCents': max(b['otherHeldCents'], extension['videoAllowanceCents'])}
-    if held + b['otherHeldCents'] > b['capCents']:
+    # Historical conservative reservations can exceed remaining allocation until
+    # exact billing reconciliation. Reading that history must remain possible;
+    # only a new extension must reject an allowance that invades held speech.
+    if extension and held + b['otherHeldCents'] > b['capCents']:
         v.fail('Budget extension would invade reserved narration allowance.')
     return {
         **b,

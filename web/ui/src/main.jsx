@@ -29,7 +29,7 @@ import { SortableScenes } from "./sortable-scenes.jsx";
 import { MultiSelect } from "./components/ui/multi-select.jsx";
 import { buttonVariants } from "./components/ui/button.jsx";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion.jsx";
-import { ThumbsUp, ThumbsDown, Pencil, Download, Users, Mic, BookOpen, Clapperboard, Folder, ChevronRight, Upload, Sparkles, Search, CirclePlus } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Pencil, Download, Users, Mic, BookOpen, Clapperboard, Folder, ChevronRight, Upload, Sparkles, Search, CirclePlus, Play } from "lucide-react";
 import "./styles.css";
 
 const chapterReviewRoots=new WeakMap();
@@ -77,7 +77,7 @@ const iconRoots=new WeakMap();
 const generationRoots=new WeakMap();
 export function clearGenerationDetails(host){generationRoots.get(host)?.unmount();generationRoots.delete(host);host.replaceChildren();}
 export function mountGenerationDetails(host,rows){clearGenerationDetails(host);const root=createRoot(host);generationRoots.set(host,root);root.render(<Accordion type="single" collapsible><AccordionItem value="generation"><AccordionTrigger>Generation details</AccordionTrigger><AccordionContent><dl>{rows.map(([label,value])=><React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}</dl></AccordionContent></AccordionItem></Accordion>);}
-export function mountIcon(host,name){const Icon={characters:Users,sessions:Mic,novel:BookOpen,videos:Clapperboard,assets:Folder,arrow:ChevronRight,search:Search,approve:ThumbsUp,reject:ThumbsDown,edit:Pencil,download:Download}[name];if(!Icon)return;let root=iconRoots.get(host);if(!root){root=createRoot(host);iconRoots.set(host,root);}root.render(<Icon size={22} strokeWidth={1.7} aria-hidden="true"/>);}
+export function mountIcon(host,name){const Icon={characters:Users,sessions:Mic,novel:BookOpen,videos:Clapperboard,assets:Folder,arrow:ChevronRight,search:Search,approve:ThumbsUp,reject:ThumbsDown,edit:Pencil,download:Download,play:Play}[name];if(!Icon)return;let root=iconRoots.get(host);if(!root){root=createRoot(host);iconRoots.set(host,root);}root.render(<Icon size={22} strokeWidth={1.7} aria-hidden="true"/>);}
 // Imperative controllers compose the same registry Button variants and Lucide
 // icons as React forms. Observe label replacement so pending/retry updates keep
 // their existing icon without rebuilding the application's event handlers.
@@ -147,7 +147,7 @@ export function mountMediaBrowser(host, props) {
   if (!mediaRoots.has(host)) mediaRoots.set(host, createRoot(host));
   mediaRoots.get(host).render(<QueryClientProvider client={client}><MediaBrowser {...props} /></QueryClientProvider>);
 }
-export { queryClient, query, invalidate, revalidate, clear } from "./data-layer.js";
+export { queryClient, query, invalidate, revalidate, clear, readRequest } from "./data-layer.js";
 export function syncGameSelector() {
   const native = document.getElementById("game-selector");
   const host = document.getElementById("game-select-root");

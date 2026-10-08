@@ -1,4 +1,4 @@
-# Indexed asset browsing (v4)
+# Indexed asset browsing (v5)
 
 S3 stores immutable files and their location records. DynamoDB stores a regenerable browsing
 projection: titles, type, metadata, explicit source links, recording/playback summaries and warnings.
@@ -25,18 +25,22 @@ payload, then resolved/read the metadata and JSON again. Every section awaited a
 latency and S3 request count grew with the whole game, including hidden workflow artifacts.
 
 The new API uses retained, pay-per-request DynamoDB partitions for each game and section (`all`,
-`audio`, `transcripts`, `videos`, `novels`). It queries at most 100 entries/1 MiB, returning a scoped cursor.
+`audio`, `transcripts`, `videos`, `novels`, `sessions`). It queries at most 100 entries/1 MiB, returning a scoped cursor.
 Sessions/Videos render one page and load more only on request. Video plans are included
-in Videos. Sessions is a logical union of audio and transcript assets from the existing
-`all` partition: each request remains bounded, its cursor is scoped to Sessions, and a sparse
-filtered page can offer Load more. The v4 all-game rebuild enriches immutable recording facts and updates Sessions membership; it creates no separate Sessions partition.
+in Videos. Version 5 gives Sessions a dedicated materialized partition containing recordings,
+listening derivatives and transcripts, excluding chunks and processing artifacts. A page of
+unrelated images/plans can no longer hide all transcripts. Cursors are scoped by the partition.
+The v5 all-game rebuild verifies every section membership before activation; no v4 fallback exists.
 Standard lossless recording chunks and listening derivatives stay in the complete
 catalog and recording reader, not as separate Sessions cards. Matching transcript Markdown exports
 are suppressed using a bounded indexed lookup, including across page boundaries.
 
-Opening a media file still obtains a short-lived authenticated URL. Full relationship graphs and
-novel reference enrichment can page through the complete **metadata index**, not source S3 files;
-their existing 5,000-entry limit remains explicit. That graph work is not needed to list Videos.
+Opening a media file still obtains a short-lived authenticated URL. Lists request `view=cards&limit=24` and never drain cursors automatically. Optional `characterId`
+and `mediaType` filters apply to each bounded catalog page; a sparse page can still offer More.
+Cursors bind the filters and page size. Card responses exclude full generation requests and lineage.
+`keys` reads at most 60 exact same-game metadata records. `relatedKey` returns only the connected
+lineage component, with a 2 MiB response ceiling. Reverse-link discovery still reads the server's
+bounded metadata index (5,000 records maximum); it does not transfer that inventory to the browser. That graph work is not needed to list Videos.
 There is no claim that arbitrary-size relationship graphs are constant-time or that cold starts
 and network latency disappear. The file-tree browser is a separate physical-folder view.
 
@@ -59,8 +63,8 @@ Logical asset removal retains original bytes and history, and excludes archived 
 
 ## Rollout and all-game verification
 
-Catalog v4 uses separate partitions and fails closed until this all-game rebuild is verified and activated.
-No v3 fallback is used by readers; preserve the old projection until cutover verification succeeds.
+Catalog v5 uses separate partitions and fails closed until this all-game rebuild is verified and activated.
+No older fallback is used by readers; preserve the old projection until cutover verification succeeds.
 
 1. Run local checks and the self-hosted Playwright gate. Review/merge the PR.
 2. Inspect the CDK diffs for Foundation and MediaExplorer in the established account/us-west-2,
@@ -85,9 +89,9 @@ be repeated with a fresh report: source data is untouched and writes are conditi
 Maintenance retries a concurrent index/transaction guard at most four times with short jittered
 backoff. Each attempt rereads current source data and the index revision; stale transactions are
 never replayed. Exhausted contention still fails the page and blocks activation.
-Do not activate a partial migration manually. The projection schema is versioned (`v3` keys);
+Do not activate a partial migration manually. The projection schema is versioned (`v5` keys);
 future schema changes require another full migration. There is no old S3-scan read fallback.
-The v1/v2 readiness/verification markers cannot authorize v3. Repeat the full dry-run/apply/verify
+Older readiness/verification markers cannot authorize v5. Repeat the full dry-run/apply/verify
 sequence for this upgrade; old projection rows may remain as unused history, never a read fallback.
 
 At rest this adds index storage, not provisioned compute. DynamoDB, Lambda, events and the failure
@@ -150,3 +154,18 @@ expected review revision and an idempotent operation identity. A transaction che
 source chapter record/output and retains each prior review with the exact chapter reference.
 This metadata Lambda cannot change manuscripts or jobs, dispatch generation, or access S3.
 The novel reader's existing read-only permissions remain unchanged.
+
+## Video covers
+
+List cards never mount a video element or sign/download a video to find a frame. They use an
+explicit same-game `thumbnailKey` or `extra.preview.imageKey`, otherwise a format placeholder.
+Image signing is viewport-triggered, batched (at most 60 keys) and cached below the signing TTL.
+Opening a video explicitly still obtains its playback URL. Missing covers do not poll indefinitely.
+
+Prepare covers outside browsing with `panther assets video-covers --all-games --work-dir PRIVATE_DIR`.
+This audits without downloading or writing. Add `--apply` to extract a nonblank frame from the
+first ten seconds with local FFmpeg, upload an immutable `video-thumbnail`, and link the exact
+source through a version-guarded metadata migration. Source bytes and prior metadata stay intact.
+Private receipts and migration records make the operation resumable; ambiguous uploads stop for
+inspection rather than overwriting. Run this after publishing new videos and for every existing game.
+No new index version is needed: these are read-time projections over existing metadata fields.

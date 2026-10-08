@@ -115,6 +115,9 @@ def test_transcript_reuses_raw_and_checkpoint_without_repeating_inference(tmp_pa
 
 
 def test_successful_handoff_is_not_repeated_or_paid(tmp_path, monkeypatch):
+    from panther_journal.session_speakers import command
+    reconcile = Mock(return_value=tmp_path / 'session-attributed')
+    monkeypatch.setattr(command, 'callback', reconcile)
     report = Mock()
     monkeypatch.setattr(worker, "Reporter", lambda *a, **k: report)
     job = {"jobId": "c" * 64, "gameId": "synthetic-game", "sessionId": "synthetic-session", "recording": {"key": "source"}}
@@ -124,10 +127,13 @@ def test_successful_handoff_is_not_repeated_or_paid(tmp_path, monkeypatch):
     monkeypatch.setattr(worker.cloud, "configuration", lambda: {})
     api = Mock(return_value={"jobId": "d" * 64})
     monkeypatch.setattr(worker.cloud, "api", api)
-    worker.process(job, {}, tmp_path)
-    worker.process(job, {}, tmp_path)
+    options = {k: str(tmp_path / k) for k in ['speakerProfiles', 'speakerModel', 'speakerRuntime']}
+    worker.process(job, options, tmp_path)
+    worker.process(job, options, tmp_path)
     assert api.call_count == 1
     assert api.call_args.args[2] == "/editorial-jobs"
+    assert 'session-attributed' in api.call_args.kwargs['json']['rawKey']
+    assert reconcile.call_count == 1
     assert report.close.call_args.args == ("done",)
 
 

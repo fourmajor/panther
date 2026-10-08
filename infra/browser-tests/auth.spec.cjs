@@ -189,7 +189,9 @@ test('failed logout stays locally signed out and can retry revocation', async ({
   await expect(other.locator('#welcome')).toBeVisible();
   state.failure = 0;
   if(!new URL(page.url()).pathname.startsWith('/account')){await page.getByRole('button',{name:'Account',exact:true}).click();await page.getByRole('button',{name:'Account settings',exact:true}).click();}
+  const signedOut = page.waitForURL(/test.amazoncognito.com\/logout/, {waitUntil:'commit'});
   await page.locator('#logout-button').click();
+  await signedOut;
   await expect(page).toHaveURL(/test.amazoncognito.com\/logout/);
   expect((await context.cookies()).some(c => c.name === COOKIE)).toBe(false);
 });

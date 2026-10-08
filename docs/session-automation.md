@@ -30,8 +30,13 @@ Private version-1 configuration contains `games`, a mapping from game ID to:
 Never commit configuration, player identities, enrollment samples, or processing inventories.
 The worker verifies pinned audio, reuses each checksummed live recognizer result where complete,
 and recognizes only missing/gapped intervals. Original ASR output remains unchanged. It saves
-an unassigned raw transcript and a separate enrolled-voice annotated version; uncertain voices
-remain unknown. Chunk-level recognition and timestamp limitations remain visible. There is no
+an unassigned raw transcript, provisional chunk annotations, and a separate session-wide
+enrolled-voice reconciled version before adaptation handoff. The session pass uses stable
+speaker groups and aggregate embeddings across the recording rather than treating each
+30-second chunk as an independent final identity decision. Its private input pins, progress,
+diarization and final transcript survive completion/restarts. It uses the existing offline
+pyannote weights on the laptop's MPS device, with bounded batches and no paid service.
+Uncertain voices remain unknown. Chunk-level recognition and timestamp limitations remain visible. There is no
 automatic enrollment or inference of identity from character dialogue.
 An all-zero runtime speaker embedding is unavailable identity evidence, not permission to
 choose the nearest player or discard speech. Preserve that analyzer result and mark affected
@@ -43,6 +48,9 @@ interval. Keep player identity unknown for that interval. Never clip away words,
 timing, or invent missing speech. Malformed/unavailable text remains an explicit failure.
 
 Per-chunk checkpoints, speaker evidence and measured chunk counters survive interruptions.
+The session diarization progress reports genuine stage counters, not an overall percentage.
+An interrupted model pass is not resumable within its inference batches; retain its evidence
+and use a new private work directory for an explicit rerun, never silently replace files.
 Changed inputs/checkpoints stop the run. A process lock prevents competing local workers.
 Publication uses Panther's authenticated no-overwrite uploads and an idempotent editorial
 commit. Partial publication is reconciled by those contracts, not repeated inference or S3 writes.

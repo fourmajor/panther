@@ -71,8 +71,25 @@ and focus on gaps/uncertain intervals. `panther recording finish-live /PRIVATE/r
 checks every source/checkpoint and creates separate local raw and provisionally attributed
 transcript versions, without rerunning recognition or triggering editorial work. Missing chunks
 and recognition gaps block finalization rather than silently producing an incomplete transcript.
-The current full-session `recording diarize` remains a separate
-optional quality pass, not something automatically launched by this preview.
+Live preview itself does not launch full-session analysis. Completed-set finalization now
+adds session-wide enrolled reconciliation before adaptation handoff. It keeps the same
+conservative identity gates (0.75 cosine / 0.15 margin); attribution coverage is not accuracy.
+An exclusive speaker needs 65% of a segment with a 25% lead and at most 10% overlapping
+speech. Whole-chunk approximate timing is never assigned. Speech/text is never rewritten.
+
+Existing completed transcripts can be repaired explicitly, preserving the earlier versions:
+
+```sh
+panther recording reconcile-speakers /PRIVATE/transcript.json \
+  --recording /PRIVATE/recording-ID --profiles /PRIVATE/profiles.json \
+  --work-dir /PRIVATE/new-reconciliation
+```
+
+This writes a local candidate and progress evidence only, with no uploads, ASR rerun,
+editorial restart, paid requests or voice synthesis. Review the actual identity/coverage
+results, then upload through `panther upload --new-version-of` with exact source lineage.
+Do not claim an existing completed session was repaired by installing the new worker.
+Session-local anonymous labels must not be mapped using a different run's label numbers.
 
 ## Voice synthesis follow-up
 
