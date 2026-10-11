@@ -91,7 +91,8 @@ def identify(embedding, references, *, threshold, margin, minimum_references=2):
     if not scores:
         return {'playerId': None, 'reason': 'no-reference-support'}
     best, person = scores[0]
-    runner = scores[1][0] if len(scores) > 1 else -1
+    # Weak secondary enrollment must not hide a strong competing identity.
+    runner = max((max(values) for other, values in groups.items() if other != person), default=-1)
     return {'playerId': person if best >= threshold and best - runner >= margin else None,
             'score': best, 'runnerUp': runner, 'scoreIsProbability': False}
 

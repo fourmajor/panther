@@ -59,6 +59,11 @@ def test_calibration_cannot_use_training_audio_or_small_evidence():
     assert calibrate(refs, held, [(.75, .15)])['status'] == 'insufficient-independent-evidence'
 
 
+def test_weak_competing_reference_does_not_hide_identity_conflict():
+    refs = [ref('alex', 1, X), ref('alex', 2, X), ref('sam', 3, X), ref('sam', 4, Y)]
+    assert identify(X, refs, threshold=.75, margin=.15)['playerId'] is None
+
+
 def test_calibration_never_activates_and_counts_wrong_names():
     refs = [ref('alex', 1, X), ref('alex', 2, X)]
     held = [{**ref('alex', f'hold{i}', X), 'origin': 'held-out'} for i in range(5)]
