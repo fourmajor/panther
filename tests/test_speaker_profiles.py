@@ -83,3 +83,43 @@ def test_profile_mismatch_and_duplicate_ids(tmp_path):
     (model / 'weights.bin').write_bytes(b'changed')
     with pytest.raises(click.ClickException, match='mismatch'):
         speakers.load_profiles(path, 'test-game', model)
+
+
+@pytest.mark.parametrize('mode', ['valid', 'missing-reference', 'ambiguous-reference'])
+def test_enrollment_uses_explicit_reference_not_clustering_vector(tmp_path, monkeypatch, mode):
+    import json
+    model = tmp_path / 'model'
+    model.mkdir()
+    (model / 'weights.bin').write_bytes(b'synthetic model')
+    samples = []
+    for player in ('alex', 'sam'):
+        source = tmp_path / f'{player}.wav'
+        source.write_bytes(b'synthetic source')
+        samples.append(dict(playerId=player, file=str(source), sha256=speakers.audio.digest(source),
+                            identityEvidence='Confirmed synthetic introduction', confirmedSingleSpeaker=True))
+    manifest = tmp_path / 'request.json'
+    manifest.write_text(json.dumps(dict(gameId='test-game', samples=samples)))
+    monkeypatch.setattr(speakers.audio.cloud, 'configuration', lambda: {})
+    monkeypatch.setattr(speakers.audio.cloud, 'api', lambda *a, **k: {'players': [{'id': 'alex'}, {'id': 'sam'}]})
+
+    def analyze(source, model, runtime, attempt, *, reference=False):
+        assert reference is True
+        result = dict(turns=[dict(start=0, end=12)], embeddings={'SPEAKER_00': embedding(-1, 0)})
+        if mode != 'missing-reference':
+            result.update(referenceEmbedding=embedding() if source.stem == 'alex' or mode == 'ambiguous-reference' else embedding(0, 1),
+                          referenceEmbeddingMethod='community-1-confirmed-full-waveform-v1')
+        (attempt / 'speaker-result.json').write_text(json.dumps(result))
+        return result
+
+    monkeypatch.setattr(speakers, 'analyze', analyze)
+    output = tmp_path / 'enrollment.json'
+    if mode != 'valid':
+        with pytest.raises(click.ClickException, match='missing' if mode == 'missing-reference' else 'ambiguous'):
+            speakers.enroll.callback(manifest, output, tmp_path / 'runtime', model, 10)
+        assert not output.exists()
+        return
+    speakers.enroll.callback(manifest, output, tmp_path / 'runtime', model, 10)
+    saved = speakers.load_profiles(output, 'test-game', model)
+    assert saved['profiles'][0]['embedding'] == embedding()
+    assert saved['profiles'][1]['embedding'] == embedding(0, 1)
+    assert all(p['embeddingMethod'] == 'community-1-confirmed-full-waveform-v1' for p in saved['profiles'])

@@ -653,6 +653,12 @@ A transcript is not automatically reviewed; an AI portrait is not automatically 
 
 ## Metadata contract (version 1)
 
+Speaker enrollment uses direct embeddings of explicitly confirmed single-speaker references,
+not the short-sample clustering vector. Preserve exact reference checksums, extraction method,
+prior profile revision and diagnostics; ambiguous roster references block enrollment. Repairs
+create new profiles and transcript versions. Compare actual candidate coverage and identity
+evidence before publication; word-timing changes are experiments, not guaranteed improvements.
+
 Every asset has `extra.generation` (schemaVersion 1). Include all known creation facts:
 `method` (ai, ai-assisted, procedural, capture, human, unknown), actual `model` version,
 `provider`, `inference` and `execution` (local, remote, unknown, not-applicable), and `tool`.

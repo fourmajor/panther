@@ -32,6 +32,14 @@ diarization and final transcript survive completion/restarts. It uses the existi
 pyannote weights on the laptop's MPS device, with bounded batches and no paid service.
 Uncertain voices remain unknown. Chunk-level recognition and timestamp limitations remain visible. There is no
 automatic enrollment or inference of identity from character dialogue.
+Explicit enrollment now extracts the confirmed single-speaker reference waveform directly,
+retaining its diarization/clustering evidence separately. A short-reference clustering vector
+can disagree with the very source used to enroll it; it must not silently become the identity
+prototype. Enrollment checks reference-to-roster ambiguity and records the extraction method.
+Existing immutable enrollments remain historical evidence: rebuild a new revision from the exact
+confirmed source checksums and explicitly select it, never overwrite or train from guessed labels.
+Word-timing recovery must demonstrate improvement on the actual session before publication;
+reusing approximate tokens alone does not guarantee better assignments.
 An all-zero runtime speaker embedding is unavailable identity evidence, not permission to
 choose the nearest player or discard speech. Preserve that analyzer result and mark affected
 utterances unassigned with an attribution warning. Malformed evidence and invalid enrolled
