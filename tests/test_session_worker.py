@@ -194,8 +194,11 @@ def test_short_confirmed_enrollment_is_explicit_and_never_accepts_multiple_speak
     monkeypatch.setattr(worker.cloud, "configuration", lambda: {})
     monkeypatch.setattr(worker.cloud, "api", lambda *a, **k: {"players": [{"id": "example-player"}]})
     monkeypatch.setattr(speaker_profiles, "model_pin", lambda *a: {"weights": "synthetic"})
-    def analyze(wav, model, runtime, attempt):
-        result = {"embeddings": {"speaker": [1.0] * 16}, "turns": [{"start": 0, "end": 5}]}
+    def analyze(wav, model, runtime, attempt, *, reference=False):
+        assert reference is True
+        result = {"embeddings": {"speaker": [1.0] * 16}, "turns": [{"start": 0, "end": 5}],
+                  "referenceEmbedding": [1.0] * 16,
+                  "referenceEmbeddingMethod": "community-1-confirmed-full-waveform-v1"}
         write_json(attempt / "speaker-result.json", result)
         return result
     monkeypatch.setattr(speaker_profiles, "analyze", analyze)
@@ -207,7 +210,7 @@ def test_short_confirmed_enrollment_is_explicit_and_never_accepts_multiple_speak
     saved = json.loads((tmp_path / "profiles.json").read_text())
     assert saved["profiles"][0]["sampleQuality"] == "short-confirmed-reference"
     assert saved["profiles"][0]["detectedSpeechSeconds"] == 5
-    monkeypatch.setattr(speaker_profiles, "analyze", lambda *a: {"embeddings": {"one": [1.0] * 16, "two": [1.0] * 16}, "turns": [{"start": 0, "end": 20}]})
+    monkeypatch.setattr(speaker_profiles, "analyze", lambda *a, **k: {"embeddings": {"one": [1.0] * 16, "two": [1.0] * 16}, "turns": [{"start": 0, "end": 20}]})
     command[2] = str(tmp_path / "invalid-profiles.json")
     result = CliRunner().invoke(speaker_profiles.enroll, [*command, "--minimum-speech-seconds", "3"])
     assert result.exit_code != 0 and "single-speaker" in result.output

@@ -82,11 +82,12 @@ def match(embedding, profiles, threshold=0.75, margin=0.15):
     return scores[0][1] if best >= threshold and best - second >= margin else None
 
 
-def analyze(wav, model, runtime, attempt):
+def analyze(wav, model, runtime, attempt, *, reference=False):
     from panther_journal.live_transcript import run_process, read_json
     output = attempt / 'speaker-result.json'
     run_process([str(runtime.absolute()), str(Path(__file__).with_name('speaker_profile_worker.py')),
-                 '--audio', str(wav), '--model', str(model.resolve()), '--output', str(output)],
+                 '--audio', str(wav), '--model', str(model.resolve()), '--output', str(output),
+                 *(['--reference'] if reference else [])],
                 attempt, 'speaker.log', timeout=180)
     return read_json(output, 4 * 1024 * 1024)
 
@@ -206,13 +207,16 @@ def enroll(manifest, output, runtime, model, minimum_speech_seconds):
             raise click.ClickException('Enrollment source checksum changed')
         attempt = output.parent / f'enrollment-{uuid.uuid4().hex}'
         attempt.mkdir(mode=0o700)
-        result = analyze(source, model, runtime, attempt)
+        result = analyze(source, model, runtime, attempt, reference=True)
         speech_seconds = sum(t['end']-t['start'] for t in result['turns'])
         if len(result['embeddings']) != 1 or speech_seconds < minimum_speech_seconds:
             raise click.ClickException(f'Need at least {minimum_speech_seconds:g} seconds of clean, single-speaker speech')
         if audio.digest(source) != sample['sha256']:
             raise click.ClickException('Enrollment audio changed during processing')
-        profiles.append({**sample, 'embedding': vector(next(iter(result['embeddings'].values()))),
+        if result.get('referenceEmbeddingMethod') != 'community-1-confirmed-full-waveform-v1':
+            raise click.ClickException('Confirmed reference extraction evidence is missing')
+        profiles.append({**sample, 'embedding': vector(result['referenceEmbedding']),
+                         'embeddingMethod': result['referenceEmbeddingMethod'],
                          'analysisSha256': audio.digest(attempt / 'speaker-result.json'),
                          'detectedSpeechSeconds': speech_seconds,
                          'sampleQuality': 'short-confirmed-reference' if speech_seconds < 10 else 'standard-reference'})
@@ -222,5 +226,7 @@ def enroll(manifest, output, runtime, model, minimum_speech_seconds):
     # Validate before publishing the immutable revision, including duplicate identities.
     if not profiles or len({p['playerId'] for p in profiles}) != len(profiles) or model_pin(model) != pins or audio.digest(manifest) != manifest_hash:
         raise click.ClickException('Empty/duplicate enrollment or changed model')
+    if any(match(p['embedding'], profiles) != p['playerId'] for p in profiles):
+        raise click.ClickException('Confirmed references are ambiguous against the enrolled roster')
     write_json(output, document)
     click.echo(str(output))
