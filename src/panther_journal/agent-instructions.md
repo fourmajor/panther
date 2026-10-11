@@ -484,6 +484,13 @@ For previously enrolled players, `recording reconcile-speakers` performs offline
 matching and writes a new candidate without changing text. Inspect actual coverage and identity
 evidence before publishing through `upload --new-version-of`; never lower gates simply to fill names.
 See `docs/local-audio.md` for setup, consent, evaluation, and current conservative alignment limits.
+`recording diarize-nemotron` is an explicit pinned local experiment, not player identification.
+`recording evaluate-speakers` scores independently confirmed private intervals by correct,
+wrong and unknown duration, including playback falsely named. Never call coverage accuracy,
+reuse enrollment audio as held-out evidence, or train from provisional assignments. See
+`docs/speaker-evaluation.md`; these commands do not upload audio, activate profiles or authorize
+cloud inference. A new candidate must retain every corrected word and timestamp before a
+separately verified immutable publication.
 
 Asset references use `games/<game-id>/assets/<asset-id>/original/<filename>`.
 They are stable identities, not a physical folder recommendation. Layout version 2 stores bytes under

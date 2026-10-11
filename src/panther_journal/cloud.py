@@ -523,6 +523,8 @@ def register(group):
     from panther_journal.live_finalize import finish_live
     from panther_journal.session_worker import automation
     from panther_journal.session_speakers import command as reconcile_speakers
+    from panther_journal.speaker_evaluation import command as evaluate_speakers
+    from panther_journal.nemotron_diarization import command as diarize_nemotron
 
     group.add_command(model)
     group.add_command(share)
@@ -547,5 +549,7 @@ def register(group):
     recording.add_command(finish_live)
     recording.add_command(automation)
     recording.add_command(reconcile_speakers)
+    recording.add_command(evaluate_speakers)
+    recording.add_command(diarize_nemotron)
     for command in (login, logout, upload, list_assets, info, instructions, character):
         group.add_command(command)

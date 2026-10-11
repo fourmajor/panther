@@ -1,5 +1,9 @@
 # Live player attribution
 
+For controlled alternative diarizer tests, multi-reference identity checks and duration-based
+correct/wrong/unknown reporting, see [speaker evaluation](speaker-evaluation.md). These tools
+do not silently change the active recognition model or learn from provisional labels.
+
 `panther recording live` can recognize enrolled players while consuming completed capture
 chunks. Capture remains a separate process. Recognition runs locally with the existing
 pyannote Community-1 audio runtime; no API billing, voice upload, new cloud resource or
