@@ -2,6 +2,18 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Verification scope (nightly always runs full)
+        type: choice
+        options: [full, full-and-deployed, deployed]
+        default: full
+  schedule:
+    - cron: "0 12 * * *"
+
+concurrency:
+  group: panther-self-hosted-quality
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -10,9 +22,11 @@ jobs:
   test:
     # Never run untrusted PR/fork code on a personal machine.
     if: >-
-      github.event_name == 'workflow_dispatch' &&
       github.repository == 'fourmajor/panther' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/codex/'))
+      inputs.suite != 'deployed' &&
+      ((github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' &&
+        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/codex/'))))
     runs-on: [self-hosted, Linux, panther-local]
     timeout-minutes: 45
     steps:
@@ -42,6 +56,13 @@ jobs:
         working-directory: infra
       - run: npx playwright install chromium
         working-directory: infra
+      - name: Critical end-user smoke (readers and session discovery)
+        run: >-
+          npx playwright test browser-tests/end-user-audit.spec.cjs
+          browser-tests/session-library.spec.cjs
+          --grep "Plain text transcript|Sessions opens readable"
+          --workers=1 --reporter=line --output=smoke-test-results
+        working-directory: infra
       - name: Playwright browser tests (self-hosted)
         run: npm run test:browser -- --reporter=line
         working-directory: infra
@@ -50,10 +71,46 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: browser-test-results
-          path: infra/test-results/
+          path: |
+            infra/test-results/
+            infra/smoke-test-results/
           if-no-files-found: ignore
           retention-days: 7
       - run: >-
           npm run synth --
           --context account=000000000000
         working-directory: infra
+
+  deployed-journeys:
+    needs: test
+    if: >-
+      !cancelled() && (needs.test.result != 'skipped' || inputs.suite == 'deployed') &&
+      github.repository == 'fourmajor/panther' &&
+      ((github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' &&
+        (github.ref == 'refs/heads/main' ||
+         ((inputs.suite == 'deployed' || inputs.suite == 'full-and-deployed') && startsWith(github.ref, 'refs/heads/codex/')))))
+    runs-on: [self-hosted, Linux, panther-local]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+        working-directory: infra
+      - run: npx playwright install chromium
+        working-directory: infra
+      - name: Deployed website journeys (synthetic data, no production account)
+        run: npm run test:deployed
+        working-directory: infra
+      - name: Deployed website evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployed-journey-results
+          path: infra/deployed-test-results/
+          if-no-files-found: error
+          retention-days: 7

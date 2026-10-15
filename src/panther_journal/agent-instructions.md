@@ -753,6 +753,13 @@ Use `--json` on upload/list for automation; `panther info` always returns JSON. 
 on failure. Results never need to expose tokens or signed URLs. Report the stored key and relevant
 metadata, not a claim of success based merely on receiving an upload link.
 
+A successful download is not a working web preview. Before handing off a reading/playback link,
+verify the actual reader/player behavior in the approved isolated browser and the deployed release,
+not just API status or file size. Check authenticated source availability separately. Synthetic
+browser fixtures do not prove real production authentication or private-data correctness; keep
+credentials and private game files out of CI. State unverified layers, and never call an unmerged
+or undeployed repair complete. See `docs/continuous-quality.md` for the ongoing journey/release gates.
+
 If the connection drops, the upload may have finished. Inspect the intended key with `panther info`
 before retrying or choosing a new key. Never delete originals to resolve a conflict. For an
 ambiguous game, identity, canonical status, or destructive replacement outside an authorized workflow,

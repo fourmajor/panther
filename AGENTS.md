@@ -237,8 +237,10 @@
 - Use the `codex/` branch prefix unless the task requires a different name.
 - Run relevant local checks before opening the pull request.
 - After opening a pull request, inspect its diff and available checks.
-- Automatic CI is intentionally deferred; local verification is the normal readiness gate except
-  for frontend-affecting changes, which also require self-hosted Playwright verification below.
+- Nightly CI on reviewed `main` is owner-authorized for ongoing quality checks on the owned
+  self-hosted runner. Branch CI remains manually dispatched after review. Never enable automatic
+  PR/fork or arbitrary-branch execution. Local verification remains the normal backend readiness gate;
+  frontend-affecting changes also require self-hosted Playwright verification below.
 - This repository is AI-agent led: the owner gives direction and agents implement, verify,
   merge and deploy in-scope changes autonomously. When a PR's required checks pass on its
   current SHA and its diff is reviewed, merge it without a routine owner approval request.
@@ -257,6 +259,21 @@
 - After an explicitly authorized merge, update local `main` when practical.
 
 ## Frontend verification
+
+- A successful API response, signed URL, download, build or fixture screenshot is not proof that
+  the user's deployed page works. Reproduce navigation, visible content, media decoding, usable
+  controls and error recovery. Each reported UI bug needs a regression for the original failure.
+- Follow `docs/continuous-quality.md`. Source tests, deployed-shell journeys and authenticated
+  private-data checks are separate evidence. Synthetic browser tokens never establish real
+  production authentication; never copy an owner's credentials or game media into CI.
+- Before handing off a page/link, verify its actual reader/player in the isolated browser, deployed
+  release identity and authenticated source availability where relevant. State untested layers.
+  A local workaround is not a deployed repair. Finish required all-game migrations before calling
+  a rollout complete. Review desktop/mobile screenshots and update the user-story coverage matrix.
+- Exercise blocked media, slow/failing responses, stale URLs, sparse pagination, missing metadata,
+  long text, keyboard access and repeat visits where relevant. Never force clicks, skip a failed
+  journey or invent content to get green checks. A missed run/offline runner is unknown coverage,
+  not a healthy result; the daily quality review must surface sustained gaps and new failures.
 
 - Playwright is a required readiness gate for changes that affect the frontend, including UI,
   styling, navigation, browser authentication, asset loading, and backend/infrastructure changes
@@ -277,8 +294,8 @@
   conceal clipping, overlays, or otherwise inaccessible controls.
 - If a required browser test cannot run, report the blocker and do not claim frontend verification
   or routine merge readiness. Static checks and mocked API tests alone are not substitutes.
-- The manual CI workflow already runs Playwright. This requirement does not enable automatic CI
-  or require CI runs for documentation-only or unrelated backend changes.
+- The CI workflow already runs Playwright. The separately owner-authorized nightly main check
+  does not enable automatic branch/PR execution or require manual CI for docs-only/backend changes.
 
 ## Tooling and CI/CD
 
@@ -286,8 +303,8 @@
 - Avoid running CI unless it adds material confidence beyond the relevant local checks.
 - A Docker-based, repository-scoped runner can run on the owner's MacBook. Start it with
   `bash ops/runner/start.sh`; it accepts one job and exits. See `docs/self-hosted-runner.md`.
-- CI remains manually triggered by trusted collaborators with repository write access on reviewed
-  `main` or `codex/` branches in this repo.
+- CI runs nightly on reviewed `main`, or is manually triggered by trusted collaborators with
+  repository write access on reviewed `main` or `codex/` branches in this repo.
   Do not dispatch untrusted contributor code, including code copied from forks. Never enable
   automatic fork/PR execution on a personal runner. Containers are not a complete security boundary.
 - Do not mount personal directories, AWS credentials, or the Docker socket into the runner.

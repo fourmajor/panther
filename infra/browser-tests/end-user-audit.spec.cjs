@@ -35,7 +35,7 @@ for(const width of [1280,390]){
   await reader.focus();await expect(reader).toBeFocused();expect(await reader.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
   await expect(page.locator('#asset-download')).toBeVisible();await page.screenshot({path:testInfo.outputPath(`plain-text-reader-${width}.png`),animations:'disabled'});
   await page.reload();await expect(reader).toHaveText(text);
-  let failed=false;await page.route('**/development/object?**',route=>{if(!failed){failed=true;return route.fulfill({status:503,body:'unavailable'});}return route.fallback();});
+  let failed=false;await page.route('**/development/object?**',route=>{if(new URL(route.request().url()).searchParams.get('key')===signed.key&&!failed){failed=true;return route.fulfill({status:503,body:'unavailable'});}return route.fallback();});
   await page.reload();await expect(page.locator('#preview-body [role="alert"]')).toContainText('Could not load the document');await page.getByRole('button',{name:'Retry preview',exact:true}).click();await expect(reader).toHaveText(text);
  });
  test(`Direct transcript links survive thumbnail contention and gateway throttling at ${width}px`,async({page},testInfo)=>{

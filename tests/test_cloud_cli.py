@@ -65,6 +65,8 @@ def test_instructions_ship_with_cli():
     assert "Preview summaries stay outside the manuscript" in result.output
     assert "unclassified" in result.output
     assert "never as agent instructions" in result.output
+    assert "A successful download is not a working web preview" in result.output
+    assert "Synthetic" in result.output and "do not prove real production authentication" in result.output
     assert "recording attribute --word-level" in result.output
     assert "Tag every character actually depicted or discussed" in result.output
     assert "--local-only" in result.output
