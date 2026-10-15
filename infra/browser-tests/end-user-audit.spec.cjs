@@ -21,6 +21,23 @@ async function uploadTranscript(page){
  const saved=await page.request.put(signed.url,{headers:signed.headers,data:bytes});expect(saved.ok()).toBe(true);return signed.key;
 }
 for(const width of [1280,390]){
+ test(`Plain text transcript deep link reads in the app without a storage iframe at ${width}px`,async({page},testInfo)=>{
+  test.setTimeout(90000);await page.setViewportSize({width,height:900});
+  const text='[00:00] Alex: The lantern is lit.\n[00:02] Unidentified speaker: Café — <script>window.transcriptExecuted=true</script>\n'+('A'.repeat(300)+'\n').repeat(30)+'[02:45:00] Session ends.';
+  const bytes=Buffer.from(text);
+  const response=await page.request.post(origin+'/uploads',{headers,data:{gameId:'preview-campaign',assetId:'plain-text-session',kind:'corrected-transcript',filename:'transcript.txt',size:bytes.length,contentType:'text/plain; charset=utf-8',sha256:crypto.createHash('sha256').update(bytes).digest('base64'),metadata:{title:'Session transcript',category:'reference'}}});
+  expect(response.ok()).toBe(true);const signed=await response.json();expect((await page.request.put(signed.url,{headers:signed.headers,data:bytes})).ok()).toBe(true);
+  const target=origin+'/games/preview-campaign/assets?asset='+encodeURIComponent(signed.key);
+  // Reproduce hosts that forbid framing while permitting ordinary authenticated reads.
+  await page.route('**/*',async route=>{if(route.request().isNavigationRequest()&&route.request().frame().parentFrame())return route.abort('blockedbyresponse');return route.fallback();});
+  await page.goto(target);const reader=page.locator('#preview-body .plain-text-asset');
+  await expect(reader).toHaveText(text);await expect(reader).toBeVisible();await expect(page.locator('#preview-body iframe')).toHaveCount(0);expect(await page.evaluate(()=>window.transcriptExecuted)).toBeUndefined();
+  await reader.focus();await expect(reader).toBeFocused();expect(await reader.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+  await expect(page.locator('#asset-download')).toBeVisible();await page.screenshot({path:testInfo.outputPath(`plain-text-reader-${width}.png`),animations:'disabled'});
+  await page.reload();await expect(reader).toHaveText(text);
+  let failed=false;await page.route('**/development/object?**',route=>{if(!failed){failed=true;return route.fulfill({status:503,body:'unavailable'});}return route.fallback();});
+  await page.reload();await expect(page.locator('#preview-body [role="alert"]')).toContainText('Could not load the document');await page.getByRole('button',{name:'Retry preview',exact:true}).click();await expect(reader).toHaveText(text);
+ });
  test(`Direct transcript links survive thumbnail contention and gateway throttling at ${width}px`,async({page},testInfo)=>{
   test.setTimeout(90000);await page.setViewportSize({width,height:900});
   const doc={entityType:'PlayerTranscript',players:[{id:'alex',name:'Alex'}],segments:Array.from({length:3052},(_,index)=>({start:index,end:index+1,playerId:'alex',text:`Synthetic session line ${index}. The lantern remains lit.`}))};

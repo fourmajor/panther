@@ -1993,6 +1993,7 @@ body { padding-bottom:0; }
 .editorial-output-list {display:flex;flex-wrap:wrap;gap:.5rem;}
 .editorial-output-button {display:inline-flex;align-items:center;gap:.4rem;}
 .artifact-prose {font:400 1.05rem/1.7 Georgia,serif;max-width:68ch;overflow-wrap:anywhere;}
+.structured-asset pre.plain-text-asset {white-space:pre-wrap;font:400 1rem/1.65 system-ui,sans-serif;max-width:78ch;margin:0;overflow-wrap:anywhere;}
 .structured-asset>section h3 {font:400 1.15rem/1.4 Georgia,serif;}
 .structured-asset>section ul {font-size:.9rem;line-height:1.6;padding-left:1.2rem;}
 @media(prefers-reduced-motion:reduce){.editorial-stage-track>[data-state=active]{animation:none;}}
