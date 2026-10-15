@@ -2104,8 +2104,9 @@ async function previewFile(file, {preserveDialog=false, returnFocus=null} = {}) 
     download.onclick = event => {if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();if(download.getAttribute("aria-disabled")!=="true")void downloadAsset(assetRef, download, document.getElementById("asset-download-status"), () => epoch === previewEpoch);};
     const structured = assetRef.endsWith(".json") && sameGameKey(assetRef);
     const markdown = sameGameKey(assetRef) && (/^text\/markdown(?:;|$)/i.test(result.contentType) || assetRef.endsWith('.md'));
+    const plainText = !markdown && sameGameKey(assetRef) && (/^text\/plain(?:;|$)/i.test(result.contentType) || /\.txt$/i.test(assetRef));
     elements.previewBody.classList.toggle("media-preview",/^(image|video|audio)\//.test(result.contentType));
-    if (structured || markdown) showLoading(elements.previewBody, "Reading the document and its metadata…");
+    if (structured || markdown || plainText) showLoading(elements.previewBody, "Reading the document and its metadata…");
     else elements.previewBody.replaceChildren(previewElement(result.contentType, result.url, file.name));
     document.getElementById("asset-generation").hidden=!result.metadata?.extra?.generation;
     renderGeneration(document.getElementById("asset-generation"),result.metadata);
@@ -2117,15 +2118,22 @@ async function previewFile(file, {preserveDialog=false, returnFocus=null} = {}) 
       const detail = await api("/asset-document", {gameId: state.gameId, key: assetRef}, {priority:1});
       if (epoch !== previewEpoch) return;
       renderStructuredAsset(detail, epoch);
-    } else if (markdown) {
-      if (!Number.isSafeInteger(result.size) || result.size > 2 * 1024 * 1024) throw new Error('This document is too large to preview. Use Download to read it.');
-      const response = await fetch(result.url);
+    } else if (markdown || plainText) {
+      if (!Number.isSafeInteger(result.size) || result.size < 0 || result.size > 2 * 1024 * 1024) throw new Error('This document is too large to preview. Use Download to read it.');
+      const response = await fetch(result.url, {signal: AbortSignal.timeout(20000)});
       if (!response.ok) throw new Error('Could not load the document. Close and reopen to retry.');
       const text = await response.text();
       if (epoch !== previewEpoch) return;
-      const prose = document.createElement('article');
+      const prose = document.createElement(plainText ? 'pre' : 'article');
       prose.className = 'artifact-prose bg-background text-foreground';
-      proseMarkdown(prose, text);
+      // Plain text is inert, including HTML-looking speech. Never frame a signed
+      // storage URL: browser frame policies can leave an otherwise valid file blank.
+      if (plainText) {
+        prose.classList.add('plain-text-asset');
+        prose.textContent = text || 'This text file is empty.';
+        prose.tabIndex = 0;
+        prose.setAttribute('aria-label', elements.previewTitle.textContent);
+      } else proseMarkdown(prose, text);
       const host = document.createElement('div');
       host.className = 'structured-asset bg-background text-foreground';
       host.append(prose);
