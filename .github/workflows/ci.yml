@@ -6,7 +6,7 @@ on:
       suite:
         description: Verification scope (nightly always runs full)
         type: choice
-        options: [full, deployed]
+        options: [full, full-and-deployed, deployed]
         default: full
   schedule:
     - cron: "0 12 * * *"
@@ -89,7 +89,7 @@ jobs:
       ((github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
        (github.event_name == 'workflow_dispatch' &&
         (github.ref == 'refs/heads/main' ||
-         (inputs.suite == 'deployed' && startsWith(github.ref, 'refs/heads/codex/')))))
+         ((inputs.suite == 'deployed' || inputs.suite == 'full-and-deployed') && startsWith(github.ref, 'refs/heads/codex/')))))
     runs-on: [self-hosted, Linux, panther-local]
     timeout-minutes: 10
     steps:

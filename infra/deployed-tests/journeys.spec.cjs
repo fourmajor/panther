@@ -54,7 +54,7 @@ async function fixture(page){
   else if(url.pathname==='/asset-document')body={...assets.find(a=>a.key===key),document:transcript};
   else if(url.pathname==='/transcript-selection')body={selection:null};
   else if(url.pathname==='/transcript-summary')body={state:'unavailable'};
-  else if(url.pathname==='/live-recordings')body={recordings:[]};
+  else if(['/live-recordings','/recordings/live'].includes(url.pathname))body={recordings:[]};
   else if(url.pathname==='/notifications')body={notifications:[],unreadCount:0,cursor:null};
   else if(['/characters','/players'].includes(url.pathname))body={characters:[],players:[],cursor:null};
   else if(url.pathname==='/objects')body={prefixes:[],objects:[],nextCursor:null};
@@ -62,6 +62,7 @@ async function fixture(page){
   else if(url.pathname==='/tags')body={tags:[]};
   else if(url.pathname==='/asset-generation')body=url.searchParams.get('view')==='options'?{images:false,generationTypes:[]}:{jobs:[],cursor:null};
   else if(url.pathname==='/generation-capabilities')body={images:false,generationTypes:[]};
+  else if(url.pathname==='/browser-recording/capabilities')body={canRecord:false,transcriptionAvailable:false,playbackAvailable:false,transcriptionUnavailableReason:'Recording is disabled in this read-only QA fixture.'};
   else if(url.pathname==='/transcript-summaries')body={summaries:[],state:'unavailable'};
   else {unexpected.push({method:request.method(),path:url.pathname});body={error:'Unmodelled QA read'};}
   return route.fulfill({json:body,headers});
@@ -79,7 +80,9 @@ for(const width of [1280,390]){
   await page.goto(origin+`/games/${game}/assets?asset=`+encodeURIComponent(plain));
   const reader=page.locator('#preview-body .plain-text-asset');await expect(reader).toHaveText(text);await expect(reader).toBeVisible();await reader.focus();await expect(reader).toBeFocused();
   expect(await reader.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);await expect(page.locator('#preview-body iframe')).toHaveCount(0);expect(await page.evaluate(()=>window.qaExecuted)).toBeUndefined();
-  await expect(page.locator('#asset-download')).toBeVisible();await page.screenshot({path:testInfo.outputPath(`deployed-text-${width}.png`),animations:'disabled'});expect(state.errors).toEqual([]);expect(state.unexpected).toEqual([]);
+  await expect(page.locator('#asset-download')).toBeInViewport();await page.screenshot({path:testInfo.outputPath(`deployed-text-${width}.png`),animations:'disabled'});
+  const pending=page.waitForEvent('download');await page.locator('#asset-download').click();const download=await pending;expect(fs.readFileSync(await download.path(),'utf8')).toBe(text);
+  await page.getByRole('button',{name:'Close preview',exact:true}).click();await expect(reader).not.toBeVisible();expect(state.errors).toEqual([]);expect(state.unexpected).toEqual([]);
  });
  test(`Deployed Sessions exposes a readable corrected transcript at ${width}px`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:900});const state=await fixture(page);await page.goto(origin+`/games/${game}/sessions`);

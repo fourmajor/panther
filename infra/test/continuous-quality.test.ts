@@ -5,7 +5,7 @@ import test from 'node:test';
 const {publicRead}=require('../../deployed-tests/safety.cjs');
 
 test('deployed QA cannot leak synthetic credentials to private assets or external services',()=>{
-  for(const url of ['https://panther.place/app.js','https://panther.place/releases/abcd/styles.css','https://panther.place/avatars/cat.svg'])assert.equal(publicRead(url,'GET'),true);
+  for(const url of ['https://panther.place/app.js','https://panther.place/releases/abcd/styles.css','https://panther.place/avatars/cat.svg','https://panther.place/release.json'])assert.equal(publicRead(url,'GET'),true);
   assert.equal(publicRead('https://panther.place/games/qa-campaign/sessions','GET',true),true);
   for(const url of ['https://provider.example/generate','https://test.s3.amazonaws.com/private.wav','http://panther.place/app.js','https://fake.panther.place/app.js','https://panther.place/games/private/assets/portrait.png','https://panther.place/auth/refresh','https://panther.place/__qa__/transcript.txt','https://user:secret@panther.place/app.js'])assert.equal(publicRead(url,'GET'),false,url);
   assert.equal(publicRead('https://panther.place/games/private/sessions','GET',true),false);

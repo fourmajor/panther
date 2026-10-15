@@ -16,7 +16,8 @@ branch; merging the workflow and observing its first main run are rollout requir
    before the full browser suite and synthesis. Broken core journeys fail early rather than
    waiting behind hundreds of unrelated tests. This smoke gate never replaces the full suite.
 2. `deployed-journeys` runs on nightly/manual main checks even when source tests fail, or when
-   explicitly dispatched with `suite=deployed` for post-rollout verification of a reviewed branch.
+   explicitly dispatched with `suite=deployed` (live checks only) or `suite=full-and-deployed`
+   (both source and live checks) for post-rollout verification of a reviewed branch.
    Ordinary pre-merge branch CI does not compare unpublished web bytes to production (which would
    make every frontend PR impossible to merge). It reads real public HTML/JS/CSS/CSP,
    verifies script/style hashes against reviewed source, then runs desktop/mobile journeys with
