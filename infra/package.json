@@ -6,6 +6,7 @@
     "build": "tsc --build",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:browser": "npm run build && playwright test browser-tests --workers=1",
+    "test:deployed": "playwright test deployed-tests --workers=1 --reporter=line --output=deployed-test-results",
     "synth": "npm run build && cdk synth",
     "diff": "npm run build && cdk diff",
     "deploy": "npm run build && cdk deploy"

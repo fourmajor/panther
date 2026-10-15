@@ -4,8 +4,8 @@
 
 Kiwi runs a persistent, repository-scoped runner in a restricted Docker
 container. It provides CI compute after host restarts without Dandelion. The
-Panther workflow still accepts only manually dispatched jobs on reviewed `main`
-or `codex/` branches. The container has two CPUs, 4 GiB RAM, no host mounts,
+Panther workflow accepts nightly scheduled jobs on reviewed `main` and manually dispatched
+jobs on reviewed `main` or `codex/` branches. The container has two CPUs, 4 GiB RAM, no host mounts,
 no Docker socket, no AWS credentials, and no private game files. Its registration
 credential remains inside the container; a new registration is required if
 that container is removed.
@@ -75,7 +75,8 @@ the exact stopped container. Completed ephemeral runners normally remove their o
 
 ## Security and limits
 
-- Manual dispatch only, on reviewed `main` or `codex/` branches in `fourmajor/panther`.
+- Nightly schedules on reviewed default-branch `main`, or manual dispatch on reviewed `main` or
+  `codex/` branches in `fourmajor/panther`; see `docs/continuous-quality.md`.
   GitHub requires repository write access to dispatch workflows; trusted collaborators with
   that access can dispatch and rerun CI without an account-specific allowlist. No PR or fork
   event triggers. Repository write access does not grant runner registration/administration
