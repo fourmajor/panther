@@ -1,4 +1,5 @@
 import {AssetArchive} from "./asset-archive";
+import {assetCatalogPartitions} from "./asset-catalog-contract";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Duration, RemovalPolicy } from "aws-cdk-lib";
@@ -173,7 +174,7 @@ export class EditorialProcessing extends Construct {
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:PutItem"], resources:[props.browseTable.tableArn],
       conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#*", "novel-library-history#*", "novel-library-ops#*"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[props.browseTable.tableArn],
-      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "novel-library#chapter#*", "v4#*#all"]}}}));
+      conditions:{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["novel-library#story#*", "novel-library#chapter#*", ...assetCatalogPartitions("all")]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:ConditionCheckItem"], resources:[table.tableArn],
       conditions:{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["TASKS"]}}}));
     library.addToRolePolicy(new iam.PolicyStatement({actions:["dynamodb:GetItem"], resources:[props.catalogTable.tableArn],

@@ -12,6 +12,7 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as apigw from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { Construct } from "constructs";
+import {assetCatalogPartitions} from "./asset-catalog-contract";
 
 export class AssetBrowseIndex extends Construct {
   readonly table: dynamodb.Table;
@@ -36,7 +37,7 @@ export class AssetBrowseIndex extends Construct {
     }));
     props.reader.addToRolePolicy(new iam.PolicyStatement({
       actions: ["dynamodb:ConditionCheckItem"], resources: [table.tableArn],
-      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["v4#*#transcripts", "v4#*#all"] } },
+      conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": assetCatalogPartitions("transcripts", "all") } },
     }));
     props.api.addRoutes({ path: "/transcript-selection", methods: [apigw.HttpMethod.GET, apigw.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration("TranscriptSelection", props.reader),

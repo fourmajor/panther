@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
+import {assetCatalogVersion, assetCatalogSections, assetCatalogPartitions} from "../lib/asset-catalog-contract";
 
 function mediaExplorerTemplate(context = {}, notifications = false): Template {
   const app = new App({context});
@@ -153,6 +154,24 @@ test("browsing uses retained on-demand indexes and event-driven read-only S3 ind
   template.resourceCountIs("AWS::EC2::NatGateway",0);
 });
 
+test("catalog IAM guards match the runtime migration version and every archive section", () => {
+  const runtime = fs.readFileSync(path.join(__dirname, "../../lambda/media-api/browse_index.py"), "utf8");
+  assert.equal(assetCatalogVersion, Number(runtime.match(/^VERSION = (\d+)$/m)?.[1]));
+  const sections = [...(runtime.match(/^SECTIONS = \((.+)\)$/m)?.[1] || "").matchAll(/"([a-z]+)"/g)].map(match => match[1]);
+  assert.deepEqual([...assetCatalogSections], sections);
+  const statements = Object.values(mediaExplorerTemplate().findResources("AWS::IAM::Policy"))
+    .flatMap(resource => resource.Properties.PolicyDocument.Statement);
+  const keys = (statement: any): string[] => statement.Condition?.["ForAllValues:StringLike"]?.["dynamodb:LeadingKeys"] || [];
+  const guards = statements.filter(statement => keys(statement).some(key => /^v\d+#/.test(key)));
+  assert.ok(guards.length >= 6, "All catalog-consuming IAM roles must be inspected");
+  for (const statement of guards) for (const key of keys(statement).filter(value => /^v\d+#/.test(value))) {
+    assert.ok(assetCatalogPartitions(...assetCatalogSections).includes(key), `Stale or unknown catalog IAM scope: ${key}`);
+  }
+  const archive = guards.find(statement => [statement.Action].flat().includes("dynamodb:DeleteItem"));
+  assert.ok(archive);
+  assert.deepEqual(keys(archive), assetCatalogPartitions(...assetCatalogSections));
+});
+
 test("canonical transcript selections have JWT routes and partition-scoped transactional permissions", () => {
   const template = mediaExplorerTemplate();
   for (const method of ["GET", "POST"]) template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -167,7 +186,8 @@ test("canonical transcript selections have JWT routes and partition-scoped trans
     "transcript-selection#*", "transcript-selection-ops#*", "transcript-selection-history#*",
     "video-collections#*", "video-collection-ops#*", "video-collection-history#*",
   ]);
-  const guard = statements.find(statement => JSON.stringify(statement.Condition || {}).includes("v4#*#transcripts"));
+  const guard = statements.find(statement => JSON.stringify(statement.Condition || {}).includes(assetCatalogPartitions("transcripts")[0]));
+  assert.ok(guard);
   assert.deepEqual([guard.Action].flat(), ["dynamodb:ConditionCheckItem"]);
 });
 
@@ -179,7 +199,7 @@ test("private video collections reuse indexed on-demand storage and scoped write
   const policies=JSON.stringify(template.findResources("AWS::IAM::Policy"));
   assert.match(policies,/video-collection-history#\*/);
   assert.match(policies,/dynamodb:BatchGetItem/);
-  assert.match(policies,/v4#\*#all/);
+  assert.ok(policies.includes(assetCatalogPartitions("all")[0]));
   const headers=JSON.stringify(template.findResources("AWS::CloudFront::ResponseHeadersPolicy"));
   assert.match(headers,/media-src 'self' blob:/);
   template.resourceCountIs("AWS::EC2::NatGateway",0);

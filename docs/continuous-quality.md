@@ -15,6 +15,9 @@ branch; merging the workflow and observing its first main run are rollout requir
 1. `test` runs Python, React and infrastructure checks, then the critical reader/session journeys
    before the full browser suite and synthesis. Broken core journeys fail early rather than
    waiting behind hundreds of unrelated tests. This smoke gate never replaces the full suite.
+   Infrastructure tests also compare every catalog-consuming IAM scope with the actual runtime
+   catalog version/sections, including archive removal from Sessions. A migration must not pass
+   source reader tests while leaving write/selection guards pointed at an obsolete partition.
 2. `deployed-journeys` runs on nightly/manual main checks even when source tests fail, or when
    explicitly dispatched with `suite=deployed` (live checks only) or `suite=full-and-deployed`
    (both source and live checks) for post-rollout verification of a reviewed branch.

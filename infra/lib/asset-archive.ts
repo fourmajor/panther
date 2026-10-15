@@ -7,6 +7,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import {assetCatalogPartitions, assetCatalogSections} from './asset-catalog-contract';
 
 /** Archives hide current catalog entries, retaining immutable bytes and historical links. */
 export class AssetArchive extends Construct {
@@ -21,7 +22,7 @@ export class AssetArchive extends Construct {
     props.bucket.grantRead(fn,'games/*');props.browseTable.grant(fn,'dynamodb:GetItem','dynamodb:Query');
     for(const table of props.jobTables)table.grant(fn,'dynamodb:GetItem');
     fn.addToRolePolicy(new iam.PolicyStatement({actions:['dynamodb:PutItem','dynamodb:UpdateItem'],resources:[props.browseTable.tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':['asset-archives-v1#*','asset-archive-ops-v1#*','asset-reference-epoch-v1#*']}}}));
-    fn.addToRolePolicy(new iam.PolicyStatement({actions:['dynamodb:DeleteItem'],resources:[props.browseTable.tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':['v4#*#all','v4#*#audio','v4#*#transcripts','v4#*#videos','v4#*#novels']}}}));
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:['dynamodb:DeleteItem'],resources:[props.browseTable.tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':assetCatalogPartitions(...assetCatalogSections)}}}));
 
     const maintenance=new lambda.Function(this,'Maintenance',{runtime:lambda.Runtime.PYTHON_3_13,architecture:lambda.Architecture.ARM_64,handler:'asset_archive_migration.handler',code:lambda.Code.fromAsset(path.join(__dirname,'../../lambda/media-api'),{exclude:['**/__pycache__/**','**/*.pyc']}),timeout:Duration.seconds(60),memorySize:512,environment:{ASSET_BUCKET_NAME:props.bucket.bucketName,ASSET_BROWSE_TABLE:props.browseTable.tableName,CATALOG_TABLE:props.catalogTable.tableName,MODEL_JOBS_TABLE:props.jobTables[0].tableName,EDITORIAL_TABLE:props.jobTables[1].tableName,ASSET_GENERATION_TABLE:props.jobTables[2].tableName,ASSET_MIGRATORS:props.accessEnvironment.ASSET_MIGRATORS}});
     props.browseTable.grant(maintenance,'dynamodb:GetItem','dynamodb:Query');
