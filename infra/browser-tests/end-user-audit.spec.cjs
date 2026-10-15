@@ -25,8 +25,8 @@ for(const width of [1280,390]){
   test.setTimeout(90000);await page.setViewportSize({width,height:900});
   const text='[00:00] Alex: The lantern is lit.\n[00:02] Unidentified speaker: Café — <script>window.transcriptExecuted=true</script>\n'+('A'.repeat(300)+'\n').repeat(30)+'[02:45:00] Session ends.';
   const bytes=Buffer.from(text);
-  const response=await page.request.post(origin+'/uploads',{headers,data:{gameId:'preview-campaign',assetId:'plain-text-session',kind:'corrected-transcript',filename:'transcript.txt',size:bytes.length,contentType:'text/plain; charset=utf-8',sha256:crypto.createHash('sha256').update(bytes).digest('base64'),metadata:{title:'Session transcript',category:'reference'}}});
-  expect(response.ok()).toBe(true);const signed=await response.json();expect((await page.request.put(signed.url,{headers:signed.headers,data:bytes})).ok()).toBe(true);
+  const response=await page.request.post(origin+'/uploads',{headers,data:{gameId:'preview-campaign',assetId:'plain-text-session',kind:'corrected-transcript',filename:'transcript.txt',size:bytes.length,contentType:'text/plain',sha256:crypto.createHash('sha256').update(bytes).digest('base64'),metadata:{title:'Session transcript',category:'reference'}}});
+  expect(response.ok(),await response.text()).toBe(true);const signed=await response.json();expect((await page.request.put(signed.url,{headers:signed.headers,data:bytes})).ok()).toBe(true);
   const target=origin+'/games/preview-campaign/assets?asset='+encodeURIComponent(signed.key);
   // Reproduce hosts that forbid framing while permitting ordinary authenticated reads.
   await page.route('**/*',async route=>{if(route.request().isNavigationRequest()&&route.request().frame().parentFrame())return route.abort('blockedbyresponse');return route.fallback();});
