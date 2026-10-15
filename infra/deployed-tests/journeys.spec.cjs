@@ -50,7 +50,9 @@ async function fixture(page){
   else if(url.pathname==='/games')body={games};
   else if(url.pathname==='/game')body={game:games[0],players:[],memberships:[],characters:[]};
   else if(url.pathname==='/assets')body={assets:url.searchParams.get('section')==='sessions'?assets.slice(0,2):assets,cursor:null};
-  else if(url.pathname==='/object-url'){const found=assets.find(a=>a.key===key);body=found?{...found,url:origin+'/__qa__/'+(key===portrait?'portrait.svg':'transcript.txt'),expiresIn:300}:{error:'Unknown QA asset'};}
+  // Chromium's native download path can bypass Playwright request routing. Use
+  // an entirely in-memory attachment; never send a fixture download to production.
+  else if(url.pathname==='/object-url'){const found=assets.find(a=>a.key===key);body=found?{...found,url:url.searchParams.get('download')==='true'?'data:text/plain;charset=utf-8,'+encodeURIComponent(text):origin+'/__qa__/'+(key===portrait?'portrait.svg':'transcript.txt'),expiresIn:300}:{error:'Unknown QA asset'};}
   else if(url.pathname==='/asset-document')body={...assets.find(a=>a.key===key),document:transcript};
   else if(url.pathname==='/transcript-selection')body={selection:null};
   else if(url.pathname==='/transcript-summary')body={state:'unavailable'};
