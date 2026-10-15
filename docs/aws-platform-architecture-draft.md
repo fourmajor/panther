@@ -2,6 +2,11 @@
 
 Status: Early draft
 
+Operational update (2026-10-15): the manual-only CI descriptions below preserve the initial
+baseline proposal, not current policy. Reviewed `main` now has owner-authorized nightly
+self-hosted quality checks; arbitrary branch, PR and fork execution remains disabled.
+See `continuous-quality.md` and `self-hosted-runner.md` for the current test/release process.
+
 ## Purpose
 
 This document describes the initial cloud architecture for Panther. It focuses on establishing

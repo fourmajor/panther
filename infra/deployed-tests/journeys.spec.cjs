@@ -1,6 +1,7 @@
 // Real deployed HTML/JS/CSS/CSP, synthetic API/media only. No real account,
 // credentials, private game assets, provider requests or production writes.
 const {test,expect}=require('@playwright/test');
+test.use({screenshot:'only-on-failure',trace:'retain-on-failure'});
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {origin,publicRead}=require('./safety.cjs');
 const root=path.resolve(__dirname,'../../web/media-explorer');

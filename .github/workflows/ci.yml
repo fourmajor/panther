@@ -56,6 +56,13 @@ jobs:
         working-directory: infra
       - run: npx playwright install chromium
         working-directory: infra
+      - name: Critical end-user smoke (readers and session discovery)
+        run: >-
+          npx playwright test browser-tests/end-user-audit.spec.cjs
+          browser-tests/session-library.spec.cjs
+          --grep "Plain text transcript|Sessions opens readable"
+          --workers=1 --reporter=line --output=smoke-test-results
+        working-directory: infra
       - name: Playwright browser tests (self-hosted)
         run: npm run test:browser -- --reporter=line
         working-directory: infra
@@ -64,7 +71,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: browser-test-results
-          path: infra/test-results/
+          path: |
+            infra/test-results/
+            infra/smoke-test-results/
           if-no-files-found: ignore
           retention-days: 7
       - run: >-

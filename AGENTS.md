@@ -294,8 +294,8 @@
   conceal clipping, overlays, or otherwise inaccessible controls.
 - If a required browser test cannot run, report the blocker and do not claim frontend verification
   or routine merge readiness. Static checks and mocked API tests alone are not substitutes.
-- The manual CI workflow already runs Playwright. This requirement does not enable automatic CI
-  or require CI runs for documentation-only or unrelated backend changes.
+- The CI workflow already runs Playwright. The separately owner-authorized nightly main check
+  does not enable automatic branch/PR execution or require manual CI for docs-only/backend changes.
 
 ## Tooling and CI/CD
 

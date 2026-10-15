@@ -18,4 +18,6 @@ test('nightly quality is scoped to reviewed source, owned runners and read-only 
   assert.doesNotMatch(workflow,/pull_request:|pull_request_target:|push:/);assert.doesNotMatch(workflow,/contents: write|issues: write|runs-on: ubuntu/);
   assert.match(workflow,/runs-on: \[self-hosted, Linux, panther-local\]/);assert.match(workflow,/contents: read/);assert.match(workflow,/cancel-in-progress: false/);
   assert.match(workflow,/Deployed website journeys/);assert.match(workflow,/npm run test:deployed/);assert.match(workflow,/deployed-journey-results/);
+  assert.ok(workflow.indexOf('Critical end-user smoke')<workflow.indexOf('name: Playwright browser tests'));
+  assert.match(workflow,/npm run test:browser/);assert.match(workflow,/smoke-test-results/);
 });

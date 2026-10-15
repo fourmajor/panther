@@ -12,7 +12,9 @@ runner, private credentials, paid inference, automatic merge/deploy or PR/fork e
 The workflow is serialized and has explicit deadlines. Schedules only activate from the default
 branch; merging the workflow and observing its first main run are rollout requirements.
 
-1. `test` runs Python, React, infrastructure, the full source browser suite and synthesis.
+1. `test` runs Python, React and infrastructure checks, then the critical reader/session journeys
+   before the full browser suite and synthesis. Broken core journeys fail early rather than
+   waiting behind hundreds of unrelated tests. This smoke gate never replaces the full suite.
 2. `deployed-journeys` runs on nightly/manual main checks even when source tests fail, or when
    explicitly dispatched with `suite=deployed` for post-rollout verification of a reviewed branch.
    Ordinary pre-merge branch CI does not compare unpublished web bytes to production (which would
