@@ -11,7 +11,7 @@ from panther_journal import cloud
 
 @click.group()
 def videos():
-    """Browse/save private video collections; never start generation."""
+    """Browse films, save collections, and render reviewed procedural companions."""
 
 
 from panther_journal.tv_library import register as register_tv  # noqa: E402
@@ -113,3 +113,6 @@ def migrate_workspace(apply, inventory_hash, storyboard_cuts):
 
 from panther_journal.episode_rendering import register as register_episode_rendering  # noqa: E402
 register_episode_rendering(videos)
+
+from panther_journal.procedural_video import register as register_procedural  # noqa: E402
+register_procedural(videos)

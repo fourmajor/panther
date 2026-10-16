@@ -8,6 +8,12 @@ Both native FLAC and browser WAV completed sets use this owned-compute path; ori
 and capture warnings remain unchanged. This does not enable or repeat paid browser ASR.
 No new always-on cloud compute or paid recognition provider is required.
 
+Each session defaults to separate procedural and model-generated movie editions from the
+same ordered scenes, alongside its novel chapter. The procedural owned-compute companion
+worker is described in [procedural-session-videos.md](procedural-session-videos.md).
+Model-film preparation remains automatic; paid rendering still waits for exact storyboard
+approval and the existing session budget. The procedural worker never spends that budget.
+
 Run `panther recording automation worker --config PRIVATE_CONFIG --work-dir PRIVATE_DIRECTORY`.
 `--once` drains each currently eligible recording once. A private per-game `completedAfter`
 activation boundary prevents unexpectedly adapting old tests. Recover older desired sessions

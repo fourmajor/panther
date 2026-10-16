@@ -370,6 +370,19 @@ REVIEW_SCHEMA = obj(
 
 
 def review_scope(stage):
+    if stage == 'procedural-shot-review':
+        return (
+            'Review the selected shot, including its visible motion and direction. '
+            'Adjacent cuts are assessed in the separate final assembled-film review. '
+            'Do not mark screen-direction uncertain solely because adjacent shots are not supplied. '
+            'Missing evidence of the selected shot\'s requested action still fails or blocks review. '
+        )
+    if stage == 'procedural-final-continuity':
+        return (
+            'Review continuity across all supplied assembled shots. A single-shot film has no cuts; '
+            'cross-cut continuity is not applicable in that case. Missing evidence of requested '
+            'visible action still fails or blocks review. '
+        )
     if stage == 'composition-preparation':
         return (
             'This is PRE-GENERATION composition preparation, not footage certification. '
