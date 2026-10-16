@@ -85,6 +85,38 @@ def test_profile_mismatch_and_duplicate_ids(tmp_path):
         speakers.load_profiles(path, 'test-game', model)
 
 
+@pytest.mark.parametrize('bad', [math.nan, math.inf, -math.inf])
+def test_nonfinite_runtime_evidence_serializes_and_preserves_unknown_speech(bad):
+    import json
+    from unittest.mock import Mock
+    from panther_journal.speaker_profile_worker import runtime_embeddings
+
+    good = Mock()
+    good.tolist.return_value = embedding()
+    short = Mock()
+    short.tolist.return_value = [bad] * 16
+    vectors, unavailable = runtime_embeddings(['SPEAKER_00', 'SPEAKER_01'], [good, short])
+    result = json.loads(json.dumps(dict(
+        embeddings=vectors, unavailableEmbeddings=unavailable,
+        turns=[dict(start=0, end=2, speaker='SPEAKER_00'), dict(start=2, end=2.2, speaker='SPEAKER_01')]
+    ), allow_nan=False))
+    lines = [dict(start=0, end=2, text='Known speech.'),
+             dict(start=2, end=2.2, text='Keep this fragment.')]
+    labeled = speakers.label_lines(lines, result, [{'playerId': 'alex', 'embedding': embedding()}], 0)
+    assert labeled[0]['playerId'] == 'alex'
+    assert labeled[1]['playerId'] is None and labeled[1]['attributionWarnings']
+    assert [(x['start'], x['end'], x['text']) for x in labeled] == [
+        (x['start'], x['end'], x['text']) for x in lines]
+    assert result['unavailableEmbeddings']['SPEAKER_01']['values'] == [repr(bad)] * 16
+    with pytest.raises(click.ClickException):
+        speakers.vector(result['embeddings']['SPEAKER_01'])  # Cannot become an enrollment.
+    with pytest.raises(click.ClickException):
+        speakers.label_lines(lines, {**result, 'unavailableEmbeddings': {}}, [], 0)
+    short.tolist.return_value = [bad]  # Malformed shape still fails closed.
+    with pytest.raises(ValueError, match='Malformed'):
+        runtime_embeddings(['short'], [short])
+
+
 @pytest.mark.parametrize('mode', ['valid', 'missing-reference', 'ambiguous-reference'])
 def test_enrollment_uses_explicit_reference_not_clustering_vector(tmp_path, monkeypatch, mode):
     import json

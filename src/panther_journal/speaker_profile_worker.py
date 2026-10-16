@@ -2,12 +2,35 @@
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
 import wave
 
 os.environ.update(HF_HUB_OFFLINE='1', HF_HUB_DISABLE_TELEMETRY='1', PYANNOTE_METRICS_ENABLED='0')
+
+
+def runtime_embeddings(labels, values):
+    """Retain non-finite runtime evidence without inventing a usable identity vector."""
+    embeddings, unavailable = {}, {}
+    for i, label in enumerate(labels):
+        vector = values[i].tolist()
+        if not isinstance(vector, list) or not 16 <= len(vector) <= 4096 or any(
+            type(x) not in (float, int) for x in vector
+        ):
+            raise ValueError('Malformed runtime speaker embedding')
+        if any(not math.isfinite(x) for x in vector):
+            embeddings[label] = None
+            unavailable[label] = {
+                'reason': 'non-finite-runtime-output',
+                # JSON forbids NaN/Infinity numbers. Strings preserve the exact
+                # returned values for diagnosis; they are never matching inputs.
+                'values': [repr(x) for x in vector],
+            }
+        else:
+            embeddings[label] = vector
+    return embeddings, unavailable
 
 
 def process(pipeline, device, audio, output, reference=False):
@@ -21,9 +44,12 @@ def process(pipeline, device, audio, output, reference=False):
         samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype='<i2').astype(np.float32) / 32768
     result = pipeline({'waveform': torch.from_numpy(samples).unsqueeze(0), 'sample_rate': 16000})
     labels = result.speaker_diarization.labels()
+    embeddings, unavailable = runtime_embeddings(labels, result.speaker_embeddings)
     document = {'inferenceDevice': device, 'turns': [{'start': float(t.start), 'end': float(t.end), 'speaker': s}
                           for t, _, s in result.speaker_diarization.itertracks(yield_label=True)],
-                'embeddings': {s: result.speaker_embeddings[i].tolist() for i, s in enumerate(labels)}}
+                'embeddings': embeddings}
+    if unavailable:
+        document['unavailableEmbeddings'] = unavailable
     if reference:
         # Only an explicitly confirmed single-speaker enrollment may use the whole waveform.
         # Preserve diarization evidence separately; its clustering vector is not this reference.
