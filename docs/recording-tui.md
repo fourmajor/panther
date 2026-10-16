@@ -22,8 +22,13 @@ Native metering runs on the existing consumer, never the real-time microphone ca
 failed meter writes do not abort recording. Its disposable local file is not uploaded.
 
 - **S / Ctrl+C / Stop & save:** request graceful stop, then wait for the original controller
-  to finalize/verify its final chunk. This is not an immediate exit.
-- **Q:** stop first; press again after finalization to exit.
+  to finalize/verify its final chunk. The dashboard exits automatically after successful
+  finalization and, with `--sync`, confirmed completion of the entire cloud chunk set.
+  A fixed status above the button explains what it is waiting for. Errors keep the screen
+  open with recovery details; they never count as successful saving. With `--no-sync`,
+  successful local finalization is sufficient. No second click is needed.
+- **Q:** requests the same stop-and-exit while recording. Once stopped, Q can explicitly
+  exit even if backup is still pending or recovery is needed; originals remain retained.
 - **Tab / arrows / Page Up / Page Down:** focus and scroll transcript/event history.
 - **L:** return to live speech. New text does not move a reader who scrolled back.
 - **H:** show help in the persistent events panel.

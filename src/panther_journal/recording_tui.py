@@ -120,6 +120,7 @@ class RecorderBackend:
             text=None,
             peak=None,
             events=[],
+            ready_to_exit=False,
         )
         if not self.folder:
             if not running:
@@ -243,7 +244,7 @@ class RecorderBackend:
                     "Live worker exited with an error. Check local model/tools and tui-preview.log; restart recording live for this folder."
                 )
         if not running:
-            complete = bool(result["recording"])
+            complete = result["recording"].get("status") == "complete"
             result["capture"] = (
                 "Saved and finalized"
                 if complete
@@ -253,7 +254,26 @@ class RecorderBackend:
                 result["events"].append(
                     "Recorder reported an error. Preserve this folder; inspect controller.log/capture.log and run recording recover then audit."
                 )
+            if complete and result["parts"] != len(result["recording"]["parts"]):
+                result["events"].append(
+                    "Final manifest and saved chunk counts disagree. Preserve this folder and run recording audit before closing."
+                )
             result["unsynced"] = max(0, result["parts"] - result["synced"])
+            # A stopped process or zero pending chunks alone is not completion.
+            result["ready_to_exit"] = bool(
+                complete
+                and self.process.returncode == 0
+                and result["parts"] == len(result["recording"]["parts"])
+                and not result["events"]
+                and (
+                    not self.sync
+                    or (
+                        result["sync"].get("complete") is True
+                        and not result["sync"].get("error")
+                        and result["synced"] == result["parts"]
+                    )
+                )
+            )
         return result
 
 
@@ -268,6 +288,7 @@ class RecordingApp(App):
     #events { height: 7; min-height: 4; border: round #e69b76; }
     Button { margin: 0 1 0 0; }
     #summary { height: auto; color: #e9c96b; }
+    #exit-status { height: auto; padding: 0 1; color: #e9c96b; }
     """
     BINDINGS = [
         Binding("ctrl+c", "stop", "Stop safely", priority=True),
@@ -285,6 +306,7 @@ class RecordingApp(App):
         self.polling = False
         self.following = True
         self.tick = 0
+        self.exit_when_ready = False
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="body"):
@@ -294,6 +316,7 @@ class RecordingApp(App):
             yield RichLog(id="events", wrap=True, markup=False, auto_scroll=True)
             yield Static(id="summary", markup=False)
         # The safety control stays outside the scrollable body at every size.
+        yield Static("", id="exit-status", markup=False)
         yield Button("Stop & save", id="stop", variant="warning")
         yield Footer()
 
@@ -383,6 +406,22 @@ class RecordingApp(App):
             self.transcript = text
         for message in status["events"]:
             self.add_event(message)
+        if self.exit_when_ready:
+            stop = self.query_one("#stop", Button)
+            stop.disabled = True
+            stop.label = "Saving…"
+            message = (
+                "Finalizing audio — this window will close when ready."
+                if status["running"]
+                else "Waiting for cloud backup — this window will close when ready."
+            )
+            if not status["running"] and not status.get("ready_to_exit") and (
+                status["events"] or status["capture"] != "Saved and finalized"
+            ):
+                message = "Could not finish safely. Check recovery details above; Q exits without deleting audio."
+            self.query_one("#exit-status", Static).update(Text(message))
+            if status.get("ready_to_exit"):
+                self.exit()
         if not status["running"]:
             self.query_one("#stop", Button).disabled = True
             folder = status.get("folder") or self.backend.root
@@ -396,9 +435,13 @@ class RecordingApp(App):
             )
 
     def action_stop(self):
+        self.exit_when_ready = True
+        self.query_one("#exit-status", Static).update(
+            "Saving audio and checking backup — this window will close when ready."
+        )
         self.backend.stop()
         self.add_event(
-            "Stop requested. Waiting for the recorder to close and verify its final audio; backup remains independent."
+            "Stop requested. This window will close after verified local saving and, when enabled, completed cloud backup. Errors keep it open."
         )
 
     def action_quit(self):
@@ -415,7 +458,7 @@ class RecordingApp(App):
 
     def action_help(self):
         self.add_event(
-            "S / Ctrl+C: stop and finalize; Q: stop first, then exit after finalization; L: return to live. Tab: change focus; arrows/PageUp/PageDown: read history. Recording, backup and provisional transcription are separate. No animation: --reduced-motion."
+            "S / Ctrl+C: stop, save and exit automatically when ready; Q: stop first, or exit a stopped recording without waiting for backup. L: return to live. Tab: change focus; arrows/PageUp/PageDown: read history. Recording, backup and provisional transcription are separate. No animation: --reduced-motion."
         )
 
     def on_button_pressed(self, event: Button.Pressed):
