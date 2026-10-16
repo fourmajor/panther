@@ -198,3 +198,67 @@ def test_plain_cli_stays_noninteractive_and_tui_flags_are_explicit():
         ],
     )
     assert result.exit_code != 0 and "require --tui" in result.output
+
+
+@pytest.mark.parametrize("size", [(100, 36), (40, 16)])
+def test_stop_button_waits_then_exits_without_second_click(size):
+    async def exercise():
+        backend = FakeBackend()
+        app = RecordingApp(backend)
+        async with app.run_test(size=size) as pilot:
+            await app.refresh_status()
+            await pilot.click("#stop")
+            assert backend.stopped and app.is_running
+            await app.refresh_status()
+            assert app.query_one("#stop", Button).disabled
+            notice = app.query_one("#exit-status", Static)
+            assert "close when ready" in str(notice.content)
+            assert notice.region.bottom <= app.screen.size.height - 1
+            backend.status.update(running=False, capture="Saved and finalized", events=[])
+            await app.refresh_status()
+            assert app.is_running  # No final cloud-set confirmation yet.
+            assert "Waiting for cloud backup" in str(notice.content)
+            backend.status.update(events=["Cloud backup failed. Check Panther login/network."])
+            await app.refresh_status()
+            assert app.is_running and "Could not finish safely" in str(notice.content)
+            backend.status.update(events=[], ready_to_exit=True)
+            await app.refresh_status()
+            await pilot.pause()
+            assert not app.is_running
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "sync_enabled,complete,error,synced,exit_code,manifest_status,expected",
+    [
+        (True, True, None, 1, 0, "complete", True),
+        (True, False, None, 1, 0, "complete", False),
+        (True, True, "AuthenticationError", 1, 0, "complete", False),
+        (True, True, None, 0, 0, "complete", False),
+        (True, True, None, 1, 1, "complete", False),
+        (True, True, None, 1, 0, "interrupted", False),
+        (False, False, None, 0, 0, "complete", True),
+    ],
+)
+def test_backend_exit_requires_successful_finalization(
+    tmp_path, sync_enabled, complete, error, synced, exit_code, manifest_status, expected
+):
+    from test_recording import recording_fixture
+
+    backend, folder = backend_at(tmp_path)
+    _, record = recording_fixture(tmp_path)
+    record.status = manifest_status
+    (folder / "recording.json").write_text(record.model_dump_json())
+    checkpoints = folder / "checkpoints"
+    checkpoints.mkdir()
+    (checkpoints / "part-0000.json").write_text("{}")
+    (folder / "sync-status.json").write_text(
+        json.dumps(dict(complete=complete, error=error, partsSynced=synced))
+    )
+    backend.sync = sync_enabled
+    backend.process.poll.return_value = exit_code
+    backend.process.returncode = exit_code
+    assert backend.snapshot()["ready_to_exit"] is expected
+    (folder / "recording.json").unlink()
+    assert not backend.snapshot()["ready_to_exit"]
