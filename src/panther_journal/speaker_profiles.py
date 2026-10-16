@@ -157,6 +157,16 @@ def label_lines(lines, result, profiles, offset):
              for t in result['turns']]
     mapping, unavailable = {}, set()
     for label, embedding in result['embeddings'].items():
+        evidence = result.get('unavailableEmbeddings', {}).get(label, {})
+        if embedding is None and evidence.get('reason') == 'non-finite-runtime-output':
+            values = evidence.get('values')
+            if not isinstance(values, list) or not 16 <= len(values) <= 4096 or not any(
+                x in ('nan', 'inf', '-inf') for x in values
+            ):
+                raise click.ClickException('Invalid unavailable speaker evidence')
+            mapping[label] = None
+            unavailable.add(label)
+            continue
         try:
             candidate = vector(embedding)
         except EmptySpeakerEmbedding:

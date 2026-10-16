@@ -44,6 +44,12 @@ An all-zero runtime speaker embedding is unavailable identity evidence, not perm
 choose the nearest player or discard speech. Preserve that analyzer result and mark affected
 utterances unassigned with an attribution warning. Malformed evidence and invalid enrolled
 profiles still fail closed.
+Very brief speech can also produce non-finite runtime embeddings. The analyzer retains
+those exact values as diagnostic strings in `unavailableEmbeddings`, emits no usable
+identity vector for that turn, and preserves its speech/timing with an unassigned-speaker
+warning. This cannot authorize enrollment or weaken matching thresholds. Earlier failed
+partial results remain preserved; resuming reuses completed chunk checkpoints rather than
+retranscribing the session.
 When fresh ASR preserves readable text but returns invalid detailed timestamps, retain the
 original response and all text in source order with an explicitly approximate whole-chunk
 interval. Keep player identity unknown for that interval. Never clip away words, infer precise
