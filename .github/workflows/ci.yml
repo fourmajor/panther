@@ -8,9 +8,9 @@ on:
         type: choice
         options: [full, full-and-deployed, deployed]
         default: full
+  # Avoid GitHub's documented top-of-hour scheduling congestion. This remains
+  # best-effort: the daily audit must verify that a scheduled run really exists.
   schedule:
-    # Avoid GitHub's documented top-of-hour scheduling congestion. This remains
-    # best-effort: the daily audit must verify that a scheduled run really exists.
     - cron: "37 12 * * *"
 
 concurrency:
