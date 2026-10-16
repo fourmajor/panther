@@ -9,7 +9,7 @@ def test_playwright_runs_only_on_reviewed_scheduled_or_dispatched_owned_compute(
         Loader=yaml.BaseLoader,
     )
     assert set(workflow["on"]) == {"workflow_dispatch", "schedule"}
-    assert workflow["on"]["schedule"] == [{"cron": "0 12 * * *"}]
+    assert workflow["on"]["schedule"] == [{"cron": "37 12 * * *"}]
     assert workflow["on"]["workflow_dispatch"]["inputs"]["suite"]["default"] == "full"
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     job = workflow["jobs"]["test"]

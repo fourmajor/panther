@@ -6,11 +6,24 @@ An HTTP 200 or downloaded file does not establish that users can find and read/p
 
 ## Daily execution and failure ownership
 
-`ci.yml` runs every day at 12:00 UTC on reviewed default-branch source, and manually on reviewed
+`ci.yml` is scheduled every day at 12:37 UTC on reviewed default-branch source, and manually on reviewed
 `main`/`codex/` branches. Both jobs use the existing restricted, owned Docker runner. No hosted
 runner, private credentials, paid inference, automatic merge/deploy or PR/fork execution is enabled.
 The workflow is serialized and has explicit deadlines. Schedules only activate from the default
 branch; merging the workflow and observing its first main run are rollout requirements.
+
+GitHub schedules are best-effort, not a delivery guarantee. The off-hour minute follows
+[GitHub's scheduling troubleshooting guidance](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows):
+top-of-hour load can delay or drop scheduled runs. If no invocation appears, first confirm
+the default-branch workflow is active, its cron is present, the runner is online and no run
+is already queued/in progress. Do not mistake a missing invocation for a test failure or
+claim its exact cause from absent logs. Changing the cron also refreshes GitHub's associated
+schedule actor, which its documentation recommends for actor-related scheduling failures.
+A reviewed foreground manual full run can fill the coverage gap, but cannot prove the
+schedule works. The daily read-only audit must retain that distinction and verify an actual
+`event=schedule` run with both jobs before reporting recurring coverage as established.
+Investigate repeated missed invocations rather than silently adding duplicate runs, granting
+broader token permissions or installing an unapproved external scheduler.
 
 1. `test` runs Python, React and infrastructure checks, then the critical reader/session journeys
    before the full browser suite and synthesis. Broken core journeys fail early rather than
