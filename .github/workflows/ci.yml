@@ -9,7 +9,9 @@ on:
         options: [full, full-and-deployed, deployed]
         default: full
   schedule:
-    - cron: "0 12 * * *"
+    # Avoid GitHub's documented top-of-hour scheduling congestion. This remains
+    # best-effort: the daily audit must verify that a scheduled run really exists.
+    - cron: "37 12 * * *"
 
 concurrency:
   group: panther-self-hosted-quality
