@@ -300,6 +300,53 @@ def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypa
     assert store.value is None
 
 
+@pytest.mark.parametrize("amr", [["pwd"], ["pwd", "otp", "mfa"]])
+def test_additive_cognito_tokens_survive_cli_login_refresh_and_api(setup, monkeypatch, amr):
+    store, config = setup
+    claims = {"acr": "urn:cognito:loa:4", "amr": amr, "future:optional": "x" * 4096}
+    token = "test." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode() + ".test"
+    refreshed = token + "-refreshed"
+    monkeypatch.setattr(
+        cloud,
+        "cognito",
+        lambda _config: SimpleNamespace(
+            initiate_auth=lambda **_kwargs: {
+                "AuthenticationResult": {
+                    "IdToken": token,
+                    "RefreshToken": "synthetic-refresh",
+                    "ExpiresIn": 3600,
+                }
+            },
+            get_tokens_from_refresh_token=lambda **_kwargs: {
+                "AuthenticationResult": {
+                    "IdToken": refreshed,
+                    "RefreshToken": "synthetic-rotated",
+                    "ExpiresIn": 3600,
+                }
+            },
+        ),
+    )
+    result = CliRunner().invoke(
+        main, ["login", "--username", "example-editor"], input="synthetic-password\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert token not in result.output
+    assert json.loads(store.value)["idToken"] == token
+    saved = json.loads(store.value)
+    saved["expiresAt"] = time.time() - 1
+    store.value = json.dumps(saved)
+    calls = []
+
+    def request(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(status_code=200, json=lambda: {"games": []})
+
+    monkeypatch.setattr(cloud.requests, "request", request)
+    assert cloud.api(config, "GET", "/games") == {"games": []}
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer " + refreshed
+    assert json.loads(store.value)["refreshToken"] == "synthetic-rotated"
+
+
 def test_login_handles_authenticator_challenge(setup, monkeypatch):
     def respond(**kwargs):
         assert kwargs["ChallengeResponses"]["SOFTWARE_TOKEN_MFA_CODE"] == "123456"

@@ -79,6 +79,54 @@ def test_refresh_rotates_httponly_cookie_never_returns_long_credential(session):
     assert "no-store" in result["headers"]["cache-control"]
 
 
+@pytest.mark.parametrize("amr", [["pwd"], ["pwd", "otp", "mfa"]])
+@pytest.mark.parametrize("route", ["session", "refresh"])
+def test_additive_cognito_claims_pass_through_exchange_and_refresh(
+    session, monkeypatch, amr, route
+):
+    module, client, _ = session
+    claims = {
+        "sub": "synthetic-subject",
+        "acr": "urn:cognito:loa:1" if len(amr) == 1 else "urn:cognito:loa:4",
+        "amr": amr,
+        "future:optional": {"value": "x" * 4096},
+    }
+    # Deliberately unsigned fixture: transport tests must not claim signature verification.
+    token = "test." + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode() + ".test"
+    assert len(token) > 4096
+    monkeypatch.setattr(
+        module,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(
+            json.dumps(
+                {
+                    "id_token": token,
+                    "access_token": "private-access",
+                    "expires_in": 3600,
+                    "refresh_token": "rotated-secret",
+                    "future_response_field": ["optional"],
+                }
+            ).encode()
+        ),
+    )
+    client.get_tokens_from_refresh_token = lambda **_kwargs: {
+        "AuthenticationResult": {
+            "IdToken": token,
+            "AccessToken": "private-access",
+            "ExpiresIn": 3600,
+            "RefreshToken": "rotated-secret",
+            "FutureResponseField": ["optional"],
+        }
+    }
+    request = event(route, body={"code": "code", "codeVerifier": "x" * 43})
+    result = module.handler(request, None)
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"]) == {"id_token": token, "expires_in": 3600}
+    assert module.read_cookie({"cookies": result["cookies"]}) == "rotated-secret"
+    assert "private-access" not in result["body"]
+    assert "rotated-secret" not in result["body"]
+
+
 def account_client(session):
     module, client, calls = session
     client.get_tokens_from_refresh_token = lambda **_kwargs: {

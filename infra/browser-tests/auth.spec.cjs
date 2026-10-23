@@ -14,9 +14,10 @@ const stack = new PantherMediaExplorerStack(new App(), 'AuthBrowserTest', {
 const policy = Object.values(Template.fromStack(stack).findResources('AWS::CloudFront::ResponseHeadersPolicy'))[0]
   .Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
 const COOKIE = '__Host-panther-refresh';
-const jwt = (expired = false, username = 'test') => 'test.' + Buffer.from(JSON.stringify({ exp: Date.now() / 1000 + (expired ? -60 : 3600), 'cognito:username': username })).toString('base64url') + '.test';
+// Synthetic payloads only: these exercise client parsing, not JWT signature validation.
+const jwt = (expired = false, username = 'test', claims = {}) => 'test.' + Buffer.from(JSON.stringify({ ...claims, exp: Date.now() / 1000 + (expired ? -60 : 3600), 'cognito:username': username })).toString('base64url') + '.test';
 
-async function fixture(context, { remembered = true, username = 'test' } = {}) {
+async function fixture(context, { remembered = true, username = 'test', claims = {} } = {}) {
   const state = { refreshes: 0, exchanges: [], revocations: 0, failure: 0, apiFailureOnce: false, apiTokens: [], apiPaths: [] };
   if (remembered) await context.addCookies([{ name: COOKIE, value: 'synthetic-cookie', domain: 'panther.place', path: '/', httpOnly: true, secure: true, sameSite: 'Strict', expires: Math.floor(Date.now()/1000) + 34560000 }]);
   await context.route('https://test.execute-api.us-west-2.amazonaws.com/**', async route => {
@@ -49,7 +50,7 @@ async function fixture(context, { remembered = true, username = 'test' } = {}) {
         const status = state.failure || 401;
         return route.fulfill({ status, json: {}, headers: status === 401 ? { 'set-cookie': expiredCookie } : {} });
       }
-      return route.fulfill({ json: { id_token: jwt(false, username), expires_in: 3600 }, headers: {
+      return route.fulfill({ json: { id_token: jwt(false, username, claims), expires_in: 3600 }, headers: {
         'set-cookie': `${COOKIE}=synthetic-rotated; Max-Age=34560000; Path=/; Secure; HttpOnly; SameSite=Strict`, 'cache-control': 'no-store',
       } });
     }
@@ -105,6 +106,34 @@ test('additional configured account uses the same authenticated browser session'
 });
 
 for (const width of [1280, 390]) {
+  for (const amr of [['pwd'], ['pwd', 'otp', 'mfa']]) {
+    test(`Cognito additive claims preserve exchange, renewal and API authorization (${amr.join('+')}, ${width}px)`, async ({browser}) => {
+      const context = await browser.newContext({viewport: {width, height: 900}});
+      const claims = {
+        acr: amr.length === 1 ? 'urn:cognito:loa:1' : 'urn:cognito:loa:4', amr,
+        'future:optional': {label: 'Unknown fields stay optional — 日本語', padding: 'x'.repeat(4096)},
+      };
+      const state = await fixture(context, {remembered: false, claims});
+      await context.addInitScript(() => sessionStorage.setItem('panther.oauth', JSON.stringify({state: 'expected', verifier: 'x'.repeat(43), returnPath: '/media'})));
+      const page = await context.newPage();
+      await page.goto('https://panther.place/?code=synthetic-code&state=expected');
+      await expect(page.locator('#account')).toBeVisible();
+      expect(state.exchanges).toEqual([{code: 'synthetic-code', codeVerifier: 'x'.repeat(43)}]);
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('panther.tokens')));
+      expect(saved.id_token.length).toBeGreaterThan(4096);
+      expect(JSON.parse(Buffer.from(saved.id_token.split('.')[1], 'base64url').toString()).amr).toEqual(amr);
+      await expect.poll(() => state.apiTokens.includes(`Bearer ${saved.id_token}`)).toBe(true);
+      await page.evaluate(value => sessionStorage.setItem('panther.tokens', JSON.stringify({id_token: value})), jwt(true, 'test', claims));
+      state.apiFailureOnce = true;
+      const previousRefreshes = state.refreshes;
+      await page.reload();
+      await expect(page.locator('#account')).toBeVisible();
+      await expect.poll(() => state.refreshes).toBe(previousRefreshes + 2);
+      expect(state.apiTokens.every(value => value?.length > 4096)).toBe(true);
+      expect(await page.evaluate(() => document.cookie)).not.toContain(COOKIE);
+      await context.close();
+    });
+  }
   test(`remembered sign-in survives a browser-context restart at ${width}px without JS-readable refresh credentials`, async ({ browser }) => {
     const first = await browser.newContext({ viewport: { width, height: 900 } });
     await fixture(first);
