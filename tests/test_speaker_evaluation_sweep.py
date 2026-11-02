@@ -69,3 +69,22 @@ def test_touching_boundaries_and_duplicate_overlapping_identity():
     assert evaluate(reference, prediction)['correctPercent'] == 100
     assert evaluate(reference, [])['unknownPercent'] == 100
     assert evaluate([], prediction)['evaluatedPlayerSeconds'] == 0
+
+
+@pytest.mark.parametrize('seconds', [.1, 1.02, 29.9, 30, 60, 10800])
+def test_fractional_tail_and_overlapping_unknown_are_not_lost(seconds):
+    """Score short/tail evidence without rounding it to a model's window size."""
+    split = seconds - .05
+    reference = [dict(start=0, end=split, playerId='alpha', confirmed=True,
+                      identityEvidence='Synthetic fixture'),
+                 dict(start=split, end=seconds, playerId='beta', confirmed=True,
+                      identityEvidence='Synthetic fixture')]
+    prediction = [dict(start=0, end=split, playerId='alpha'),
+                  dict(start=split, end=seconds, playerId='beta'),
+                  dict(start=split + .01, end=seconds, playerId=None)]
+    expected, people = scan_oracle(reference, prediction)
+    actual = evaluate(reference, prediction)
+    assert {key: actual[key] for key in expected} == expected
+    assert actual['perPlayer'] == people
+    assert actual['wrongSeconds'] > 0  # Mixed known/unknown overlap is not a correct label.
+    assert actual['perPlayer']['beta']['correctSeconds'] > 0
