@@ -23,7 +23,12 @@ def test_empty_graph_is_not_started_and_reaches_both_finals():
         node(manifest, "session-audio")["column"] < node(manifest, "corrected-transcript")["column"]
     )
     assert node(manifest, "novel-chapter")["final"] and node(manifest, "session-video")["final"]
-    assert node(manifest, "novel-chapter")["column"] == node(manifest, "session-video")["column"]
+    assert node(manifest, "session-audio")["lane"] == "shared"
+    assert node(manifest, "novel-chapter")["lane"] == "novel"
+    assert node(manifest, "session-video")["lane"] == "video"
+    assert node(manifest, "novel-brief")["column"] == node(manifest, "video-source-brief")["column"]
+    assert node(manifest, "novel-proof")["column"] + 1 == node(manifest, "novel-chapter")["column"]
+    assert [item["id"] for item in manifest["lanes"]] == ["shared", "novel", "video"]
     assert edge(manifest, "corrected-transcript", "novel-brief")["status"] == "pending"
     assert edge(manifest, "corrected-transcript", "video-source-brief")["status"] == "pending"
 
@@ -251,6 +256,12 @@ def test_sessions_share_one_branching_pipeline_and_reused_stages_stay_done():
     assert latest["correction"] == "done"
     assert latest["novel-chapter"] == "failed"
     assert latest["session-video"] == "pending"
+    assert {item["id"]: item["status"] for item in result["runs"][0]["lanes"]} == {
+        "shared": "started",
+        "novel": "failed",
+        "video": "pending",
+    }
+    assert {item["id"]: item["status"] for item in result["runs"][1]["lanes"]}["shared"] == "failed"
     assert older["correction"] == "failed"
     assert older["novel-chapter"] == "pending"
     assert "editorial" in result["runs"][0]["workers"]
@@ -267,6 +278,32 @@ def test_sessions_share_one_branching_pipeline_and_reused_stages_stay_done():
     )
     assert other["workersNeeded"] == ["playback"]
     assert other["runs"] == []
+
+
+def test_an_unlisted_artifact_lane_is_appended_after_video():
+    headers = pipeline._lanes(
+        [
+            {
+                "id": "session-audio",
+                "title": "Session audio",
+                "column": 0,
+                "row": 0,
+                "lane": "shared",
+                "status": "done",
+                "final": False,
+            },
+            {
+                "id": "credits",
+                "title": "Credits",
+                "column": 8,
+                "row": 0,
+                "lane": "credits",
+                "status": "pending",
+                "final": True,
+            },
+        ]
+    )
+    assert [item["id"] for item in headers] == ["shared", "credits"]
 
 
 def test_title_suffix_is_not_a_short_plan_id():

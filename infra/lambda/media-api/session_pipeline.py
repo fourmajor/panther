@@ -1,8 +1,8 @@
 """One branching session pipeline. A run is one execution of that pipeline for a session.
 
-The graph starts at the session recording and branches to the final artifacts. Append a row to
-FINALS to add another artifact. Status comes from job records. A later run keeps reused stages
-done instead of painting them as not started.
+The graph starts at the session recording. Shared stages lead into one lane per final artifact.
+Append a lane in graph() and a title in LANE_TITLES to add the next artifact. Status comes from
+job records. A later run keeps reused stages done instead of painting them as not started.
 """
 
 import json
@@ -75,12 +75,19 @@ LABELS = {
     "video-edit-sound-vfx": ("Planning", "Edit, sound and VFX", "audio"),
     "video-production-plan": ("Planning", "Production plan", "list"),
     "video-preflight": ("Review", "Preflight", "shield"),
+    "storyboard-approval": ("Gate", "Storyboard approval", "shield"),
+    "video-generation": ("Render", "Video generation", "film"),
+    "sound-delivery": ("Delivery", "Sound and delivery", "audio"),
+    "session-video": ("Final", "Session video", "film"),
+    "listening-copy": ("Audio", "Listening copy", "audio"),
+    "still-images": ("Image", "Still images", "image"),
+    "narration": ("Narration", "Narration", "mic"),
 }
-# Final artifacts share the last column, one row each. The stage column has three rows,
-# so append one tuple here to add the next artifact.
-FINALS = (
-    ("novel-chapter", "Final", "Novel chapter", "book"),
-    ("session-video", "Final", "Session video", "film"),
+# Lane order inside the one graph. Append the next artifact's title here.
+LANE_TITLES = (
+    ("shared", "Shared"),
+    ("novel", "Novel"),
+    ("video", "Video"),
 )
 KIND_NODE = {
     "recording": "session-audio",
@@ -107,7 +114,7 @@ def plan_document():
     return json.loads(os.environ["WORKSHOP_PLAN"])
 
 
-def _node(identity, column, row, final=False):
+def _node(identity, column, row, lane, final=False):
     kind, title, icon = LABELS.get(
         identity, ("Stage", identity.replace("-", " ").capitalize(), "circle")
     )
@@ -118,6 +125,7 @@ def _node(identity, column, row, final=False):
         "icon": icon,
         "column": column,
         "row": row,
+        "lane": lane,
         "final": final,
     }
 
@@ -134,110 +142,55 @@ def graph():
                 "icon": icon,
                 "column": column,
                 "row": row,
+                "lane": "shared",
                 "final": False,
             }
         )
     transcription = next(node for node in nodes if node["id"] == "transcription")
-    nodes.append(
-        {
-            "id": "listening-copy",
-            "type": "Audio",
-            "title": "Listening copy",
-            "icon": "audio",
-            "column": transcription["column"],
-            "row": 1,
-            "final": False,
-        }
+    nodes.append(_node("listening-copy", transcription["column"], 1, "shared"))
+    # Each artifact lane branches from the corrected transcript at this column.
+    # Append (lane id, stage ids, final id) for the next artifact, and its title in LANE_TITLES.
+    branch = len(PREFIX)
+    artifact_lanes = (
+        ("novel", list(plan["novel"]), "novel-chapter"),
+        (
+            "video",
+            [
+                *plan["video"],
+                "storyboard-approval",
+                "video-generation",
+                "sound-delivery",
+                "session-video",
+            ],
+            "session-video",
+        ),
     )
-    novel = [name for name in plan["novel"] if name != "novel-chapter"]
-    video = list(plan["video"])
-    start = len(PREFIX)
-    for offset in range(max(len(novel), len(video), 1)):
-        if offset < len(novel):
-            nodes.append(_node(novel[offset], start + offset, 0))
-        if offset < len(video):
-            nodes.append(_node(video[offset], start + offset, 1))
-    column = start + max(len(novel), len(video), 1)
-    for identity, kind, title, icon in (
-        ("storyboard-approval", "Gate", "Storyboard approval", "shield"),
-        ("video-generation", "Render", "Video generation", "film"),
-        ("sound-delivery", "Delivery", "Sound and delivery", "audio"),
-    ):
-        nodes.append(
-            {
-                "id": identity,
-                "type": kind,
-                "title": title,
-                "icon": icon,
-                "column": column,
-                "row": 1,
-                "final": False,
-            }
-        )
-        column += 1
-    for row, (identity, kind, title, icon) in enumerate(FINALS):
-        nodes.append(
-            {
-                "id": identity,
-                "type": kind,
-                "title": title,
-                "icon": icon,
-                "column": column,
-                "row": row,
-                "final": True,
-            }
-        )
-    story = next((node for node in nodes if node["id"] == "video-storyboards"), None)
+    for lane, stages, final_id in artifact_lanes:
+        for index, identity in enumerate(stages):
+            nodes.append(_node(identity, branch + index, 0, lane, final=identity == final_id))
+    by_id = {node["id"]: node for node in nodes}
+    story = by_id.get("video-storyboards")
     if story:
-        nodes.append(
-            {
-                "id": "still-images",
-                "type": "Image",
-                "title": "Still images",
-                "icon": "image",
-                "column": story["column"],
-                "row": 2,
-                "final": False,
-            }
-        )
-    generation = next(node for node in nodes if node["id"] == "video-generation")
-    nodes.append(
-        {
-            "id": "narration",
-            "type": "Narration",
-            "title": "Narration",
-            "icon": "mic",
-            "column": generation["column"],
-            "row": 2,
-            "final": False,
-        }
-    )
+        nodes.append(_node("still-images", story["column"], 1, story["lane"]))
+    generation = by_id["video-generation"]
+    nodes.append(_node("narration", generation["column"], 1, generation["lane"]))
     edges = []
 
     def link(source, dest):
-        if any(node["id"] == source for node in nodes) and any(
-            node["id"] == dest for node in nodes
-        ):
+        if any(node["id"] == source for node in nodes) and any(node["id"] == dest for node in nodes):
             edges.append({"from": source, "to": dest})
 
-    ids = [node["id"] for node in nodes if node["row"] == 0 and node["column"] < len(PREFIX)]
-    for source, dest in zip(ids, ids[1:]):
+    shared = [node["id"] for node in nodes if node["lane"] == "shared" and node["row"] == 0]
+    for source, dest in zip(shared, shared[1:]):
         link(source, dest)
     link("session-audio", "listening-copy")
-    if novel:
-        link("corrected-transcript", novel[0])
-        for source, dest in zip(novel, novel[1:]):
+    for _lane, stages, _final in artifact_lanes:
+        if not stages:
+            continue
+        link("corrected-transcript", stages[0])
+        for source, dest in zip(stages, stages[1:]):
             link(source, dest)
-        link(novel[-1], "novel-chapter")
-    if video:
-        link("corrected-transcript", video[0])
-        for source, dest in zip(video, video[1:]):
-            link(source, dest)
-        link(video[-1], "storyboard-approval")
-    link("storyboard-approval", "video-generation")
-    link("video-generation", "sound-delivery")
     link("narration", "sound-delivery")
-    link("sound-delivery", "session-video")
     if story:
         link("video-storyboards", "still-images")
         link("still-images", "video-generation")
@@ -468,6 +421,7 @@ def project(observations):
                     "icon",
                     "column",
                     "row",
+                    "lane",
                     "final",
                     "status",
                     "message",
@@ -569,6 +523,52 @@ def _needed_workers(nodes, edges):
     return needed
 
 
+def _lane_status(nodes):
+    states = {node.get("status") or "pending" for node in nodes}
+    if "failed" in states:
+        return "failed"
+    if "running" in states:
+        return "running"
+    if "queued" in states:
+        return "queued"
+    if "paused" in states:
+        return "paused"
+    if nodes and all(node.get("status") == "done" for node in nodes):
+        return "done"
+    if any(node.get("status") not in {None, "pending", "unknown"} for node in nodes):
+        return "started"
+    return "pending"
+
+
+def _lanes(nodes):
+    """Lane headers in graph order. A lane id that is not listed yet is appended."""
+    grouped = {}
+    for node in nodes:
+        grouped.setdefault(node.get("lane") or "shared", []).append(node)
+    titles = dict(LANE_TITLES)
+    order = [lane for lane, _title in LANE_TITLES]
+    for node in nodes:
+        lane = node.get("lane") or "shared"
+        if lane not in titles:
+            titles[lane] = lane.replace("-", " ").capitalize()
+            order.append(lane)
+    headers = []
+    for lane in order:
+        members = grouped.get(lane)
+        if not members:
+            continue
+        stage, _finals = _progress(members)
+        headers.append(
+            {
+                "id": lane,
+                "title": titles[lane],
+                "status": _lane_status(members),
+                "stage": stage,
+            }
+        )
+    return headers
+
+
 def _progress(nodes):
     ordered = sorted(nodes, key=lambda node: (node["column"], node["row"], node["id"]))
     failed = [node for node in ordered if node["status"] == "failed"]
@@ -596,6 +596,7 @@ def _run_graph(rows, row):
         "workers": _needed_workers(nodes, edges),
         "nodes": nodes,
         "edges": edges,
+        "lanes": _lanes(nodes),
     }
 
 
@@ -676,6 +677,7 @@ def view(session_id, observations):
             "updatedAt": chosen["updatedAt"],
             "nodes": chosen["nodes"],
             "edges": chosen["edges"],
+            "lanes": _lanes(chosen["nodes"]),
         }
         runs = chosen["runs"]
         workers_needed = runs[0]["workers"] if runs else _needed_workers(chosen["nodes"], chosen["edges"])
@@ -688,6 +690,7 @@ def view(session_id, observations):
             "updatedAt": 0,
             "nodes": nodes,
             "edges": edges,
+            "lanes": _lanes(nodes),
         }
         runs = []
         workers_needed = []

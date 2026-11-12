@@ -8,19 +8,45 @@ import {cardText, cardTone, formatWhen, presentation, runIdentity, sessionHeadli
 
 const icons = {mic: Mic, captions: Captions, users: Users, file: FileText, 'file-check': FileText, library: Library, pencil: Pencil, book: BookOpen, clapper: Clapperboard, list: List, search: Search, image: Image, package: Package, audio: AudioLines, palette: Palette, camera: Camera, scroll: ScrollText, shield: ShieldCheck, film: Film, circle: CircleAlert};
 
-function columnsOf(nodes) {
-  const columns = new Map();
-  for (const node of nodes) {
-    if (!columns.has(node.column)) columns.set(node.column, []);
-    columns.get(node.column).push(node);
-  }
-  return [...columns.entries()].sort((a, b) => a[0] - b[0]).map(([index, items]) => ({index, nodes: items}));
+const COLUMN_PITCH = 204;
+const LANE_HEAD = 180;
+
+function laneColumns(nodes, laneId) {
+  const members = nodes.filter(node => (node.lane || 'shared') === laneId);
+  const indexes = [...new Set(members.map(node => node.column))].sort((a, b) => a - b);
+  return indexes.map((column, index) => ({index, nodes: members.filter(node => node.column === column)}));
 }
 
-function Graph({nodes, edges, onOpen, label='Session pipeline'}) {
+function branchIndent(nodes) {
+  const shared = nodes.filter(node => (node.lane || 'shared') === 'shared' && node.row === 0);
+  if (!shared.length) return 0;
+  return Math.max(...shared.map(node => node.column)) * COLUMN_PITCH;
+}
+
+function route(from, to) {
+  const x1 = from.x + from.w, y1 = from.y + from.h / 2, x2 = to.x, y2 = to.y + to.h / 2;
+  const aligned = Math.abs((from.x + from.w / 2) - (to.x + to.w / 2)) < 28;
+  if (aligned && to.y > from.y + from.h) {
+    const x = from.x + from.w / 2;
+    return `M ${x} ${from.y + from.h} L ${x} ${to.y}`;
+  }
+  if (Math.abs(y1 - y2) < 2 && x2 >= x1 - 4) return `M ${x1} ${y1} L ${x2} ${y2}`;
+  if (x2 >= x1 - 8) {
+    const mid = x1 + Math.max(18, (x2 - x1) / 2);
+    return `M ${x1} ${y1} L ${mid} ${y1} L ${mid} ${y2} L ${x2} ${y2}`;
+  }
+  const xOut = x1 + 8;
+  const yTop = to.y - 8;
+  const xTop = to.x + to.w / 2;
+  return `M ${x1} ${y1} L ${xOut} ${y1} L ${xOut} ${yTop} L ${xTop} ${yTop} L ${xTop} ${to.y}`;
+}
+
+function Graph({nodes, edges, lanes, onOpen, label='Session pipeline'}) {
   const canvas = React.useRef(null);
   const refs = React.useRef(new Map());
   const [lines, setLines] = React.useState([]);
+  const groups = (lanes?.length ? lanes : [{id: 'shared', title: 'Shared', status: 'pending'}]).filter(lane => nodes.some(node => (node.lane || 'shared') === lane.id));
+  const indent = branchIndent(nodes);
   const measure = React.useCallback(() => {
     const root = canvas.current;
     if (!root) return;
@@ -35,11 +61,7 @@ function Graph({nodes, edges, onOpen, label='Session pipeline'}) {
     setLines(edges.flatMap(edge => {
       const from = placed[edge.from], to = placed[edge.to];
       if (!from || !to) return [];
-      const x1 = from.x + from.w, y1 = from.y + from.h / 2, x2 = to.x, y2 = to.y + to.h / 2;
-      const mid = x1 + Math.max(18, (x2 - x1) / 2);
-      const sameRow = Math.abs(y1 - y2) < 2;
-      const d = sameRow ? `M ${x1} ${y1} L ${x2} ${y2}` : `M ${x1} ${y1} L ${mid} ${y1} L ${mid} ${y2} L ${x2} ${y2}`;
-      return [{id: `${edge.from}-${edge.to}`, d, status: presentation(edge.status, edge.from)}];
+      return [{id: `${edge.from}-${edge.to}`, d: route(from, to), status: presentation(edge.status, edge.from)}];
     }));
   }, [nodes, edges]);
   React.useLayoutEffect(() => {
@@ -57,14 +79,20 @@ function Graph({nodes, edges, onOpen, label='Session pipeline'}) {
         <defs><marker id="pipeline-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6" fill="none" stroke="context-stroke" strokeWidth="1.4"/></marker></defs>
         {lines.map(line => <path key={line.id} d={line.d} data-status={line.status} markerEnd="url(#pipeline-arrow)"/>)}
       </svg>
-      <div className="pipeline-columns">{columnsOf(nodes).map(column => <div className="pipeline-column" key={column.index}>{column.nodes.map(node => {
+      <div className="pipeline-lanes">{groups.map(lane => {
+        const tone = cardTone(lane.status);
+        const branch = lane.id !== 'shared';
+        return <section key={lane.id} className={branch ? 'pipeline-lane pipeline-lane-branch' : 'pipeline-lane'} data-status={tone} style={branch ? {marginLeft: Math.max(0, indent - LANE_HEAD)} : undefined} aria-label={`${lane.title}, ${cardText(lane)}`}>
+          <header className="pipeline-lane-head"><span className="pipeline-mark" aria-hidden="true">{tone === 'failed' ? '×' : ''}</span><strong>{lane.title}</strong><span className="pipeline-lane-status">{cardText(lane)}</span></header>
+          <div className="pipeline-lane-track">{laneColumns(nodes, lane.id).map(column => <div className="pipeline-column" key={column.index}>{column.nodes.map(node => {
         const Icon = icons[node.icon] || CircleAlert;
         const shown = presentation(node.status, node.id);
         return <button key={node.id} type="button" className="pipeline-node" data-status={shown} data-final={node.final ? 'true' : 'false'} style={{gridRow: node.row + 1}} ref={element => { if (element) refs.current.set(node.id, element); else refs.current.delete(node.id); }} aria-label={`${node.title}, ${statusText(node.status, node.id)}`} onClick={() => onOpen(node)}>
           <span className="pipeline-icon" aria-hidden="true">{shown === 'failed' ? <span className="pipeline-x">×</span> : <Icon size={18} strokeWidth={1.7}/>}</span>
           <span className="pipeline-copy"><span className="pipeline-type">{node.type}</span><strong>{node.title}</strong><span className="pipeline-state">{statusText(node.status, node.id)}</span></span>
         </button>;
-      })}</div>)}</div>
+      })}</div>)}</div></section>;
+      })}</div>
     </div>
   </div>;
 }
@@ -115,6 +143,7 @@ export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, o
   const active = runs.find(item => item.id === picked) || runs[0] || null;
   const nodes = active?.nodes || data?.manifest?.nodes || [];
   const edges = active?.edges || data?.manifest?.edges || [];
+  const lanes = active?.lanes || data?.manifest?.lanes || [];
   const needed = new Set(active?.workers || data?.workersNeeded || []);
   React.useEffect(() => { if (opened) back.current?.focus(); }, [opened, sessionId]);
   const Heading = embedded ? 'h2' : 'h1';
@@ -155,7 +184,7 @@ export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, o
     {data && !opened && sessions.length === 0 && <p className="pipeline-card-stage">No sessions yet.</p>}
     {opened && data && <div className="pipeline-run">
       <Button ref={back} variant="outline" className="pipeline-back" onClick={() => { setOpen(null); onNavigate(listPath); }}>Sessions</Button>
-      <Graph nodes={nodes} edges={edges} onOpen={setOpen} label="Session pipeline"/>
+      <Graph nodes={nodes} edges={edges} lanes={lanes} onOpen={setOpen} label="Session pipeline"/>
       <Detail node={open} onPreview={onPreview} onClose={() => setOpen(null)}/>
     </div>}
   </section>;
