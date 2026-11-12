@@ -215,8 +215,11 @@ for (const width of [1280,390]) {
     await fixture(page,true);
     const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     await page.goto('https://panther.place/');
+    await expect(page).toHaveURL('https://panther.place/games/campaign-a/pipeline');
+    await expect(page.locator('#primary-nav a').first()).toHaveText('Pipeline');
+    await page.locator('#primary-nav').getByRole('link', {name: 'Dashboard', exact: true}).click();
     await expect(page.locator('#dashboard-name')).toHaveText('Campaign A');
-    await expect(page.locator('#primary-nav a').first()).toHaveText('Dashboard');await expect(page.locator('.dashboard-card-link svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-link svg.lucide-arrow-up-right')).toHaveCount(0);
+    await expect(page.locator('.dashboard-card-link svg.lucide-chevron-right')).toHaveCount(5);await expect(page.locator('.dashboard-card-link svg.lucide-arrow-up-right')).toHaveCount(0);
     await expect(page.locator('header #game-select-trigger')).toBeVisible();
     const selectorBox=await page.locator('#game-select-trigger').boundingBox();
     expect(selectorBox.y).toBeLessThan(100); expect(selectorBox.x).toBeLessThan(width/2);
@@ -227,7 +230,7 @@ for (const width of [1280,390]) {
     await expect(page.locator('#dashboard-sections a')).toHaveCount(5);
     for(const card of await page.locator('#dashboard-sections a').all()) await expect(card).toHaveAttribute('href',/^\/games\/campaign-a\//);
     await page.screenshot({path:test.info().outputPath(`dashboard-${width}.png`),fullPage:true});
-    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/');await firstCard.getByRole('link',{name:'Characters',exact:true}).click();await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
+    const firstCard=page.locator('#dashboard-sections [data-section=characters]');await expect(firstCard.locator('svg')).toHaveCount(2);const box=await firstCard.boundingBox();expect(box.y+box.height).toBeLessThan(900);await page.mouse.click(box.x+box.width-8,box.y+box.height-8);await expect(page).toHaveURL('https://panther.place/games/campaign-a/dashboard');await firstCard.getByRole('link',{name:'Characters',exact:true}).click();await expect(page).toHaveURL('https://panther.place/games/campaign-a/characters');
     await page.locator('#primary-nav').getByRole('link',{name:'Settings',exact:true}).click();
     await expect(page.getByLabel('Game name',{exact:true})).toHaveValue('Campaign A');
     await page.getByLabel('Game name',{exact:true}).fill('The Lantern Campaign');
@@ -481,7 +484,7 @@ for (const width of [1280,390]) {
     await page.getByRole('option',{name:'Other',exact:true}).click();
     await dialog.getByLabel('Custom game system',{exact:true}).fill('Imaginary Rules');
     await dialog.getByRole('button',{name:'Create Game',exact:true}).click();
-    await expect(page).toHaveURL(/\/games\/imaginary-voyage-[a-f0-9]+\/dashboard$/);
+    await expect(page).toHaveURL(/\/games\/imaginary-voyage-[a-f0-9]+\/pipeline$/);
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('#game-select-root').getByRole('combobox')).toContainText('Imaginary Voyage');
     expect(created).toMatchObject({name:'Imaginary Voyage',ruleset:'Imaginary Rules',purpose:'campaign',players:[],characters:[],memberships:[]});
@@ -497,7 +500,7 @@ for(const width of [1280,390])test(`Create game searches rules editions and pers
  await expect(page.getByRole('option',{name:'Dungeons & Dragons — 5.5e (2024)',exact:true})).toBeVisible();await expect(page.getByRole('option',{name:'Dungeons & Dragons — 5e (2014)',exact:true})).toBeVisible();
  await search.fill('Pathfinder');const option=page.getByRole('option',{name:'Pathfinder — 2e Remaster',exact:true});await expect(option).toBeInViewport();expect(await option.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
  await page.screenshot({path:test.info().outputPath(`game-systems-${width}.png`)});await search.press('Enter');await expect(dialog).toBeVisible();await expect(dialog.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');await expect(dialog.getByLabel('Custom game system',{exact:true})).toHaveCount(0);
- await dialog.getByRole('button',{name:'Create Game',exact:true}).click();await expect(page).toHaveURL(/\/games\/edition-voyage-[a-f0-9]+\/dashboard$/);expect(created.ruleset).toBe('Pathfinder — 2e Remaster');
+ await dialog.getByRole('button',{name:'Create Game',exact:true}).click();await expect(page).toHaveURL(/\/games\/edition-voyage-[a-f0-9]+\/pipeline$/);expect(created.ruleset).toBe('Pathfinder — 2e Remaster');
  await page.getByRole('link',{name:'Settings',exact:true}).click();await expect(page.getByRole('combobox',{name:'Game system',exact:true})).toHaveText('Pathfinder — 2e Remaster');
 });
 

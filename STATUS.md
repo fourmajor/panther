@@ -121,4 +121,4 @@ Recovery starts a new execution. It does not rewrite the failed run. A host that
 
 ## Pipeline page
 
-`/games/<game>/pipeline` and `/games/<game>/pipeline/<session-id>` draw this graph from `GET /workflows?view=session-pipeline`. Gray is not started (including queued and waiting). Green is done. Red with an X is failed. A running step pulses. Arrow color follows the upstream step. Choosing a session loads that session's stored jobs. An empty game shows every step not started.
+The signed-in home at `/` opens `/games/<game>/pipeline`. `/games/<game>/pipeline/<session-id>` selects one session. The graph is drawn from `GET /workflows?view=session-pipeline`. Gray is not started, including queued work. Blue and animated is running. Green is success. Red with an X is failed, and the recorded error opens on click. Storyboard approval stays a waiting gate: a finished plan does not paint video generation as authorized or complete. Editorial, playback, and model each show an online or offline badge. Choosing a session loads that session's stored jobs. An empty game shows every step not started.

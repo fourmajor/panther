@@ -353,7 +353,7 @@ async function completeLogin() {
   markLogout(false);
   storeTokens(tokens);
   sessionStorage.removeItem("panther.oauth");
-  window.history.replaceState({}, "", saved.returnPath || "/dashboard");
+  window.history.replaceState({}, "", saved.returnPath || "/pipeline");
 }
 
 window.PantherUI.enhanceDialog(elements.previewDialog,{onDismiss:closePreview});
@@ -1864,6 +1864,10 @@ async function renderRoute() {
     if (epoch === routeEpoch) pageLoading.hidden = true;
   }
   if (epoch !== routeEpoch) return;
+  if (location.pathname === "/" || location.pathname === "/pipeline") {
+    navigate(gamePath("pipeline") + location.search + location.hash, {replace: true});
+    return;
+  }
   const requestedSection = gameRoute?.[2] || window.location.pathname.slice(1);
   const section=requestedSection==="episodes"?"videos":requestedSection;
   await roomCapture.render(section, epoch);
@@ -1876,7 +1880,7 @@ async function renderRoute() {
     setActiveNavigation("pipeline"); elements.characters.hidden = true; elements.explorer.hidden = true;
     await pipeline.open(epoch, gameRoute?.[3] || null); return;
   }
-  if (section === "dashboard" || location.pathname === "/") {
+  if (section === "dashboard") {
     setActiveNavigation("dashboard"); elements.characters.hidden = true; elements.explorer.hidden = true;
     document.getElementById("dashboard").hidden = false; renderDashboard(); void loadDashboardRecent(epoch); return;
   }
@@ -4052,7 +4056,7 @@ elements.gameSelector.addEventListener("change", () => {
 
 function openCreateGame(trigger=document.querySelector("#game-select-root button")) {
   if(elements.gameSelector.disabled)return;
-  window.PantherUI.openCreateGameDialog({onCreate:body=>api('/games',{}, {body}),onComplete:id=>{state.games=null;navigate(`/games/${encodeURIComponent(id)}/dashboard`);},onClose:()=>trigger?.focus()});
+  window.PantherUI.openCreateGameDialog({onCreate:body=>api('/games',{}, {body}),onComplete:id=>{state.games=null;navigate(`/games/${encodeURIComponent(id)}/pipeline`);},onClose:()=>trigger?.focus()});
 }
 document.getElementById("game-create-button").addEventListener("click",event=>openCreateGame(event.currentTarget));
 
@@ -4099,7 +4103,7 @@ elements.primaryNav.addEventListener("click", (event) => {
 document.querySelector(".brand").addEventListener("click", (event) => {
   if (!state.tokens || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  navigate(gamePath("dashboard"));
+  navigate(gamePath("pipeline"));
 });
 window.addEventListener("popstate", renderRoute);
 window.addEventListener("storage", (event) => {
