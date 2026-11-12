@@ -1516,6 +1516,33 @@ def test_recovery_preserves_history_pins_cutoff_and_never_approves_generation(ed
     assert request(m, "POST /editorial-jobs", {"recovery": request_body})["statusCode"] == 400
 
 
+def test_plan_version_bump_mints_a_new_recovery_and_skips_the_old_run(editorial):
+    m = editorial
+    _, parent = submitted(m)
+    m.internal({"operation": "fail", "jobId": parent["jobId"]})
+    body = {"jobId": parent["jobId"], "target": "both"}
+    first = unpack(request(m, "POST /editorial-jobs", {"recovery": body}))
+    m.handler(
+        {"operation": "dispatch", "jobId": first["jobId"], "stage": "novel-draft", "taskToken": "PRIVATE"},
+        None,
+    )
+    bumped = PLAN["version"] + 1
+    m.PLAN["version"] = bumped
+    second = unpack(request(m, "POST /editorial-jobs", {"recovery": body}))
+    expected = hashlib.sha256(
+        json.dumps(["editorial-recovery-v1", parent["jobId"], "both", bumped]).encode()
+    ).hexdigest()
+    assert second["jobId"] == expected
+    assert second["jobId"] != first["jobId"]
+    assert second["workflowVersion"] == bumped
+    assert second["recovery"]["parentJobId"] == parent["jobId"]
+    assert m.read("RUNS", first["jobId"])["status"] == "SUBMITTED"
+    assert m.read("RUNS", first["jobId"])["workflowVersion"] == PLAN["version"]
+    claimed = unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": bumped}))
+    assert claimed["task"] is None
+    assert unpack(request(m, "POST /editorial-jobs", {"recovery": body}))["jobId"] == second["jobId"]
+
+
 def test_branch_failure_does_not_cancel_video_and_finish_requires_real_outputs(editorial):
     m = editorial
     _, job = submitted(m)
