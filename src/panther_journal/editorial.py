@@ -302,7 +302,7 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 revised = call(role, inputs)
                 inputs["priorStages"][role] = revised
                 candidate = (
-                    apply_corrections(inputs["raw"], revised, evidence)
+                    _retain_corrections(inputs["raw"], candidate, revised, evidence)
                     if stage == "corrected-transcript"
                     else revised["markdown"]
                 )
@@ -321,8 +321,34 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 "instruction": "Repair the invalid output; do not bypass the guard.",
             }
 
+    if stage == "corrected-transcript" and _candidate_keeps_speech(inputs.get("raw"), candidate):
+        # The correction stage already validated these edits. A window that does not
+        # restate them must not publish an empty raw overlay in their place.
+        note = (
+            "Review did not converge after three rounds. The validated candidate corrections remain; "
+            "they were not replaced with an empty raw transcript."
+        )
+        fallback = {
+            "passed": False,
+            "title": "Corrected transcript retained with notes",
+            "markdown": note,
+            "evidenceIds": ["raw"],
+            "uncertainties": [note],
+            "selectedKeys": [],
+            "shots": [],
+            "edits": [],
+            "decisions": [
+                {
+                    "issue": "Unresolved correction review",
+                    "decision": "Preserve the validated candidate",
+                    "reason": note,
+                    "evidenceIds": ["raw"],
+                }
+            ],
+        }
+        return fallback, candidate, history, "accepted-with-notes"
     if stage in {"correction", "corrected-transcript"}:
-        # Review disagreement must never publish possibly unsupported speech changes.
+        # No validated candidate exists. Disagreement must not invent speech.
         note = "Automatic fallback: retain raw wording because correction/review did not converge after three rounds."
         fallback = {
             "passed": False,
@@ -727,7 +753,8 @@ def _stage_prompt(stage, inputs):
         "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
         "and disclose inventions separately. When revisionFeedback is supplied, actually revise the deliverable, "
         "not just its pass flag. Return the COMPLETE replacement, including ALL edits against original raw segments. "
-        "A bounded revision loop follows rejection. An imperfect working draft may proceed with explicit notes, "
+        + _window_note(inputs)
+        + "A bounded revision loop follows rejection. An imperfect working draft may proceed with explicit notes, "
         "but do not claim that an unresolved quality failure passed review.\n"
         + "For developmental/script editing, passed means the critique is complete and actionable; ordinary revision notes do not fail that stage. "
         "At video-preflight, undecided provider and budget are expected approval blockers, not missing planning; list them explicitly. "
@@ -735,6 +762,61 @@ def _stage_prompt(stage, inputs):
         + "\nINPUT DATA:\n"
         + json.dumps(prompt_projection(inputs), ensure_ascii=False, separators=(",", ":"))
     )
+
+
+def _window_note(inputs):
+    """A slice is not the whole transcript. An empty edit list must not delete its corrections."""
+    window = inputs.get("reviewWindow") if isinstance(inputs, dict) else None
+    if not isinstance(window, dict) or not {"start", "end", "total"} <= set(window):
+        return ""
+    return (
+        f"This call covers utterances {window['start']} through {window['end'] - 1} "
+        f"of {window['total']}. segmentIndex counts from zero inside this slice. "
+        "Candidate corrections already on this slice stay in effect when edits is empty or omits them. "
+        "Return an edit only to change that utterance. "
+        "Do not use an empty edit list to revert the slice to raw wording.\n"
+    )
+
+
+def _retain_corrections(raw, candidate, proposal, evidence):
+    """Apply stated edits and keep every candidate correction the revision does not replace."""
+    if (
+        not isinstance(candidate, dict)
+        or not isinstance(raw, dict)
+        or not isinstance(candidate.get("segments"), list)
+        or len(candidate["segments"]) != len(raw.get("segments") or [])
+    ):
+        return apply_corrections(raw, proposal, evidence)
+    revised = copy.deepcopy(candidate)
+    kept = {}
+    for edit in revised.get("corrections") or []:
+        if isinstance(edit, dict) and type(edit.get("segmentIndex")) is int:
+            kept[edit["segmentIndex"]] = edit
+    for edit in proposal.get("edits") or []:
+        applied = apply_corrections(raw, {"edits": [edit], "uncertainties": []}, evidence)
+        index = edit["segmentIndex"]
+        revised["segments"][index]["text"] = applied["segments"][index]["text"]
+        if edit.get("after") == edit.get("before"):
+            kept.pop(index, None)
+        else:
+            kept[index] = copy.deepcopy(edit)
+    revised["corrections"] = [kept[index] for index in sorted(kept)]
+    if isinstance(proposal.get("uncertainties"), list):
+        revised["uncertainties"] = proposal["uncertainties"]
+    revised["artifactType"] = "corrected-transcript"
+    revised["reviewStatus"] = "ai-reviewed-unverified"
+    return revised
+
+
+def _candidate_keeps_speech(raw, candidate):
+    if not isinstance(candidate, dict) or not isinstance(raw, dict):
+        return False
+    if candidate.get("corrections"):
+        return True
+    left, right = candidate.get("segments"), raw.get("segments")
+    if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+        return False
+    return any(item.get("text") != source.get("text") for item, source in zip(left, right))
 
 
 def ensure_prompt_budget(stage, inputs):
@@ -863,7 +945,14 @@ def paginated_review(folder, stage, inputs, heartbeat):
         raise DeterministicFailure(f"{stage} has no transcript utterances to review.")
     total = len(segments)
     start = 0
-    reports, histories, publications, new_edits, merged_segments = [], [], [], [], []
+    reports, histories, publications, new_edits, merged_segments, merged_corrections = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
     while start < total:
         end, window = _fitting_end(stage, inputs, start)
         if end <= start:
@@ -881,7 +970,14 @@ def paginated_review(folder, stage, inputs, heartbeat):
                 f"{stage} window {start}-{end} returned {got} segments; all {expected} utterances are required."
             )
         merged_segments.extend(copy.deepcopy(window_segments))
-        new_edits.extend(_window_edits(report, start, end))
+        review_edits = _window_edits(report, start, end)
+        spoken = _window_edits({"edits": candidate.get("corrections") or []}, start, end)
+        replaced = {edit["segmentIndex"] for edit in review_edits}
+        new_edits.extend(review_edits)
+        merged_corrections.extend(
+            edit for edit in spoken if edit["segmentIndex"] not in replaced
+        )
+        merged_corrections.extend(review_edits)
         reports.append(report)
         histories.extend(history)
         publications.append(publication)
@@ -893,15 +989,7 @@ def paginated_review(folder, stage, inputs, heartbeat):
     transcript["segments"] = merged_segments
     transcript["artifactType"] = "corrected-transcript"
     transcript["reviewStatus"] = "ai-reviewed-unverified"
-    replaced = {edit["segmentIndex"] for edit in new_edits}
-    prior = [
-        edit
-        for edit in (base.get("corrections") or [])
-        if isinstance(edit, dict)
-        and type(edit.get("segmentIndex")) is int
-        and edit["segmentIndex"] not in replaced
-    ]
-    transcript["corrections"] = prior + new_edits
+    transcript["corrections"] = merged_corrections
     uncertainties = [item for report in reports for item in report.get("uncertainties", [])]
     transcript["uncertainties"] = uncertainties
     passed = all(report.get("passed") for report in reports)

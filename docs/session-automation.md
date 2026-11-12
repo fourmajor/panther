@@ -104,6 +104,7 @@ transcript plus a verified correction overlay, not two duplicate copies of its s
 overlay is emitted only when its edits exactly reconstruct the candidate and all non-text
 speech fields are unchanged. Full corrected assets remain stored unchanged. Prompts stay below
 the observed one-Mi-character CLI transport limit. Corrected-transcript review that would exceed
-1,000,000 bytes runs in contiguous utterance windows and merges every window, including prior
-corrections that a window does not replace. A prompt that still cannot fit fails once, with the
-measured size stored on the task, and is not retried as a subscription failure.
+1,000,000 bytes runs in contiguous utterance windows and merges every window. Each window's
+candidate corrections are the edits for that slice; a review edit replaces the same utterance,
+and an empty edit list does not revert the slice to raw wording. A prompt that still cannot fit
+fails once, with the measured size stored on the task, and is not retried as a subscription failure.
