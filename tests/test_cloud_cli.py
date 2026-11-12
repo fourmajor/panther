@@ -253,6 +253,34 @@ def test_video_collection_cli_preserves_order_and_guard(setup, monkeypatch, tmp_
     assert calls[-1][1]["json"] == {**body, "operationId": "a" * 32}
 
 
+def test_refresh_lock_is_exclusive_across_callers():
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+    entered = []
+
+    def hold():
+        with cloud.refresh_lock():
+            started.set()
+            assert release.wait(2)
+
+    def wait():
+        assert started.wait(2)
+        with cloud.refresh_lock():
+            entered.append(True)
+
+    first, second = threading.Thread(target=hold), threading.Thread(target=wait)
+    first.start()
+    second.start()
+    assert started.wait(2)
+    time.sleep(0.05)
+    assert entered == []
+    release.set()
+    first.join(2)
+    second.join(2)
+    assert entered == [True]
+
+
 def test_login_refresh_and_logout_do_not_print_or_store_password(setup, monkeypatch):
     store, config = setup
     calls = []

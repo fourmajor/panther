@@ -17,8 +17,10 @@ import { CharacterAppearances } from "./character-appearances";
 /** Private application jobs, not CI. No AI service, inbound laptop connection, or idle compute. */
 export class ModelProcessing extends Construct {
   readonly table: dynamodb.Table;
+  readonly stateMachine: sfn.StateMachine;
+  readonly broker: lambda.Function;
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable; executionLogs: logs.ILogGroup;
   }) {
     super(scope, id);
     const table = this.table = new dynamodb.Table(this, "Jobs", {
@@ -35,7 +37,7 @@ export class ModelProcessing extends Construct {
     const code = lambda.Code.fromAsset(path.join(__dirname, "../../lambda/media-api"), {
       exclude: ["**/__pycache__/**", "**/*.pyc"],
     });
-    const fn = new lambda.Function(this, "Broker", {
+    const fn = this.broker = new lambda.Function(this, "Broker", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
       handler: "model_jobs.handler",
       code,
@@ -59,12 +61,13 @@ export class ModelProcessing extends Construct {
       resultPath: sfn.JsonPath.DISCARD,
     });
     wait.addCatch(expire.next(new sfn.Fail(this, "Expired")), { resultPath: "$.failure" });
-    const machine = new sfn.StateMachine(this, "Workflow", {
+    const machine = this.stateMachine = new sfn.StateMachine(this, "Workflow", {
       definitionBody: sfn.DefinitionBody.fromChainable(wait.next(new sfn.Choice(this, "Published")
         .when(sfn.Condition.stringEquals("$.outcome.status", "PUBLISHED"), new sfn.Succeed(this, "Finished"))
         .otherwise(new sfn.Fail(this, "NotPublished", { cause: "Inspect the Panther job for failure, conflict, or supersession" })))),
       stateMachineType: sfn.StateMachineType.STANDARD,
       timeout: Duration.days(31),
+      logs: { destination: props.executionLogs, level: sfn.LogLevel.ALL, includeExecutionData: false },
     });
     // Separate stream consumer avoids a role/function/state-machine dependency cycle.
     const trigger = new lambda.Function(this, "Trigger", {

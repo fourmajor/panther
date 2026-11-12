@@ -43,6 +43,8 @@ import { EditorialProcessing } from "./editorial-processing";
 import { PlaybackProcessing } from "./playback-processing";
 import { BrowserRecordings } from "./browser-recordings";
 import { WorkflowWorkshop } from "./workflow-workshop";
+import { PipelineWatch } from "./pipeline-watch";
+import { Notifications } from "./notifications";
 
 import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
 
@@ -477,7 +479,8 @@ export class PantherMediaExplorerStack extends Stack {
     }
     const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable:assetBrowse.table });
     CharacterAppearances.grantProducer(mediaApiFunction,assetBrowse.table,gameCatalog.table);
-    const modeling = new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table,catalogTable:gameCatalog.table });
+    const notifications = new Notifications(this, "Notifications", { api: mediaApi, authorizer });
+    const modeling = new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table,catalogTable:gameCatalog.table, executionLogs: notifications.executionLogs });
     new CharacterAppearances(this,"CharacterAppearances",{bucket:privateAssets,api:mediaApi,authorizer,
       browseTable:assetBrowse.table,catalogTable:gameCatalog.table,accessEnvironment});
     new TVLibrary(this,"TVLibrary",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,
@@ -486,11 +489,22 @@ export class PantherMediaExplorerStack extends Stack {
       catalogTable:gameCatalog.table,accessEnvironment});
     new TranscriptSummaries(this,"TranscriptSummaries",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,accessEnvironment});
     const assetGeneration = new AssetGeneration(this,"AssetGeneration",{bucket:privateAssets,api:mediaApi,authorizer,catalogTable:gameCatalog.table,browseTable:assetBrowse.table,accessEnvironment});
-    const editorial = new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table });
+    const editorial = new EditorialProcessing(this, "EditorialProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable: assetBrowse.table, catalogTable: gameCatalog.table, executionLogs: notifications.executionLogs });
     new AssetArchive(this,"AssetArchive",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,catalogTable:gameCatalog.table,jobTables:[modeling.table,editorial.table,assetGeneration.table],accessEnvironment});
-    const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment });
+    const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, executionLogs: notifications.executionLogs });
     const browserRecording = new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
-    new WorkflowWorkshop(this,"WorkflowWorkshop",{api:mediaApi,authorizer,accessEnvironment,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table}});
+    const workshop = new WorkflowWorkshop(this,"WorkflowWorkshop",{api:mediaApi,authorizer,accessEnvironment,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table},notifications});
+    new PipelineWatch(notifications, "PipelineWatch", {
+      api: mediaApi,
+      authorizer,
+      workshopTable: workshop.index,
+      jobs: {editorial: editorial.table, model: modeling.table, playback: playback.table},
+      routes: [
+        {id: "EditorialFail", path: "/editorial-jobs/fail", fn: editorial.broker},
+        {id: "ModelFail", path: "/model-jobs/fail", fn: modeling.broker},
+        {id: "WorkerHeartbeat", path: "/workflows/heartbeat", fn: workshop.reader},
+      ],
+    });
     new LiveRecordings(this, "LiveRecordings", { api: mediaApi, authorizer, accessEnvironment });
     for (const route of ["/objects", "/object-url", "/assets", "/asset-document", "/character", "/character-profile", "/character-versions"]) {
       mediaApi.addRoutes({

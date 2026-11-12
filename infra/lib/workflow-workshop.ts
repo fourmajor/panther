@@ -12,9 +12,11 @@ import {Notifications} from "./notifications";
 
 /** Read-time views never enumerate source storage or invoke a worker. */
 export class WorkflowWorkshop extends Construct {
-  constructor(scope:Construct,id:string,props:{api:api.HttpApi;authorizer:api.IHttpRouteAuthorizer;accessEnvironment:Record<string,string>;tables:Record<string,dynamodb.Table>}) {
+  readonly index: dynamodb.Table;
+  readonly reader: lambda.Function;
+  constructor(scope:Construct,id:string,props:{api:api.HttpApi;authorizer:api.IHttpRouteAuthorizer;accessEnvironment:Record<string,string>;tables:Record<string,dynamodb.Table>;notifications:Notifications}) {
     super(scope,id);
-    const index=new dynamodb.Table(this,"Index",{
+    const index=this.index=new dynamodb.Table(this,"Index",{
       partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},sortKey:{name:"sk",type:dynamodb.AttributeType.STRING},
       billingMode:dynamodb.BillingMode.PAY_PER_REQUEST,encryption:dynamodb.TableEncryption.AWS_MANAGED,removalPolicy:RemovalPolicy.RETAIN,
       stream:dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
@@ -24,7 +26,7 @@ export class WorkflowWorkshop extends Construct {
       WORKSHOP_PLAN:fs.readFileSync(path.join(__dirname,"../../../src/panther_journal/editorial-plan.json"),"utf8")};
     const code=lambda.Code.fromAsset(path.join(__dirname,"../../lambda/media-api"),{exclude:["**/__pycache__/**","**/*.pyc"]});
     const create=(name:string,handler:string)=>new lambda.Function(this,name,{runtime:lambda.Runtime.PYTHON_3_13,architecture:lambda.Architecture.ARM_64,code,handler,environment,timeout:Duration.seconds(60),memorySize:256,logGroup:new logs.LogGroup(this,name+"Logs",{retention:logs.RetentionDays.ONE_MONTH})});
-    const reader=create("Reader","workflow_workshop.handler");
+    const reader=this.reader=create("Reader","workflow_workshop.handler");
     index.grant(reader,"dynamodb:GetItem","dynamodb:Query","dynamodb:PutItem");
     const writer=create("Projection","workflow_workshop.project_handler");
     index.grantReadWriteData(writer);
@@ -36,6 +38,6 @@ export class WorkflowWorkshop extends Construct {
     props.api.addRoutes({path:"/workflows",methods:[api.HttpMethod.GET],authorizer:props.authorizer,integration:view});
     props.api.addRoutes({path:"/workflow-progress",methods:[api.HttpMethod.POST],authorizer:props.authorizer,integration:view});
     props.api.addRoutes({path:"/workflows/rebuild",methods:[api.HttpMethod.POST],authorizer:props.authorizer,integration:new integrations.HttpLambdaIntegration("WorkshopRebuild",writer)});
-    new Notifications(this,"Notifications",{api:props.api,authorizer:props.authorizer,environment,index});
+    props.notifications.bind({environment,index});
   }
 }

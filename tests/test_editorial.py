@@ -2,6 +2,7 @@ import copy
 import importlib
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -1716,3 +1717,224 @@ def test_episode_handoff_materializes_locked_panels_and_bounds_pinned_references
     other.mkdir()
     with pytest.raises(worker.local.Deferred):
         worker.autonomous_stage(other,'video-generation-packets',inputs,lambda:None)
+
+
+def _long_transcript(count, text):
+    return {
+        "entityType": "PlayerTranscript",
+        "artifactType": "raw-transcript",
+        "gameId": "test-game",
+        "sessionId": "test-session",
+        "recordingId": "recording-" + "a" * 32,
+        "segments": [
+            {"start": index, "end": index + 1, "playerId": "person", "text": f"{index} {text}"}
+            for index in range(count)
+        ],
+    }
+
+
+def test_corrected_transcript_reviews_every_utterance_under_the_prompt_limit(tmp_path, monkeypatch):
+    speech = "table talk " * 1400
+    document = _long_transcript(80, speech)
+    candidate = copy.deepcopy(document)
+    for index, segment in enumerate(candidate["segments"]):
+        segment["text"] = f"kept-{index}"
+    candidate["artifactType"] = "corrected-transcript"
+    candidate["corrections"] = [
+        {
+            "segmentIndex": index,
+            "before": document["segments"][index]["text"],
+            "after": f"kept-{index}",
+            "reason": "Pinned spelling",
+            "evidenceIds": ["catalog"],
+        }
+        for index in range(len(document["segments"]))
+    ]
+    bloated = {
+        "raw": document,
+        "candidate": candidate,
+        "context": {"catalog": {"game": {"id": "test-game"}}},
+        "priorStages": {
+            "context": {"selection": {"title": "Context"}, "content": "x" * 200_000},
+            "correction": {"markdown": "y" * 80_000, "edits": [], "passed": True},
+        },
+    }
+    trimmed = worker.trim_prior_stages("corrected-transcript", bloated)
+    assert set(trimmed["priorStages"]["context"]) == {"selection"}
+    assert len(trimmed["priorStages"]["correction"]["markdown"]) == 4000
+    full = worker.render_prompt_size("corrected-transcript", trimmed)
+    assert full > worker.PROMPT_LIMIT
+    assert worker.render_prompt_size("corrected-transcript", bloated) > full
+    ranges = []
+
+    def fake(folder, stage, inputs, heartbeat):
+        window = inputs["reviewWindow"]
+        assert worker.render_prompt_size(stage, inputs) <= worker.PROMPT_LIMIT
+        assert len(inputs["raw"]["segments"]) == window["end"] - window["start"]
+        ranges.append((window["start"], window["end"]))
+        updated = copy.deepcopy(inputs["candidate"])
+        updated["segments"][0]["text"] = f"audited-{window['start']}"
+        review = report(
+            edits=[
+                {
+                    "segmentIndex": 0,
+                    "before": inputs["raw"]["segments"][0]["text"],
+                    "after": f"audited-{window['start']}",
+                    "reason": "Window audit marker",
+                    "evidenceIds": ["raw"],
+                }
+            ]
+        )
+        return review, updated, [{"stage": stage}], "accepted"
+
+    monkeypatch.setattr(worker, "autonomous_stage", fake)
+    merged, transcript, history, publication = worker.paginated_review(
+        tmp_path, "corrected-transcript", trimmed, lambda: None
+    )
+    assert publication == "accepted"
+    assert len(transcript["segments"]) == 80
+    covered = []
+    for start, end in ranges:
+        assert end > start
+        covered.extend(range(start, end))
+        assert transcript["segments"][start]["text"] == f"audited-{start}"
+    assert covered == list(range(80))
+    assert ranges[0][1] - ranges[0][0] > 1
+    assert len(ranges) > 1
+    for index in range(80):
+        if index not in {start for start, _ in ranges}:
+            assert transcript["segments"][index]["text"] == f"kept-{index}"
+    edited = {edit["segmentIndex"] for edit in transcript["corrections"]}
+    assert edited == set(range(80))
+    assert {edit["segmentIndex"] for edit in merged["edits"]} == {start for start, _ in ranges}
+    assert history[-1] == {"stage": "corrected-transcript", "windows": len(ranges), "segments": 80}
+    assert "No utterance was omitted." in merged["markdown"]
+
+
+def test_short_transcript_stays_one_review(tmp_path, monkeypatch):
+    calls = []
+
+    def fake(folder, stage, inputs, heartbeat):
+        calls.append(inputs.get("reviewWindow"))
+        return report(), inputs["candidate"], [], "accepted"
+
+    monkeypatch.setattr(worker, "autonomous_stage", fake)
+    document = raw()
+    candidate = apply_corrections(document, {"edits": []}, {"raw"})
+    inputs = {"raw": document, "context": {"catalog": {}}, "priorStages": {}, "candidate": candidate}
+    _, transcript, _, publication = worker.paginated_review(
+        tmp_path, "corrected-transcript", inputs, lambda: None
+    )
+    assert calls == [None]
+    assert publication == "accepted"
+    assert transcript["segments"] == candidate["segments"]
+
+
+def test_other_stages_fail_before_codex_when_the_prompt_exceeds_the_limit(tmp_path, monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("Codex must not run")
+
+    monkeypatch.setattr(worker.local, "run_process", refuse)
+    text = "spoken word " * 400
+    segments = [
+        {"start": index, "end": index + 1, "playerId": "person", "text": text} for index in range(280)
+    ]
+    inputs = {
+        "raw": {"entityType": "PlayerTranscript", "segments": segments},
+        "context": {},
+        "priorStages": {},
+        "candidate": "A chapter that still leaves the transcript over the transport limit.",
+    }
+    with pytest.raises(worker.DeterministicFailure, match="novel-chapter prompt is") as caught:
+        worker.agent(tmp_path, "novel-chapter", inputs, lambda: None)
+    assert "safe stage limit" in str(caught.value)
+    assert "This preflight failure is deterministic and is not retried." in str(caught.value)
+    duplicate = {
+        "raw": raw(),
+        "context": {"catalog": {}},
+        "priorStages": {"context": {"selection": {"title": "Notes"}, "content": "z" * 1_100_000}},
+        "candidate": "Short chapter.",
+    }
+    with pytest.raises(worker.DeterministicFailure):
+        worker.ensure_prompt_budget("novel-chapter", duplicate)
+    trimmed = worker.trim_prior_stages("novel-chapter", duplicate)
+    assert worker.ensure_prompt_budget("novel-chapter", trimmed) <= worker.PROMPT_LIMIT
+
+
+def test_deterministic_editorial_failure_is_not_retried(editorial):
+    m = editorial
+    job, claim = queued(m, stage="corrected-transcript")
+    message = (
+        "corrected-transcript prompt is 1021951 bytes and the safe stage limit is 1000000. "
+        "This preflight failure is deterministic and is not retried."
+    )
+    body = {
+        "jobId": job["jobId"],
+        "stage": "corrected-transcript",
+        "lease": claim["lease"],
+        "message": message,
+        "deterministic": True,
+    }
+    assert unpack(request(m, "POST /editorial-jobs/fail", body)) == {"ok": True, "status": "FAILED"}
+    task = m.read("TASKS", f"{job['jobId']}:corrected-transcript")
+    assert task["status"] == "FAILED"
+    assert task["attempts"] == 1
+    assert task["failure"] == {"code": "deterministic", "message": " ".join(message.split())[:500]}
+    assert task["attemptErrors"] == [{"attempt": 1, "message": task["failure"]["message"]}]
+    assert unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))["task"] is None
+
+
+def test_transient_editorial_failure_keeps_each_attempt_message(editorial):
+    m = editorial
+    job, claim = queued(m)
+    lease = {"jobId": job["jobId"], "stage": "context", "lease": claim["lease"]}
+    first = unpack(
+        request(
+            m,
+            "POST /editorial-jobs/fail",
+            {**lease, "message": "Codex paused/failed; preserve checkpoints, no paid fallback."},
+        )
+    )
+    assert first["status"] == "QUEUED"
+    stored = m.read("TASKS", f"{job['jobId']}:context")
+    assert stored["attemptErrors"][0]["message"].startswith("Codex paused/failed")
+    assert "failure" not in stored
+    again = unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))
+    second = {
+        "jobId": job["jobId"],
+        "stage": "context",
+        "lease": again["lease"],
+        "message": "Could not reach Panther. Check your connection and retry.",
+    }
+    assert unpack(request(m, "POST /editorial-jobs/fail", second))["status"] == "QUEUED"
+    third = unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))
+    exhausted = unpack(
+        request(
+            m,
+            "POST /editorial-jobs/fail",
+            {
+                "jobId": job["jobId"],
+                "stage": "context",
+                "lease": third["lease"],
+                "message": "Could not reach Panther. Check your connection and retry.",
+            },
+        )
+    )
+    assert exhausted["status"] == "FAILED"
+    task = m.read("TASKS", f"{job['jobId']}:context")
+    assert task["failure"]["code"] == "attempts-exhausted"
+    assert "Codex paused/failed" in task["failure"]["message"]
+    assert len(task["attemptErrors"]) == 3
+
+
+def test_editorial_launch_agent_is_one_resident_process():
+    import runpy
+
+    install = runpy.run_path(str(Path(__file__).parents[1] / "ops/editorial-worker/install.py"))
+    definition = install["service_definition"](Path("/release"), Path("/state"), Path("/home/example"))
+    assert definition["Label"] == "place.panther.editorial-worker"
+    assert "--once" not in definition["ProgramArguments"]
+    assert definition["KeepAlive"] is True
+    assert "StartInterval" not in definition
+    assert definition["ThrottleInterval"] == 30
+    assert not any("AWS" in key or "CODEX" in key for key in definition["EnvironmentVariables"])

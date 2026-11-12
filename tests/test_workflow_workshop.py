@@ -242,3 +242,72 @@ def test_hierarchy_normalizes_iso_and_decimal_timestamps(workshop):
     assert result['successful'] == result['failed'] == 1
     assert result['latestRunAt'] == 1790989200
     assert result['latestActivityAt'] == 1790992800
+
+
+def test_session_pipeline_reads_indexed_execution_state(workshop):
+    m = workshop
+    assert request(m, query={"gameId": "synthetic-game", "view": "session-pipeline"})["statusCode"] == 503
+    ready(m)
+    m.INDEX.put_item(Item={
+        "pk": "GAME#synthetic-game", "sk": "playback~abc", "id": "playback~abc", "kind": "playback",
+        "gameId": "synthetic-game", "title": "Continuous audio playback", "status": "done",
+        "sessionId": "session-one", "createdAt": 4,
+        "stages": [{"id": "assemble-verify-publish", "label": "Assemble", "status": "done", "outputKey": "games/synthetic-game/assets/a/original/listen.mp3"}],
+    })
+    body = unpack(request(m, query={"gameId": "synthetic-game", "view": "session-pipeline", "sessionId": "session-one"}))
+    listening = next(node for node in body["manifest"]["nodes"] if node["id"] == "listening-copy")
+    novel = next(node for node in body["manifest"]["nodes"] if node["id"] == "novel-chapter")
+    assert body["source"] == "job-records"
+    assert listening["status"] == "done" and listening["artifacts"][0]["key"].endswith("listen.mp3")
+    assert novel["status"] == "pending"
+    offline = next(worker for worker in body["workers"] if worker["id"] == "editorial")
+    assert offline["status"] == "offline"
+    assert "sign-in expired" in offline["message"]
+
+
+def test_worker_heartbeat_is_fresh_until_it_goes_stale(workshop):
+    m = workshop
+    ready(m)
+    assert request(m, "POST /workflows/heartbeat", body={"worker": "editorial"})["statusCode"] == 403
+    assert request(m, "POST /workflows/heartbeat", body={"worker": "other"}, username="example-worker")["statusCode"] == 400
+    seen = unpack(request(m, "POST /workflows/heartbeat", body={"worker": "editorial"}, username="example-worker"))
+    assert seen["status"] == "ready"
+    view = unpack(request(m, query={"gameId": "synthetic-game", "view": "session-pipeline"}))
+    editorial = next(worker for worker in view["workers"] if worker["id"] == "editorial")
+    playback = next(worker for worker in view["workers"] if worker["id"] == "playback")
+    assert editorial["status"] == "ready" and editorial["message"] is None
+    assert playback["status"] == "offline"
+    m.INDEX.put_item(Item={
+        "pk": "SYSTEM", "sk": "worker#editorial", "worker": "editorial",
+        "seenAt": int(time.time()) - 1201, "status": "ready",
+    })
+    stale = unpack(request(m, query={"gameId": "synthetic-game", "view": "session-pipeline"}))
+    editorial = next(worker for worker in stale["workers"] if worker["id"] == "editorial")
+    assert editorial["status"] == "offline"
+    assert "sign-in expired" in editorial["message"]
+
+
+def test_failed_stage_projects_the_recorded_worker_message(workshop):
+    m = workshop
+    identity = "b" * 64
+    table = m.DB.Table(m.SOURCES["editorial"]["name"])
+    table.put_item(Item={
+        "pk": "RUNS", "sk": identity, "jobId": identity, "gameId": "synthetic-game",
+        "status": "FAILED", "createdAt": 4, "sessionId": "session-one",
+        "creation": {"target": "both", "title": "Lantern"},
+    })
+    message = "corrected-transcript prompt is 1021951 bytes and the safe stage limit is 1000000."
+    table.put_item(Item={
+        "pk": "TASKS", "sk": identity + ":corrected-transcript", "jobId": identity,
+        "stage": "corrected-transcript", "status": "FAILED",
+        "failure": {"code": "deterministic", "message": message},
+        "attemptErrors": [{"attempt": 1, "message": message}],
+    })
+    ready(m)
+    m.project("editorial", {"pk": "RUNS", "sk": identity})
+    body = unpack(request(m, query={
+        "gameId": "synthetic-game", "view": "session-pipeline", "sessionId": "session-one",
+    }))
+    node = next(item for item in body["manifest"]["nodes"] if item["id"] == "corrected-transcript")
+    assert node["status"] == "failed"
+    assert "1021951" in node["message"]

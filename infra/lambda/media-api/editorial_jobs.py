@@ -657,6 +657,14 @@ def claim(actor, version=1):
             internal({"jobId": job["jobId"], "operation": "fail"})
             continue
         if task.get("attempts", 0) >= 3:
+            recorded = [
+                item.get("message")
+                for item in task.get("attemptErrors") or []
+                if isinstance(item, dict) and isinstance(item.get("message"), str)
+            ]
+            detail = " | ".join(recorded)[:500] or (
+                "Three worker attempts ended without a completed artifact."
+            )
             table.update_item(
                 Key={"pk": "TASKS", "sk": task["sk"]},
                 UpdateExpression="SET #s = :failed, failure = :failure, completedAt = :now",
@@ -666,10 +674,7 @@ def claim(actor, version=1):
                     ":failed": "FAILED",
                     ":old": task["status"],
                     ":now": now,
-                    ":failure": {
-                        "code": "attempts-exhausted",
-                        "message": "Three worker attempts ended without a completed artifact.",
-                    },
+                    ":failure": {"code": "attempts-exhausted", "message": detail},
                 },
             )
             continue
@@ -845,6 +850,53 @@ def update(task, body, operation):
     return {"ok": True}
 
 
+def report_failure(task, body):
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip() or len(message) > 2000:
+        raise ValueError("Failure report requires a message")
+    message = " ".join(message.split())[:500]
+    deterministic = body.get("deterministic") is True
+    now = int(time.time())
+    errors = [
+        item for item in (task.get("attemptErrors") or [])
+        if isinstance(item, dict) and isinstance(item.get("message"), str)
+    ]
+    errors.append({"attempt": int(task.get("attempts") or 0), "message": message})
+    errors = errors[-3:]
+    exhausted = deterministic or int(task.get("attempts") or 0) >= 3
+    values = {
+        ":lease": body["lease"],
+        ":now": now,
+        ":running": "RUNNING",
+        ":errors": errors,
+        ":until": 0,
+    }
+    if exhausted:
+        summary = message if deterministic else " | ".join(item["message"] for item in errors)[:500]
+        expression = (
+            "SET #s = :failed, failure = :failure, attemptErrors = :errors, "
+            "completedAt = :now, leaseUntil = :until"
+        )
+        values[":failed"] = "FAILED"
+        values[":failure"] = {
+            "code": "deterministic" if deterministic else "attempts-exhausted",
+            "message": summary,
+        }
+        status = "FAILED"
+    else:
+        expression = "SET #s = :queued, attemptErrors = :errors, leaseUntil = :until"
+        values[":queued"] = "QUEUED"
+        status = "QUEUED"
+    table.update_item(
+        Key={"pk": "TASKS", "sk": task["sk"]},
+        UpdateExpression=expression,
+        ConditionExpression="lease = :lease AND leaseUntil > :now AND #s = :running",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues=values,
+    )
+    return {"ok": True, "status": status}
+
+
 def internal(event):
     job_id = event["jobId"]
     job = read("RUNS", job_id)
@@ -864,6 +916,7 @@ def internal(event):
             "taskToken": event["taskToken"],
             "leaseUntil": 0,
             "attempts": 0,
+            "queuedAt": int(time.time()),
         }
         try:
             table.put_item(Item=task, ConditionExpression="attribute_not_exists(pk)")
@@ -986,9 +1039,12 @@ def handler(event, _context):
         if route == "POST /editorial-jobs/claim":
             return response(200, claim(claims["sub"], body.get("workflowVersion", 1)))
         operation = route.removeprefix("POST /editorial-jobs/")
-        if operation not in {"heartbeat", "defer", "complete"}:
+        if operation not in {"heartbeat", "defer", "complete", "fail"}:
             return response(404, {"error": "Unknown operation"})
-        return response(200, update(owned(body, claims["sub"]), body, operation))
+        task = owned(body, claims["sub"])
+        if operation == "fail":
+            return response(200, report_failure(task, body))
+        return response(200, update(task, body, operation))
     except (ValueError, TypeError, KeyError) as error:
         message = (
             str(error)

@@ -252,15 +252,24 @@ def claim(claims):
                 )
                 continue
             if job.get("attempts", 0) >= 3 and job["status"] != "PUBLISHING":
+                recorded = [
+                    item.get("message")
+                    for item in job.get("attemptErrors") or []
+                    if isinstance(item, dict) and isinstance(item.get("message"), str)
+                ]
+                detail = " | ".join(recorded)[:500] or (
+                    "Three worker attempts ended without a completed artifact."
+                )
                 table.update_item(
                     Key=job_key(job["jobId"]),
-                    UpdateExpression="SET #s = :failed",
+                    UpdateExpression="SET #s = :failed, failure = :failure, completedAt = :now",
                     ConditionExpression="#s = :old AND leaseUntil <= :now",
                     ExpressionAttributeNames={"#s": "status"},
                     ExpressionAttributeValues={
                         ":failed": "FAILED",
                         ":old": job["status"],
                         ":now": now,
+                        ":failure": {"code": "attempts-exhausted", "message": detail},
                     },
                 )
                 continue
@@ -296,6 +305,46 @@ def owned_job(body, claims):
     if not job or job.get("leaseActor") != claims["sub"] or job.get("lease") != body.get("lease"):
         raise ValueError("Job lease does not belong to this worker")
     return job
+
+
+def record_failure(job, body):
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip() or len(message) > 2000:
+        raise ValueError("Failure report requires a message")
+    message = " ".join(message.split())[:500]
+    now = int(time.time())
+    errors = [
+        item for item in (job.get("attemptErrors") or [])
+        if isinstance(item, dict) and isinstance(item.get("message"), str)
+    ]
+    errors.append({"attempt": int(job.get("attempts") or 0), "message": message})
+    errors = errors[-3:]
+    deterministic = body.get("deterministic") is True
+    exhausted = deterministic or int(job.get("attempts") or 0) >= 3
+    values = {":lease": body["lease"], ":now": now, ":running": "RUNNING", ":errors": errors, ":until": 0}
+    if exhausted:
+        expression = (
+            "SET #s = :failed, failure = :failure, attemptErrors = :errors, "
+            "completedAt = :now, leaseUntil = :until"
+        )
+        values[":failed"] = "FAILED"
+        values[":failure"] = {
+            "code": "deterministic" if deterministic else "attempts-exhausted",
+            "message": message if deterministic else " | ".join(item["message"] for item in errors)[:500],
+        }
+        status = "FAILED"
+    else:
+        expression = "SET #s = :queued, attemptErrors = :errors, leaseUntil = :until"
+        values[":queued"] = "QUEUED"
+        status = "QUEUED"
+    table.update_item(
+        Key=job_key(job["jobId"]),
+        UpdateExpression=expression,
+        ConditionExpression="#s = :running AND lease = :lease AND leaseUntil > :now",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues=values,
+    )
+    return response(200, {"status": status})
 
 
 def update_lease(job, body, *, defer=False):
@@ -567,6 +616,8 @@ def handler(event, _context):
             return update_lease(job, body)
         if route == "POST /model-jobs/defer":
             return update_lease(job, body, defer=True)
+        if route == "POST /model-jobs/fail":
+            return record_failure(job, body)
         if route == "POST /model-jobs/complete":
             return finish(job, body, claims)
         return response(404, {"error": "Unknown job operation"})

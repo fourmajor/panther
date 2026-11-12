@@ -22,7 +22,6 @@ def service_definition(release, state, home):
             "worker",
             "--work-dir",
             str(state / "jobs"),
-            "--once",
         ],
         "WorkingDirectory": str(state),
         "EnvironmentVariables": {
@@ -31,7 +30,8 @@ def service_definition(release, state, home):
             "PYTHONUNBUFFERED": "1",
         },
         "RunAtLoad": True,
-        "StartInterval": 60,
+        "KeepAlive": True,
+        "ThrottleInterval": 30,
         "ProcessType": "Background",
         "Umask": 0o077,
         "StandardOutPath": str(state / "worker.log"),

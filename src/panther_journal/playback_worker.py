@@ -133,8 +133,20 @@ def worker(work_dir, once):
     for name in ("ffmpeg", "ffprobe"):
         audio.executable(name)
     with lock(root, "worker.lock"):
-        config = cloud.configuration()
         while True:
+            try:
+                config = cloud.configuration()
+                cloud.token(config)
+            except click.ClickException as exc:
+                click.echo(str(exc), err=True)
+                if once:
+                    raise
+                time.sleep(900)
+                continue
+            try:
+                cloud.api(config, "POST", "/workflows/heartbeat", json={"worker": "playback"})
+            except click.ClickException as exc:
+                click.echo(str(exc), err=True)
             claimed = cloud.api(config, "POST", "/recording-playback-jobs/claim", json={"workflowVersion": 2})
             if claimed.get("job"):
                 result = process(config, claimed, root)

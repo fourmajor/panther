@@ -387,3 +387,40 @@
 .scene-order-row .scene-drag-handle{position:relative;z-index:1;}
 .scene-order-row:has(.scene-card:hover){background:var(--accent);}
 .scene-order-row:has(.scene-card:focus-visible){outline:2px solid var(--ring);outline-offset:2px;}
+
+.pipeline-page{padding-bottom:2rem;}
+.pipeline-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;}
+.pipeline-heading .panther-select-trigger{width:min(22rem,100%);}
+.pipeline-scroll{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:1.25rem 1rem 1.5rem;box-shadow:0 16px 40px rgb(0 0 0 / .12);}
+.pipeline-scroll:focus-visible{outline:2px solid var(--panther-accent);outline-offset:3px;}
+.pipeline-canvas{position:relative;min-width:max-content;}
+.pipeline-edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;}
+.pipeline-edges path{fill:none;stroke:var(--line);stroke-width:2;stroke-linejoin:round;}
+.pipeline-edges path[data-status=done]{stroke:#1f8a56;}
+.pipeline-edges path[data-status=failed]{stroke:#c43c3c;}
+.pipeline-edges path[data-status=running]{stroke:var(--panther-accent);stroke-dasharray:7 6;animation:pipeline-dash 1s linear infinite;}
+.pipeline-columns{position:relative;z-index:1;display:flex;gap:64px;align-items:start;}
+.pipeline-column{display:grid;grid-template-rows:repeat(3,92px);align-items:center;width:196px;gap:8px;}
+.pipeline-node{position:relative;display:flex;align-items:center;gap:.7rem;width:100%;min-height:76px;padding:.7rem .8rem;border:1px solid var(--line);border-radius:16px;background:var(--panel);color:var(--ink);text-align:left;box-shadow:0 10px 28px rgb(0 0 0 / .14);cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}
+.pipeline-node:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgb(0 0 0 / .18);}
+.pipeline-node:focus-visible{outline:2px solid var(--panther-accent);outline-offset:3px;}
+.pipeline-node[data-status=pending]{background:color-mix(in srgb,var(--panel-raised) 55%,var(--panel));color:var(--panther-muted);box-shadow:none;}
+.pipeline-node[data-status=done]{border-color:#1f8a56;background:color-mix(in srgb,#1f8a56 16%,var(--panel));}
+.pipeline-node[data-status=failed]{border-color:#c43c3c;background:color-mix(in srgb,#c43c3c 18%,var(--panel));}
+.pipeline-node[data-status=running]{border-color:var(--panther-accent);animation:pipeline-pulse 1.8s ease-in-out infinite;}
+.pipeline-node[data-final=true]{box-shadow:0 12px 30px rgb(0 0 0 / .16),inset 0 0 0 1px color-mix(in srgb,var(--ink) 12%,transparent);}
+.pipeline-icon{display:grid;place-items:center;width:36px;height:36px;flex:0 0 36px;border-radius:12px;background:color-mix(in srgb,var(--panel-raised) 80%,transparent);}
+.pipeline-x{display:grid;place-items:center;width:28px;height:28px;border-radius:999px;background:#c43c3c;color:#fff;font:700 1.25rem/1 Georgia,serif;}
+.pipeline-copy{min-width:0;}
+.pipeline-type,.pipeline-state{display:block;font:600 .62rem/1.3 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--panther-muted);}
+.pipeline-node strong{display:block;margin:.15rem 0;font:600 .92rem/1.25 system-ui,sans-serif;color:var(--ink);}
+.pipeline-loading{display:grid;grid-template-columns:repeat(3,minmax(0,180px));gap:1rem;}
+.pipeline-loading div{height:76px;border-radius:16px;background:var(--panel-raised);animation:pipeline-pulse 1.4s ease-in-out infinite;}
+.pipeline-error{display:flex;align-items:center;gap:.4rem;color:var(--danger);}
+.pipeline-log{white-space:pre-wrap;overflow-wrap:anywhere;font:400 .9rem/1.5 system-ui,sans-serif;margin:.5rem 0;}
+.pipeline-artifacts{list-style:none;display:flex;flex-wrap:wrap;gap:.5rem;margin:0;padding:0;}
+.pipeline-detail{max-height:calc(100dvh - 2rem);overflow:auto;}
+@keyframes pipeline-pulse{0%,100%{box-shadow:0 8px 22px rgb(0 0 0 / .12);}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--panther-accent) 45%,transparent),0 8px 22px rgb(0 0 0 / .12);}}
+@keyframes pipeline-dash{to{stroke-dashoffset:-26;}}
+@media(max-width:720px){.pipeline-column{width:min(196px,72vw);}.pipeline-heading h1{font-size:1.8rem;}}
+@media(prefers-reduced-motion:reduce){.pipeline-node,.pipeline-node[data-status=running],.pipeline-loading div,.pipeline-edges path{animation:none;transition:none;}}

@@ -280,7 +280,12 @@ failed candidates and logs remain intact. No video, speech or spending is author
 Upgrade the pinned laptop worker from reviewed merged main before submitting recovery.
 The worker's branch-scoped input selection and lossless transcript-overlay projection
 prevent older duplicated transcript/audit bundles from growing with both branches.
-Inputs still have a hard prompt limit; no speech is silently truncated to fit.
+Inputs still have a hard prompt limit. No speech is silently truncated to fit. The
+corrected-transcript review splits a transcript that would exceed 1,000,000 bytes into
+contiguous utterance windows, keeps each prompt under that limit, and merges every window
+back into one transcript. Prior context carried again inside `priorStages` is reduced to
+the selection already present on the stage input. Other stages are checked the same way
+and, when one prompt still cannot fit, fail before Codex runs.
 After deployment, run `panther workflows rebuild` and verify all games to refresh
 historical observations. Older executions omit stages that did not exist in their
 protocol, rather than displaying invented pending work. Their saved source jobs
@@ -291,8 +296,17 @@ and a Standard Step Functions state machine in `us-west-2`. Each AI stage queues
 [waits for a callback](https://docs.aws.amazon.com/step-functions/latest/dg/connect-to-resource.html).
 Callback tokens never leave AWS. Only the owner worker can claim jobs; owner and DM can submit/inspect.
 Leases last ten minutes with one-minute heartbeats. Subscription pauses defer one hour without spending
-crash attempts. Three abandoned attempts fail a stage. Waiting expires after 30 days; outbox records
-have DynamoDB Streams' 24-hour delivery window, so prolonged delivery failures need operator recovery.
+crash attempts. A deterministic preflight failure, including a prompt that cannot be windowed under
+the safe limit, is recorded immediately on the task as `failure.message` and is not retried. Other
+failures keep that attempt's message and are retried until three attempts, which then fail with those
+messages. Three abandoned attempts with no recorded error still fail a stage. Waiting expires after
+30 days; outbox records have DynamoDB Streams' 24-hour delivery window, so prolonged delivery
+failures need operator recovery. Step Functions execution logging is `ALL` with execution data
+omitted. The three executions share one log group. A ten-minute watchdog publishes to SNS when a
+worker heartbeat is older than 20 minutes or a queued/running task has had no active lease for
+that long. Execution `FAILED`, `TIMED_OUT`, and `ABORTED` transitions in this account publish to
+the same topic. The log group, watchdog, and the new fail/heartbeat routes live in the existing
+notifications nested stack so the media stack stays within the CloudFormation resource limit.
 No NAT, EC2, hosted runner, provisioned database or paid AI service is created.
 
 ```sh
@@ -311,10 +325,29 @@ Install the automatic owner-scoped worker only from clean, fetched, reviewed mer
 ```
 
 It snapshots the commit and installs a non-editable CLI under the private editorial-worker directory.
-The user LaunchAgent `place.panther.editorial-worker` processes one stage per minute while awake.
-It never mounts/copies AWS or Codex credentials. Inspect with `launchctl print gui/$(id -u)/place.panther.editorial-worker`;
-stop with `launchctl bootout gui/$(id -u)/place.panther.editorial-worker`. Upgrades refuse to silently
+The user LaunchAgent `place.panther.editorial-worker` is one resident process (`KeepAlive`, no
+`--once` and no `StartInterval`). It polls once a minute while idle. An authentication failure is
+printed and the process waits 15 minutes before trying again, instead of exiting every minute.
+Each successful poll posts `POST /workflows/heartbeat`. Workshop shows a worker with no heartbeat
+in 20 minutes as offline: "Worker offline or its Panther sign-in expired." The same absence raises
+the pipeline SNS alarm. The agent never mounts or copies AWS or Codex credentials. Inspect with
+`launchctl print gui/$(id -u)/place.panther.editorial-worker`; stop with
+`launchctl bootout gui/$(id -u)/place.panther.editorial-worker`. Upgrades refuse to silently
 replace a loaded service or existing release. Preserve prior releases/logs when explicitly upgrading.
+An already loaded one-minute agent keeps the old program until it is booted out and reinstalled.
+
+The Cognito app client refresh token is already valid for 3650 days. The October 2026 stall was
+not a short refresh lifetime. Cognito rotates a refresh token and the previous token stops working
+about 60 seconds later. Two workers refreshing the same saved session can invalidate it. `panther`
+now takes an exclusive lock on `~/.local/state/panther/cli-refresh.lock` and reads the saved session
+again inside that lock before refreshing. Recovery from a token that was already invalidated is
+`panther login`. There is no API-key fallback for this worker.
+
+Inference is subscription Codex through a ChatGPT login. `panther editorial worker` refuses to
+start unless `codex login status` reports `Logged in using ChatGPT`. An always-on host, including
+a systemd user service from `ops/editorial-worker/panther-editorial-worker.service`, needs that
+Codex login for the same user that runs the service. A replacement machine needs a new `panther
+login` and a new Codex login. Do not copy a refresh token or put an API key in the unit.
 
 Browser room transcription produces an unreviewed `BrowserTranscript`, with unassigned speakers
 and window-boundary timestamps. It can be selected explicitly for editorial creation. Preserve its raw evidence, capture
