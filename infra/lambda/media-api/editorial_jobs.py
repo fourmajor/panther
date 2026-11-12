@@ -566,10 +566,12 @@ def reusable_outputs(parent, target=None):
             doc = document(current)
         except (ValueError, TypeError, KeyError, json.JSONDecodeError, ClientError):
             continue
+        # A recovered parent keeps the original producer id on inherited artifacts.
+        origin = task.get("reusedFrom") or parent["jobId"]
         if (
             doc.get("entityType") != "EditorialArtifact"
             or doc.get("stage") != stage
-            or doc.get("jobId") != parent["jobId"]
+            or doc.get("jobId") not in {parent["jobId"], origin}
             or doc.get("structuralValidation") != "passed"
             or doc.get("publicationStatus") not in {"accepted", "accepted-with-notes"}
             or doc.get("videoGenerationAuthorized") is not False
