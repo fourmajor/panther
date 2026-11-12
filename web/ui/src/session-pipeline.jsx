@@ -4,23 +4,49 @@ import {AudioLines, BookOpen, Camera, Captions, CircleAlert, Clapperboard, FileT
 import {Button} from './components/ui/button.jsx';
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from './components/ui/dialog.jsx';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from './components/ui/select.jsx';
-import {presentation, statusText, workerLabel} from './session-pipeline-model.js';
+import {cardText, cardTone, formatWhen, presentation, runIdentity, sessionHeadline, statusText, workerLabel} from './session-pipeline-model.js';
 
 const icons = {mic: Mic, captions: Captions, users: Users, file: FileText, 'file-check': FileText, library: Library, pencil: Pencil, book: BookOpen, clapper: Clapperboard, list: List, search: Search, image: Image, package: Package, audio: AudioLines, palette: Palette, camera: Camera, scroll: ScrollText, shield: ShieldCheck, film: Film, circle: CircleAlert};
 
-function columnsOf(nodes) {
-  const columns = new Map();
-  for (const node of nodes) {
-    if (!columns.has(node.column)) columns.set(node.column, []);
-    columns.get(node.column).push(node);
-  }
-  return [...columns.entries()].sort((a, b) => a[0] - b[0]).map(([index, items]) => ({index, nodes: items}));
+const COLUMN_PITCH = 204;
+const LANE_HEAD = 180;
+
+function laneColumns(nodes, laneId) {
+  const members = nodes.filter(node => (node.lane || 'shared') === laneId);
+  const indexes = [...new Set(members.map(node => node.column))].sort((a, b) => a - b);
+  return indexes.map((column, index) => ({index, nodes: members.filter(node => node.column === column)}));
 }
 
-function Graph({nodes, edges, onOpen}) {
+function branchIndent(nodes) {
+  const shared = nodes.filter(node => (node.lane || 'shared') === 'shared' && node.row === 0);
+  if (!shared.length) return 0;
+  return Math.max(...shared.map(node => node.column)) * COLUMN_PITCH;
+}
+
+function route(from, to) {
+  const x1 = from.x + from.w, y1 = from.y + from.h / 2, x2 = to.x, y2 = to.y + to.h / 2;
+  const aligned = Math.abs((from.x + from.w / 2) - (to.x + to.w / 2)) < 28;
+  if (aligned && to.y > from.y + from.h) {
+    const x = from.x + from.w / 2;
+    return `M ${x} ${from.y + from.h} L ${x} ${to.y}`;
+  }
+  if (Math.abs(y1 - y2) < 2 && x2 >= x1 - 4) return `M ${x1} ${y1} L ${x2} ${y2}`;
+  if (x2 >= x1 - 8) {
+    const mid = x1 + Math.max(18, (x2 - x1) / 2);
+    return `M ${x1} ${y1} L ${mid} ${y1} L ${mid} ${y2} L ${x2} ${y2}`;
+  }
+  const xOut = x1 + 8;
+  const yTop = to.y - 8;
+  const xTop = to.x + to.w / 2;
+  return `M ${x1} ${y1} L ${xOut} ${y1} L ${xOut} ${yTop} L ${xTop} ${yTop} L ${xTop} ${to.y}`;
+}
+
+function Graph({nodes, edges, lanes, onOpen, label='Session pipeline'}) {
   const canvas = React.useRef(null);
   const refs = React.useRef(new Map());
   const [lines, setLines] = React.useState([]);
+  const groups = (lanes?.length ? lanes : [{id: 'shared', title: 'Shared', status: 'pending'}]).filter(lane => nodes.some(node => (node.lane || 'shared') === lane.id));
+  const indent = branchIndent(nodes);
   const measure = React.useCallback(() => {
     const root = canvas.current;
     if (!root) return;
@@ -35,11 +61,7 @@ function Graph({nodes, edges, onOpen}) {
     setLines(edges.flatMap(edge => {
       const from = placed[edge.from], to = placed[edge.to];
       if (!from || !to) return [];
-      const x1 = from.x + from.w, y1 = from.y + from.h / 2, x2 = to.x, y2 = to.y + to.h / 2;
-      const mid = x1 + Math.max(18, (x2 - x1) / 2);
-      const sameRow = Math.abs(y1 - y2) < 2;
-      const d = sameRow ? `M ${x1} ${y1} L ${x2} ${y2}` : `M ${x1} ${y1} L ${mid} ${y1} L ${mid} ${y2} L ${x2} ${y2}`;
-      return [{id: `${edge.from}-${edge.to}`, d, status: presentation(edge.status, edge.from)}];
+      return [{id: `${edge.from}-${edge.to}`, d: route(from, to), status: presentation(edge.status, edge.from)}];
     }));
   }, [nodes, edges]);
   React.useLayoutEffect(() => {
@@ -51,20 +73,26 @@ function Graph({nodes, edges, onOpen}) {
     window.addEventListener('resize', measure);
     return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
   }, [measure]);
-  return <div className="pipeline-scroll" tabIndex={0} aria-label="Session pipeline">
+  return <div className="pipeline-scroll" tabIndex={0} aria-label={label}>
     <div className="pipeline-canvas" ref={canvas}>
       <svg className="pipeline-edges" aria-hidden="true">
         <defs><marker id="pipeline-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6" fill="none" stroke="context-stroke" strokeWidth="1.4"/></marker></defs>
         {lines.map(line => <path key={line.id} d={line.d} data-status={line.status} markerEnd="url(#pipeline-arrow)"/>)}
       </svg>
-      <div className="pipeline-columns">{columnsOf(nodes).map(column => <div className="pipeline-column" key={column.index}>{column.nodes.map(node => {
+      <div className="pipeline-lanes">{groups.map(lane => {
+        const tone = cardTone(lane.status);
+        const branch = lane.id !== 'shared';
+        return <section key={lane.id} className={branch ? 'pipeline-lane pipeline-lane-branch' : 'pipeline-lane'} data-status={tone} style={branch ? {marginLeft: Math.max(0, indent - LANE_HEAD)} : undefined} aria-label={`${lane.title}, ${cardText(lane)}`}>
+          <header className="pipeline-lane-head"><span className="pipeline-mark" aria-hidden="true">{tone === 'failed' ? '×' : ''}</span><strong>{lane.title}</strong><span className="pipeline-lane-status">{cardText(lane)}</span></header>
+          <div className="pipeline-lane-track">{laneColumns(nodes, lane.id).map(column => <div className="pipeline-column" key={column.index}>{column.nodes.map(node => {
         const Icon = icons[node.icon] || CircleAlert;
         const shown = presentation(node.status, node.id);
         return <button key={node.id} type="button" className="pipeline-node" data-status={shown} data-final={node.final ? 'true' : 'false'} style={{gridRow: node.row + 1}} ref={element => { if (element) refs.current.set(node.id, element); else refs.current.delete(node.id); }} aria-label={`${node.title}, ${statusText(node.status, node.id)}`} onClick={() => onOpen(node)}>
           <span className="pipeline-icon" aria-hidden="true">{shown === 'failed' ? <span className="pipeline-x">×</span> : <Icon size={18} strokeWidth={1.7}/>}</span>
           <span className="pipeline-copy"><span className="pipeline-type">{node.type}</span><strong>{node.title}</strong><span className="pipeline-state">{statusText(node.status, node.id)}</span></span>
         </button>;
-      })}</div>)}</div>
+      })}</div>)}</div></section>;
+      })}</div>
     </div>
   </div>;
 }
@@ -84,24 +112,48 @@ function Detail({node, onPreview, onClose}) {
   </Dialog>;
 }
 
+function Finals({finals}) {
+  if (!finals?.length) return null;
+  return <div className="pipeline-finals" role="list" aria-label="Final artifacts">{finals.map(final => <span key={final.id} role="listitem" className="pipeline-chip" data-status={cardTone(final.status)}>{final.title}</span>)}</div>;
+}
+
 export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, onPreview, embedded=false}) {
   const [open, setOpen] = React.useState(null);
+  const [picked, setPicked] = React.useState(null);
+  const back = React.useRef(null);
   const query = useQuery({
     queryKey: ['session-pipeline', scope, gameId, sessionId || ''],
     queryFn: ({signal}) => onLoad({sessionId: sessionId || null, signal}),
     refetchInterval: current => (current.state.data?.manifest?.nodes || []).some(node => node.status === 'running' || node.status === 'queued') ? 5000 : 15000,
     retry: false,
   });
-  const manifest = query.data?.manifest;
-  const sessions = query.data?.sessions || [];
-  const workers = query.data?.workers || [];
-  const selected = sessionId || manifest?.sessionId || '';
+  const data = query.data;
+  const sessions = data?.sessions || [];
+  const workers = data?.workers || [];
+  const runs = data?.runs || [];
+  const opened = Boolean(sessionId);
+  const session = sessions.find(item => item.id === sessionId) || null;
+  const headline = opened ? sessionHeadline(session?.title || data?.manifest?.title, sessionId) : 'Sessions';
+  const [tracked, setTracked] = React.useState(sessionId || '');
+  if (tracked !== (sessionId || '')) {
+    setTracked(sessionId || '');
+    setPicked(null);
+    setOpen(null);
+  }
+  const active = runs.find(item => item.id === picked) || runs[0] || null;
+  const nodes = active?.nodes || data?.manifest?.nodes || [];
+  const edges = active?.edges || data?.manifest?.edges || [];
+  const lanes = active?.lanes || data?.manifest?.lanes || [];
+  const needed = new Set(active?.workers || data?.workersNeeded || []);
+  React.useEffect(() => { if (opened) back.current?.focus(); }, [opened, sessionId]);
   const Heading = embedded ? 'h2' : 'h1';
-  return <section className={`pipeline-page${embedded ? ' pipeline-embedded' : ''}`} aria-label="Pipeline">
+  const listPath = `/games/${encodeURIComponent(gameId)}/pipeline`;
+  return <section className={`pipeline-page${embedded ? ' pipeline-embedded' : ''}`} aria-label={opened ? 'Session' : 'Sessions'}>
     <header className="page-heading pipeline-heading">
       <div>
-        <Heading>Pipeline</Heading>
-        {manifest?.title && <p className="pipeline-session">{manifest.title}</p>}
+        {opened && headline !== 'Session' && <p className="pipeline-kicker">Session</p>}
+        <Heading>{headline}</Heading>
+        {opened && <Finals finals={session?.finals}/>}
       </div>
       <div className="pipeline-tools">
         {workers.length > 0 && <ul className="pipeline-workers" aria-label="Workers">{workers.map(worker => {
@@ -109,15 +161,31 @@ export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, o
           const label = `${workerLabel(worker.id)} ${online ? 'online' : 'offline'}`;
           return <li key={worker.id} className="pipeline-worker" data-status={online ? 'online' : 'offline'} title={worker.message || label}>{label}</li>;
         })}</ul>}
-        {sessions.length > 0 && <Select value={selected ? `option:${selected}` : undefined} onValueChange={value => onNavigate(`/games/${encodeURIComponent(gameId)}/pipeline/${encodeURIComponent(value.slice(7))}`)}>
-          <SelectTrigger aria-label="Session"><SelectValue placeholder="Session"/></SelectTrigger>
-          <SelectContent>{sessions.map(session => <SelectItem key={session.id} value={`option:${session.id}`}>{session.title}</SelectItem>)}</SelectContent>
+        {opened && runs.length > 1 && <Select value={`run:${active?.id || runs[0].id}`} onValueChange={value => setPicked(value.slice(4))}>
+          <SelectTrigger aria-label="Run"><SelectValue/></SelectTrigger>
+          <SelectContent>{runs.map(run => <SelectItem key={run.id} value={`run:${run.id}`}>{runIdentity(run)?.slice(0, 8) || 'Run'}{formatWhen(run.startedAt) ? ` · ${formatWhen(run.startedAt)}` : ''}</SelectItem>)}</SelectContent>
         </Select>}
       </div>
     </header>
-    {workers.filter(worker => worker.status && worker.status !== 'ready').map(worker => <p role="alert" className="pipeline-error" key={`${worker.id}-alert`}><CircleAlert size={16}/>{worker.message}</p>)}
-    {query.isPending && <div className="pipeline-loading" aria-label="Loading pipeline"><div/><div/><div/></div>}
-    {query.error && <div><p role="alert" className="pipeline-error"><CircleAlert size={16}/>{query.error.message || 'The pipeline could not be loaded.'}</p><Button variant="outline" onClick={() => query.refetch()}>Retry pipeline</Button></div>}
-    {manifest && <><Graph nodes={manifest.nodes} edges={manifest.edges} onOpen={setOpen}/><Detail node={open} onPreview={onPreview} onClose={() => setOpen(null)}/></>}
+    {opened && workers.filter(worker => needed.has(worker.id) && worker.status && worker.status !== 'ready').map(worker => <p role="alert" className="pipeline-error" key={`${worker.id}-alert`}><CircleAlert size={16}/>{worker.message}</p>)}
+    {query.isPending && <div className="pipeline-loading" aria-label="Loading sessions"><div/><div/><div/></div>}
+    {query.error && <div><p role="alert" className="pipeline-error"><CircleAlert size={16}/>{query.error.message || 'The sessions could not be loaded.'}</p><Button variant="outline" onClick={() => query.refetch()}>Retry sessions</Button></div>}
+    {data && !opened && sessions.length > 0 && <ul className="pipeline-cards" aria-label="Sessions">{sessions.map(item => {
+      const tone = cardTone(item.status);
+      return <li key={item.id}><button type="button" className="pipeline-card" data-status={tone} aria-label={`${sessionHeadline(item.title, item.id)}, ${cardText(item)}`} onClick={() => onNavigate(`${listPath}/${encodeURIComponent(item.id)}`)}>
+        <span className="pipeline-mark" aria-hidden="true">{tone === 'failed' ? '×' : ''}</span>
+        <span className="pipeline-card-copy">
+          <strong className="pipeline-card-name">{sessionHeadline(item.title, item.id)}</strong>
+          <span className="pipeline-card-stage">{cardText(item)}</span>
+          <Finals finals={item.finals}/>
+        </span>
+      </button></li>;
+    })}</ul>}
+    {data && !opened && sessions.length === 0 && <p className="pipeline-card-stage">No sessions yet.</p>}
+    {opened && data && <div className="pipeline-run">
+      <Button ref={back} variant="outline" className="pipeline-back" onClick={() => { setOpen(null); onNavigate(listPath); }}>Sessions</Button>
+      <Graph nodes={nodes} edges={edges} lanes={lanes} onOpen={setOpen} label="Session pipeline"/>
+      <Detail node={open} onPreview={onPreview} onClose={() => setOpen(null)}/>
+    </div>}
   </section>;
 }

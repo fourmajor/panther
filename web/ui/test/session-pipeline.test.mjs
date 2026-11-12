@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {presentation, statusText} from '../src/session-pipeline-model.js';
+import {cardText, cardTone, presentation, runIdentity, sessionHeadline, statusText} from '../src/session-pipeline-model.js';
 
 test('pipeline colors use success, failure, running, and gray for everything else', () => {
   assert.equal(presentation('done'), 'done');
@@ -20,4 +20,18 @@ test('storyboard approval stays a gate and does not look finished or running', (
   assert.equal(presentation('pending', 'video-generation'), 'pending');
   assert.equal(statusText('paused', 'storyboard-approval'), 'Needs approval');
   assert.equal(statusText('pending', 'video-generation'), 'Not started');
+});
+
+test('a session card uses the session name or date and names the failed stage', () => {
+  assert.equal(sessionHeadline('Night one', 'session-one'), 'Night one');
+  assert.equal(sessionHeadline('session-2026-10-15', 'session-2026-10-15'), '2026-10-15');
+  assert.equal(sessionHeadline('', ''), 'Session');
+  assert.equal(cardTone('done'), 'done');
+  assert.equal(cardTone('failed'), 'failed');
+  assert.equal(cardTone('started'), 'pending');
+  assert.equal(cardText({status: 'pending'}), 'Not started');
+  assert.equal(cardText({status: 'failed', stage: {title: 'Novel chapter', status: 'failed'}}), 'Failed · Novel chapter');
+  assert.equal(cardText({status: 'started', stage: {id: 'context', title: 'Context selection', status: 'pending'}}), 'Context selection');
+  assert.equal(runIdentity({id: 'editorial~66d4b374'}), '66d4b374');
+  assert.equal(runIdentity(null), null);
 });
