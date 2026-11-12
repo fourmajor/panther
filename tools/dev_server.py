@@ -1345,6 +1345,14 @@ class Store:
         import session_pipeline
         self.game(game)
         observations, audio, episode_sessions = [], {}, {}
+
+        def job_run(kind, job):
+            identity = None
+            if isinstance(job, dict):
+                identity = job.get("jobId") or job.get("id") or job.get("chapterId")
+            if not isinstance(identity, str) or not 0 < len(identity) <= 128:
+                return {}
+            return {"runId": f"{kind}~{identity}", "startedAt": job.get("createdAt") or job.get("publishedAt") or 0}
         for asset in self.objects(game):
             meta = asset.get("metadata") or {}
             sid = meta.get("sessionId")
@@ -1366,7 +1374,7 @@ class Store:
         for job in self.list("playback", game):
             sid = self._pipeline_session(job)
             if sid:
-                observations.append({"sessionId": sid, "kind": "playback", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("completedAt") or job.get("createdAt"), "outputKey": job.get("outputKey") or job.get("assetKey"), "message": job.get("message")})
+                observations.append({"sessionId": sid, "kind": "playback", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("completedAt") or job.get("createdAt"), "outputKey": job.get("outputKey") or job.get("assetKey"), "message": job.get("message"), **job_run("playback", job)})
         for job in self.list("transcription", game):
             sid = job.get("sessionId")
             if not session_pipeline.slug(sid):
@@ -1375,7 +1383,7 @@ class Store:
             stages = [{"id": "processing", "status": job.get("status"), "outputKey": output, "message": job.get("message")}]
             if job.get("mode") == "final" and job.get("status") in {"DONE", "PUBLISHED"}:
                 stages.append({"id": "preserve-final-transcript", "status": "done", "outputKey": output})
-            observations.append({"sessionId": sid, "kind": "transcription", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("completedAt") or job.get("createdAt"), "message": job.get("message"), "stages": stages, "label": job.get("sessionName")})
+            observations.append({"sessionId": sid, "kind": "transcription", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("completedAt") or job.get("createdAt"), "message": job.get("message"), "stages": stages, "label": job.get("sessionName"), **job_run("transcription", job)})
         tasks = {}
         for task in self.list("editorial-task", game):
             tasks.setdefault(task.get("jobId"), []).append(task)
@@ -1398,7 +1406,9 @@ class Store:
                 stages.append({"id": "storyboard-approval", "status": "done" if approved else "paused", "message": None if approved else "Paid video stays blocked until this storyboard revision is approved."})
             if session_pipeline.normalize(job.get("status")) == "failed" and not any(session_pipeline.normalize(stage.get("status")) == "failed" for stage in stages) and isinstance(job.get("currentStage"), str):
                 stages.append({"id": job["currentStage"], "status": "failed", "message": job.get("message")})
-            observations.append({"sessionId": sid, "kind": "editorial", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("createdAt"), "label": (job.get("creation") or {}).get("title"), "message": job.get("message") if session_pipeline.normalize(job.get("status")) == "failed" else None, "stages": stages})
+            recovery = job.get("recovery") if isinstance(job.get("recovery"), dict) else {}
+            reused = recovery.get("reusedStages") if isinstance(recovery.get("reusedStages"), list) else []
+            observations.append({"sessionId": sid, "kind": "editorial", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("createdAt"), "label": (job.get("creation") or {}).get("title"), "message": job.get("message") if session_pipeline.normalize(job.get("status")) == "failed" else None, "stages": stages, "reusedStages": [name for name in reused if isinstance(name, str)][:80], **job_run("editorial", job)})
         def episode_session(job):
             sid = job.get("sessionId")
             if session_pipeline.slug(sid):
@@ -1412,14 +1422,14 @@ class Store:
                     continue
                 output = job.get("outputKey") or job.get("assetKey")
                 updated = job.get("updatedAt") or job.get("completedAt") or job.get("createdAt")
-                observations.append({"sessionId": sid, "kind": kind, "status": job.get("status"), "updatedAt": updated, "outputKey": output, "message": job.get("message"), "stages": [{"id": "processing", "status": job.get("status"), "outputKey": output, "message": job.get("message")}]})
+                observations.append({"sessionId": sid, "kind": kind, "status": job.get("status"), "updatedAt": updated, "outputKey": output, "message": job.get("message"), "stages": [{"id": "processing", "status": job.get("status"), "outputKey": output, "message": job.get("message")}], **job_run(kind, job)})
                 frame = job.get("storyboardFramePin") if isinstance(job.get("storyboardFramePin"), dict) else None
                 if frame and frame.get("key"):
                     observations.append({"sessionId": sid, "kind": "asset-generation", "status": "done", "updatedAt": updated, "stages": [{"id": "processing", "status": "done", "outputKey": frame["key"]}]})
         for chapter in self.list("chapter", game):
             sid = chapter.get("sessionId")
             if session_pipeline.slug(sid):
-                observations.append({"sessionId": sid, "kind": "chapter", "status": "done", "updatedAt": chapter.get("publishedAt") or chapter.get("createdAt"), "outputKey": chapter.get("assetKey"), "label": chapter.get("title")})
+                observations.append({"sessionId": sid, "kind": "chapter", "status": "done", "updatedAt": chapter.get("publishedAt") or chapter.get("createdAt"), "outputKey": chapter.get("assetKey"), "label": chapter.get("title"), **job_run("chapter", chapter)})
         return session_pipeline.view(session_id or None, observations)
 
     def workflows(self, game, identity=None, cursor=None, view=None, workflow_type=None, session_id=None):

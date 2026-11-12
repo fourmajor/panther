@@ -52,7 +52,11 @@ utterances unassigned with an attribution warning. The session diarization file 
 unavailable-embedding record as the chunk pass, so one non-finite speaker does not discard the
 other speakers. Transcript text shows the diarized speaker label when the player is unknown.
 Unassigned means there is no player and no speaker label. Malformed evidence and invalid enrolled
-profiles still fail closed. After reconciliation, a player-assignment rate below 25% of segments fails the handoff.
+profiles still fail closed. Reconciliation assigns each diarized speaker to a different enrolled
+player. A match is kept when its cosine leads the runner-up by at least 0.1, or when the cosine
+is at least 0.75. A tie stays unknown. After reconciliation, a player-assignment rate below 25% of
+segments fails the handoff. An accepted cosine below 0.75 is logged as a prompt to re-enroll that
+profile from a clean sample.
 The local candidate and the cosine for each diarized speaker are kept; the transcript is
 not published and adaptation does not start. A near-zero rate is a broken mapping, not a
 successful unknown.
@@ -102,8 +106,12 @@ From clean, fetched and reviewed merged main:
 
 The session LaunchAgent is `place.panther.session-worker`; it performs one pass per minute
 while logged in and awake. The editorial worker is a separate resident LaunchAgent. It uses the
-same pinned release and Panther authentication. Its inference is subscription Codex through a
-ChatGPT login on that machine, with no API-key fallback. Upgrades require explicitly stopping
+same pinned release and Panther authentication. Its inference defaults to the Claude Code
+CLI signed in with the Claude subscription. The editorial installer checks that `claude` is on the
+LaunchAgent PATH and records the absolute path. Grok is the alternative
+(`PANTHER_EDITORIAL_BACKEND=grok`, key in `XAI_API_KEY` or keychain service `panther-xai`).
+Codex is optional, not the default. The session installer also caches
+`~/.cache/whisper.cpp/ggml-large-v3-turbo.bin`. Upgrades require explicitly stopping
 old services and preserving their plists/releases. A failed Panther refresh stops the worker
 heartbeat; Workshop and the pipeline SNS alarm show that worker as offline. Never replace an
 authentication error with AWS asset writes or a paid inference fallback.

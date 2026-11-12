@@ -346,9 +346,10 @@ are not exhaustive motion, lip-sync or perceptual audio verification. New genera
 and paid retries still require separate approval. New finishing assets record exact provenance,
 hidden processing roles and subscription/local-processing metadata; never relabel original footage.
 
-H3 Max image shots use `h3-max-image`: one approved pinned starting frame, eight seconds at
-768P with native audio, safety checking on and prompt expansion disabled. This is H3 Max, not
-Turbo; it is the selected dialogue model. Existing spending and reference-sharing approvals still apply.
+H3 Max image shots use `h3-max-image`: one approved pinned starting frame, 2–7 seconds at
+768P with native audio, safety checking on and prompt expansion disabled. `480P` is an explicit
+option. This is H3 Max, not Turbo, and it is the model for every new shot. Existing spending
+and reference-sharing approvals still apply.
 Use `h3-max` for text-only comparisons with the same settings, explicit 16:9 and no reference image.
 The guard reserves the regular rate plus headroom, even during promotional pricing.
 For a lost result, `panther video reconcile-unavailable ATTEMPT_ID` verifies the original account,
@@ -356,18 +357,17 @@ live completion, exact request identity, result HTTP 404 and a matching zero-cha
 It retains the full reservation and audit trail, records outcome unknown/output unavailable, and
 forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
 
-Standing production selection policy: default to **Veo 3.1 Fast through fal**, explicitly for
-city/urban establishing shots. Use **MiniMax H3 Max (not Turbo) through fal for dialogue** and
-**Kling 3 Pro through fal for battle/action**. H3 Max replaces the earlier Veo dialogue preference.
-Select per shot: action in a city uses Kling; dialogue close-ups between combat beats use H3 Max,
-including dialogue in a city. For an inseparable mixed shot, use Kling if action drives the shot,
-H3 Max if dialogue drives it, otherwise Veo; record the reason.
-Use explicit `veo-3.1-fast` / `h3-max` / `kling-3-pro` manifest profiles, or their `-image` variants when using
-an approved starting image. The CLI does not automatically classify shots or fill a missing model.
-This policy guides post-preproduction plan preparation; it does not change the provider-neutral
-editorial worker or authorize spending, reference sharing, model upgrades or failure fallbacks.
-Other models require an explicit owner-directed exception/comparison. Preserve historical plans
-and actual model provenance; never relabel old videos to match today's preference.
+First-cut video uses **`h3-max-image`** for every scene: MiniMax H3 Max through fal, audio on,
+768P, one take. A full cut is 90 seconds or less, about 14–16 shots of 2–7 seconds. A take that
+fails review is kept and flagged; it is not a paid retry. `480P` is an explicit option on the
+same model. Start frames default to `gpt-image-2` at quality medium through the API. A Blender
+render is allowed. ElevenLabs is only for speech that the clip itself should not generate.
+The CLI does not automatically classify shots or fill a missing model. **Veo 3.1 Fast**
+(`veo-3.1-fast-silent`) and **Kling 3 Pro** stay available as explicit per-shot overrides.
+This policy does not change the editorial worker or authorize spending, reference sharing,
+model upgrades or failure fallbacks. The plan records its estimated cost. The session budget
+is the video allowance from `panther narration allocate`. Preserve historical plans and actual
+model provenance; never relabel old videos to match today's preference.
 
 Use `panther video --help` and the trusted `docs/fal-video-comparison.md` for the separate local
 comparison integration. `video check` checks live pricing and balance without generation;
@@ -481,8 +481,11 @@ use local `recording diarize` and a confirmed anonymous-speaker-label to player-
 character dialogue, cluster numbering, or another run. Unknown and overlapping speech stays
 unassigned. Keep table chatter and mark speech context separately. Preserve every earlier version.
 For previously enrolled players, `recording reconcile-speakers` performs offline session-wide
-matching and writes a new candidate without changing text. Inspect actual coverage and identity
-evidence before publishing through `upload --new-version-of`; never lower gates simply to fill names.
+matching and writes a new candidate without changing text. Each diarized speaker maps to a
+different enrolled player. Keep the match when it leads the runner-up by at least 0.1 or its cosine
+is at least 0.75; a tie stays unknown. The 25% segment floor still stops the handoff. Low absolute
+scores are a prompt to re-enroll, not a reason to drop that floor. Inspect actual coverage and identity
+evidence before publishing through `upload --new-version-of`.
 See `docs/local-audio.md` for setup, consent, evaluation, and current conservative alignment limits.
 `recording diarize-nemotron` is an explicit pinned local experiment, not player identification.
 `recording evaluate-speakers` scores independently confirmed private intervals by correct,

@@ -205,13 +205,14 @@ Panther is a hobby project. Rapid development beats almost everything else.
   Routine defects yield explicit working drafts, never invented repairs or implicit paid retries.
   Frame-sampled visual checks and technical sound checks must disclose their coverage limits.
 
-- Video production model policy: default to Veo 3.1 Fast through fal, explicitly for city shots;
-  use MiniMax H3 Max (not Turbo) through fal for dialogue and Kling 3 Pro through fal for battle/action.
-  Apply per shot, with action taking precedence over city setting and separate dialogue close-ups
-  using H3 Max. Follow the mixed-shot
-  guidance and exact profiles in `docs/fal-video-comparison.md#production-model-selection`.
-  Record the choice in new executable plans; this is not automatic routing or spending approval.
-  Do not silently upgrade/fallback models or rewrite historical comparison provenance.
+- Video production model policy: every new shot is MiniMax H3 Max through fal (`h3-max-image`),
+  audio on, 768P, one take of 2–7 seconds, in a cut of about 14–16 shots and 90 seconds or less.
+  `480P` is an explicit option. Veo 3.1 Fast and Kling 3 Pro are explicit per-shot overrides only.
+  A take that fails review is kept and flagged. Start frames default to `gpt-image-2` medium;
+  a Blender render is allowed. The plan stores its estimated cost, and the session budget is the
+  video allowance from `panther narration allocate`. Follow
+  `docs/fal-video-comparison.md#production-model-selection`. This is not automatic routing or
+  spending approval. Do not silently upgrade/fallback models or rewrite historical comparison provenance.
 
 - Novel link previews are separate read-time projections, never manuscript edits. Support hover,
   keyboard focus and touch; keep navigation usable when a preview fails. Use descriptions or clearly

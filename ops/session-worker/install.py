@@ -33,6 +33,13 @@ if __name__ == "__main__":
     sys.path.insert(0, str(args.repo / "src"))
     from panther_journal.session_worker import settings
     settings(args.config)
+    from panther_journal.whisper_runtime import ensure_model
+
+    try:
+        path = ensure_model()
+    except OSError as exc:
+        raise SystemExit("Could not cache ggml-large-v3-turbo.bin in ~/.cache/whisper.cpp. " + str(exc)) from exc
+    print("Whisper weights ready at " + str(path))
     module = installer()
     module.LABEL = "place.panther.session-worker"
     module.service_definition = lambda release, state, home: service_definition(release, state, home, args.config.resolve())

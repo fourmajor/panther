@@ -112,9 +112,9 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                 if job['storyboardShotRef']['revision'] != board['revision'] or job.get('sceneContext', {}).get('shots') != [shot]:
                     raise ValueError('The pinned storyboard shot differs from this generation request')
         model = job.get('model') or model_for(job)
-        allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
+        allowed = {'veo-3.1-fast', 'veo-3.1-fast-silent', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if standalone:
-            allowed = {'veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
+            allowed = {'veo-3.1-fast', 'veo-3.1-fast-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if model not in allowed:
             raise ValueError('Unsupported selected video model')
         endpoint = job.get('endpoint') or v.PROFILES[model]['endpoint']
@@ -149,7 +149,13 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             prompt = job.get('preparedPrompt') or job['prompt']
             if standalone and job.get('visualStyle'):
                 prompt += '\nVisual style: ' + job['visualStyle'].replace('-', ' ')
+            has_frame = bool(job.get('storyboardFramePin') or job.get('mapPin') or job.get('imagePin'))
+            portraits = (job.get('promptComposition') or {}).get('visibleCharacterIds')
+            if v.PROFILES[model].get('imageField') and not has_frame and not portraits:
+                raise ValueError('This shot uses h3-max-image. Pin a start frame from gpt-image-2 medium or a Blender render.')
             shot = {'model': model, 'prompt': prompt}
+            if model.startswith('h3-max'):
+                shot['resolution'] = job.get('resolution', '768P')
             from panther_journal.film_prompt_policy import prompt_blockers
             blockers = prompt_blockers(prompt)
             if blockers:

@@ -149,14 +149,14 @@ def file_hash(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def run_process(command, *, folder, log, heartbeat, timeout, stdin=None):
+def run_process(command, *, folder, log, heartbeat, timeout, stdin=None, env=None):
     # One process group per job. Stop only its children on lease loss, interruption, or timeout.
     start = time.monotonic()
     with log.open("ab") as output:
         child = subprocess.Popen(
             command,
             cwd=folder,
-            env=clean_environment(),
+            env=clean_environment() if env is None else env,
             stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             stdout=output,
             stderr=subprocess.STDOUT,

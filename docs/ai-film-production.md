@@ -36,14 +36,18 @@ evidence. No method here authorizes a new model, paid retry, voice clone or serv
    notes. Corked/open, spirit counts and intact/broken glass must progress coherently. These notes
    are review context, not a global paragraph appended to every shot.
 5. **Prepare real plates.** One clean starting composition per shot, correct identity/anatomy,
-   supported aspect ratio, readable props and feasible starting pose. Object inserts contain only
+   supported aspect ratio, readable props and feasible starting pose. The default generator is
+   `gpt-image-2` at quality medium through the API. A Blender render is the other allowed plate.
+   Object inserts contain only
    necessary objects. A creature-free opening must not carry later effects. Prepare compatible end
    plates only where the verified adapter supports them. Never reuse a defective generated closing
    frame just to gain continuity; review it first.
 6. **Review a timed storyboard.** Inspect frame order, narrative causality, action coverage and sound
-   intent at intended duration. The owner reviews the actual storyboard in Panther. An optional
+   intent at intended duration. A full cut defaults to 90 seconds or less: about 14–16 shots of
+   2–7 seconds, one H3 Max take each. The owner reviews the actual storyboard in Panther. An optional
    timed animatic is clearly previsualization, not a finished movie or replacement for native review.
-   Prepare separately approved premium voice auditions where needed; no system-TTS shortcut.
+   H3 Max audio is the dialogue baseline. Prepare a separate voice audition only when a shot needs
+   speech the clip should not generate; no system-TTS shortcut.
 7. **Compose exact shot requests.** Use the visible subset, one clear action trajectory and a feasible
    camera move. Starting images already establish appearance. Prefer positive outcomes (corks lift
    and stay clear) over extensive negations. Keep audit commentary, offscreen cast and unrelated

@@ -83,6 +83,100 @@ def identity_scores(embedding, profiles, threshold=0.75, margin=0.15):
     return player, best, second
 
 
+MATCH_COSINE = 0.75
+MATCH_MARGIN = 0.1
+REENROLL_HINT = (
+    'Absolute speaker scores are low. Re-enroll profiles from clean single-speaker samples.'
+)
+
+
+def _accepted(score, runner_up):
+    """A clear lead, or a strong cosine. An exact tie is not a person."""
+    if runner_up is not None and score - runner_up <= 1e-6:
+        return False
+    if score >= MATCH_COSINE:
+        return True
+    return runner_up is not None and score - runner_up >= MATCH_MARGIN
+
+
+def _minimize(cost):
+    """Column chosen for each row of a square cost matrix."""
+    n = len(cost)
+    u = [0.0] * (n + 1)
+    v = [0.0] * (n + 1)
+    p = [0] * (n + 1)
+    way = [0] * (n + 1)
+    for i in range(1, n + 1):
+        p[0] = i
+        j0 = 0
+        minv = [float('inf')] * (n + 1)
+        used = [False] * (n + 1)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = float('inf')
+            j1 = 0
+            for j in range(1, n + 1):
+                if used[j]:
+                    continue
+                cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+                if cur < minv[j]:
+                    minv[j] = cur
+                    way[j] = j0
+                if minv[j] < delta:
+                    delta = minv[j]
+                    j1 = j
+            for j in range(n + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+    assignment = [-1] * n
+    for j in range(1, n + 1):
+        if p[j]:
+            assignment[p[j] - 1] = j - 1
+    return assignment
+
+
+def _assign_players(rows):
+    """One player per speaker. rows are (label, scores highest first)."""
+    players = []
+    seen = set()
+    for _label, scores in rows:
+        for _score, player in scores:
+            if player not in seen:
+                seen.add(player)
+                players.append(player)
+    if not rows or not players:
+        return {label: None for label, _scores in rows}
+    n = max(len(rows), len(players))
+    cost = [[0.0] * n for _ in range(n)]
+    index = {player: column for column, player in enumerate(players)}
+    for row, (_label, scores) in enumerate(rows):
+        for score, player in scores:
+            cost[row][index[player]] = -score
+    chosen = _minimize(cost)
+    assigned = {}
+    for row, (_label, scores) in enumerate(rows):
+        column = chosen[row]
+        if column < 0 or column >= len(players):
+            assigned[rows[row][0]] = None
+            continue
+        player = players[column]
+        assigned[rows[row][0]] = (player, next(score for score, name in scores if name == player))
+    return assigned
+
+
 def match(embedding, profiles, threshold=0.75, margin=0.15):
     """Cosine similarity is not a probability. Never force the nearest player."""
     player, _best, _second = identity_scores(embedding, profiles, threshold, margin)
@@ -161,6 +255,7 @@ class SpeakerWorker:
 def map_speakers(result, profiles):
     """Match enrolled voices. Unavailable or empty embeddings stay unknown for that label only."""
     mapping, unavailable, reports = {}, set(), []
+    pending = []
     embeddings = result.get('embeddings')
     if not isinstance(embeddings, dict):
         raise click.ClickException('Session-wide speaker embeddings are missing; rerun the separate speaker pass')
@@ -201,10 +296,35 @@ def map_speakers(result, profiles):
             mapping[label] = None
             unavailable.add(label)
             report.update(unavailable=True, reason='empty-embedding')
-        else:
-            player, best, second = identity_scores(candidate, profiles)
-            mapping[label] = player
-            report.update(playerId=player, bestCosine=best, runnerUpCosine=second)
+            reports.append(report)
+            continue
+        scores = []
+        for person in profiles:
+            reference = vector(person['embedding'])
+            if len(reference) != len(candidate):
+                raise click.ClickException('Speaker embedding dimensions differ')
+            scores.append((sum(a * b for a, b in zip(candidate, reference)), person['playerId']))
+        scores.sort(key=lambda item: item[0], reverse=True)
+        pending.append((label, scores, report))
+    assigned = _assign_players([(label, scores) for label, scores, _report in pending])
+    for label, scores, report in pending:
+        pair = assigned.get(label)
+        player = None
+        matched = None
+        if pair:
+            matched_player, matched = pair
+            others = [score for score, name in scores if name != matched_player]
+            runner_up = max(others) if others else None
+            if _accepted(matched, runner_up):
+                player = matched_player
+        mapping[label] = player
+        report.update(
+            playerId=player,
+            bestCosine=scores[0][0] if scores else None,
+            runnerUpCosine=scores[1][0] if len(scores) > 1 else None,
+        )
+        if player and matched is not None and matched < MATCH_COSINE:
+            report['reenroll'] = True
         reports.append(report)
     return mapping, unavailable, reports
 

@@ -69,15 +69,18 @@ def reconcile(document, diarization, profiles):
         "minimumAssignedSegmentPercent": MINIMUM_ASSIGNED_SEGMENT_PERCENT,
         "coverageIsNotAccuracy": True,
     }
+    if any(item.get("reenroll") for item in reports):
+        result["speakerAttributionSummary"]["reenrollHint"] = speakers.REENROLL_HINT
     result["speakerAttributionPolicy"] = {
         "version": 1,
-        "identityMinimumCosine": 0.75,
-        "identityWinnerMargin": 0.15,
+        "identityMinimumCosine": speakers.MATCH_COSINE,
+        "identityWinnerMargin": speakers.MATCH_MARGIN,
+        "assignment": "one-to-one",
         "minimumExclusiveCoverage": 0.65,
         "turnWinnerMargin": 0.25,
         "maximumOverlapCoverage": 0.1,
         "coverageIsNotAccuracy": True,
-        "note": "Session-wide enrolled voice matching; uncertain identities and overlapping speech remain unknown.",
+        "note": "One-to-one enrolled matching. Keep a clear 0.1 lead or a cosine of at least 0.75. A tie stays unknown. Low absolute scores ask for re-enrollment.",
     }
     return result
 
@@ -103,10 +106,17 @@ def assert_assignment_rate(result, minimum=MINIMUM_ASSIGNED_SEGMENT_PERCENT):
         )
     detail = "; ".join(described) if described else "no speaker embedding was matched"
     percent = 100 * assigned / segments
+    hint = summary.get("reenrollHint")
+    if not hint and any(
+        isinstance(item.get("bestCosine"), (int, float)) and item["bestCosine"] < speakers.MATCH_COSINE
+        for item in summary.get("speakerMatches") or []
+    ):
+        hint = speakers.REENROLL_HINT
     raise click.ClickException(
         f"Speaker assignment gave players {assigned} of {segments} segments ({percent:.1f}%), "
         f"and {labeled} segments have a diarized label. "
         f"Below the {minimum:g}% floor, so this transcript is not handed to adaptation. {detail}."
+        + (f" {hint}" if hint else "")
     )
 
 
@@ -238,6 +248,9 @@ def command(transcript, folder, profiles, work_dir, runtime, model, device):
                 raise click.ClickException("Session reconciliation result changed")
         else:
             write_json(root / "result.json", receipt)
+        hint = result["speakerAttributionSummary"].get("reenrollHint")
+        if hint:
+            click.echo(hint, err=True)
         assert_assignment_rate(result)
         click.echo(str(destination))
         return destination

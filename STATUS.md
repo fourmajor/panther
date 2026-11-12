@@ -46,7 +46,7 @@ Status below is the code that exists, not a claim that a live session has been r
 | Sound and delivery | Selected takes, real stems if they exist | 1280×720 24 fps browser MP4, master, captions | `video_production.py` on the laptop | Local ffmpeg. Checkpoints are reported; AWS does not encode. | Needs actual shot media. |
 | Session video | Finished delivery | Episode/master the browser can play | `dev_episode_worker.py` for ordered scene outputs; production delivery for the laptop film | Assembly is local. | Cannot be completed without the paid shots or already rendered scene outputs. |
 
-The editorial state machine is built in `infra/lib/editorial-processing.ts` from `editorial-plan.json` version 10: context, then correction, then a parallel novel branch and video branch. Each stage is a Lambda callback (`WAIT_FOR_TASK_TOKEN`) lasting up to 30 days. There is no ECS or Batch stage. Playback and 3D model jobs have their own small Standard state machines (`playback-processing.ts`, `model-processing.ts`). Recovery of a failed run reuses parent stages whose artifacts still validate, and dispatches those stages as already done.
+The editorial state machine is built in `infra/lib/editorial-processing.ts` from `editorial-plan.json` version 11: context, then correction, then a parallel novel branch and video branch. Each stage is a Lambda callback (`WAIT_FOR_TASK_TOKEN`) lasting up to 30 days. There is no ECS or Batch stage. Playback and 3D model jobs have their own small Standard state machines (`playback-processing.ts`, `model-processing.ts`). Recovery of a failed run reuses parent stages whose artifacts still validate, and dispatches those stages as already done.
 
 The Pipeline page reads those job and task records (local SQLite, or the workflow index projected from the DynamoDB job tables). It does not call `states:DescribeExecution`. The workshop reader is deliberately not allowed to read Step Functions. Task status is the callback result the state machine is waiting on.
 
@@ -57,12 +57,12 @@ Do not invent a look or a voice for a session.
 - Visual style is per game (`visualStyle`), default `photorealistic` for new games. Presets and prompt text are in `infra/lambda/media-api/visual_styles.py`. Generation must use the saved game style. Identity references do not override it.
 - Novel voice is chosen inside each run by the `novel-options` stage (an original voice bible, no imitation of a living writer). There is no fixed chapter length.
 - Narration is ElevenLabs Eleven v3 through fal, stock voices only. Trailer reads are paced, not neutral. Recording consent is not cloning consent.
-- Video model policy is Veo 3.1 Fast / MiniMax H3 Max / Kling 3 Pro as above, recorded on the plan. It is not an automatic router and it is not spending approval.
+- First-cut video is `h3-max-image` for every shot: H3 Max, audio on, 768P (480P is an option), one take of 2–7 seconds, about 14–16 shots and 90 seconds or less. A failed review is kept and flagged. Start frames are `gpt-image-2` medium or a Blender render. The plan stores the estimate; the session budget is `panther narration allocate`. This is not spending approval.
 - Browser delivery that already exists is a 1280×720, 24 fps MP4.
 
 ## Providers, keys, hardware
 
-From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`, `PANTHER_EDITORIAL_MODEL=gpt-5-mini`, optional `XAI_API_KEY` (unused by the current workers). Never commit them.
+From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`. The laptop editorial worker defaults to the Claude Code CLI signed in with the Claude subscription. The installer records that binary's absolute path (`PANTHER_CLAUDE`) from the LaunchAgent PATH. An Anthropic API key is not used. Optional `XAI_API_KEY` selects the grok-4.7 backend and must stay out of Git. `PANTHER_EDITORIAL_MODEL` and `PANTHER_EDITORIAL_BACKEND` override a stage when set. Never commit them.
 
 Laptop session finalization also needs local Whisper weights, pyannote model and runtime, enrolled speaker profiles, ffmpeg/ffprobe, and a signed-in Panther CLI. Browser transcription needs the us-west-2 Secrets Manager ARN deployed on the media stack. Native recording needs macOS and a named input device.
 
@@ -90,7 +90,7 @@ Eleven open issues, not thirteen: #209 transcript selection storage, #206 durabl
 
 The laptop LaunchAgent `place.panther.editorial-worker` had been exiting every minute since the Cognito refresh token was invalidated on 2026-10-16. Refresh lifetime in the app client is already 3650 days. The failure mode is a rotated refresh token used again after Cognito invalidates it. The CLI now locks refresh across processes and re-reads the saved session inside that lock. A token that is already dead still needs `panther login`.
 
-That worker's inference is subscription Codex through a ChatGPT login. It does not fall back to an API key. `codex login status` must report `Logged in using ChatGPT` for the same user. The local development worker in `tools/dev_editorial_worker.py` is a different path and still uses the server-side OpenAI key.
+That worker's inference is the Claude Code CLI signed in with the Claude subscription (`claude auth status` reports `authMethod` `claude.ai`). It does not fall back to an API key. Codex remains optional and, when selected, still requires `codex login status` to report `Logged in using ChatGPT`. The local development worker in `tools/dev_editorial_worker.py` is a different path and still uses the server-side OpenAI key.
 
 Corrected-transcript review that does not fit in 1,000,000 bytes now runs in utterance windows and merges all of them. A deterministic preflight error is stored on the DynamoDB task and shown on the failed Pipeline step. It is not claimed three times.
 
@@ -121,4 +121,4 @@ Recovery starts a new execution. It does not rewrite the failed run. A host that
 
 ## Pipeline page
 
-The signed-in home at `/` opens `/games/<game>/pipeline`. `/games/<game>/pipeline/<session-id>` selects one session. The graph is drawn from `GET /workflows?view=session-pipeline`. Gray is not started, including queued work. Blue and animated is running. Green is success. Red with an X is failed, and the recorded error opens on click. Storyboard approval stays a waiting gate: a finished plan does not paint video generation as authorized or complete. Editorial, playback, and model each show an online or offline badge. Choosing a session loads that session's stored jobs. An empty game shows every step not started.
+The signed-in home at `/` opens `/games/<game>/pipeline`. The page lists sessions. Each card shows the session name or date, an overall status, the furthest stage reached or the failed stage, and a chip for each final artifact. Gray is not started. Green is success. Red with an X is failure. Opening a session shows the one branching graph from the recording to every final artifact. Shared, Novel, and Video are labeled lanes inside that graph, and each lane header shows that lane's status. Novel chapter and session video are the finals; another artifact is another lane. A session with more than one run, such as a recovery, has a run picker with the run id and start time. The latest run is selected, and stages it reused stay done. In the graph, blue and animated is running, and storyboard approval stays a waiting gate. A recorded error opens on click. Editorial, playback, and model each show a status pill. An offline warning appears only for a worker a pending stage in the open graph is ready to use. An empty game shows no sessions.

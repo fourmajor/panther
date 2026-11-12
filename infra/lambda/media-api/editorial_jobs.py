@@ -592,6 +592,29 @@ def _reused_pin(job, stage):
     return {"key": pin["key"], "sha256": pin["sha256"], "size": int(pin["size"])}
 
 
+def _recovery_parent(parent, target):
+    """A failed run, or a finished run whose novel or video branch failed."""
+    if not parent:
+        raise ValueError("Only failed runs can be recovered")
+    status = parent.get("status")
+    novel_failed = parent.get("novelFailed") is True
+    video_failed = parent.get("videoFailed") is True
+    if status == "FAILED":
+        return
+    if status in {"READY_FOR_VIDEO_DISCUSSION", "NOVEL_READY"}:
+        if target == "novel" and novel_failed:
+            return
+        if target == "video" and video_failed:
+            return
+        if target == "both" and novel_failed and video_failed:
+            return
+        if novel_failed and not video_failed:
+            raise ValueError("Only the novel branch failed; recover it with target novel")
+        if video_failed and not novel_failed:
+            raise ValueError("Only the video branch failed; recover it with target video")
+    raise ValueError("Only failed runs can be recovered")
+
+
 def recover(body, actor):
     """An explicit, idempotent replay; never mutate a failed execution or its artifacts."""
     if set(body) != {"jobId", "target"} or body["target"] not in {"novel", "video", "both"}:
@@ -599,8 +622,7 @@ def recover(body, actor):
     if not isinstance(body["jobId"], str) or not re.fullmatch(r"[a-f0-9]{64}", body["jobId"]):
         raise ValueError("Invalid job")
     parent = read("RUNS", body["jobId"])
-    if not parent or parent["status"] != "FAILED":
-        raise ValueError("Only failed runs can be recovered")
+    _recovery_parent(parent, body["target"])
     if parent.get("creation") and parent["creation"]["target"] != body["target"]:
         raise ValueError("Recovery must preserve the creation target")
     refs = parent.get("rawSources", [parent["raw"]] if parent.get("raw") else [])
@@ -671,11 +693,17 @@ def recover(body, actor):
                 "ConditionCheck": {
                     "TableName": table.name,
                     "Key": {"pk": {"S": "RUNS"}, "sk": {"S": parent["jobId"]}},
-                    "ConditionExpression": "#s = :failed AND workflowVersion = :version",
+                    "ConditionExpression": (
+                        "#s = :status AND workflowVersion = :version"
+                        + (" AND novelFailed = :novelFailed" if parent.get("novelFailed") is True else "")
+                        + (" AND videoFailed = :videoFailed" if parent.get("videoFailed") is True else "")
+                    ),
                     "ExpressionAttributeNames": {"#s": "status"},
                     "ExpressionAttributeValues": {
-                        ":failed": {"S": "FAILED"},
+                        ":status": {"S": parent["status"]},
                         ":version": serializer.serialize(parent["workflowVersion"]),
+                        **({":novelFailed": {"BOOL": True}} if parent.get("novelFailed") is True else {}),
+                        **({":videoFailed": {"BOOL": True}} if parent.get("videoFailed") is True else {}),
                     },
                 }
             },

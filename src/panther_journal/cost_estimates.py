@@ -85,8 +85,10 @@ def fal(model, request, api_base=None):
             return None
         if model.startswith('veo') and (request.get('resolution') != '720p' or request.get('generate_audio') is not (not model.endswith('silent'))):
             return None
-        if model.startswith('h3') and request.get('resolution') != '768P':
+        if model.startswith('h3') and request.get('resolution') not in {'768P', '480P'}:
             return None
+        if model.startswith('h3') and request.get('resolution') == '480P':
+            settings_rate, reviewed_base = '0.02', '0.0125'
         if model.startswith('kling') and request.get('generate_audio') is not True:
             return None
         base = number(api_base) if api_base is not None else number(reviewed_base)

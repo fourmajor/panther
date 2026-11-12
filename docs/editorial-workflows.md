@@ -88,18 +88,14 @@ auto-submit preproduction packets, or replace subscription-backed planning with 
 
 ### Video model selection policy
 
-Owner-selected on 2026-09-10, based on the reviewed comparison clips. Use **Veo 3.1 Fast through
-fal by default**, explicitly including city/urban establishing shots. Use **MiniMax H3 Max
-(not Turbo) through fal for dialogue**, and **Kling 3 Pro through fal for battle/action shots**.
-H3 Max supersedes the earlier Veo dialogue preference. These are production preferences, not
-universal quality claims.
-
-Apply the choice per shot: action in a city still uses Kling; a dialogue close-up between combat
-beats uses H3 Max, including dialogue in a city. For an inseparable mixed shot, use Kling when
-battle/action drives the shot, H3 Max when dialogue drives it, otherwise Veo. Record the selected
-model and rationale in the production plan. New model versions,
-comparison experiments and deliberate exceptions require an explicit owner choice; do not silently
-substitute another model on failure.
+The first cut is `h3-max-image` for every scene: MiniMax H3 Max through fal, audio on, 768P,
+one take of 2–7 seconds, and a cut of 90 seconds or less (about 14–16 shots). `480P` is an
+explicit option on that model. A take that fails review is kept and flagged; it is not bought
+again. Veo 3.1 Fast and Kling 3 Pro are per-shot overrides only (`PANTHER_VIDEO_MODEL` can name
+one, and a shot `model` wins). Start frames default to `gpt-image-2` at quality `medium`; a
+Blender render is allowed. ElevenLabs is not the dialogue default. The plan records its
+estimated cost, and the session budget is the video allowance from `panther narration allocate`.
+Earlier comparison clips used other profiles; do not relabel them.
 
 This policy guides agents preparing executable video plans after preproduction. The existing
 automated editorial stages remain provider-neutral and stop at `READY_FOR_VIDEO_DISCUSSION`;
@@ -246,10 +242,15 @@ Each AI stage is fresh, structured and least-privilege, following
 The autonomous revision prompts also apply [OpenAI's model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 on explicit initiative and concrete verification. Panther enforces bounded loops and source guards
 in code; prompting alone is not a guarantee of correctness.
-Shell, apps, web, multi-agent and image tools are disabled. Trusted Python performs downloads,
-validation and uploads. Codex uses the existing ChatGPT login, never API keys or a paid fallback.
-AI inference still occurs at OpenAI under the subscription; the worker and artifact processing are
-on the laptop. Independent AI sessions can share biases; automatic review is not human endorsement.
+Shell, apps, web, multi-agent and image tools are disabled when Codex is the selected backend.
+Trusted Python performs downloads, validation and uploads. The default backend is the Claude Code
+CLI on this Mac (`claude -p`), using the Claude subscription login (`claude auth status` reports
+`authMethod` `claude.ai`). An Anthropic API key is not read and must not override that login.
+`grok` calls the xAI
+API with `grok-4.7`; the key is `XAI_API_KEY` or the OS keychain service `panther-xai`, account
+`api-key`, and it is never logged. Codex remains available with `PANTHER_EDITORIAL_BACKEND=codex`
+and its ChatGPT login. No backend may use a Fast model or a priority tier. There is no automatic
+paid fallback. Independent AI sessions can share biases; automatic review is not human endorsement.
 
 ## Operations
 
@@ -267,10 +268,14 @@ reusing an expired Step Functions callback:
 panther editorial recover --job-id FAILED_JOB_ID --target video
 ```
 
-Use `novel` or `both` for the other branches. Explicit creation requests retain their
+Use `novel` or `both` for the other branches. A run that reached
+`READY_FOR_VIDEO_DISCUSSION` or `NOVEL_READY` with `novelFailed` or `videoFailed`
+is recoverable too: pass `--target novel` or `--target video` for the branch that
+failed. Finished stages are reused and the successful branch is not replayed.
+Explicit creation requests retain their
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
-execution at plan version 10. A parent stage that completed with a still-valid envelope
+execution at plan version 11. A parent stage that completed with a still-valid envelope
 is carried forward, including a completed novel-chapter and completed video stages:
 the bytes, checksum, stage, and publication decision must still match.
 Dispatch marks that stage done and points at the parent's artifact. The worker does not
@@ -307,11 +312,17 @@ deterministic guards even if one sibling edit does not. After the three review r
 one final review runs on a revision that has not been reviewed yet. A validated superset
 is published when that review does not pass; the first, smaller candidate is not restored
 in its place.
-Each editorial stage calls Codex with an explicit model and reasoning effort: high for
-correction and corrected-transcript, medium for novel and video planning. The model defaults
-to the signed-in Codex configuration unless `PANTHER_EDITORIAL_MODEL` overrides it.
-`PANTHER_EDITORIAL_REASONING` can override the effort. Fast mode and a priority tier are
-refused. The stage artifact records the model and effort that actually ran.
+Each editorial stage records its backend, model, reasoning effort, token counts, and cache-read
+tokens. The edit-proposal stage (`correction`) defaults to medium effort. The review stage
+(`corrected-transcript`) stays high. Novel and video stages stay medium. `PANTHER_EDITORIAL_BACKEND`,
+`PANTHER_EDITORIAL_MODEL`, and `PANTHER_EDITORIAL_REASONING` accept either one value or a JSON
+object keyed by stage id (`correction`, `corrected-transcript`) or branch (`novel`, `video`,
+`correction`). A stage key wins over a branch key. Claude defaults are `claude-sonnet-4-6` for
+medium and `claude-opus-4-6` for high. Grok uses `grok-4.7`. Fast mode and a priority tier are
+refused. Cost stays `unknown` unless the backend reports a figure. Prompts put the catalog and
+transcript first, in the same order for every stage that shares them, and the stage instructions
+last. Novel stages after the brief receive a transcript excerpt plus the brief and later outlines,
+not the full transcript. Novel-chapter still receives the proof, brief, and continuity notes only.
 After deployment, run `panther workflows rebuild` and verify all games to refresh
 historical observations. Older executions omit stages that did not exist in their
 protocol, rather than displaying invented pending work. Their saved source jobs
@@ -369,11 +380,16 @@ now takes an exclusive lock on `~/.local/state/panther/cli-refresh.lock` and rea
 again inside that lock before refreshing. Recovery from a token that was already invalidated is
 `panther login`. There is no API-key fallback for this worker.
 
-Inference is subscription Codex through a ChatGPT login. `panther editorial worker` refuses to
-start unless `codex login status` reports `Logged in using ChatGPT`. An always-on host, including
-a systemd user service from `ops/editorial-worker/panther-editorial-worker.service`, needs that
-Codex login for the same user that runs the service. A replacement machine needs a new `panther
-login` and a new Codex login. Do not copy a refresh token or put an API key in the unit.
+Inference defaults to the Claude Code CLI already signed in with the Claude subscription on
+this Mac. The installer resolves `claude` under the LaunchAgent PATH
+(`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`) and records that absolute
+path as `PANTHER_CLAUDE`. A binary that exists only on a shell PATH is not accepted. The worker
+runs `claude -p` with that binary and refuses to start unless `claude auth status` reports
+`authMethod` `claude.ai`. `ANTHROPIC_API_KEY` is not read and is not put in the plist.
+Select Codex with `PANTHER_EDITORIAL_BACKEND=codex`; that path still requires `codex login status`
+to report `Logged in using ChatGPT`. Select xAI with `PANTHER_EDITORIAL_BACKEND=grok` and put the
+key in `XAI_API_KEY` or the keychain, not in the plist. A replacement machine needs a new
+`panther login` and a new Claude login. Do not copy a refresh token or put an API key in the unit.
 
 Browser room transcription produces an unreviewed `BrowserTranscript`, with unassigned speakers
 and window-boundary timestamps. It can be selected explicitly for editorial creation. Preserve its raw evidence, capture

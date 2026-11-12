@@ -1,4 +1,9 @@
-"""Per-session pipeline graph. Topology matches the deployed stages; status comes from job records."""
+"""One branching session pipeline. A run is one execution of that pipeline for a session.
+
+The graph starts at the session recording. Shared stages lead into one lane per final artifact.
+Append a lane in graph() and a title in LANE_TITLES to add the next artifact. Status comes from
+job records. A later run keeps reused stages done instead of painting them as not started.
+"""
 
 import json
 import os
@@ -70,7 +75,20 @@ LABELS = {
     "video-edit-sound-vfx": ("Planning", "Edit, sound and VFX", "audio"),
     "video-production-plan": ("Planning", "Production plan", "list"),
     "video-preflight": ("Review", "Preflight", "shield"),
+    "storyboard-approval": ("Gate", "Storyboard approval", "shield"),
+    "video-generation": ("Render", "Video generation", "film"),
+    "sound-delivery": ("Delivery", "Sound and delivery", "audio"),
+    "session-video": ("Final", "Session video", "film"),
+    "listening-copy": ("Audio", "Listening copy", "audio"),
+    "still-images": ("Image", "Still images", "image"),
+    "narration": ("Narration", "Narration", "mic"),
 }
+# Lane order inside the one graph. Append the next artifact's title here.
+LANE_TITLES = (
+    ("shared", "Shared"),
+    ("novel", "Novel"),
+    ("video", "Video"),
+)
 KIND_NODE = {
     "recording": "session-audio",
     "playback": "listening-copy",
@@ -96,7 +114,7 @@ def plan_document():
     return json.loads(os.environ["WORKSHOP_PLAN"])
 
 
-def _node(identity, column, row, final=False):
+def _node(identity, column, row, lane, final=False):
     kind, title, icon = LABELS.get(
         identity, ("Stage", identity.replace("-", " ").capitalize(), "circle")
     )
@@ -107,6 +125,7 @@ def _node(identity, column, row, final=False):
         "icon": icon,
         "column": column,
         "row": row,
+        "lane": lane,
         "final": final,
     }
 
@@ -123,120 +142,55 @@ def graph():
                 "icon": icon,
                 "column": column,
                 "row": row,
+                "lane": "shared",
                 "final": False,
             }
         )
     transcription = next(node for node in nodes if node["id"] == "transcription")
-    nodes.append(
-        {
-            "id": "listening-copy",
-            "type": "Audio",
-            "title": "Listening copy",
-            "icon": "audio",
-            "column": transcription["column"],
-            "row": 1,
-            "final": False,
-        }
+    nodes.append(_node("listening-copy", transcription["column"], 1, "shared"))
+    # Each artifact lane branches from the corrected transcript at this column.
+    # Append (lane id, stage ids, final id) for the next artifact, and its title in LANE_TITLES.
+    branch = len(PREFIX)
+    artifact_lanes = (
+        ("novel", list(plan["novel"]), "novel-chapter"),
+        (
+            "video",
+            [
+                *plan["video"],
+                "storyboard-approval",
+                "video-generation",
+                "sound-delivery",
+                "session-video",
+            ],
+            "session-video",
+        ),
     )
-    novel = [name for name in plan["novel"] if name != "novel-chapter"]
-    video = list(plan["video"])
-    start = len(PREFIX)
-    for offset in range(max(len(novel), len(video), 1)):
-        if offset < len(novel):
-            nodes.append(_node(novel[offset], start + offset, 0))
-        if offset < len(video):
-            nodes.append(_node(video[offset], start + offset, 1))
-    column = start + max(len(novel), len(video), 1)
-    for identity, kind, title, icon in (
-        ("storyboard-approval", "Gate", "Storyboard approval", "shield"),
-        ("video-generation", "Render", "Video generation", "film"),
-        ("sound-delivery", "Delivery", "Sound and delivery", "audio"),
-    ):
-        nodes.append(
-            {
-                "id": identity,
-                "type": kind,
-                "title": title,
-                "icon": icon,
-                "column": column,
-                "row": 1,
-                "final": False,
-            }
-        )
-        column += 1
-    nodes.append(
-        {
-            "id": "novel-chapter",
-            "type": "Final",
-            "title": "Novel chapter",
-            "icon": "book",
-            "column": column,
-            "row": 0,
-            "final": True,
-        }
-    )
-    nodes.append(
-        {
-            "id": "session-video",
-            "type": "Final",
-            "title": "Session video",
-            "icon": "film",
-            "column": column,
-            "row": 1,
-            "final": True,
-        }
-    )
-    story = next((node for node in nodes if node["id"] == "video-storyboards"), None)
+    for lane, stages, final_id in artifact_lanes:
+        for index, identity in enumerate(stages):
+            nodes.append(_node(identity, branch + index, 0, lane, final=identity == final_id))
+    by_id = {node["id"]: node for node in nodes}
+    story = by_id.get("video-storyboards")
     if story:
-        nodes.append(
-            {
-                "id": "still-images",
-                "type": "Image",
-                "title": "Still images",
-                "icon": "image",
-                "column": story["column"],
-                "row": 2,
-                "final": False,
-            }
-        )
-    generation = next(node for node in nodes if node["id"] == "video-generation")
-    nodes.append(
-        {
-            "id": "narration",
-            "type": "Narration",
-            "title": "Narration",
-            "icon": "mic",
-            "column": generation["column"],
-            "row": 2,
-            "final": False,
-        }
-    )
+        nodes.append(_node("still-images", story["column"], 1, story["lane"]))
+    generation = by_id["video-generation"]
+    nodes.append(_node("narration", generation["column"], 1, generation["lane"]))
     edges = []
 
     def link(source, dest):
-        if any(node["id"] == source for node in nodes) and any(
-            node["id"] == dest for node in nodes
-        ):
+        if any(node["id"] == source for node in nodes) and any(node["id"] == dest for node in nodes):
             edges.append({"from": source, "to": dest})
 
-    ids = [node["id"] for node in nodes if node["row"] == 0 and node["column"] < len(PREFIX)]
-    for source, dest in zip(ids, ids[1:]):
+    shared = [node["id"] for node in nodes if node["lane"] == "shared" and node["row"] == 0]
+    for source, dest in zip(shared, shared[1:]):
         link(source, dest)
     link("session-audio", "listening-copy")
-    if novel:
-        link("corrected-transcript", novel[0])
-        for source, dest in zip(novel, novel[1:]):
+    for _lane, stages, _final in artifact_lanes:
+        if not stages:
+            continue
+        link("corrected-transcript", stages[0])
+        for source, dest in zip(stages, stages[1:]):
             link(source, dest)
-        link(novel[-1], "novel-chapter")
-    if video:
-        link("corrected-transcript", video[0])
-        for source, dest in zip(video, video[1:]):
-            link(source, dest)
-        link(video[-1], "storyboard-approval")
-    link("storyboard-approval", "video-generation")
-    link("video-generation", "sound-delivery")
     link("narration", "sound-delivery")
-    link("sound-delivery", "session-video")
     if story:
         link("video-storyboards", "still-images")
         link("still-images", "video-generation")
@@ -467,6 +421,7 @@ def project(observations):
                     "icon",
                     "column",
                     "row",
+                    "lane",
                     "final",
                     "status",
                     "message",
@@ -488,10 +443,161 @@ def rollup(nodes):
         return "running"
     if "queued" in states:
         return "queued"
-    finals = {node["id"]: node["status"] for node in nodes if node["final"]}
-    if finals.get("novel-chapter") == "done" and finals.get("session-video") == "done":
+    finals = [node for node in nodes if node["final"]]
+    if finals and all(node["status"] == "done" for node in finals):
         return "done"
+    if any(node["status"] not in {"pending", "unknown"} for node in nodes):
+        return "started"
     return "pending"
+
+
+def _run_id(row):
+    if row.get("kind") != "editorial":
+        return None
+    identity = row.get("runId")
+    if not isinstance(identity, str):
+        return None
+    identity = identity.strip()
+    if not identity or len(identity) > 160:
+        return None
+    return identity
+
+
+def _reused(row):
+    values = row.get("reusedStages")
+    if not isinstance(values, list):
+        return []
+    return [name for name in values if isinstance(name, str) and name in NODE_IDS][:80]
+
+
+def _paint(rows, reused):
+    nodes, edges, _, _ = project(rows)
+    if not reused:
+        return nodes, edges
+    wanted = set(reused)
+    painted = []
+    for node in nodes:
+        if node["id"] in wanted and node["status"] in {"pending", "queued", "unknown"}:
+            painted.append(
+                {**node, "status": "done", "message": node["message"] or "Reused from the previous run."}
+            )
+        else:
+            painted.append(node)
+    by_id = {node["id"]: node for node in painted}
+    return painted, [{**edge, "status": by_id[edge["from"]]["status"]} for edge in edges]
+
+
+def _rows_for(rows, run_id):
+    if run_id is None:
+        return rows
+    return [row for row in rows if _run_id(row) in {None, run_id}]
+
+
+def _worker_for(stage_id):
+    if stage_id == "listening-copy":
+        return "playback"
+    if stage_id in EDITORIAL_IDS:
+        return "editorial"
+    return None
+
+
+def _needed_workers(nodes, edges):
+    """Workers for stages that are ready to run. Later gray stages do not count."""
+    by_id = {node["id"]: node for node in nodes}
+    incoming = {}
+    for edge in edges:
+        incoming.setdefault(edge["to"], []).append(edge["from"])
+    needed = []
+    for node in nodes:
+        worker = _worker_for(node["id"])
+        if not worker or node["status"] in {"done", "failed"}:
+            continue
+        predecessors = incoming.get(node["id"], [])
+        ready = node["status"] in {"queued", "running"} or not predecessors or any(
+            by_id[name]["status"] in {"done", "running", "queued"} for name in predecessors
+        )
+        if node["status"] == "pending" and not ready:
+            continue
+        if worker not in needed:
+            needed.append(worker)
+    return needed
+
+
+def _lane_status(nodes):
+    states = {node.get("status") or "pending" for node in nodes}
+    if "failed" in states:
+        return "failed"
+    if "running" in states:
+        return "running"
+    if "queued" in states:
+        return "queued"
+    if "paused" in states:
+        return "paused"
+    if nodes and all(node.get("status") == "done" for node in nodes):
+        return "done"
+    if any(node.get("status") not in {None, "pending", "unknown"} for node in nodes):
+        return "started"
+    return "pending"
+
+
+def _lanes(nodes):
+    """Lane headers in graph order. A lane id that is not listed yet is appended."""
+    grouped = {}
+    for node in nodes:
+        grouped.setdefault(node.get("lane") or "shared", []).append(node)
+    titles = dict(LANE_TITLES)
+    order = [lane for lane, _title in LANE_TITLES]
+    for node in nodes:
+        lane = node.get("lane") or "shared"
+        if lane not in titles:
+            titles[lane] = lane.replace("-", " ").capitalize()
+            order.append(lane)
+    headers = []
+    for lane in order:
+        members = grouped.get(lane)
+        if not members:
+            continue
+        stage, _finals = _progress(members)
+        headers.append(
+            {
+                "id": lane,
+                "title": titles[lane],
+                "status": _lane_status(members),
+                "stage": stage,
+            }
+        )
+    return headers
+
+
+def _progress(nodes):
+    ordered = sorted(nodes, key=lambda node: (node["column"], node["row"], node["id"]))
+    failed = [node for node in ordered if node["status"] == "failed"]
+    reached = [node for node in ordered if node["status"] not in {"pending", "unknown"}]
+    chosen = failed[-1] if failed else (reached[-1] if reached else None)
+    stage = (
+        {"id": chosen["id"], "title": chosen["title"], "status": chosen["status"]} if chosen else None
+    )
+    finals = [
+        {"id": node["id"], "title": node["title"], "status": node["status"]}
+        for node in sorted((node for node in nodes if node["final"]), key=lambda node: node["row"])
+    ]
+    return stage, finals
+
+
+def _run_graph(rows, row):
+    identity = _run_id(row)
+    nodes, edges = _paint(_rows_for(rows, identity), _reused(row))
+    started = stamp(row.get("startedAt"))
+    return {
+        "id": identity,
+        "startedAt": started or None,
+        "updatedAt": stamp(row.get("updatedAt")),
+        "status": rollup(nodes),
+        "workers": _needed_workers(nodes, edges),
+        "nodes": nodes,
+        "edges": edges,
+        "lanes": _lanes(nodes),
+    }
 
 
 def view(session_id, observations):
@@ -503,50 +609,99 @@ def view(session_id, observations):
         if slug(session):
             grouped.setdefault(session, []).append(observation)
     sessions = []
-    manifests = {}
+    graphs = {}
     for session, rows in grouped.items():
-        session_nodes, session_edges, session_titles, session_latest = project(rows)
-        title = session_titles.get(session) or session
-        updated = session_latest.get(session, 0)
-        sessions.append(
-            {"id": session, "title": title, "updatedAt": updated, "status": rollup(session_nodes)}
+        _, _, titles, latest = project(rows)
+        title = titles.get(session) or session
+        updated = latest.get(session, 0)
+        run_rows = sorted(
+            (row for row in rows if _run_id(row)),
+            key=lambda row: (
+                stamp(row.get("startedAt")) or stamp(row.get("updatedAt")),
+                stamp(row.get("updatedAt")),
+                _run_id(row),
+            ),
         )
-        manifests[session] = {
-            "schemaVersion": 1,
-            "sessionId": session,
+        runs = [_run_graph(rows, row) for row in run_rows]
+        runs.reverse()
+        if runs:
+            nodes, edges = runs[0]["nodes"], runs[0]["edges"]
+        else:
+            nodes, edges = _paint(rows, [])
+        stage, finals = _progress(nodes)
+        sessions.append(
+            {
+                "id": session,
+                "title": title,
+                "updatedAt": updated,
+                "status": rollup(nodes),
+                "stage": stage,
+                "finals": finals,
+            }
+        )
+        graphs[session] = {
             "title": title,
             "updatedAt": updated,
-            "nodes": session_nodes,
-            "edges": session_edges,
+            "nodes": nodes,
+            "edges": edges,
+            "runs": runs,
         }
-    if session_id and session_id not in manifests:
-        empty_nodes, empty_edges, _, _ = project([])
+    if session_id and session_id not in graphs:
+        nodes, edges = _paint([], [])
+        stage, finals = _progress(nodes)
         sessions.append(
-            {"id": session_id, "title": session_id, "updatedAt": 0, "status": "pending"}
+            {
+                "id": session_id,
+                "title": session_id,
+                "updatedAt": 0,
+                "status": "pending",
+                "stage": stage,
+                "finals": finals,
+            }
         )
-        manifests[session_id] = {
-            "schemaVersion": 1,
-            "sessionId": session_id,
+        graphs[session_id] = {
             "title": session_id,
             "updatedAt": 0,
-            "nodes": empty_nodes,
-            "edges": empty_edges,
+            "nodes": nodes,
+            "edges": edges,
+            "runs": [],
         }
     sessions.sort(key=lambda item: (-item["updatedAt"], item["id"]))
     selected = session_id or (sessions[0]["id"] if sessions else None)
     if selected:
-        manifest = manifests[selected]
+        chosen = graphs[selected]
+        manifest = {
+            "schemaVersion": 1,
+            "sessionId": selected,
+            "title": chosen["title"],
+            "updatedAt": chosen["updatedAt"],
+            "nodes": chosen["nodes"],
+            "edges": chosen["edges"],
+            "lanes": _lanes(chosen["nodes"]),
+        }
+        runs = chosen["runs"]
+        workers_needed = runs[0]["workers"] if runs else _needed_workers(chosen["nodes"], chosen["edges"])
     else:
-        empty_nodes, empty_edges, _, _ = project([])
+        nodes, edges = _paint([], [])
         manifest = {
             "schemaVersion": 1,
             "sessionId": None,
             "title": None,
             "updatedAt": 0,
-            "nodes": empty_nodes,
-            "edges": empty_edges,
+            "nodes": nodes,
+            "edges": edges,
+            "lanes": _lanes(nodes),
         }
-    return {"schemaVersion": 1, "source": "job-records", "sessions": sessions, "manifest": manifest}
+        runs = []
+        workers_needed = []
+    return {
+        "schemaVersion": 1,
+        "source": "job-records",
+        "sessions": sessions,
+        "manifest": manifest,
+        "runs": runs,
+        "workersNeeded": workers_needed,
+    }
 
 
 def session_of(item):
