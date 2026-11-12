@@ -89,17 +89,21 @@ From clean, fetched and reviewed merged main:
 ```
 
 The session LaunchAgent is `place.panther.session-worker`; it performs one pass per minute
-while logged in and awake. The editorial worker independently executes queued creative stages.
-Both use pinned, non-editable releases and normal Panther authentication. Upgrades require
-explicitly stopping old services and preserving their plists/releases. Authentication errors
-must remain visible; never replace them with AWS asset writes or a paid inference fallback.
+while logged in and awake. The editorial worker is a separate resident LaunchAgent. It uses the
+same pinned release and Panther authentication. Its inference is subscription Codex through a
+ChatGPT login on that machine, with no API-key fallback. Upgrades require explicitly stopping
+old services and preserving their plists/releases. A failed Panther refresh stops the worker
+heartbeat; Workshop and the pipeline SNS alarm show that worker as offline. Never replace an
+authentication error with AWS asset writes or a paid inference fallback.
 
 Writing prompts use a versioned reading projection retaining every utterance, timestamp,
 player label and capture warning, while detailed per-word analysis stays in the exact pinned
-raw asset. Raw inputs up to 16 MiB are supported; prompt/result size limits still fail visibly.
-There is no silent truncation and no rewrite of previous transcript or chapter editions.
-Independent review receives one complete raw transcript plus a verified correction overlay,
-not two duplicate copies of its speech. The overlay is emitted only when its edits exactly
-reconstruct the candidate and all non-text speech fields are unchanged. Full corrected assets
-remain stored unchanged. Prompts stay below the observed one-Mi-character CLI transport limit;
-oversized evidence fails visibly rather than being truncated or treated as a subscription limit.
+raw asset. Raw inputs up to 16 MiB are supported. There is no silent truncation and no rewrite
+of previous transcript or chapter editions. Independent review receives one complete raw
+transcript plus a verified correction overlay, not two duplicate copies of its speech. The
+overlay is emitted only when its edits exactly reconstruct the candidate and all non-text
+speech fields are unchanged. Full corrected assets remain stored unchanged. Prompts stay below
+the observed one-Mi-character CLI transport limit. Corrected-transcript review that would exceed
+1,000,000 bytes runs in contiguous utterance windows and merges every window, including prior
+corrections that a window does not replace. A prompt that still cannot fit fails once, with the
+measured size stored on the task, and is not retried as a subscription failure.

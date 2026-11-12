@@ -847,3 +847,29 @@ def test_chapter_list_pages_exclude_manuscript_and_foreign_cursors(tmp_path):
     assert len(store.chapter_page('example', {'cursor': page['cursor']})['chapters']) == 6
     with pytest.raises(ValueError, match='cursor'):
         store.chapter_page('other', {'cursor': page['cursor']})
+
+
+def test_session_pipeline_reads_saved_audio_and_transcription(tmp_path):
+    import json
+    store = dev.Store(tmp_path / 'pipeline.sqlite')
+    store.seed()
+    game = 'preview-sandbox'
+    recording = 'recording-' + 'ab' * 16
+    doc = {'schemaVersion': 1, 'entityType': 'BrowserRecording', 'id': recording, 'gameId': game,
+           'sessionId': 'session-one', 'sessionName': 'Night one', 'status': 'complete',
+           'parts': [{'duration': 1}]}
+    meta = {'kind': 'recording-manifest', 'contentType': 'application/json',
+            'sessionId': 'session-one', 'title': 'Night one'}
+    key = f'games/{game}/assets/{recording}/original/recording.json'
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)',
+                   (key, game, json.dumps(meta), json.dumps(doc).encode(), '2026-11-12T00:00:00Z'))
+    store.put('transcription', 'job-1', {'jobId': 'job-1', 'gameId': game, 'sessionId': 'session-one', 'status': 'FAILED', 'message': 'No speech key configured.', 'createdAt': 5, 'mode': 'final'}, game)
+    view = store.workflows(game, view='session-pipeline', session_id='session-one')
+    nodes = {node['id']: node for node in view['manifest']['nodes']}
+    assert view['manifest']['title'] == 'Night one'
+    assert nodes['session-audio']['status'] == 'done'
+    assert nodes['transcription']['status'] == 'failed'
+    assert 'speech key' in nodes['transcription']['message']
+    assert nodes['novel-chapter']['status'] == 'pending'
+    assert nodes['session-video']['status'] == 'pending'

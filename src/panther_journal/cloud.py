@@ -10,7 +10,7 @@ import os
 import re
 import time
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlparse
@@ -111,10 +111,28 @@ def remember(result, username, config, refresh_token=None):
     return session
 
 
+@contextmanager
+def refresh_lock():
+    """One refresh at a time. Rotation invalidates the previous token after 60 seconds."""
+    import fcntl
+
+    directory = Path.home() / ".local" / "state" / "panther"
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o700)
+    path = directory / "cli-refresh.lock"
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.chmod(path, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def token(config):
     store = credential_store()
-    lock = store.refresh_lock() if isinstance(store, EncryptedSessionStore) else nullcontext()
-    with lock:
+    nested = store.refresh_lock() if isinstance(store, EncryptedSessionStore) else nullcontext()
+    with refresh_lock(), nested:
         session = saved_session()
         if not session or session.get("clientId") != config["clientId"]:
             raise click.ClickException("Sign in first: panther login --username YOUR_USERNAME")

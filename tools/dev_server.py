@@ -1319,8 +1319,113 @@ class Store:
             db.execute("INSERT INTO records VALUES ('scene-render',?,?,?)", (key, game, json.dumps(job)))
         return job
 
-    def workflows(self, game, identity=None, cursor=None, view=None, workflow_type=None):
+    def _pipeline_session(self, job):
+        import session_pipeline
+        sid = job.get("sessionId")
+        if session_pipeline.slug(sid):
+            return sid
+        key = job.get("recordingKey")
+        if not isinstance(key, str):
+            return None
+        try:
+            meta, raw = self.object(key)
+        except LookupError:
+            return None
+        if session_pipeline.slug(meta.get("sessionId")):
+            return meta["sessionId"]
+        try:
+            doc = json.loads(raw)
+        except (ValueError, UnicodeError):
+            return None
+        sid = doc.get("sessionId") if isinstance(doc, dict) else None
+        return sid if session_pipeline.slug(sid) else None
+
+    def session_pipeline(self, game, session_id=None):
+        """Project the session graph from stored jobs. Reading it never starts work."""
+        import session_pipeline
+        self.game(game)
+        observations, audio, episode_sessions = [], {}, {}
+        for asset in self.objects(game):
+            meta = asset.get("metadata") or {}
+            sid = meta.get("sessionId")
+            if not session_pipeline.slug(sid):
+                continue
+            kind, updated = asset.get("kind"), asset.get("lastModified")
+            if kind == "recording-manifest" and asset.get("name") == "recording.json":
+                recording = asset.get("recording") or {}
+                status = recording.get("status") or "complete"
+                audio[sid] = {"sessionId": sid, "sessionTitle": recording.get("sessionName") or meta.get("title"), "kind": "recording", "status": status, "updatedAt": updated, "outputKey": asset["key"], "message": "Capture was interrupted. Uploaded audio is the retained original." if status == "interrupted" else None}
+            elif kind == "recording" and sid not in audio and re.fullmatch(r"part-\d{4}\.(flac|wav)", asset.get("name", "")):
+                audio[sid] = {"sessionId": sid, "kind": "recording", "status": "running", "updatedAt": updated, "message": "Audio parts are saved. The recording manifest is not complete."}
+            elif kind == "recording-playback":
+                observations.append({"sessionId": sid, "kind": "playback", "status": "done", "updatedAt": updated, "outputKey": asset["key"]})
+            elif kind in {"raw-transcript", "transcript", "corrected-transcript", "edited-transcript"}:
+                stage = "corrected-transcript" if kind in {"corrected-transcript", "edited-transcript"} else "raw-transcript"
+                observations.append({"sessionId": sid, "kind": "editorial", "status": "done", "updatedAt": updated, "stages": [{"id": stage, "status": "done", "outputKey": asset["key"]}]})
+        observations.extend(audio.values())
+        for job in self.list("playback", game):
+            sid = self._pipeline_session(job)
+            if sid:
+                observations.append({"sessionId": sid, "kind": "playback", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("completedAt") or job.get("createdAt"), "outputKey": job.get("outputKey") or job.get("assetKey"), "message": job.get("message")})
+        for job in self.list("transcription", game):
+            sid = job.get("sessionId")
+            if not session_pipeline.slug(sid):
+                continue
+            output = job.get("transcriptKey") or job.get("outputKey")
+            stages = [{"id": "processing", "status": job.get("status"), "outputKey": output, "message": job.get("message")}]
+            if job.get("mode") == "final" and job.get("status") in {"DONE", "PUBLISHED"}:
+                stages.append({"id": "preserve-final-transcript", "status": "done", "outputKey": output})
+            observations.append({"sessionId": sid, "kind": "transcription", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("completedAt") or job.get("createdAt"), "message": job.get("message"), "stages": stages, "label": job.get("sessionName")})
+        tasks = {}
+        for task in self.list("editorial-task", game):
+            tasks.setdefault(task.get("jobId"), []).append(task)
+        for record in self.list("editorial", game):
+            job = self.editorial_view(record)
+            sid = job.get("sessionId")
+            if not session_pipeline.slug(sid):
+                continue
+            episode = (job.get("episodeRef") or {}).get("episodeId")
+            if isinstance(episode, str):
+                episode_sessions[episode] = sid
+            stages = []
+            for task in tasks.get(job.get("jobId"), []):
+                output = task.get("outputKey")
+                if not output and isinstance(task.get("output"), dict):
+                    output = task["output"].get("key")
+                stages.append({"id": task.get("stage"), "status": task.get("status"), "outputKey": output, "message": task.get("message")})
+            if any(stage.get("id") == "video-preflight" and session_pipeline.normalize(stage.get("status")) == "done" for stage in stages) and not any(stage.get("id") == "storyboard-approval" for stage in stages):
+                approved = bool(job.get("videoGenerationAuthorized"))
+                stages.append({"id": "storyboard-approval", "status": "done" if approved else "paused", "message": None if approved else "Paid video stays blocked until this storyboard revision is approved."})
+            if session_pipeline.normalize(job.get("status")) == "failed" and not any(session_pipeline.normalize(stage.get("status")) == "failed" for stage in stages) and isinstance(job.get("currentStage"), str):
+                stages.append({"id": job["currentStage"], "status": "failed", "message": job.get("message")})
+            observations.append({"sessionId": sid, "kind": "editorial", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("createdAt"), "label": (job.get("creation") or {}).get("title"), "message": job.get("message") if session_pipeline.normalize(job.get("status")) == "failed" else None, "stages": stages})
+        def episode_session(job):
+            sid = job.get("sessionId")
+            if session_pipeline.slug(sid):
+                return sid
+            episode = job.get("episodeId") or (job.get("sceneRef") or {}).get("episodeId")
+            return episode_sessions.get(episode)
+        for kind in ("scene-render", "episode-render", "narration", "asset-generation"):
+            for job in self.list(kind, game):
+                sid = episode_session(job)
+                if not sid or (kind == "asset-generation" and job.get("mediaType", "image") != "image"):
+                    continue
+                output = job.get("outputKey") or job.get("assetKey")
+                updated = job.get("updatedAt") or job.get("completedAt") or job.get("createdAt")
+                observations.append({"sessionId": sid, "kind": kind, "status": job.get("status"), "updatedAt": updated, "outputKey": output, "message": job.get("message"), "stages": [{"id": "processing", "status": job.get("status"), "outputKey": output, "message": job.get("message")}]})
+                frame = job.get("storyboardFramePin") if isinstance(job.get("storyboardFramePin"), dict) else None
+                if frame and frame.get("key"):
+                    observations.append({"sessionId": sid, "kind": "asset-generation", "status": "done", "updatedAt": updated, "stages": [{"id": "processing", "status": "done", "outputKey": frame["key"]}]})
+        for chapter in self.list("chapter", game):
+            sid = chapter.get("sessionId")
+            if session_pipeline.slug(sid):
+                observations.append({"sessionId": sid, "kind": "chapter", "status": "done", "updatedAt": chapter.get("publishedAt") or chapter.get("createdAt"), "outputKey": chapter.get("assetKey"), "label": chapter.get("title")})
+        return session_pipeline.view(session_id or None, observations)
+
+    def workflows(self, game, identity=None, cursor=None, view=None, workflow_type=None, session_id=None):
         """Observe real SQLite jobs without starting processing or inventing activity."""
+        if view == "session-pipeline":
+            return self.session_pipeline(game, session_id)
         self.game(game)
         plan = json.loads((ROOT / "src/panther_journal/editorial-plan.json").read_text())
         states = {"SUBMITTED": "queued", "QUEUED": "queued", "RUNNING": "running", "PROCESSING": "running", "DONE": "done", "NOVEL_READY": "done", "READY_FOR_VIDEO_DISCUSSION": "done", "FAILED": "failed", "BLOCKED": "paused", "DEFERRED": "paused", "IN_QUEUE": "queued", "IN_PROGRESS": "running", "PUBLISHED": "done", "ATTENTION": "failed", "UNKNOWN": "paused", "GENERATING": "running", "COMPOSING": "running"}
@@ -1557,7 +1662,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     result = {"jobs": [store.generation_job_view(job, kind) for job in store.list(kind, game) if (not q.get("episodeId") or job.get("episodeId", job.get("sceneRef", {}).get("episodeId")) == q["episodeId"]) and (not q.get("sceneId") or job.get("sceneId", job.get("sceneRef", {}).get("sceneId")) == q["sceneId"])]}
             elif path == "/workflows":
-                result = store.workflows(game, q.get("id"), q.get("cursor"), q.get("view"), q.get("type"))
+                result = store.workflows(game, q.get("id"), q.get("cursor"), q.get("view"), q.get("type"), q.get("sessionId"))
             elif path in ("/novel-stories", "/novel-books", "/tv-series", "/tv-episodes"):
                 kind = {"/novel-stories": "story", "/novel-books": "book", "/tv-series": "tv-series", "/tv-episodes": "tv-episode"}[path]
                 if "id" in q:

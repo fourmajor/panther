@@ -708,7 +708,19 @@ def worker(repo, work_dir, once, qa_image, allow_unsandboxed_blender):
             raise click.ClickException("A worker already owns this directory.")
         blender = preflight(repo, qa_image)
         while True:
-            config = cloud.configuration()
+            try:
+                config = cloud.configuration()
+                cloud.token(config)
+            except click.ClickException as exc:
+                click.echo(str(exc), err=True)
+                if once:
+                    raise
+                time.sleep(900)
+                continue
+            try:
+                cloud.api(config, "POST", "/workflows/heartbeat", json={"worker": "model"})
+            except click.ClickException as exc:
+                click.echo(str(exc), err=True)
             claimed = cloud.api(config, "POST", "/model-jobs/claim", json={"workerVersion": 2})
             if claimed.get("job"):
                 click.echo(f"Working on {claimed['job']['jobId']}")
@@ -718,11 +730,22 @@ def worker(repo, work_dir, once, qa_image, allow_unsandboxed_blender):
                     )
                 except Deferred as exc:
                     click.echo(str(exc), err=True)
-                except Exception:
-                    # Lease eventually expires; do not acknowledge an unverified result.
-                    raise click.ClickException(
-                        "Job stopped safely. Inspect private logs/checkpoints; no model was knowingly published."
-                    )
+                except Exception as exc:
+                    message = " ".join(f"{type(exc).__name__}: {exc}".split())[:500]
+                    click.echo(message, err=True)
+                    try:
+                        cloud.api(
+                            config,
+                            "POST",
+                            "/model-jobs/fail",
+                            json={
+                                "jobId": claimed["job"]["jobId"],
+                                "lease": claimed["lease"],
+                                "message": message,
+                            },
+                        )
+                    except click.ClickException as report_error:
+                        click.echo(str(report_error), err=True)
             if once:
                 return
             time.sleep(300)

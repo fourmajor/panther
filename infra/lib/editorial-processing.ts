@@ -18,8 +18,10 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** Each editorial discipline is a durable callback stage, not a Lambda-hosted AI call. */
 export class EditorialProcessing extends Construct {
   readonly table: dynamodb.Table;
+  readonly stateMachine: sfn.StateMachine;
+  readonly broker: lambda.Function;
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; browseTable: dynamodb.ITable; catalogTable: dynamodb.ITable; executionLogs: logs.ILogGroup;
   }) {
     super(scope, id);
     const plan = JSON.parse(fs.readFileSync(path.join(__dirname,
@@ -38,7 +40,7 @@ export class EditorialProcessing extends Construct {
       CATALOG_READERS: props.accessEnvironment.CATALOG_READERS,
       MODEL_PUBLISHERS: props.accessEnvironment.MODEL_PUBLISHERS, MODEL_WORKERS: props.accessEnvironment.MODEL_WORKERS,
       CATALOG_TABLE: props.catalogTable.tableName, EDITORIAL_TABLE: table.tableName, EDITORIAL_PLAN: JSON.stringify(plan), ASSET_BROWSE_TABLE: props.browseTable.tableName };
-    const fn = new lambda.Function(this, "Broker", {
+    const fn = this.broker = new lambda.Function(this, "Broker", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,
       handler: "editorial_jobs.handler", code, environment,
       memorySize: 256, timeout: Duration.seconds(60),
@@ -103,10 +105,11 @@ export class EditorialProcessing extends Construct {
       lambdaFunction: fn, payload: sfn.TaskInput.fromObject({ operation: "finish", "jobId.$": "$.jobId" }),
       resultPath: sfn.JsonPath.DISCARD,
     });
-    const machine = new sfn.StateMachine(this, "Workflow", {
+    const machine = this.stateMachine = new sfn.StateMachine(this, "Workflow", {
       definitionBody: sfn.DefinitionBody.fromChainable(pipeline.next(finish)
         .next(new sfn.Succeed(this, "VideoGenerationNotAuthorized"))),
       stateMachineType: sfn.StateMachineType.STANDARD, timeout: Duration.days(31),
+      logs: { destination: props.executionLogs, level: sfn.LogLevel.ALL, includeExecutionData: false },
     });
     const trigger = new lambda.Function(this, "Trigger", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,

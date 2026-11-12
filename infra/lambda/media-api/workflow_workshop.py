@@ -25,6 +25,8 @@ KINDS = (*SOURCES, "video-production", "video-generation", "session-finalization
 STATE = {"pk": "SYSTEM", "sk": "workshop-v1"}
 SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 STATES = {"pending", "queued", "running", "done", "failed", "paused", "unknown"}
+WORKERS = ("editorial", "playback", "model")
+STALE_SECONDS = 1200
 
 
 def reply(code, body):
@@ -57,9 +59,14 @@ def status(value):
 
 def phase(name, state, item=None):
     item = item or {}
+    failure = item.get("failure") if isinstance(item.get("failure"), dict) else {}
+    errors = item.get("attemptErrors") if isinstance(item.get("attemptErrors"), list) else []
+    latest = errors[-1].get("message") if errors and isinstance(errors[-1], dict) else None
+    message = failure.get("message") or latest
     return {"id": name, "label": name.replace("-", " ").capitalize(), "status": state,
             **{field: item[field] for field in ("leaseUntil", "notBefore", "attempts") if field in item},
-            **({"outputKey": item["output"]["key"]} if isinstance(item.get("output"), dict) and item["output"].get("key") else {})}
+            **({"outputKey": item["output"]["key"]} if isinstance(item.get("output"), dict) and item["output"].get("key") else {}),
+            **({"message": message[:500]} if isinstance(message, str) and message.strip() else {})}
 
 
 def source_view(kind, key):
@@ -109,7 +116,8 @@ def source_view(kind, key):
             stages.append(phase(f"transcription-window-{i + 1}", "pending"))
         stages.append(phase("preserve-final-transcript", "done" if final else "pending"))
         state = "DONE" if final else "FAILED" if any(w["status"] == "FAILED" for w in windows) else "RUNNING" if any(w["status"] == "RUNNING" for w in windows) else "UNKNOWN" if any(w["status"] == "UNKNOWN" for w in windows) else "QUEUED"
-        job = {"jobId": recording, "gameId": game, "status": state, "createdAt": min((w.get("createdAt", 0) for w in windows), default=0)}
+        session_id = next((w.get("sessionId") for w in windows if isinstance(w.get("sessionId"), str)), None)
+        job = {"jobId": recording, "gameId": game, "status": state, "createdAt": min((w.get("createdAt", 0) for w in windows), default=0), **({"sessionId": session_id} if session_id else {})}
         title = "Final transcription · " + plan.get("sessionName", "Recording")
         note = "Speakers are unassigned until a separate player-attribution step."
     return {"schemaVersion": 1, "id": kind + "~" + job["jobId"], "kind": kind, "gameId": job["gameId"],
@@ -235,12 +243,37 @@ def public(item, detail=False):
     return result
 
 
+def worker_health():
+    now = time.time()
+    rows = []
+    for name in WORKERS:
+        item = get(INDEX, "SYSTEM", "worker#" + name) or {}
+        seen = int(item.get("seenAt") or 0)
+        fresh = bool(seen) and now - seen < STALE_SECONDS
+        rows.append({"id": name, "status": "ready" if fresh else "offline", "seenAt": seen,
+                     "message": None if fresh else "Worker offline or its Panther sign-in expired."})
+    return rows
+
+
+def remember_worker(body):
+    name = body.get("worker") if isinstance(body, dict) else None
+    if set(body) != {"worker"} or name not in WORKERS:
+        raise ValueError("Unknown worker")
+    now = int(time.time())
+    INDEX.put_item(Item={"pk": "SYSTEM", "sk": "worker#" + name, "worker": name, "seenAt": now, "status": "ready"})
+    return {"worker": name, "seenAt": now, "status": "ready"}
+
+
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     route = event.get("routeKey")
     if not authorized(claims, "CATALOG_READERS" if route == "GET /workflows" else "MODEL_WORKERS"):
         return reply(403, {"error": "Workflow access denied"})
     try:
+        if route == "POST /workflows/heartbeat":
+            if len(event.get("body") or "") > 200:
+                raise ValueError("Invalid heartbeat")
+            return reply(200, remember_worker(json.loads(event.get("body") or "{}")))
         if route == "POST /workflow-progress":
             if len(event.get("body") or "") > 65536:
                 raise ValueError("Progress report too large")
@@ -279,6 +312,35 @@ def handler(event, _context):
         marker = get(INDEX, **STATE)
         if not marker or set(marker.get("sources", [])) != set(SOURCES):
             return reply(503, {"error": "Workflow history is being indexed; the library is not complete yet."})
+        if q.get("view") == "session-pipeline":
+            from session_pipeline import session_of, view as session_view
+            items, cursor = [], None
+            for _ in range(10):
+                args = {"KeyConditionExpression": Key("pk").eq("GAME#" + game), "Limit": 50, "ConsistentRead": True}
+                if cursor:
+                    args["ExclusiveStartKey"] = cursor
+                page = INDEX.query(**args)
+                items.extend(page.get("Items", []))
+                cursor = page.get("LastEvaluatedKey")
+                if not cursor:
+                    break
+            else:
+                return reply(503, {"error": "Session pipeline index exceeds its supported bound."})
+            observations = []
+            for item in items:
+                sid = session_of(item)
+                if not sid or item.get("kind") not in KINDS:
+                    continue
+                stages = []
+                for stage in item.get("stages") or []:
+                    if isinstance(stage, dict) and isinstance(stage.get("id"), str):
+                        stages.append({"id": stage["id"], "status": stage.get("status"), "outputKey": stage.get("outputKey"), "message": stage.get("message")})
+                observations.append({"sessionId": sid, "kind": item.get("kind"), "status": item.get("status"), "updatedAt": item.get("reportedAt") or item.get("observedAt") or item.get("createdAt") or 0, "message": item.get("note") if item.get("status") == "failed" else None, "stages": stages, "label": item.get("title")})
+            if q.get("sessionId") is not None and not q.get("sessionId"):
+                raise ValueError("Invalid session")
+            body = session_view(q.get("sessionId"), observations)
+            body["workers"] = worker_health()
+            return reply(200, body)
         if q.get("view") == "types":
             if marker.get("hierarchyVersion") != 1:
                 return reply(503, {"error": "Workflow types are being indexed; totals are not complete yet."})

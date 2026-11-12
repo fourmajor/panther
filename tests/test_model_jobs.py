@@ -246,6 +246,23 @@ def test_ineligible_references_do_not_enqueue(broker, change):
     assert broker.table.scan()["Count"] == 0
 
 
+def test_model_failure_records_the_worker_message(broker):
+    _, claimed = queued(broker)
+    message = "Sign in to Codex using ChatGPT; no API-key fallback"
+    body = {
+        "jobId": claimed["job"]["jobId"],
+        "lease": claimed["lease"],
+        "message": message,
+        "deterministic": True,
+    }
+    assert unpack(request(broker, "POST /model-jobs/fail", body))["status"] == "FAILED"
+    item = broker.table.get_item(Key=broker.job_key(claimed["job"]["jobId"]))["Item"]
+    assert item["status"] == "FAILED"
+    assert item["failure"] == {"code": "deterministic", "message": message}
+    assert item["attemptErrors"] == [{"attempt": 1, "message": message}]
+    assert unpack(request(broker, "POST /model-jobs/claim"))["job"] is None
+
+
 def test_claim_is_exclusive_and_worker_only(broker):
     _, claimed = queued(broker)
     assert claimed["job"]["status"] == "RUNNING"

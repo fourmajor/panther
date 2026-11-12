@@ -551,6 +551,8 @@ function showWelcome(message = "") {
   document.getElementById("game-settings").hidden = true;
   workshop.stop();
   document.getElementById("workshop").hidden = true;
+  pipeline.stop();
+  document.getElementById("pipeline").hidden = true;
   document.getElementById("game-context").hidden = true;
   elements.account.hidden = true;
   elements.primaryNav.hidden = true;
@@ -1812,6 +1814,8 @@ async function renderRoute() {
   document.getElementById("episode-workspace")?.cleanupProduction?.();
   workshop.stop();
   document.getElementById("workshop").hidden = true;
+  pipeline.stop();
+  document.getElementById("pipeline").hidden = true;
   if (location.pathname === "/account" || location.pathname === "/account/recovery") {
     const epoch = ++routeEpoch;
     await roomCapture?.render("account", epoch);
@@ -1841,7 +1845,7 @@ async function renderRoute() {
     setActiveNavigation('notifications');const host=document.getElementById('notifications-page');host.hidden=false;window.PantherUI.mountNotificationsPage(host,notificationProps());await roomCapture?.render('notifications',epoch);return;
   }
   const workflowRoute = window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/([^/]+))?\/?$/);
-  const gameRoute = workflowRoute || window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|episodes|workflows)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
+  const gameRoute = workflowRoute || window.location.pathname.match(/^\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(dashboard|settings|assets|media|characters|novel|sessions|videos|episodes|workflows|pipeline)(?:\/([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\/scenes\/([a-z0-9]+(?:-[a-z0-9]+)*))?\/?$/);
   const characterMatch = window.location.pathname.match(
     /^\/characters\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/,
   );
@@ -1867,6 +1871,10 @@ async function renderRoute() {
   if(section === "workflows") {
     setActiveNavigation("workflows"); elements.characters.hidden = true; elements.explorer.hidden = true;
     await workshop.open(epoch, gameRoute?.[3], gameRoute?.[4]); return;
+  }
+  if(section === "pipeline") {
+    setActiveNavigation("pipeline"); elements.characters.hidden = true; elements.explorer.hidden = true;
+    await pipeline.open(epoch, gameRoute?.[3] || null); return;
   }
   if (section === "dashboard" || location.pathname === "/") {
     setActiveNavigation("dashboard"); elements.characters.hidden = true; elements.explorer.hidden = true;
@@ -4746,9 +4754,22 @@ document.getElementById("account-game-back").addEventListener("click",event=>{ev
 const workshop = (() => {
   const host = document.getElementById("workshop");
   return {
-    stop() { window.PantherUI.unmountWorkflowBrowser?.(host); },
+    stop() {
+      const pipelineHost = document.getElementById("workshop-pipeline");
+      window.PantherUI.unmountSessionPipeline?.(pipelineHost);
+      if (pipelineHost) pipelineHost.hidden = true;
+      window.PantherUI.unmountWorkflowBrowser?.(host);
+    },
     async open(epoch, type, encodedId) {
       host.hidden = false;
+      const pipelineHost = document.getElementById("workshop-pipeline");
+      pipelineHost.hidden = false;
+      window.PantherUI.mountSessionPipeline(pipelineHost, {
+        gameId: state.gameId, scope: apiScope(), sessionId: null, embedded: true,
+        onLoad: ({sessionId: selected, signal}) => api("/workflows", {gameId: state.gameId, view: "session-pipeline", ...(selected ? {sessionId: selected} : {})}, {signal}),
+        onNavigate: href => navigate(href),
+        onPreview: key => void previewFile({key, name: key.split("/").at(-1)}),
+      });
       let workflowId;
       try { workflowId = encodedId ? decodeURIComponent(encodedId) : null; }
       catch { host.textContent = "This workflow link is invalid."; return; }
@@ -4784,6 +4805,24 @@ const workshop = (() => {
         onNavigate: href => navigate(href),
         onPreview: key => void previewFile({key, name: key.split("/").at(-1)}),
       });
+    },
+  };
+})();
+
+const pipeline = (() => {
+  const host = document.getElementById("pipeline");
+  return {
+    stop() { window.PantherUI.unmountSessionPipeline?.(host); host.hidden = true; },
+    async open(epoch, sessionId) {
+      host.hidden = false;
+      const gameId = state.gameId;
+      window.PantherUI.mountSessionPipeline(host, {
+        gameId, scope: apiScope(), sessionId,
+        onLoad: ({sessionId: selected, signal}) => api("/workflows", {gameId, view: "session-pipeline", ...(selected ? {sessionId: selected} : {})}, {signal}),
+        onNavigate: href => navigate(href),
+        onPreview: key => void previewFile({key, name: key.split("/").at(-1)}),
+      });
+      if (epoch !== routeEpoch) pipeline.stop();
     },
   };
 })();

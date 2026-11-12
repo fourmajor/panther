@@ -1,0 +1,16 @@
+[Unit]
+Description=Panther editorial worker
+After=network-online.target
+
+[Service]
+Type=simple
+# Point ExecStart at the pinned virtualenv panther binary for this host.
+ExecStart=%h/.local/bin/panther editorial worker --work-dir %h/.local/state/panther/editorial-jobs
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+# Uncomment on a host without a GUI keyring. Create the file once with panther login.
+# Environment=PANTHER_SESSION_CREDENTIAL_FILE=%h/.local/share/panther/session.cred
+
+[Install]
+WantedBy=default.target

@@ -15,8 +15,9 @@ import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 /** A completed set is the durable outbox event; individual uploads never start assembly. */
 export class PlaybackProcessing extends Construct {
   readonly table: dynamodb.Table;
+  readonly stateMachine: sfn.StateMachine;
   constructor(scope: Construct, id: string, props: {
-    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>;
+    bucket: s3.IBucket; api: api.HttpApi; authorizer: api.IHttpRouteAuthorizer; accessEnvironment: Record<string, string>; executionLogs: logs.ILogGroup;
   }) {
     super(scope, id);
     const table = this.table = new dynamodb.Table(this, "Sets", {
@@ -52,9 +53,10 @@ export class PlaybackProcessing extends Construct {
     const gate = new sfn.Choice(this, "VerifiedPlaybackPublished")
       .when(sfn.Condition.stringEquals("$.outcome.status", "DONE"), new sfn.Succeed(this, "PlaybackReady"))
       .otherwise(failure);
-    const machine = new sfn.StateMachine(this, "Workflow", {
+    const machine = this.stateMachine = new sfn.StateMachine(this, "Workflow", {
       definitionBody: sfn.DefinitionBody.fromChainable(assemble.next(gate)),
       stateMachineType: sfn.StateMachineType.STANDARD, timeout: Duration.days(31),
+      logs: { destination: props.executionLogs, level: sfn.LogLevel.ALL, includeExecutionData: false },
     });
     const trigger = new lambda.Function(this, "Trigger", {
       runtime: lambda.Runtime.PYTHON_3_13, architecture: lambda.Architecture.ARM_64,

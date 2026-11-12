@@ -863,3 +863,36 @@ test("logical archive routes retain S3 bytes and scope transactional current-ref
  assert.ok(policies.includes("asset-archives-v1#*"));
  for(const [id,resource] of Object.entries(template.findResources("AWS::IAM::Policy"))){if(!/CharacterAppearances|VideoScenes/.test(id))continue;for(const statement of (resource as any).Properties.PolicyDocument.Statement){if([statement.Action].flat().includes("dynamodb:UpdateItem"))assert.deepEqual(statement.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"],["asset-reference-epoch-v1#*","asset-references-v1#*"]);}}
 });
+
+test("session pipeline logs executions and alarms when a worker or callback stalls", () => {
+  const app = new App();
+  const stack = new PantherMediaExplorerStack(app, "TestMediaExplorer", {
+    identities: {schemaVersion:1, users:["example-operator","example-editor","example-member"],
+      publishers:["example-operator","example-editor"], workers:["example-operator"], migrationAdmins:["example-operator"]},
+    env: { account: "123456789012", region: "us-west-2" },
+    certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
+    cognitoDomainPrefix: "panther-media-example",
+    domainName: "panther.place",
+    hostedZoneId: "Z1234567890",
+  });
+  const parent = Template.fromStack(stack);
+  const machines = Object.values(parent.findResources("AWS::StepFunctions::StateMachine"));
+  assert.equal(machines.length, 3);
+  for (const machine of machines) {
+    const logging = (machine as any).Properties.LoggingConfiguration;
+    assert.equal(logging.Level, "ALL");
+    assert.equal(logging.IncludeExecutionData, false);
+  }
+  const watch = Template.fromStack(stack.node.findChild("WorkflowWorkshop").node.findChild("Notifications") as NestedStack);
+  for (const route of ["POST /workflows/heartbeat", "POST /editorial-jobs/fail", "POST /model-jobs/fail"]) {
+    watch.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
+  }
+  watch.hasResourceProperties("AWS::Lambda::Function", {Handler: "pipeline_watch.handler"});
+  const rules = Object.values(watch.findResources("AWS::Events::Rule")).map((rule: any) => rule.Properties);
+  const execution = rules.filter(rule => JSON.stringify(rule.EventPattern || {}).includes("TIMED_OUT"));
+  assert.equal(execution.length, 1);
+  assert.deepEqual(execution[0].EventPattern.detail.status, ["FAILED", "TIMED_OUT", "ABORTED"]);
+  assert.equal(execution[0].EventPattern.detail.stateMachineArn, undefined);
+  assert.ok(rules.some(rule => rule.ScheduleExpression === "rate(10 minutes)"));
+  assert.ok(Object.keys(parent.findResources("AWS::SNS::Topic")).length === 0);
+});
