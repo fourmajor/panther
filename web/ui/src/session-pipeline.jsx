@@ -4,7 +4,7 @@ import {AudioLines, BookOpen, Camera, Captions, CircleAlert, Clapperboard, FileT
 import {Button} from './components/ui/button.jsx';
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from './components/ui/dialog.jsx';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from './components/ui/select.jsx';
-import {presentation, statusText} from './session-pipeline-model.js';
+import {presentation, statusText, workerLabel} from './session-pipeline-model.js';
 
 const icons = {mic: Mic, captions: Captions, users: Users, file: FileText, 'file-check': FileText, library: Library, pencil: Pencil, book: BookOpen, clapper: Clapperboard, list: List, search: Search, image: Image, package: Package, audio: AudioLines, palette: Palette, camera: Camera, scroll: ScrollText, shield: ShieldCheck, film: Film, circle: CircleAlert};
 
@@ -39,7 +39,7 @@ function Graph({nodes, edges, onOpen}) {
       const mid = x1 + Math.max(18, (x2 - x1) / 2);
       const sameRow = Math.abs(y1 - y2) < 2;
       const d = sameRow ? `M ${x1} ${y1} L ${x2} ${y2}` : `M ${x1} ${y1} L ${mid} ${y1} L ${mid} ${y2} L ${x2} ${y2}`;
-      return [{id: `${edge.from}-${edge.to}`, d, status: presentation(edge.status)}];
+      return [{id: `${edge.from}-${edge.to}`, d, status: presentation(edge.status, edge.from)}];
     }));
   }, [nodes, edges]);
   React.useLayoutEffect(() => {
@@ -59,10 +59,10 @@ function Graph({nodes, edges, onOpen}) {
       </svg>
       <div className="pipeline-columns">{columnsOf(nodes).map(column => <div className="pipeline-column" key={column.index}>{column.nodes.map(node => {
         const Icon = icons[node.icon] || CircleAlert;
-        const shown = presentation(node.status);
-        return <button key={node.id} type="button" className="pipeline-node" data-status={shown} data-final={node.final ? 'true' : 'false'} style={{gridRow: node.row + 1}} ref={element => { if (element) refs.current.set(node.id, element); else refs.current.delete(node.id); }} aria-label={`${node.title}, ${statusText(node.status)}`} onClick={() => onOpen(node)}>
-          <span className="pipeline-icon" aria-hidden="true">{node.status === 'failed' ? <span className="pipeline-x">×</span> : <Icon size={18} strokeWidth={1.7}/>}</span>
-          <span className="pipeline-copy"><span className="pipeline-type">{node.type}</span><strong>{node.title}</strong><span className="pipeline-state">{statusText(node.status)}</span></span>
+        const shown = presentation(node.status, node.id);
+        return <button key={node.id} type="button" className="pipeline-node" data-status={shown} data-final={node.final ? 'true' : 'false'} style={{gridRow: node.row + 1}} ref={element => { if (element) refs.current.set(node.id, element); else refs.current.delete(node.id); }} aria-label={`${node.title}, ${statusText(node.status, node.id)}`} onClick={() => onOpen(node)}>
+          <span className="pipeline-icon" aria-hidden="true">{shown === 'failed' ? <span className="pipeline-x">×</span> : <Icon size={18} strokeWidth={1.7}/>}</span>
+          <span className="pipeline-copy"><span className="pipeline-type">{node.type}</span><strong>{node.title}</strong><span className="pipeline-state">{statusText(node.status, node.id)}</span></span>
         </button>;
       })}</div>)}</div>
     </div>
@@ -72,11 +72,13 @@ function Graph({nodes, edges, onOpen}) {
 function Detail({node, onPreview, onClose}) {
   return <Dialog open={Boolean(node)} onOpenChange={open => { if (!open) onClose(); }}>
     <DialogContent className="pipeline-detail">
-      {node && <><DialogHeader><DialogTitle>{node.title}</DialogTitle><DialogDescription>{node.type} · {statusText(node.status)}</DialogDescription></DialogHeader>
-        {node.message && <p className="pipeline-log">{node.message}</p>}
+      {node && <><DialogHeader><DialogTitle>{node.title}</DialogTitle><DialogDescription>{node.type} · {statusText(node.status, node.id)}</DialogDescription></DialogHeader>
+        {node.status === 'failed' && <p role="alert" className="pipeline-failure">{node.message || 'This step failed without a recorded message.'}</p>}
+        {presentation(node.status, node.id) === 'gate' && <p className="pipeline-gate">{node.message || 'Paid video stays blocked until this storyboard revision is approved.'}</p>}
+        {node.message && node.status !== 'failed' && presentation(node.status, node.id) !== 'gate' && <p className="pipeline-log">{node.message}</p>}
         {node.logs?.length > 0 && <pre className="pipeline-log">{node.logs.join('\n')}</pre>}
         {node.artifacts?.length > 0 && <ul className="pipeline-artifacts">{node.artifacts.map(artifact => <li key={artifact.key}><Button variant="outline" onClick={() => onPreview(artifact.key)}>{artifact.label || 'Open artifact'}</Button></li>)}</ul>}
-        {!node.message && !node.logs?.length && !node.artifacts?.length && <p className="pipeline-log">No artifact or log has been recorded for this step.</p>}
+        {!node.message && !node.logs?.length && !node.artifacts?.length && node.status !== 'failed' && presentation(node.status, node.id) !== 'gate' && <p className="pipeline-log">No artifact or log has been recorded for this step.</p>}
       </>}
     </DialogContent>
   </Dialog>;
@@ -95,14 +97,25 @@ export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, o
   const workers = query.data?.workers || [];
   const selected = sessionId || manifest?.sessionId || '';
   const Heading = embedded ? 'h2' : 'h1';
-  return <section className="pipeline-page" aria-label="Pipeline">
-    {workers.filter(worker => worker.status && worker.status !== 'ready').map(worker => <p role="alert" className="pipeline-error" key={worker.id}><CircleAlert size={16}/>{worker.message}</p>)}
-    <header className="page-heading pipeline-heading"><Heading>Pipeline</Heading>
-      {sessions.length > 0 && <Select value={selected ? `option:${selected}` : undefined} onValueChange={value => onNavigate(`/games/${encodeURIComponent(gameId)}/pipeline/${encodeURIComponent(value.slice(7))}`)}>
-        <SelectTrigger aria-label="Session"><SelectValue placeholder="Session"/></SelectTrigger>
-        <SelectContent>{sessions.map(session => <SelectItem key={session.id} value={`option:${session.id}`}>{session.title}</SelectItem>)}</SelectContent>
-      </Select>}
+  return <section className={`pipeline-page${embedded ? ' pipeline-embedded' : ''}`} aria-label="Pipeline">
+    <header className="page-heading pipeline-heading">
+      <div>
+        <Heading>Pipeline</Heading>
+        {manifest?.title && <p className="pipeline-session">{manifest.title}</p>}
+      </div>
+      <div className="pipeline-tools">
+        {workers.length > 0 && <ul className="pipeline-workers" aria-label="Workers">{workers.map(worker => {
+          const online = worker.status === 'ready';
+          const label = `${workerLabel(worker.id)} ${online ? 'online' : 'offline'}`;
+          return <li key={worker.id} className="pipeline-worker" data-status={online ? 'online' : 'offline'} title={worker.message || label}>{label}</li>;
+        })}</ul>}
+        {sessions.length > 0 && <Select value={selected ? `option:${selected}` : undefined} onValueChange={value => onNavigate(`/games/${encodeURIComponent(gameId)}/pipeline/${encodeURIComponent(value.slice(7))}`)}>
+          <SelectTrigger aria-label="Session"><SelectValue placeholder="Session"/></SelectTrigger>
+          <SelectContent>{sessions.map(session => <SelectItem key={session.id} value={`option:${session.id}`}>{session.title}</SelectItem>)}</SelectContent>
+        </Select>}
+      </div>
     </header>
+    {workers.filter(worker => worker.status && worker.status !== 'ready').map(worker => <p role="alert" className="pipeline-error" key={`${worker.id}-alert`}><CircleAlert size={16}/>{worker.message}</p>)}
     {query.isPending && <div className="pipeline-loading" aria-label="Loading pipeline"><div/><div/><div/></div>}
     {query.error && <div><p role="alert" className="pipeline-error"><CircleAlert size={16}/>{query.error.message || 'The pipeline could not be loaded.'}</p><Button variant="outline" onClick={() => query.refetch()}>Retry pipeline</Button></div>}
     {manifest && <><Graph nodes={manifest.nodes} edges={manifest.edges} onOpen={setOpen}/><Detail node={open} onPreview={onPreview} onClose={() => setOpen(null)}/></>}
