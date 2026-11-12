@@ -11,9 +11,21 @@ import signal
 try:
     from .diarization_progress import Progress
     from .speaker_profile_worker import runtime_embeddings
+    from .speaker_reference import (
+        EXCLUSIVE_TURN_SOURCE,
+        REFERENCE_EMBEDDING_METHOD,
+        annotation_turns,
+        reference_embeddings,
+    )
 except ImportError:  # Script invocation in the separate audio runtime, not the CLI environment.
     from diarization_progress import Progress
     from speaker_profile_worker import runtime_embeddings
+    from speaker_reference import (
+        EXCLUSIVE_TURN_SOURCE,
+        REFERENCE_EMBEDDING_METHOD,
+        annotation_turns,
+        reference_embeddings,
+    )
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -46,6 +58,52 @@ def main():
         except OSError:
             pass
         raise
+
+
+class _Rows:
+    """Give runtime_embeddings a .tolist() row without requiring a NumPy matrix."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __len__(self):
+        return len(self._rows)
+
+    def __getitem__(self, index):
+        return self._rows[index]
+
+
+class _Row:
+    def __init__(self, values):
+        self._values = values
+
+    def tolist(self):
+        return list(self._values)
+
+
+def _finite_embeddings(embeddings):
+    clean, rejected = {}, {}
+    for label, value in embeddings.items():
+        if value is None:
+            clean[label] = None
+            continue
+        row = value if isinstance(value, list) else value.tolist()
+        if row and isinstance(row[0], list):
+            if len(row) != 1:
+                clean[label] = None
+                rejected[label] = {"reason": "malformed-reference-embedding"}
+                continue
+            row = row[0]
+        try:
+            checked, missing = runtime_embeddings([label], _Rows([_Row(row)]))
+        except (TypeError, ValueError):
+            clean[label] = None
+            rejected[label] = {"reason": "malformed-reference-embedding"}
+            continue
+        clean[label] = checked[label]
+        if label in missing:
+            rejected[label] = missing[label]
+    return clean, rejected
 
 
 def run(args, progress):
@@ -107,10 +165,30 @@ def run(args, progress):
     progress.update('segmentation', force=True)
     result = pipeline({"waveform": waveform, "sample_rate": 16000}, hook=progress, **options)
     progress.update('writing-result', force=True)
-    turns = [
-        {"start": float(turn.start), "end": float(turn.end), "speaker": speaker}
-        for turn, _, speaker in result.speaker_diarization.itertracks(yield_label=True)
-    ]
+    # Overlapping diarization makes almost every table line fail the 10% overlap
+    # cap, so the transcript loses both the label and the player. Exclusive turns
+    # are the timeline pyannote builds for transcription.
+    overlapping = annotation_turns(result.speaker_diarization)
+    exclusive_annotation = getattr(result, "exclusive_speaker_diarization", None)
+    exclusive = annotation_turns(exclusive_annotation) if exclusive_annotation is not None else None
+    if exclusive is not None:
+        turns, turn_source = exclusive, EXCLUSIVE_TURN_SOURCE
+    else:
+        turns, turn_source = overlapping, "speaker-diarization"
+    embeddings, unavailable = {}, {}
+    if turns:
+        samples = waveform.detach().cpu().reshape(-1).numpy()
+
+        def embed(speech):
+            # Same call as confirmed enrollment: the full waveform, no cluster centroid.
+            audio = torch.from_numpy(np.ascontiguousarray(speech, dtype=np.float32)).reshape(
+                1, 1, -1
+            )
+            return pipeline._embedding(audio)[0].tolist()
+
+        embeddings, unavailable = reference_embeddings(embed, samples, turns)
+        embeddings, rejected = _finite_embeddings(embeddings)
+        unavailable = {**unavailable, **rejected}
     model_hashes = {}
     for file in sorted(args.model.rglob("*")):
         if file.is_file() and file.suffix in {".bin", ".npz", ".yaml"}:
@@ -127,18 +205,25 @@ def run(args, progress):
         "modelFiles": model_hashes,
         "requestedSpeakers": args.speakers,
         "turns": turns,
+        "turnSource": turn_source,
+        "overlappingTurns": overlapping if exclusive is not None else [],
+        "embeddingMethod": REFERENCE_EMBEDDING_METHOD,
+        "embeddings": embeddings,
         "inferenceDevice": args.device,
     }
-    # Private recognition evidence, never a voice-synthesis profile. Keep the
-    # pipeline's session-wide label order paired with its aggregate embeddings.
-    if hasattr(result, 'speaker_embeddings'):
-        labels = result.speaker_diarization.labels()
+    if unavailable:
+        document["unavailableEmbeddings"] = unavailable
+    # Centroids stay diagnostic. They are not the identity prototype: enrollment
+    # stores pipeline._embedding of the confirmed waveform, and those two
+    # statistics do not cosine-match even for the same voice.
+    if getattr(result, "speaker_embeddings", None) is not None:
+        labels = list(result.speaker_diarization.labels())
         if len(labels) != len(result.speaker_embeddings):
-            raise ValueError('Session speaker embedding labels differ')
-        embeddings, unavailable = runtime_embeddings(labels, result.speaker_embeddings)
-        document['embeddings'] = embeddings
-        if unavailable:
-            document['unavailableEmbeddings'] = unavailable
+            raise ValueError("Session speaker embedding labels differ")
+        centroids, centroid_gaps = runtime_embeddings(labels, result.speaker_embeddings)
+        document["clusterCentroids"] = centroids
+        if centroid_gaps:
+            document["unavailableClusterCentroids"] = centroid_gaps
     with args.output.open("x") as stream:
         json.dump(document, stream, indent=2, allow_nan=False)
     progress.update('complete', state='complete', force=True)

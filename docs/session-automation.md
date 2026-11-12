@@ -26,9 +26,15 @@ The worker verifies pinned audio, reuses each checksummed live recognizer result
 and recognizes only missing/gapped intervals. Original ASR output remains unchanged. It saves
 an unassigned raw transcript, provisional chunk annotations, and a separate session-wide
 enrolled-voice reconciled version before adaptation handoff. The session pass uses stable
-speaker groups and aggregate embeddings across the recording rather than treating each
-30-second chunk as an independent final identity decision. Its private input pins, progress,
-diarization and final transcript survive completion/restarts. It uses the existing offline
+speaker groups across the recording rather than treating each
+30-second chunk as an independent final identity decision. Transcript alignment uses
+pyannote's exclusive diarization, the timeline without overlapping speech. Player identity
+uses the same full-waveform extractor as confirmed enrollment, run on each speaker's
+exclusive speech. Cluster centroids stay in the diarization file as diagnostic evidence
+and are not the identity prototype. Private input pins, progress, diarization and the
+final transcript survive completion and restarts. A saved diarization from before
+exclusive reference embeddings is not reused; leave it in place and rerun in a new
+private work directory. The pass uses the existing offline
 pyannote weights on the laptop's MPS device, with bounded batches and no paid service.
 Uncertain voices remain unknown. Chunk-level recognition and timestamp limitations remain visible. There is no
 automatic enrollment or inference of identity from character dialogue.
@@ -46,7 +52,10 @@ utterances unassigned with an attribution warning. The session diarization file 
 unavailable-embedding record as the chunk pass, so one non-finite speaker does not discard the
 other speakers. Transcript text shows the diarized speaker label when the player is unknown.
 Unassigned means there is no player and no speaker label. Malformed evidence and invalid enrolled
-profiles still fail closed.
+profiles still fail closed. After reconciliation, a player-assignment rate below 25% of segments fails the handoff.
+The local candidate and the cosine for each diarized speaker are kept; the transcript is
+not published and adaptation does not start. A near-zero rate is a broken mapping, not a
+successful unknown.
 Very brief speech can also produce non-finite runtime embeddings. The analyzer retains
 those exact values as diagnostic strings in `unavailableEmbeddings`, emits no usable
 identity vector for that turn, and preserves its speech/timing with an unassigned-speaker

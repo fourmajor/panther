@@ -357,7 +357,7 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch, multi
             "shots": [],
             "edits": [],
         }
-        if stage in PLAN["video"]:
+        if stage in PLAN["video"] or stage == "novel-chapter":
             report["evidenceIds"] = ["catalog"]
         if stage == "video-source-brief":
             report["sourceFacts"] = []
@@ -436,6 +436,12 @@ def test_all_worker_stages_with_synthetic_artifacts(tmp_path, monkeypatch, multi
     else:
         assert corrected["segments"] == original["segments"]
     assert "novel-chapter" not in seen_inputs["video-treatment"]["priorStages"]
+    assert "raw" not in seen_inputs["novel-chapter"]
+    assert set(seen_inputs["novel-chapter"]["priorStages"]) == {
+        "novel-brief",
+        "novel-continuity",
+        "novel-proof",
+    }
     assert storage["video-storyboards.json"]["payload"]["animaticTimeline"][0]["duration"] == 5
     assert (
         storage["video-voice-casting.json"]["payload"]["voiceProfiles"][0]["generationAuthorized"]
@@ -1843,6 +1849,169 @@ def test_recovery_preserves_history_pins_cutoff_and_never_approves_generation(ed
     assert request(m, "POST /editorial-jobs", {"recovery": request_body})["statusCode"] == 400
 
 
+def _done_stage(m, job, stage, payload):
+    envelope = {
+        "schemaVersion": 1,
+        "entityType": "EditorialArtifact",
+        "jobId": job["jobId"],
+        "gameId": job["gameId"],
+        "stage": stage,
+        "workflowVersion": job["workflowVersion"],
+        "passed": True,
+        "publicationStatus": "accepted",
+        "structuralValidation": "passed",
+        "videoGenerationAuthorized": False,
+        "payload": payload,
+    }
+    body = json.dumps(envelope).encode()
+    key = (
+        f"games/test-game/assets/editorial-{job['jobId'][:32]}-{stage}/original/{stage}.json"
+    )
+    put(m, key, body, "application/json")
+    ref, _head = m.asset(key, "test-game")
+    m.table.put_item(
+        Item={
+            "pk": "TASKS",
+            "sk": f"{job['jobId']}:{stage}",
+            "jobId": job["jobId"],
+            "gameId": job["gameId"],
+            "stage": stage,
+            "status": "DONE",
+            "output": ref,
+            "leaseUntil": 0,
+            "attempts": 1,
+        }
+    )
+    return ref
+
+
+def test_recovery_reuses_valid_stages_and_reruns_only_the_failed_one(editorial):
+    m = editorial
+    _body, parent = submitted(m)
+    payloads = {
+        "context": {"selection": {"title": "Context"}, "evidence": {"catalog": {}}},
+        "correction": {"markdown": "Names fixed", "edits": [], "passed": True},
+        "corrected-transcript": {"transcript": {"segments": []}, "review": {"markdown": "Kept"}},
+        "novel-brief": {"markdown": "A brief that no longer matches its pin.", "passed": True},
+        "novel-proof": {"markdown": "The river chapter.", "passed": True, "title": "River"},
+    }
+    kept = {stage: _done_stage(m, parent, stage, payload) for stage, payload in payloads.items()}
+    m.table.update_item(
+        Key={"pk": "TASKS", "sk": f"{parent['jobId']}:novel-brief"},
+        UpdateExpression="SET #output = :output",
+        ExpressionAttributeNames={"#output": "output"},
+        ExpressionAttributeValues={":output": {**kept["novel-brief"], "sha256": "stale-checksum"}},
+    )
+    m.table.put_item(
+        Item={
+            "pk": "TASKS",
+            "sk": f"{parent['jobId']}:novel-chapter",
+            "jobId": parent["jobId"],
+            "stage": "novel-chapter",
+            "status": "FAILED",
+        }
+    )
+    m.internal({"operation": "fail", "jobId": parent["jobId"]})
+    recovered = unpack(
+        request(m, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "both"}})
+    )
+    assert recovered["recovery"]["mode"] == "reuse-valid-stages"
+    assert recovered["recovery"]["parentJobId"] == parent["jobId"]
+    assert set(recovered["recovery"]["reusedStages"]) == {
+        "context",
+        "correction",
+        "corrected-transcript",
+        "novel-proof",
+    }
+    assert recovered["workflowVersion"] == PLAN["version"]
+    for stage in recovered["recovery"]["reusedStages"]:
+        m.internal(
+            {
+                "operation": "dispatch",
+                "jobId": recovered["jobId"],
+                "stage": stage,
+                "taskToken": f"token-{stage}",
+            }
+        )
+        stored = m.read("TASKS", f"{recovered['jobId']}:{stage}")
+        assert stored["status"] == "DONE"
+        assert stored["output"]["key"] == recovered["recovery"]["reusedOutputs"][stage]["key"]
+        assert stored["output"]["sha256"] == recovered["recovery"]["reusedOutputs"][stage]["sha256"]
+        assert stored["reusedFrom"] == parent["jobId"]
+    assert unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))["task"] is None
+    m.internal(
+        {
+            "operation": "dispatch",
+            "jobId": recovered["jobId"],
+            "stage": "novel-chapter",
+            "taskToken": "token-novel-chapter",
+        }
+    )
+    claimed = unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))
+    assert claimed["task"]["stage"] == "novel-chapter"
+    assert set(claimed["artifacts"]) == set(recovered["recovery"]["reusedStages"])
+    assert claimed["artifacts"]["novel-proof"]["key"] == kept["novel-proof"]["key"]
+    assert claimed["artifacts"]["correction"]["key"] == kept["correction"]["key"]
+
+
+def test_recovery_reuses_completed_novel_chapter_and_video_stages(editorial):
+    m = editorial
+    _body, parent = submitted(m)
+    payloads = {
+        "context": {"selection": {"title": "Context"}, "evidence": {"catalog": {}}},
+        "correction": {"markdown": "Names fixed", "edits": [], "passed": True},
+        "corrected-transcript": {"transcript": {"segments": []}, "review": {"markdown": "Kept"}},
+        "novel-brief": {"markdown": "A brief.", "passed": True},
+        "novel-proof": {"markdown": "The river chapter.", "passed": True, "title": "River"},
+        "novel-chapter": {"markdown": "The finished chapter.", "passed": True, "title": "River"},
+        "video-source-brief": {"markdown": "Usable dialogue from the enrolled players.", "passed": True},
+        "video-treatment": {"markdown": "Treatment.", "passed": True},
+    }
+    kept = {stage: _done_stage(m, parent, stage, payload) for stage, payload in payloads.items()}
+    m.table.put_item(
+        Item={
+            "pk": "TASKS",
+            "sk": f"{parent['jobId']}:video-preflight",
+            "jobId": parent["jobId"],
+            "stage": "video-preflight",
+            "status": "FAILED",
+        }
+    )
+    m.internal({"operation": "fail", "jobId": parent["jobId"]})
+    recovered = unpack(
+        request(m, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "both"}})
+    )
+    assert recovered["recovery"]["mode"] == "reuse-valid-stages"
+    assert {"novel-chapter", "video-source-brief", "video-treatment"} <= set(
+        recovered["recovery"]["reusedStages"]
+    )
+    for stage in ("novel-chapter", "video-source-brief", "video-treatment"):
+        m.internal(
+            {
+                "operation": "dispatch",
+                "jobId": recovered["jobId"],
+                "stage": stage,
+                "taskToken": f"token-{stage}",
+            }
+        )
+        stored = m.read("TASKS", f"{recovered['jobId']}:{stage}")
+        assert stored["status"] == "DONE"
+        assert stored["reusedFrom"] == parent["jobId"]
+        assert stored["output"]["sha256"] == kept[stage]["sha256"]
+    m.internal(
+        {
+            "operation": "dispatch",
+            "jobId": recovered["jobId"],
+            "stage": "video-preflight",
+            "taskToken": "token-video-preflight",
+        }
+    )
+    claimed = unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))
+    assert claimed["task"]["stage"] == "video-preflight"
+    assert claimed["artifacts"]["novel-chapter"]["key"] == kept["novel-chapter"]["key"]
+    assert claimed["artifacts"]["video-treatment"]["key"] == kept["video-treatment"]["key"]
+
+
 def test_plan_version_bump_mints_a_new_recovery_and_skips_the_old_run(editorial):
     m = editorial
     _, parent = submitted(m)
@@ -2118,7 +2287,9 @@ def test_corrected_transcript_reviews_every_utterance_under_the_prompt_limit(tmp
     assert len(trimmed["priorStages"]["correction"]["markdown"]) == 4000
     full = worker.render_prompt_size("corrected-transcript", trimmed)
     assert full > worker.PROMPT_LIMIT
-    assert worker.render_prompt_size("corrected-transcript", bloated) > full
+    assert worker._prompt_bytes("corrected-transcript", bloated) > worker._prompt_bytes(
+        "corrected-transcript", trimmed
+    )
     ranges = []
 
     def fake(folder, stage, inputs, heartbeat):
@@ -2255,6 +2426,105 @@ def test_multi_window_review_merges_produced_edits(tmp_path, monkeypatch):
     assert all(not text.startswith("Automatic fallback") for text in merged["uncertainties"])
 
 
+def _three_line_transcript():
+    document = raw()
+    document["segments"] = [
+        {"start": 1, "end": 2, "playerId": "person", "text": "Ask Captain Kade."},
+        {"start": 2, "end": 3, "playerId": "person", "text": "The bridge is closed."},
+        {"start": 3, "end": 4, "playerId": "person", "text": "Leave the count alone."},
+    ]
+    return document
+
+
+def _name_edit(document, index, after):
+    return {
+        "segmentIndex": index,
+        "before": document["segments"][index]["text"],
+        "after": after,
+        "reason": "Catalog spelling",
+        "evidenceIds": ["catalog"],
+    }
+
+
+def test_round_cap_keeps_a_validated_superset_of_corrections(tmp_path, monkeypatch):
+    document = _three_line_transcript()
+    first = _name_edit(document, 0, "Ask Captain Cade.")
+    extra = _name_edit(document, 1, "The span is closed.")
+    invalid = {
+        "segmentIndex": 2,
+        "before": "not the source line",
+        "after": "Invented speech that must be ignored.",
+        "reason": "Guess",
+        "evidenceIds": ["catalog"],
+    }
+    initial = apply_corrections(document, {"edits": [first], "uncertainties": []}, {"catalog": {}})
+    reviews = []
+
+    def ai(folder, stage, data, heartbeat):
+        if stage == "correction":
+            return report(edits=[first, extra, invalid], evidenceIds=["catalog"])
+        reviews.append(data["candidate"]["segments"][1]["text"])
+        return report(passed=False, markdown="Need another pass")
+
+    monkeypatch.setattr(worker, "agent", ai)
+    result, candidate, history, status = worker.autonomous_stage(
+        tmp_path,
+        "corrected-transcript",
+        {
+            "raw": document,
+            "context": {"catalog": {}},
+            "candidate": initial,
+            "priorStages": {"correction": report(edits=[first], evidenceIds=["catalog"])},
+        },
+        lambda: None,
+    )
+    assert status == "accepted-with-notes" and result["passed"] is False
+    assert candidate["segments"][0]["text"] == "Ask Captain Cade."
+    assert candidate["segments"][1]["text"] == "The span is closed."
+    assert candidate["segments"][2]["text"] == "Leave the count alone."
+    assert {edit["segmentIndex"] for edit in candidate["corrections"]} == {0, 1}
+    assert any(item.get("salvagedEdits") for item in history if isinstance(item, dict))
+    assert "The span is closed." in reviews
+    assert "validated correction superset" in result["markdown"]
+    assert all(segment["text"] == original["text"] for segment, original in zip(
+        document["segments"], _three_line_transcript()["segments"], strict=True
+    ))
+
+
+def test_final_review_accepts_the_last_unreviewed_correction(tmp_path, monkeypatch):
+    document = _three_line_transcript()
+    first = _name_edit(document, 0, "Ask Captain Cade.")
+    extra = _name_edit(document, 1, "The span is closed.")
+    initial = apply_corrections(document, {"edits": [first], "uncertainties": []}, {"catalog": {}})
+    reviews = {"n": 0}
+
+    def ai(folder, stage, data, heartbeat):
+        if stage == "correction":
+            return report(edits=[first, extra], evidenceIds=["catalog"])
+        reviews["n"] += 1
+        if reviews["n"] <= 3:
+            return report(evidenceIds=["not-a-source"])
+        assert data["candidate"]["segments"][1]["text"] == "The span is closed."
+        return report(passed=True, markdown="The extra correction holds.")
+
+    monkeypatch.setattr(worker, "agent", ai)
+    result, candidate, _history, status = worker.autonomous_stage(
+        tmp_path,
+        "corrected-transcript",
+        {
+            "raw": document,
+            "context": {"catalog": {}},
+            "candidate": initial,
+            "priorStages": {"correction": report(edits=[first], evidenceIds=["catalog"])},
+        },
+        lambda: None,
+    )
+    assert reviews["n"] == 4
+    assert status == "accepted" and result["passed"] is True
+    assert candidate["segments"][1]["text"] == "The span is closed."
+    assert {edit["segmentIndex"] for edit in candidate["corrections"]} == {0, 1}
+
+
 def test_windowed_disagreement_keeps_validated_corrections(tmp_path, monkeypatch):
     inputs = _windowed_inputs(count=16)
 
@@ -2295,35 +2565,63 @@ def test_short_transcript_stays_one_review(tmp_path, monkeypatch):
     assert transcript["segments"] == candidate["segments"]
 
 
-def test_other_stages_fail_before_codex_when_the_prompt_exceeds_the_limit(tmp_path, monkeypatch):
+def test_novel_chapter_drops_the_transcript_and_trims_to_the_prompt_budget(tmp_path, monkeypatch):
+    speech = "spoken word " * 80
+    document = _long_transcript(400, speech)
+    inputs = {
+        "raw": document,
+        "context": {
+            "catalog": {"game": {"id": "test-game"}, "characters": [{"name": "Endrik"}]},
+            "lore": {"content": "z" * 1_100_000},
+        },
+        "priorStages": {
+            "correction": {"markdown": "e" * 80_000, "edits": [], "passed": True},
+            "corrected-transcript": {"markdown": "t" * 120_000},
+            "novel-brief": {"title": "Brief", "markdown": "Keep the river brief.", "passed": True},
+            "novel-outline": {"markdown": "o" * 80_000},
+            "novel-draft": {"markdown": "d" * 80_000},
+            "novel-continuity": {
+                "title": "Continuity",
+                "markdown": "Gianno stays at the gate.",
+                "passed": True,
+            },
+            "novel-proof": {"title": "Proof", "markdown": "The river chapter.", "passed": True},
+        },
+        "candidate": "The river chapter.",
+    }
+    assert worker._prompt_bytes("novel-chapter", inputs) > worker.PROMPT_LIMIT
+    budgeted, notes = worker.plan_prompt_budget("novel-chapter", inputs)
+    assert "raw" not in budgeted
+    assert set(budgeted["priorStages"]) <= {"novel-brief", "novel-continuity", "novel-proof"}
+    assert "river brief" in budgeted["priorStages"]["novel-brief"]["markdown"]
+    assert "gate" in budgeted["priorStages"]["novel-continuity"]["markdown"]
+    assert budgeted["context"]["catalog"]["characters"][0]["name"] == "Endrik"
+    assert len(budgeted["context"]["lore"]["content"]) < 1_100_000
+    assert worker.ensure_prompt_budget("novel-chapter", inputs) <= worker.PROMPT_LIMIT
+    omitted = {
+        item.get("stage")
+        for item in notes
+        if item.get("part") == "priorStages" and item.get("action") == "omitted"
+    }
+    assert {"novel-draft", "corrected-transcript", "correction", "novel-outline"} <= omitted
+    assert any(item.get("part") == "raw" and item.get("action") == "omitted" for item in notes)
+    prompt = worker._stage_prompt("novel-chapter", inputs)
+    assert "The river chapter." in prompt and "raw transcript is not in this prompt" in prompt
+    assert '"segments"' not in prompt
+
     def refuse(*_args, **_kwargs):
         raise AssertionError("Codex must not run")
 
     monkeypatch.setattr(worker.local, "run_process", refuse)
-    text = "spoken word " * 400
-    segments = [
-        {"start": index, "end": index + 1, "playerId": "person", "text": text} for index in range(280)
-    ]
-    inputs = {
-        "raw": {"entityType": "PlayerTranscript", "segments": segments},
-        "context": {},
+    huge = {
+        "context": {"catalog": {}},
         "priorStages": {},
-        "candidate": "A chapter that still leaves the transcript over the transport limit.",
+        "candidate": "x" * (worker.PROMPT_LIMIT + 50),
     }
     with pytest.raises(worker.DeterministicFailure, match="novel-chapter prompt is") as caught:
-        worker.agent(tmp_path, "novel-chapter", inputs, lambda: None)
+        worker.agent(tmp_path, "novel-chapter", huge, lambda: None)
     assert "safe stage limit" in str(caught.value)
     assert "This preflight failure is deterministic and is not retried." in str(caught.value)
-    duplicate = {
-        "raw": raw(),
-        "context": {"catalog": {}},
-        "priorStages": {"context": {"selection": {"title": "Notes"}, "content": "z" * 1_100_000}},
-        "candidate": "Short chapter.",
-    }
-    with pytest.raises(worker.DeterministicFailure):
-        worker.ensure_prompt_budget("novel-chapter", duplicate)
-    trimmed = worker.trim_prior_stages("novel-chapter", duplicate)
-    assert worker.ensure_prompt_budget("novel-chapter", trimmed) <= worker.PROMPT_LIMIT
 
 
 def test_deterministic_editorial_failure_is_not_retried(editorial):

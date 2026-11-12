@@ -65,7 +65,7 @@ def load_profiles(path, game_id, model):
     return value
 
 
-def match(embedding, profiles, threshold=0.75, margin=0.15):
+def identity_scores(embedding, profiles, threshold=0.75, margin=0.15):
     """Cosine similarity is not a probability. Never force the nearest player."""
     target = vector(embedding)
     scores = []
@@ -73,13 +73,20 @@ def match(embedding, profiles, threshold=0.75, margin=0.15):
         reference = vector(person['embedding'])
         if len(reference) != len(target):
             raise click.ClickException('Speaker embedding dimensions differ')
-        scores.append((sum(a*b for a, b in zip(target, reference)), person['playerId']))
+        scores.append((sum(a * b for a, b in zip(target, reference)), person['playerId']))
     scores.sort(reverse=True)
-    if not scores:
-        return None
-    best = scores[0][0]
-    second = scores[1][0] if len(scores) > 1 else -1
-    return scores[0][1] if best >= threshold and best - second >= margin else None
+    best = scores[0][0] if scores else None
+    second = scores[1][0] if len(scores) > 1 else None
+    player = None
+    if scores and best >= threshold and best - (second if second is not None else -1) >= margin:
+        player = scores[0][1]
+    return player, best, second
+
+
+def match(embedding, profiles, threshold=0.75, margin=0.15):
+    """Cosine similarity is not a probability. Never force the nearest player."""
+    player, _best, _second = identity_scores(embedding, profiles, threshold, margin)
+    return player
 
 
 def analyze(wav, model, runtime, attempt, *, reference=False):
@@ -153,20 +160,38 @@ class SpeakerWorker:
 
 def map_speakers(result, profiles):
     """Match enrolled voices. Unavailable or empty embeddings stay unknown for that label only."""
-    mapping, unavailable = {}, set()
+    mapping, unavailable, reports = {}, set(), []
     embeddings = result.get('embeddings')
     if not isinstance(embeddings, dict):
         raise click.ClickException('Session-wide speaker embeddings are missing; rerun the separate speaker pass')
     for label, embedding in embeddings.items():
         evidence = result.get('unavailableEmbeddings', {}).get(label, {})
-        if embedding is None and evidence.get('reason') == 'non-finite-runtime-output':
-            values = evidence.get('values')
-            if not isinstance(values, list) or not 16 <= len(values) <= 4096 or not any(
-                x in ('nan', 'inf', '-inf') for x in values
-            ):
+        report = {
+            'speaker': label,
+            'playerId': None,
+            'bestCosine': None,
+            'runnerUpCosine': None,
+            'unavailable': False,
+        }
+        if embedding is None:
+            reason = evidence.get('reason')
+            if reason == 'non-finite-runtime-output':
+                values = evidence.get('values')
+                if not isinstance(values, list) or not 16 <= len(values) <= 4096 or not any(
+                    x in ('nan', 'inf', '-inf') for x in values
+                ):
+                    raise click.ClickException('Invalid unavailable speaker evidence')
+            elif reason not in {
+                'insufficient-exclusive-speech',
+                'reference-extraction-failed',
+                'malformed-reference-embedding',
+                'empty-embedding',
+            }:
                 raise click.ClickException('Invalid unavailable speaker evidence')
             mapping[label] = None
             unavailable.add(label)
+            report.update(unavailable=True, reason=reason)
+            reports.append(report)
             continue
         try:
             candidate = vector(embedding)
@@ -175,16 +200,20 @@ def map_speakers(result, profiles):
             # vector. Keep speech and the original result; never force identity.
             mapping[label] = None
             unavailable.add(label)
+            report.update(unavailable=True, reason='empty-embedding')
         else:
-            mapping[label] = match(candidate, profiles)
-    return mapping, unavailable
+            player, best, second = identity_scores(candidate, profiles)
+            mapping[label] = player
+            report.update(playerId=player, bestCosine=best, runnerUpCosine=second)
+        reports.append(report)
+    return mapping, unavailable, reports
 
 
 def label_lines(lines, result, profiles, offset):
     turns = [audio.SpeakerTurn(start=float(t['start']) + offset,
                               end=float(t['end']) + offset, speaker=t['speaker'])
              for t in result['turns']]
-    mapping, unavailable = map_speakers(result, profiles)
+    mapping, unavailable, _reports = map_speakers(result, profiles)
     labeled = audio.attributed_lines(lines, turns, mapping)
     for line in labeled:
         line['attribution'] = 'provisional-enrolled-voice' if line['playerId'] else 'unassigned'

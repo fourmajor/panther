@@ -8,7 +8,12 @@ import click
 
 from panther_journal import recording as audio, speaker_profiles as speakers
 from panther_journal.audio_storage import write_json
+from panther_journal.speaker_reference import EXCLUSIVE_TURN_SOURCE, REFERENCE_EMBEDDING_METHOD
 from panther_journal.word_attribution import decision
+
+# A working enrolled table lands well above this. Zero or near-zero means the
+# mapping did not run, not that every voice was genuinely unknown.
+MINIMUM_ASSIGNED_SEGMENT_PERCENT = 25
 
 
 def reconcile(document, diarization, profiles):
@@ -28,7 +33,7 @@ def reconcile(document, diarization, profiles):
     turns = [audio.SpeakerTurn.model_validate(t) for t in diarization["turns"]]
     if any(t.end > sum(p["duration"] for p in document["sourceParts"]) + 1 for t in turns):
         raise click.ClickException("Session speaker turns exceed audio")
-    mapping, _unavailable = speakers.map_speakers(diarization, profiles["profiles"])
+    mapping, _unavailable, reports = speakers.map_speakers(diarization, profiles["profiles"])
     if {t.speaker for t in turns} - mapping.keys():
         raise click.ClickException("Detected speakers lack session embedding evidence")
     result = copy.deepcopy(document)
@@ -58,6 +63,10 @@ def reconcile(document, diarization, profiles):
         "assignedSegmentPercent": 100 * len(assigned) / len(result["segments"])
         if result["segments"]
         else 0,
+        "speakerMatches": reports,
+        "embeddingMethod": diarization.get("embeddingMethod"),
+        "turnSource": diarization.get("turnSource"),
+        "minimumAssignedSegmentPercent": MINIMUM_ASSIGNED_SEGMENT_PERCENT,
         "coverageIsNotAccuracy": True,
     }
     result["speakerAttributionPolicy"] = {
@@ -71,6 +80,46 @@ def reconcile(document, diarization, profiles):
         "note": "Session-wide enrolled voice matching; uncertain identities and overlapping speech remain unknown.",
     }
     return result
+
+
+def assert_assignment_rate(result, minimum=MINIMUM_ASSIGNED_SEGMENT_PERCENT):
+    """Refuse a transcript that diarized speech and then assigned it to nobody."""
+    summary = result.get("speakerAttributionSummary") or {}
+    segments = summary.get("segments") or 0
+    assigned = summary.get("assignedSegments") or 0
+    if not segments or assigned * 100 >= minimum * segments:
+        return result
+    labeled = sum(1 for line in result["segments"] if line.get("speakerLabel"))
+    described = []
+    for item in summary.get("speakerMatches") or []:
+        if item.get("unavailable"):
+            shown = "unavailable"
+        elif isinstance(item.get("bestCosine"), (int, float)):
+            shown = f"{item['bestCosine']:.3f}"
+        else:
+            shown = "none"
+        described.append(
+            f"{item.get('speaker')} cosine {shown} ({item.get('playerId') or 'unmatched'})"
+        )
+    detail = "; ".join(described) if described else "no speaker embedding was matched"
+    percent = 100 * assigned / segments
+    raise click.ClickException(
+        f"Speaker assignment gave players {assigned} of {segments} segments ({percent:.1f}%), "
+        f"and {labeled} segments have a diarized label. "
+        f"Below the {minimum:g}% floor, so this transcript is not handed to adaptation. {detail}."
+    )
+
+
+def require_reusable_diarization(saved):
+    if (
+        saved.get("embeddingMethod") != REFERENCE_EMBEDDING_METHOD
+        or saved.get("turnSource") != EXCLUSIVE_TURN_SOURCE
+    ):
+        raise click.ClickException(
+            "Saved session diarization has no exclusive reference embeddings. "
+            "Leave that file in place and rerun in a new private work directory."
+        )
+    return saved
 
 
 def analyze(folder, model, runtime, root, device="mps"):
@@ -90,7 +139,7 @@ def analyze(folder, model, runtime, root, device="mps"):
         write_json(pin_file, pins)
     output = root / "diarization.json"
     if output.exists():
-        return json.loads(output.read_text())
+        return require_reusable_diarization(json.loads(output.read_text()))
     from panther_journal.live_transcript import run_process
 
     run_process(
@@ -189,5 +238,6 @@ def command(transcript, folder, profiles, work_dir, runtime, model, device):
                 raise click.ClickException("Session reconciliation result changed")
         else:
             write_json(root / "result.json", receipt)
+        assert_assignment_rate(result)
         click.echo(str(destination))
         return destination

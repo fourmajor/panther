@@ -3,7 +3,12 @@ import copy
 import click
 import pytest
 
-from panther_journal.session_speakers import reconcile
+from panther_journal.session_speakers import (
+    assert_assignment_rate,
+    reconcile,
+    require_reusable_diarization,
+)
+from panther_journal.speaker_reference import EXCLUSIVE_TURN_SOURCE, REFERENCE_EMBEDDING_METHOD
 
 
 def fixture():
@@ -109,6 +114,65 @@ def test_competing_identity_profiles_remain_unknown():
         {"playerId": "other-example-player", "embedding": profiles["profiles"][0]["embedding"]}
     )
     assert reconcile(document, evidence, profiles)["segments"][0]["playerId"] is None
+
+
+def test_overlapping_turns_leave_the_line_unassigned_and_the_floor_stops_handoff():
+    document, evidence, profiles = fixture()
+    document["segments"] = [
+        dict(start=float(index), end=float(index) + 1, text="Keep every word.", playerId=None)
+        for index in range(4)
+    ]
+    document["sourceParts"] = [{"duration": 4}]
+    evidence["sourceParts"] = document["sourceParts"]
+    evidence["turns"] = [
+        dict(start=0.0, end=4.0, speaker="SPEAKER_00"),
+        dict(start=0.0, end=4.0, speaker="SPEAKER_01"),
+    ]
+    evidence["embeddings"]["SPEAKER_01"] = [0.0, 1.0] + [0.0] * 14
+    result = reconcile(document, evidence, profiles)
+    assert all(line["playerId"] is None and line["speakerLabel"] is None for line in result["segments"])
+    assert result["speakerAttributionSummary"]["assignedSegments"] == 0
+    with pytest.raises(click.ClickException, match="Below the 25% floor"):
+        assert_assignment_rate(result)
+
+
+def test_exclusive_turns_and_a_reference_vector_assign_the_player():
+    document, evidence, profiles = fixture()
+    document["segments"] = [
+        dict(start=float(index), end=float(index) + 1, text="Keep every word.", playerId=None)
+        for index in range(4)
+    ]
+    document["sourceParts"] = [{"duration": 4}]
+    evidence["sourceParts"] = document["sourceParts"]
+    evidence["turns"] = [dict(start=0.0, end=4.0, speaker="SPEAKER_00")]
+    evidence["turnSource"] = EXCLUSIVE_TURN_SOURCE
+    evidence["embeddingMethod"] = REFERENCE_EMBEDDING_METHOD
+    result = reconcile(document, evidence, profiles)
+    assert all(line["playerId"] == "example-player" for line in result["segments"])
+    assert result["speakerAttributionSummary"]["turnSource"] == EXCLUSIVE_TURN_SOURCE
+    assert result["speakerAttributionSummary"]["speakerMatches"][0]["bestCosine"] == pytest.approx(1)
+    assert_assignment_rate(result)
+
+
+def test_weak_reference_match_is_reported_and_blocks_handoff():
+    document, evidence, profiles = fixture()
+    evidence["embeddings"]["SPEAKER_00"] = [0.0, 1.0] + [0.0] * 14
+    result = reconcile(document, evidence, profiles)
+    assert result["segments"][0]["speakerLabel"] == "SPEAKER_00"
+    assert result["segments"][0]["playerId"] is None
+    match = result["speakerAttributionSummary"]["speakerMatches"][0]
+    assert match["playerId"] is None and match["bestCosine"] == 0
+    with pytest.raises(click.ClickException, match="cosine 0.000"):
+        assert_assignment_rate(result)
+
+
+def test_saved_centroid_diarization_is_not_reused():
+    with pytest.raises(click.ClickException, match="exclusive reference embeddings"):
+        require_reusable_diarization({"embeddingMethod": "cluster-centroid", "turnSource": "speaker-diarization"})
+    saved = require_reusable_diarization(
+        {"embeddingMethod": REFERENCE_EMBEDDING_METHOD, "turnSource": EXCLUSIVE_TURN_SOURCE}
+    )
+    assert saved["turnSource"] == EXCLUSIVE_TURN_SOURCE
 
 
 def test_out_of_recording_turn_is_rejected():

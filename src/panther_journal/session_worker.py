@@ -294,6 +294,14 @@ def process(job, options, root):
         write_json(state_file, {"status": "done", "completedSetJobId": job["jobId"], "rawKey": raw_key, "editorialJobId": editorial["jobId"]}, replace=True)
         report.stage("start-adaptations", "done")
         report.close("done")
+    except click.ClickException as exc:
+        write_json(
+            target / "failure.json",
+            {"status": "failed", "failedAt": time.time(), "message": str(exc)},
+            replace=True,
+        )
+        report.close("failed")
+        raise
     except Exception:
         write_json(target / "failure.json", {"status": "failed", "failedAt": time.time(), "message": "Session finalization stopped; inspect private worker logs and checkpoints. Originals are retained."}, replace=True)
         report.close("failed")
@@ -323,6 +331,8 @@ def worker(config_file, work_dir, once):
                 if job["gameId"] in options["games"] and job["createdAt"] >= options["games"][job["gameId"]]["completedAfter"]:
                     try:
                         process(job, options["games"][job["gameId"]], root)
+                    except click.ClickException as exc:
+                        click.echo("Session finalization failed: " + str(exc), err=True)
                     except Exception as exc:
                         # Do not expose credential-bearing URLs/provider exceptions.
                         click.echo("Session finalization failed; private checkpoints retained (" + type(exc).__name__ + ").", err=True)

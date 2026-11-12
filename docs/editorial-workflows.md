@@ -253,7 +253,7 @@ on the laptop. Independent AI sessions can share biases; automatic review is not
 
 ## Operations
 
-### Recovery and independent branches (workflow 9)
+### Recovery and independent branches (workflow 10)
 
 Novel and screen planning now have separate failure boundaries. A failed novel step does
 not cancel video preparation; a failed video step does not cancel the chapter. Readiness
@@ -270,17 +270,21 @@ panther editorial recover --job-id FAILED_JOB_ID --target video
 Use `novel` or `both` for the other branches. Explicit creation requests retain their
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
-execution at plan version 9. It replays the requested planning branch from source; it does not
-relabel or reuse older-version stage outputs as newly reviewed results. The new job
-records its parent and recovery mode. The recovery id is the failed parent, the target,
-and the plan version, so the same parent and target at a new version is a different job.
-Repeating the same parent/target/version request returns the same recovery job, including
-when that job has failed; recovering a new failure requires explicitly naming that failed
-job. A worker claims only jobs at its installed plan version. An older execution stays
-in its callback until that execution is stopped or a worker of its own version runs.
-Stop that execution before loading a worker, then deploy this plan and reinstall the
-worker, then recover the failed parent. Original executions, artifacts, failed candidates
-and logs remain intact. No video, speech or spending is authorized.
+execution at plan version 10. A parent stage that completed with a still-valid envelope
+is carried forward, including a completed novel-chapter and completed video stages:
+the bytes, checksum, stage, and publication decision must still match.
+Dispatch marks that stage done and points at the parent's artifact. The worker does not
+run Codex for it. A failed stage, a changed checksum, or an envelope that no longer
+validates is run again. The new job records its parent, the recovery mode, and the reused
+stage names. The recovery id is the failed parent, the target, and the plan version, so
+the same parent and target at a new version is a different job. Repeating the same
+parent/target/version request returns the same recovery job, including when that job has
+failed; recovering a new failure requires explicitly naming that failed job. A worker
+claims only jobs at its installed plan version. An older execution stays in its callback
+until that execution is stopped or a worker of its own version runs. Stop that execution
+before loading a worker, then deploy this plan and reinstall the worker, then recover the
+failed parent. Original executions, artifacts, failed candidates and logs remain intact.
+No video, speech or spending is authorized.
 
 Upgrade the pinned laptop worker from reviewed merged main before submitting recovery.
 The worker's branch-scoped input selection and lossless transcript-overlay projection
@@ -292,8 +296,17 @@ bytes. Every window is merged. Before the model runs, unambiguous capitalized ca
 repairs are applied in code and recorded as edits; ordinary words such as talent and Remix
 are not treated as names. A round that still leaves a clear catalog-name misspelling fails
 with the segment id, the word, and the catalog spelling. Prior context carried again inside
-`priorStages` is reduced to the selection already present on the stage input. Other stages
-are checked the same way and, when one prompt still cannot fit, fail before Codex runs.
+`priorStages` is reduced to the selection already present on the stage input. novel-chapter
+receives the novel-proof chapter, the novel brief, and the continuity notes. It does not
+receive the raw transcript or the other prior stages. Any stage whose projected prompt
+would still exceed the limit excerpts or drops the lowest-priority context and prior-stage
+text, and records that budget on the Codex invocation. The candidate and transcript
+utterances are not dropped to make a prompt fit. A prompt that still cannot fit fails
+before Codex runs. Corrected-transcript keeps a later revision when its edits pass the
+deterministic guards even if one sibling edit does not. After the three review rounds,
+one final review runs on a revision that has not been reviewed yet. A validated superset
+is published when that review does not pass; the first, smaller candidate is not restored
+in its place.
 Each editorial stage calls Codex with an explicit model and reasoning effort: high for
 correction and corrected-transcript, medium for novel and video planning. The model defaults
 to the signed-in Codex configuration unless `PANTHER_EDITORIAL_MODEL` overrides it.
