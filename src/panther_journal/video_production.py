@@ -88,7 +88,8 @@ class Shot(Record):
     clip: Reference | None = None
     inSeconds: float = Field(ge=0, default=0)
     outSeconds: float = Field(gt=0, le=30, default=8)
-    nativeAudio: Literal["mute", "keep-mixed"] = "mute"
+    nativeAudio: Literal["mute", "keep-mixed"] = "keep-mixed"
+    resolution: Literal["768P", "480P"] | None = None
     sounds: list[Sound] = Field(default_factory=list, max_length=30)
     captions: list[Caption] = Field(default_factory=list, max_length=30)
     model: str | None = None
@@ -103,8 +104,12 @@ class Shot(Record):
             raise ValueError(
                 "Character shots require a selected appearance and prepared starting frame"
             )
-        if self.endImage and (self.use != "action" or not self.startImage):
-            raise ValueError("End frames require the verified Kling action image adapter")
+        if self.endImage and (
+            not self.startImage or self.model not in {"kling-3-pro-image", "kling-3-pro-image-silent"}
+        ):
+            raise ValueError("End frames are an explicit Kling image override")
+        if self.resolution and not (self.model or video.DEFAULT_VIDEO_MODEL).startswith("h3-max"):
+            raise ValueError("480P and 768P are H3 Max options")
         ids = [a.characterId for a in self.appearances]
         if len(set(ids)) != len(ids):
             raise ValueError("Duplicate appearance selection")
@@ -127,6 +132,7 @@ class Production(Record):
     gameId: str
     sessionId: str | None
     title: str = Field(min_length=1, max_length=120)
+    projectId: str | None = None
     complete: bool
     sourceKeys: list[str] = Field(max_length=100)
     shots: list[Shot] = Field(min_length=1, max_length=20)
@@ -136,6 +142,8 @@ class Production(Record):
         cloud.slug(self.gameId)
         if self.sessionId:
             cloud.slug(self.sessionId)
+        if self.projectId:
+            cloud.slug(self.projectId)
         if len({s.id for s in self.shots}) != len(self.shots):
             raise ValueError("Duplicate shot IDs")
         if sum(s.outSeconds - s.inSeconds for s in self.shots) > 300:
@@ -490,14 +498,12 @@ def sheets(path, start, duration, folder, prefix, *, fps=4):
 
 
 def model_for(shot):
-    """First cut uses one configured silent model. An end frame stays on the Kling adapter."""
-    if shot.endImage:
-        return "kling-3-pro-image"
-    chosen = shot.model or video.configured_video_model()
+    """First cut is h3-max-image. Veo and Kling are explicit per-shot overrides."""
+    chosen = shot.model or video.DEFAULT_VIDEO_MODEL
     if chosen not in video.PROFILES:
         raise click.ClickException("Shot model is not a reviewed video profile")
-    if shot.startImage and chosen == "veo-3.1-fast-silent":
-        return "veo-3.1-fast-image-silent"
+    if shot.endImage and chosen not in {"kling-3-pro-image", "kling-3-pro-image-silent"}:
+        raise click.ClickException("End frames are an explicit Kling image override")
     if shot.startImage and "image" not in chosen:
         image_model = chosen + "-image"
         if image_model in video.PROFILES:
@@ -531,7 +537,23 @@ def prepare(plan, folder, refs, reviewer=review):
             )
             validate_review(report)
             reports.append({"shotId": shot.id, "report": report})
-        entry = {"id": shot.id, "model": model_for(shot), "prompt": shot.prompt, "maxAttempts": 2}
+        duration = shot.outSeconds - shot.inSeconds
+        entry = {
+            "id": shot.id,
+            "model": model_for(shot),
+            "prompt": shot.prompt,
+            "maxAttempts": 1,
+            "durationSeconds": duration,
+        }
+        if entry["model"].startswith("h3-max"):
+            entry["resolution"] = shot.resolution or "768P"
+        if entry["model"].startswith("h3-max-image") and not shot.startImage:
+            blockers.append({
+                "shotId": shot.id,
+                "reason": "Prepare a start frame with gpt-image-2 medium or a Blender render",
+            })
+        if not video.PLANNED_SHOT_MIN <= duration <= video.PLANNED_SHOT_MAX:
+            blockers.append({"shotId": shot.id, "reason": "Each planned shot is 2–7 seconds"})
         for attr, field in (("startImage", "image"), ("endImage", "endImage")):
             ref = getattr(shot, attr)
             if ref:
@@ -548,7 +570,12 @@ def prepare(plan, folder, refs, reviewer=review):
     ready = not blockers and all(
         c["status"] not in ("fail", "uncertain") for r in reports for c in r["report"]["checks"]
     )
+    if ready and not plan.projectId:
+        blockers.append({"shotId": plan.shots[0].id, "reason": "Session video budget comes from panther narration allocate"})
+        ready = False
     if ready:
+        manifest["schemaVersion"] = 2
+        manifest["projectId"] = plan.projectId
         video.validate_manifest(manifest)
     # Preserve rejected preparation evidence, never an executable paid request.
     write_json(folder / ("generation-manifest.json" if ready else "blocked-generation-candidate.json"), manifest)
@@ -557,6 +584,7 @@ def prepare(plan, folder, refs, reviewer=review):
         "reports": reports,
         "blockers": blockers,
         "generationApproved": False,
+        **({} if ready else {"reviewDisposition": "kept-and-flagged"}),
         "soundPlan": {
             "nativeMixedShots": [s.id for s in plan.shots if s.nativeAudio == "keep-mixed"],
             "mutedShots": [s.id for s in plan.shots if s.nativeAudio == "mute"],
@@ -564,7 +592,12 @@ def prepare(plan, folder, refs, reviewer=review):
                 role: sum(c.role == role for s in plan.shots for c in s.sounds)
                 for role in ("dialogue", "music", "effects", "ambience")
             },
-            "notice": "Captions are not spoken dialogue. The first cut is silent; dialogue is voiced separately with ElevenLabs and mixed in the edit. Native mixed audio does not guarantee speech, music or effects.",
+            "notice": "H3 Max audio is the baseline and stays in the edit when native audio is kept. Add ElevenLabs only when a shot needs separately generated speech. A take that fails review is kept and flagged.",
+        },
+        "estimatedCost": video.reviewed_estimate(shots),
+        "startFrames": {
+            "default": {"model": "gpt-image-2", "quality": "medium", "api": "openai"},
+            "allowed": ["gpt-image-2", "blender"],
         },
         "generation": generation.subscription(),
     }

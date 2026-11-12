@@ -2196,7 +2196,7 @@ def test_cloud_publication_uses_canonical_episode_store_and_live_lease(editorial
     packet = {'gameId': job['gameId'], 'jobId': job['jobId'], 'stage': stage, 'workflowVersion': PLAN['version'],
               'passed': True, 'structuralValidation': 'passed', 'publicationStatus': 'accepted', 'videoGenerationAuthorized': False,
               'sourceKeys': [job['raw']['key']], 'payload': {
-                'shots': [{'shotId': 'SC01_SH01', 'sceneId': 'SC01', 'durationSeconds': 8, 'description': 'The gates open.', 'camera': 'Wide', 'color': '#223344', 'subjects': []}],
+                'shots': [{'shotId': 'SC01_SH01', 'sceneId': 'SC01', 'durationSeconds': 6, 'description': 'The gates open.', 'camera': 'Wide', 'color': '#223344', 'subjects': []}],
                 'episode': {'schemaVersion': 1, 'title': 'Arrival', 'synopsis': 'The party reaches the gate.', 'scenes': [
                     {'id': 'arrival', 'title': 'Arrival', 'type': 'general', 'prompt': 'The gates open.', 'narration': 'At dusk, they arrived.',
                      'characterIds': [], 'referenceKeys': [job['raw']['key']], 'shotIds': ['SC01_SH01']}]}}}
@@ -2333,9 +2333,9 @@ def test_generation_schema_constrains_all_citations_to_pinned_evidence():
 
 def test_storyboard_generation_schema_matches_renderer_palette_and_blocking():
     import jsonschema
-    shot={'sceneId':'arrival','shotId':'dock','durationSeconds':8,'description':'Wet wharf','camera':'Wide','color':'#182838','subjects':[{'label':'Guide','x':0.5,'y':0.5}]}
+    shot={'sceneId':'arrival','shotId':'dock','durationSeconds':6,'description':'Wet wharf','camera':'Wide','color':'#182838','subjects':[{'label':'Guide','x':0.5,'y':0.5}]}
     jsonschema.validate(shot,worker.SHOT)
-    for change in ({'color':'cold blues'},{'durationSeconds':0},{'durationSeconds':121},{'subjects':[{'label':'Guide','x':1.1,'y':0.5}]}):
+    for change in ({'color':'cold blues'},{'durationSeconds':1},{'durationSeconds':8},{'subjects':[{'label':'Guide','x':1.1,'y':0.5}]}):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({**shot,**change},worker.SHOT)
 

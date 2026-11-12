@@ -513,22 +513,36 @@ def production_duration(model, duration):
 
 
 def quote_key(manifest, shot):
-    return (f"{shot['model']}@{shot['durationSeconds']}s"
-            if manifest["schemaVersion"] == 2 else shot["model"])
+    if manifest["schemaVersion"] != 2:
+        return shot["model"]
+    resolution = h3_resolution(shot)
+    suffix = f"@{resolution}" if resolution else ""
+    return f"{shot['model']}@{shot['durationSeconds']}s{suffix}"
 
 
 def shot_quote(fal, manifest, shot):
-    return quote(fal, shot["model"], duration_seconds=shot.get("durationSeconds", 8))
+    return quote(
+        fal,
+        shot["model"],
+        duration_seconds=shot.get("durationSeconds", 8),
+        resolution=shot.get("resolution"),
+    )
 
 
-def quote(fal, model, *, duration_seconds=8, _base_price=None):
+def quote(fal, model, *, duration_seconds=8, resolution=None, _base_price=None):
     if duration_seconds != 8:
         production_duration(model, duration_seconds)
     profile = PROFILES[model]
     base = fal.price(model) if _base_price is None else _base_price
     # fal pricing API returns a base, not a settings-aware binding quotation. Audio can be
     # a multiplier (Kling); use the higher reviewed rate, then reserve another 25% headroom.
-    rate = max(number(profile["floor"]), base * number(profile["multiplier"]))
+    floor = profile["floor"]
+    if model in {"h3-max", "h3-max-image"}:
+        chosen = resolution or "768P"
+        if chosen not in H3_RESOLUTIONS:
+            fail("H3 Max resolution must be 768P or 480P.")
+        floor = H3_RESOLUTION_FLOORS[chosen]
+    rate = max(number(floor), base * number(profile["multiplier"]))
     if "reviewedBase" in profile:
         # Public settings-specific rate reviewed against this exact API base. Never infer
         # a permanent discount ratio from the API's non-settings-aware number.
@@ -598,7 +612,7 @@ def validate_manifest(value, *, check_prompt_policy=True):
         if (
             not isinstance(shot, dict)
             or not {"id", "model", "prompt", "maxAttempts"} <= set(shot)
-            or set(shot) - {"id", "model", "prompt", "maxAttempts", "image", "endImage"}
+            or set(shot) - {"id", "model", "prompt", "maxAttempts", "image", "endImage", "resolution"}
             - ({"durationSeconds"} if value["schemaVersion"] == 2 else set())
         ):
             fail(
@@ -637,9 +651,44 @@ def validate_manifest(value, *, check_prompt_policy=True):
                 fail("Invalid image path or checksum.")
         if not isinstance(shot["prompt"], str) or not shot["prompt"].strip():
             fail("Prompts must contain text.")
-        if type(shot["maxAttempts"]) is not int or not 1 <= shot["maxAttempts"] <= 2:
-            fail("Each shot allows one take and at most one retry, both charged to the same budget.")
+        h3_resolution(shot)
+        attempt_limit = 1 if value["schemaVersion"] == 2 else 2
+        if type(shot["maxAttempts"]) is not int or not 1 <= shot["maxAttempts"] <= attempt_limit:
+            fail(
+                "A production shot is one take. A failed review is kept and flagged, not bought again."
+                if attempt_limit == 1
+                else "Each comparison shot allows one take and at most one explicit retry."
+            )
     return value
+
+
+def reviewed_estimate(shots):
+    """Settings estimate for a plan. The session budget is a narration allocation."""
+    lines = []
+    total = 0
+    for shot in shots:
+        model = shot["model"]
+        duration = number(shot.get("durationSeconds", 8))
+        resolution = shot.get("resolution", "768P") if str(model).startswith("h3-max") else None
+        rate = number(H3_RESOLUTION_FLOORS[resolution] if resolution else PROFILES[model]["floor"])
+        if resolution == "480P":
+            rate = max(rate, rate * number(PROFILES[model]["multiplier"]))
+        amount = cents(rate * duration) * shot.get("maxAttempts", 1)
+        total += amount
+        lines.append({
+            "id": shot["id"],
+            "model": model,
+            "durationSeconds": float(duration),
+            "resolution": resolution,
+            "estimatedCents": amount,
+        })
+    return {
+        "currency": "USD",
+        "estimatedUsd": f"{total / 100:.2f}",
+        "estimatedCents": total,
+        "shots": lines,
+        "budgetSource": "panther narration allocate",
+    }
 
 
 def fit_prompt(text, limit=2500):
@@ -652,11 +701,18 @@ def fit_prompt(text, limit=2500):
     return prefix[:boundary].rstrip() if boundary >= limit * .9 else prefix.rstrip()
 
 
-DEFAULT_VIDEO_MODEL = "veo-3.1-fast-silent"
+DEFAULT_VIDEO_MODEL = "h3-max-image"
+H3_RESOLUTIONS = ("768P", "480P")
+# 768P is the reviewed regular rate. 480P is the 2026-09-10 settings base, still raised by the live quote.
+H3_RESOLUTION_FLOORS = {"768P": "0.08", "480P": "0.0125"}
+PLANNED_SHOT_MIN = 2
+PLANNED_SHOT_MAX = 7
+PLANNED_CUT_SECONDS = 90
+PLANNED_SHOT_COUNT = 16
 
 
 def configured_video_model():
-    """One profile for the first cut. Hero shots pass their own model instead."""
+    """The first cut is H3 Max image-to-video. A per-shot model is an explicit override."""
     value = os.environ.get("PANTHER_VIDEO_MODEL", DEFAULT_VIDEO_MODEL).strip() or DEFAULT_VIDEO_MODEL
     if value not in PROFILES:
         raise ValueError("PANTHER_VIDEO_MODEL is not a reviewed video profile")
@@ -667,23 +723,45 @@ def configured_video_model():
 
 
 def scene_model(job):
-    kind = job.get('sceneType', job.get('type', 'general'))
-    if kind == 'map':
-        if not job.get('mapPin'):
-            raise ValueError('Choose a map asset for this scene')
-        return 'veo-3.1-fast-image-silent'
+    """Every scene uses h3-max-image unless the shot names another reviewed profile."""
+    if job.get("sceneType", job.get("type")) == "map" and not job.get("mapPin") and not job.get("model"):
+        raise ValueError("Choose a map asset for this scene")
     override = job.get("model")
     model = override.strip() if isinstance(override, str) and override.strip() else configured_video_model()
     if model not in PROFILES:
         raise ValueError("Unsupported scene video model")
     framed = bool(job.get("storyboardFramePin") or job.get("mapPin"))
-    if framed and model == "veo-3.1-fast-silent":
-        return "veo-3.1-fast-image-silent"
     if framed and "image" not in model:
         image_model = model + "-image"
         if image_model in PROFILES:
             return image_model
     return model
+
+
+def assert_planned_cut(shots):
+    """A full cut is 90 seconds or less: about 14–16 shots, each 2–7 seconds."""
+    if len(shots) > PLANNED_SHOT_COUNT:
+        raise ValueError("A cut is at most 16 shots")
+    total = 0
+    for shot in shots:
+        duration = shot.get("durationSeconds")
+        if type(duration) is bool or type(duration) not in (int, float) or not PLANNED_SHOT_MIN <= duration <= PLANNED_SHOT_MAX:
+            raise ValueError("Each planned shot is 2–7 seconds")
+        total += duration
+    if total > PLANNED_CUT_SECONDS:
+        raise ValueError("A cut is 90 seconds or less")
+
+
+def h3_resolution(shot):
+    model = shot.get("model", "")
+    if not str(model).startswith("h3-max"):
+        if "resolution" in shot:
+            fail("Resolution is an H3 Max option.")
+        return None
+    value = shot.get("resolution", "768P")
+    if value not in H3_RESOLUTIONS:
+        fail("H3 Max resolution must be 768P or 480P.")
+    return value
 
 
 def generation_duration(model, planned):
@@ -726,7 +804,8 @@ def payload(shot, *, duration_seconds=None, check_prompt_policy=True):
         body.update(duration="8", resolution="720p", bitrate_mode="standard")
     elif shot["model"] in {"h3-max", "h3-max-image"}:
         # Native audio is integral; canvas follows the pinned image. No prompt rewrite.
-        body = {"prompt": fit_prompt(shot["prompt"]), "duration": duration_seconds, "resolution": "768P",
+        body = {"prompt": fit_prompt(shot["prompt"]), "duration": duration_seconds,
+                "resolution": h3_resolution(shot),
                 "prompt_expansion_mode": "disabled", "enable_safety_checker": True,
                 "sync_mode": False}
         if shot["model"] == "h3-max":
@@ -821,6 +900,11 @@ def prepare(value, fal):
         "quotes": quotes,
         "createdAt": int(time.time()),
         "billingAccount": billing["account"],
+        "estimatedCostCents": sum(
+            cents(quotes[quote_key(value, s)]["conservativeEstimateUsd"]) * s["maxAttempts"]
+            for s in value["shots"]
+        ),
+        "budgetSource": "panther narration allocate" if value.get("projectId") else "comparison-ledger",
         "worstCaseReservationCents": sum(
             quotes[quote_key(value, s)]["reserveCents"] * s["maxAttempts"] for s in value["shots"]
         ),
@@ -845,6 +929,8 @@ def prepare(value, fal):
     return {
         "planId": plan_id,
         "approved": False,
+        "estimatedCostUsd": f"{plan['estimatedCostCents'] / 100:.2f}",
+        "budgetSource": plan["budgetSource"],
         "worstCaseReservationUsd": f"{plan['worstCaseReservationCents'] / 100:.2f}",
         "quotes": quotes,
     }
@@ -932,6 +1018,8 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
         if not approved:
             fail("Plan is not approved for these models, rights and account settings.")
         shot = next((s for s in plan["manifest"]["shots"] if s["id"] == shot_id), None)
+        if plan["manifest"]["schemaVersion"] == 2 and ordinal > 1:
+            fail("A failed review is kept and flagged. This plan does not buy another take.")
         if not shot or not 1 <= ordinal <= shot["maxAttempts"]:
             fail("Attempt not allowed by the pinned plan.")
         payload(shot)  # Current creative safeguards apply before any new paid request.

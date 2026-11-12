@@ -118,8 +118,11 @@ BRIEFS["video-source-brief"] += (
 BRIEFS["video-generation-packets"] += (
     " Include coherent structured scene and cast information from the pinned revisions in each packet."
     " Keep the same character identity, appearance selection and wardrobe across shots unless an explicit source supports a change."
-    " The first cut uses one configured model, currently Veo 3.1 Fast with no audio."
-    " Dialogue is voiced separately and mixed in the edit. A hero shot may name Kling 3 Pro or an audio variant as an override."
+    " The first cut is MiniMax H3 Max image-to-video for every shot, audio on, 768P, one take."
+    " 480P is an explicit option on that same model. Veo and Kling are per-shot overrides only."
+    " The clip's own audio is the dialogue baseline. Add ElevenLabs only when a shot needs separately generated speech."
+    " Start frames default to gpt-image-2 at medium quality; a Blender render is allowed."
+    " A take that fails review is kept and flagged. Do not plan a paid retry."
     " Travel/map shots must cite actual map and location references, not invented geography."
     " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
 )
@@ -186,7 +189,8 @@ BRIEFS["video-generation-packets"] += (
 # without changing previously approved storyboards or authorizing inference.
 for _stage in ('video-shot-list', 'video-storyboards', 'video-generation-packets'):
     BRIEFS[_stage] += (
-        " Plan independently renderable items of at most fifteen seconds each; eight seconds is the Veo limit. Use timed shot sequences where supported. Split overlong sequences"
+        " Default a full cut to 90 seconds or less: about 14 to 16 shots, each 2 to 7 seconds, one take and no paid retry."
+        " A take that fails review is kept and flagged. Use timed shot sequences where supported. Split overlong sequences"
         " into separate items while permitting explicit timed cuts within an item; avoid asking a take to"
         " perform several unclear simultaneous interactions. Keep every consequential source action across"
         " those items. Each item must state only its visible cast, relative size and screen positions,"

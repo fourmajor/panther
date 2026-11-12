@@ -346,9 +346,10 @@ are not exhaustive motion, lip-sync or perceptual audio verification. New genera
 and paid retries still require separate approval. New finishing assets record exact provenance,
 hidden processing roles and subscription/local-processing metadata; never relabel original footage.
 
-H3 Max image shots use `h3-max-image`: one approved pinned starting frame, eight seconds at
-768P with native audio, safety checking on and prompt expansion disabled. This is H3 Max, not
-Turbo; it is the selected dialogue model. Existing spending and reference-sharing approvals still apply.
+H3 Max image shots use `h3-max-image`: one approved pinned starting frame, 2–7 seconds at
+768P with native audio, safety checking on and prompt expansion disabled. `480P` is an explicit
+option. This is H3 Max, not Turbo, and it is the model for every new shot. Existing spending
+and reference-sharing approvals still apply.
 Use `h3-max` for text-only comparisons with the same settings, explicit 16:9 and no reference image.
 The guard reserves the regular rate plus headroom, even during promotional pricing.
 For a lost result, `panther video reconcile-unavailable ATTEMPT_ID` verifies the original account,
@@ -356,15 +357,17 @@ live completion, exact request identity, result HTTP 404 and a matching zero-cha
 It retains the full reservation and audit trail, records outcome unknown/output unavailable, and
 forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
 
-First-cut video uses one configured model, `PANTHER_VIDEO_MODEL`, defaulting to **Veo 3.1 Fast
-through fal** with audio off (`veo-3.1-fast-silent`, or `veo-3.1-fast-image-silent` when a starting
-frame is pinned). Dialogue is voiced separately with ElevenLabs and mixed in the edit. Each clip
-is one take; a failed or invalid generation may be retried once. A hero shot may override that
-model with **Kling 3 Pro** or an audio variant. The CLI does not automatically classify shots or
-fill a missing model. This policy does not change the editorial worker or authorize spending, reference sharing,
-model upgrades or failure fallbacks. Historical comparison profiles, including MiniMax H3 Max and Kling, stay
-available as explicit overrides. Preserve historical plans and actual model provenance; never
-relabel old videos to match today's preference.
+First-cut video uses **`h3-max-image`** for every scene: MiniMax H3 Max through fal, audio on,
+768P, one take. A full cut is 90 seconds or less, about 14–16 shots of 2–7 seconds. A take that
+fails review is kept and flagged; it is not a paid retry. `480P` is an explicit option on the
+same model. Start frames default to `gpt-image-2` at quality medium through the API. A Blender
+render is allowed. ElevenLabs is only for speech that the clip itself should not generate.
+The CLI does not automatically classify shots or fill a missing model. **Veo 3.1 Fast**
+(`veo-3.1-fast-silent`) and **Kling 3 Pro** stay available as explicit per-shot overrides.
+This policy does not change the editorial worker or authorize spending, reference sharing,
+model upgrades or failure fallbacks. The plan records its estimated cost. The session budget
+is the video allowance from `panther narration allocate`. Preserve historical plans and actual
+model provenance; never relabel old videos to match today's preference.
 
 Use `panther video --help` and the trusted `docs/fal-video-comparison.md` for the separate local
 comparison integration. `video check` checks live pricing and balance without generation;

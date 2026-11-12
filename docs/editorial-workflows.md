@@ -88,13 +88,14 @@ auto-submit preproduction packets, or replace subscription-backed planning with 
 
 ### Video model selection policy
 
-The first cut uses one config value, `PANTHER_VIDEO_MODEL`, default `veo-3.1-fast-silent`
-(Veo 3.1 Fast through fal, audio off). A pinned starting frame uses the image-silent profile.
-Dialogue is voiced separately with ElevenLabs and mixed in the edit. Each clip is one take.
-Retry only a failed or invalid generation, and only once. A hero shot may set its own model,
-including Kling 3 Pro or an audio variant. The hard budget guard still applies. Earlier
-comparison clips used other profiles; do not relabel them. Changing the default is a change to
-this one value, after those earlier videos are checked.
+The first cut is `h3-max-image` for every scene: MiniMax H3 Max through fal, audio on, 768P,
+one take of 2–7 seconds, and a cut of 90 seconds or less (about 14–16 shots). `480P` is an
+explicit option on that model. A take that fails review is kept and flagged; it is not bought
+again. Veo 3.1 Fast and Kling 3 Pro are per-shot overrides only (`PANTHER_VIDEO_MODEL` can name
+one, and a shot `model` wins). Start frames default to `gpt-image-2` at quality `medium`; a
+Blender render is allowed. ElevenLabs is not the dialogue default. The plan records its
+estimated cost, and the session budget is the video allowance from `panther narration allocate`.
+Earlier comparison clips used other profiles; do not relabel them.
 
 This policy guides agents preparing executable video plans after preproduction. The existing
 automated editorial stages remain provider-neutral and stop at `READY_FOR_VIDEO_DISCUSSION`;

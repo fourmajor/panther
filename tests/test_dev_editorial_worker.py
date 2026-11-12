@@ -261,7 +261,7 @@ def test_chapter_runs_existing_screen_stages_and_atomically_publishes_owned_epis
         def create(self, **request):
             response = super().create(**request)
             value = json.loads(response.output_text)
-            value['shots'] = [{'sceneId': 'SC01', 'shotId': 'SC01_SH01', 'durationSeconds': 8,
+            value['shots'] = [{'sceneId': 'SC01', 'shotId': 'SC01_SH01', 'durationSeconds': 6,
                               'description': 'The gates open at dusk.', 'camera': 'Wide', 'color': '#223344', 'subjects': []}]
             properties = request['text']['format']['schema']['properties']
             if 'sourceFacts' in properties:

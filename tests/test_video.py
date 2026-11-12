@@ -437,43 +437,47 @@ def test_production_quote_and_payload_use_exact_duration(setup, model, duration,
         assert v.totals(db)["reservationCents"] == 0
 
 
-def test_default_take_is_silent_and_a_second_attempt_requires_failure(setup):
-    body = v.payload({"id": "scene", "model": "veo-3.1-fast-silent", "prompt": "A fictional harbor.", "durationSeconds": 8, "maxAttempts": 2})
-    assert body["generate_audio"] is False
-    assert v.scene_model({"sceneType": "dialogue"}) == "veo-3.1-fast-silent"
+def test_default_take_is_h3_audio_and_a_failed_review_is_not_rebought(setup):
+    assert v.scene_model({"sceneType": "dialogue"}) == "h3-max-image"
+    assert v.scene_model({"sceneType": "action"}) == "h3-max-image"
+    assert v.scene_model({"sceneType": "map", "mapPin": {"key": "map"}}) == "h3-max-image"
     assert v.scene_model({"sceneType": "action", "model": "kling-3-pro"}) == "kling-3-pro"
+    body = v.payload({"id": "scene", "model": "h3-max", "prompt": "A fictional harbor.", "durationSeconds": 4, "maxAttempts": 1})
+    assert body["resolution"] == "768P"
+    assert v.payload({**{"id": "scene", "model": "h3-max", "prompt": "A fictional harbor.", "durationSeconds": 4, "maxAttempts": 1}, "resolution": "480P"})["resolution"] == "480P"
+    setup.rate = Decimal("0.0125")
+    assert v.quote(setup, "h3-max", duration_seconds=4, resolution="480P")["reserveCents"] == 10
     from panther_journal import narration as n
     n.create_budget("test-film", "synthetic-game", "15", "13", "Synthetic approval", setup)
     m = manifest()
-    m.update(projectId="test-film")
-    m["shots"][0]["model"] = "veo-3.1-fast-silent"
+    m.update(schemaVersion=2, projectId="test-film")
+    m["shots"][0].update(model="h3-max", durationSeconds=4, maxAttempts=1)
     pid = v.prepare(m, setup)["planId"]
     CliRunner().invoke(main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"])
     first = v.submit(pid, "scene-veo", 1, "", setup)
     setup.status = "COMPLETED"
     assert v.poll(first["attemptId"], setup)["state"] == "COMPLETED"
-    with pytest.raises(click.ClickException, match="failed or invalid"):
-        v.submit(pid, "scene-veo", 2, "another look", setup)
-    v.update_attempt(first["attemptId"], "FAILED", {"providerErrorTypes": ["no_media_generated"]})
-    second = v.submit(pid, "scene-veo", 2, "invalid first take", setup)
-    assert second["attempt"] == 2
+    with pytest.raises(click.ClickException, match="kept and flagged"):
+        v.submit(pid, "scene-veo", 2, "the review failed", setup)
 
 
 def test_mixed_durations_pin_separate_quotes_and_all_attempts(setup):
     from panther_journal import narration as n
-    n.create_budget("test-film", "synthetic-game", "4", "3.99", "Synthetic approval", setup)
+    n.create_budget("test-film", "synthetic-game", "4", "2.00", "Synthetic approval", setup)
     m = manifest()
     m.update(schemaVersion=2, projectId="test-film")
     m["shots"][0].update(durationSeconds=4, maxAttempts=1)
-    m["shots"].append({**m["shots"][0], "id":"scene-long", "durationSeconds":6, "maxAttempts":2})
+    m["shots"].append({**m["shots"][0], "id":"scene-long", "durationSeconds":6, "maxAttempts":1})
     reads = []
     original_price = setup.price
     setup.price = lambda model: (reads.append(model), original_price(model))[1]
     result = v.prepare(m, setup)
     assert reads == ["veo-3.1-fast"]
     assert set(result["quotes"]) == {"veo-3.1-fast@4s", "veo-3.1-fast@6s"}
-    assert result["worstCaseReservationUsd"] == "3.01"
-    m["shots"].append({**m["shots"][1], "id": "scene-extra", "maxAttempts": 2})
+    assert result["worstCaseReservationUsd"] == "1.88"
+    assert result["budgetSource"] == "panther narration allocate"
+    assert Decimal(result["estimatedCostUsd"]) <= Decimal(result["worstCaseReservationUsd"])
+    m["shots"].append({**m["shots"][1], "id": "scene-extra", "maxAttempts": 1})
     with pytest.raises(click.ClickException, match="allowance"):
         v.prepare(m, setup)
 

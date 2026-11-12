@@ -16,7 +16,7 @@ class Fal:
         if method == 'POST':
             if self.fail:
                 raise TimeoutError('private-body')
-            prefix = 'https://queue.fal.run/fal-ai/veo3.1/requests/request-example'
+            prefix = url.rstrip('/') + '/requests/request-example'
             return {'request_id': 'request-example', 'status_url': prefix + '/status', 'response_url': prefix}
         if url.endswith('/status'):
             return {'status': 'IN_PROGRESS' if self.pending else 'COMPLETED', 'request_id': 'request-example'}
@@ -24,12 +24,24 @@ class Fal:
 
 
 def queued(tmp_path):
+    import base64
+    import hashlib
+    import json
+    from io import BytesIO
+    from PIL import Image
     store = worker.Store(tmp_path / 'private.sqlite')
     ref = {'episodeId': 'episode-example', 'sceneId': 'scene-example', 'revision': 'revision-example'}
     scene = {'gameId': 'fictional', 'episodeId': ref['episodeId'], 'id': ref['sceneId'], 'revision': ref['revision'], 'name': 'A journey'}
     store.put('scene-history', 'fictional:' + ':'.join(ref.values()), {'record': scene}, 'fictional')
+    buffer = BytesIO()
+    Image.new('RGB', (1280, 720), 'blue').save(buffer, format='PNG')
+    raw = buffer.getvalue()
+    frame_key = 'games/fictional/assets/start-frame/original/frame.png'
+    frame = {'key': frame_key, 'sha256': base64.b64encode(hashlib.sha256(raw).digest()).decode(), 'size': len(raw), 'contentType': 'image/png'}
+    with store.connect() as db:
+        db.execute('INSERT INTO objects VALUES (?,?,?,?,?)', (frame_key, 'fictional', json.dumps({'kind': 'image', 'contentType': 'image/png'}), raw, '2026-01-01T00:00:00Z'))
     identity = 'a' * 64
-    job = {'id': identity, 'jobId': identity, 'gameId': 'fictional', 'sceneRef': ref, 'sceneType': 'general', 'prompt': 'Travel through a fictional city', 'status': 'QUEUED'}
+    job = {'id': identity, 'jobId': identity, 'gameId': 'fictional', 'sceneRef': ref, 'sceneType': 'general', 'prompt': 'Travel through a fictional city', 'status': 'QUEUED', 'storyboardFramePin': frame, 'sourceKeys': [frame_key]}
     store.put('scene-render', identity, job, 'fictional')
     return store, identity
 
@@ -56,7 +68,7 @@ def test_render_polls_and_resumes_without_repeated_submission(tmp_path):
     metadata, video = store.object(job['outputKey'])
     assert video == b'real test bytes'
     assert metadata['extra']['sceneRef']['revision'] == 'revision-example'
-    assert metadata['extra']['generation']['model'] == 'Veo 3.1 Fast'
+    assert metadata['extra']['generation']['model'] == 'MiniMax H3 Max (post-trained by fal)'
     assert metadata['extra']['generation']['cost']['status'] == 'unknown'
     assert store.get('scene', 'fictional:scene-example') is None  # No silent selection or creation.
 
@@ -68,16 +80,17 @@ def test_unknown_post_never_repeats_or_publishes_video(tmp_path):
     assert not worker.process(store, identity, root, client)
     assert store.get('scene-render', identity)['status'] == 'UNKNOWN'
     assert not worker.process(store, identity, root, client)
-    assert len(client.calls) == 1 and not store.objects('fictional')
+    assert len(client.calls) == 1
+    assert [item['key'] for item in store.objects('fictional')] == ['games/fictional/assets/start-frame/original/frame.png']
     assert 'private-body' not in store.get('scene-render', identity)['message']
 
 
-def test_model_routes_are_explicit_by_scene_type():
-    assert worker.model_for({'sceneType': 'action'}) == 'veo-3.1-fast-silent'
-    assert worker.model_for({'sceneType': 'dialogue'}) == 'veo-3.1-fast-silent'
-    assert worker.model_for({'sceneType': 'general'}) == 'veo-3.1-fast-silent'
+def test_model_routes_are_h3_unless_a_shot_overrides():
+    assert worker.model_for({'sceneType': 'action'}) == 'h3-max-image'
+    assert worker.model_for({'sceneType': 'dialogue'}) == 'h3-max-image'
+    assert worker.model_for({'sceneType': 'general'}) == 'h3-max-image'
     assert worker.model_for({'sceneType': 'action', 'model': 'kling-3-pro'}) == 'kling-3-pro'
-    assert worker.model_for({'sceneType': 'map', 'mapPin': {'key': 'example'}}) == 'veo-3.1-fast-image-silent'
+    assert worker.model_for({'sceneType': 'map', 'mapPin': {'key': 'example'}}) == 'h3-max-image'
 
 
 def standalone(tmp_path, monkeypatch, **changes):
@@ -206,25 +219,25 @@ def test_reference_render_keeps_actual_endpoint_on_resume_and_selected_cast(tmp_
         def request(self, method, url, **kwargs):
             if method == 'POST':
                 self.calls.append((method, url, kwargs))
-                prefix = 'https://queue.fal.run/fal-ai/veo3.1/fast/reference-to-video/requests/request-example'
+                prefix = 'https://queue.fal.run/minimax/h3-max/reference-to-video/requests/request-example'
                 return {'request_id': 'request-example', 'status_url': prefix + '/status', 'response_url': prefix}
             return super().request(method, url, **kwargs)
 
     client = ReferenceFal(pending=True)
     root = worker.private_root(tmp_path / 'work')
     assert not worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
-    assert store.get('scene-render', identity)['endpoint'] == 'fal-ai/veo3.1/fast/reference-to-video'
+    assert store.get('scene-render', identity)['endpoint'] == 'minimax/h3-max/reference-to-video'
     client.pending = False
     assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
     assert len([call for call in client.calls if call[0] == 'POST']) == 1
     finished = store.get('scene-render', identity)
     metadata, _ = store.object(finished['outputKey'])
     assert metadata['characterIds'] == ['hero']
-    assert metadata['extra']['generation']['model'] == 'Veo 3.1 Fast'
+    assert metadata['extra']['generation']['model'] == 'MiniMax H3 Max (post-trained by fal)'
     assert metadata['extra']['generation']['cost']['status'] == 'unknown'
     assert 'costEstimate' not in metadata['extra']  # Never reuse a different endpoint's price.
     request = json.loads((root / identity / 'request.json').read_text())
-    assert len(request['payload']['image_urls']) == 1
+    assert len(request['payload']['reference_image_urls']) == 1
     assert 'Absent' not in request['payload']['prompt']
 
 

@@ -1,8 +1,8 @@
 # Shot prompt preparation
 
 A storyboard item is one independently rendered shot and one editable cut, not an
-entire scene. New planning stages use the selected model duration: Veo remains eight seconds;
-H3 Max and Kling 3 Pro support takes up to fifteen seconds. An item may describe a
+entire scene. New planning stages default to a cut of 90 seconds or less: about 14–16 shots
+of 2–7 seconds, one H3 Max take each. An item may describe a
 clearly timed sequence such as `[shot 1, 0-4s]`, with achievable actions in each beat. The cut duration controls when
 the action must finish; extra source-take time holds the ending rather than delaying
 an event beyond the cut.
@@ -36,8 +36,9 @@ is used for bounded visual analysis of the actual frame and candidate portraits.
 
 ## Reference modes of the production models
 
-Model selection remains the established city/dialogue/action policy. Input mode is
-chosen from that model's documented capabilities; there is no provider/model fallback.
+Every new scene uses MiniMax H3 Max image-to-video. Veo 3.1 Fast and Kling 3 Pro are explicit
+per-shot overrides. Input mode is chosen from that model's documented capabilities; there is
+no provider/model fallback.
 
 | Model | Shot conditioning |
 | --- | --- |

@@ -94,7 +94,7 @@ SHOT = obj(
     {
         "sceneId": TEXT,
         "shotId": TEXT,
-        "durationSeconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 120},
+        "durationSeconds": {"type": "number", "minimum": 2, "maximum": 7},
         "description": TEXT,
         "camera": TEXT,
         "color": {"type": "string", "pattern": r"^#[0-9a-fA-F]{6}$"},
@@ -947,12 +947,15 @@ def upload(config, file, job, kind, category, source_keys, run_suffix):
 
 
 def storyboard(shots):
-    if not shots or len(shots) > 100:
-        raise ValueError("Storyboard needs 1–100 panels")
+    from panther_journal.video import assert_planned_cut
+
+    if not shots or len(shots) > 16:
+        raise ValueError("Storyboard needs 1–16 panels")
+    assert_planned_cut(shots)
     ids = set()
     panels = []
     for i, shot in enumerate(shots):
-        if shot["shotId"] in ids or not 0 < shot["durationSeconds"] <= 120:
+        if shot["shotId"] in ids or not 2 <= shot["durationSeconds"] <= 7:
             raise ValueError("Duplicate shot or invalid duration")
         ids.add(shot["shotId"])
         color = shot["color"]
@@ -2118,6 +2121,10 @@ def process(config, root, claim):
                 job.get("selectedContext", [])[i]["key"]
                 for i in range(len(job.get("selectedContext", [])))
             )
+        if stage in {"video-shot-list", "video-storyboards"}:
+            from panther_journal.video import assert_planned_cut
+
+            assert_planned_cut(report.get("shots") or [])
         if stage == "video-storyboards":
             expected = previous["video-shot-list"]["payload"]["shots"]
             if [(s["shotId"], s["sceneId"], s["durationSeconds"]) for s in report["shots"]] != [

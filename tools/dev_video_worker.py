@@ -149,7 +149,13 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
             prompt = job.get('preparedPrompt') or job['prompt']
             if standalone and job.get('visualStyle'):
                 prompt += '\nVisual style: ' + job['visualStyle'].replace('-', ' ')
+            has_frame = bool(job.get('storyboardFramePin') or job.get('mapPin') or job.get('imagePin'))
+            portraits = (job.get('promptComposition') or {}).get('visibleCharacterIds')
+            if v.PROFILES[model].get('imageField') and not has_frame and not portraits:
+                raise ValueError('This shot uses h3-max-image. Pin a start frame from gpt-image-2 medium or a Blender render.')
             shot = {'model': model, 'prompt': prompt}
+            if model.startswith('h3-max'):
+                shot['resolution'] = job.get('resolution', '768P')
             from panther_journal.film_prompt_policy import prompt_blockers
             blockers = prompt_blockers(prompt)
             if blockers:

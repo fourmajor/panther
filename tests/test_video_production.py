@@ -131,6 +131,7 @@ def media(tmp_path):
             "rightsNote": "Locally generated synthetic sine wave",
         }
     ]
+    shot["nativeAudio"] = "mute"
     shot["captions"] = [
         {"start": 0.25, "end": 1.5, "text": "Synthetic test", "source": ref(caption, "captions")}
     ]
@@ -139,7 +140,7 @@ def media(tmp_path):
 
 def test_manifest_validation():
     m = manifest()
-    assert p.Production.model_validate(m).shots[0].nativeAudio == "mute"
+    assert p.Production.model_validate(m).shots[0].nativeAudio == "keep-mixed"
     for change in (
         {"complete": True},
         {"gameId": "../bad"},
@@ -374,6 +375,25 @@ def test_preparation_review_scope_is_not_footage_certification():
     assert 'missing temporal evidence must not be treated as a pass' in p.review_scope('shot-review')
 
 
+def test_start_frame_defaults_to_gpt_image_2_and_fits_16_by_9():
+    from io import BytesIO
+
+    from PIL import Image
+
+    from panther_journal.asset_generation import fit_start_frame, start_frame_request, start_frame_source
+
+    request = start_frame_request("A wet wharf at dusk")
+    assert request["model"] == "gpt-image-2" and request["quality"] == "medium"
+    assert start_frame_source()["generator"] == "openai"
+    assert start_frame_source("blender")["generator"] == "blender"
+    with pytest.raises(ValueError, match="Blender"):
+        start_frame_source("codex")
+    buffer = BytesIO()
+    Image.new("RGB", (1536, 1024), "navy").save(buffer, format="PNG")
+    fitted = Image.open(BytesIO(fit_start_frame(buffer.getvalue())))
+    assert fitted.size == (1536, 864)
+
+
 def test_preparation_selects_profiles_and_never_approves(tmp_path):
     plan = p.Production.model_validate(manifest())
     folder, result = p.execute(
@@ -385,15 +405,19 @@ def test_preparation_selects_profiles_and_never_approves(tmp_path):
     )
     assert result["generationApproved"] is False
     sound = result["soundPlan"]
-    assert sound["mutedShots"] == ["one"]
-    assert sound["nativeMixedShots"] == []
+    assert sound["mutedShots"] == []
+    assert sound["nativeMixedShots"] == ["one"]
     assert sound["suppliedCueCounts"] == dict(dialogue=0, music=0, effects=0, ambience=0)
-    assert "Captions are not spoken dialogue" in sound["notice"]
-    generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
-    assert generated["shots"][0]["model"] == "veo-3.1-fast-silent"
-    assert generated["shots"][0]["maxAttempts"] == 2
+    assert "kept and flagged" in sound["notice"]
+    assert result["reviewDisposition"] == "kept-and-flagged"
+    assert result["startFrames"]["default"] == {"model": "gpt-image-2", "quality": "medium", "api": "openai"}
+    assert result["estimatedCost"]["budgetSource"] == "panther narration allocate"
+    generated = json.loads(next(folder.glob("preparation/*/blocked-generation-candidate.json")).read_text())
+    assert generated["shots"][0]["model"] == "h3-max-image"
+    assert generated["shots"][0]["maxAttempts"] == 1
+    assert generated["shots"][0]["resolution"] == "768P"
     for purpose in ("dialogue", "action", "default"):
-        assert p.model_for(plan.shots[0].model_copy(update={"use": purpose})) == "veo-3.1-fast-silent"
+        assert p.model_for(plan.shots[0].model_copy(update={"use": purpose})) == "h3-max-image"
     assert p.model_for(plan.shots[0].model_copy(update={"model": "kling-3-pro"})) == "kling-3-pro"
 
 
@@ -404,6 +428,7 @@ def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):
     shot = media.shots[0].model_copy(
         update={
             "use": "action",
+            "model": "kling-3-pro-image",
             "startImage": frame,
             "endImage": frame,
             "appearances": [p.Appearance(characterId="hero", reference=frame)],
