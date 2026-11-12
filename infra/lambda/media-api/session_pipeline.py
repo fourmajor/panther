@@ -1,4 +1,7 @@
-"""Per-session pipeline graph. Topology matches the deployed stages; status comes from job records."""
+"""Per-session pipelines. A pipeline is a named definition; a run is one execution for a session.
+
+Topology matches the deployed stages. Status, stage, and run identity come from job records.
+"""
 
 import json
 import os
@@ -494,6 +497,153 @@ def rollup(nodes):
     return "pending"
 
 
+def definitions():
+    """Named pipelines. Workers are the heartbeats that pipeline actually needs."""
+    plan = plan_document()
+    return (
+        {
+            "id": "listening",
+            "name": "Listening copy",
+            "workers": ("playback",),
+            "runs": ("playback",),
+            "stages": ("session-audio", "listening-copy"),
+        },
+        {
+            "id": "transcript",
+            "name": "Speech → transcript",
+            "workers": (),
+            "runs": ("transcription",),
+            "stages": ("transcription", "speaker-match", "raw-transcript"),
+        },
+        {
+            "id": "story",
+            "name": "Transcript → story & screen planning",
+            "workers": ("editorial",),
+            "runs": ("editorial", "chapter"),
+            "stages": (*plan["correction"], *plan["novel"], *plan["video"], "storyboard-approval"),
+        },
+        {
+            "id": "video",
+            "name": "Narration and session video",
+            "workers": (),
+            "runs": (
+                "episode-render",
+                "scene-render",
+                "narration",
+                "video-generation",
+                "video-production",
+                "asset-generation",
+            ),
+            "stages": (
+                "still-images",
+                "narration",
+                "video-generation",
+                "sound-delivery",
+                "session-video",
+            ),
+        },
+    )
+
+
+def _targets(observation):
+    kind = observation.get("kind")
+    found = []
+    for stage in observation.get("stages") or []:
+        if not isinstance(stage, dict) or not isinstance(stage.get("id"), str):
+            continue
+        dest = target(kind, stage["id"])
+        if dest and dest not in found:
+            found.append(dest)
+    if not found and kind in KIND_NODE:
+        found.append(KIND_NODE[kind])
+    return found
+
+
+def _slice(nodes, edges, stage_ids):
+    chosen = [node for node in nodes if node["id"] in stage_ids]
+    columns = sorted({node["column"] for node in chosen})
+    remap = {column: index for index, column in enumerate(columns)}
+    sliced = [{**node, "column": remap[node["column"]]} for node in chosen]
+    present = {node["id"] for node in sliced}
+    return sliced, [dict(edge) for edge in edges if edge["from"] in present and edge["to"] in present]
+
+
+def _pipeline_status(nodes):
+    states = [node["status"] for node in nodes]
+    if not states or set(states) <= {"pending", "unknown"}:
+        return "pending"
+    if "failed" in states:
+        return "failed"
+    if "running" in states or "queued" in states:
+        return "running"
+    if "paused" in states:
+        return "paused"
+    if states.count("done") == len(states):
+        return "done"
+    if "done" in states:
+        return "started"
+    return "pending"
+
+
+def _focus(nodes):
+    ordered = sorted(nodes, key=lambda node: (node["column"], node["row"], node["id"]))
+    for status in ("failed", "running", "queued", "paused"):
+        found = next((node for node in ordered if node["status"] == status), None)
+        if found:
+            return found
+    if any(node["status"] == "done" for node in ordered):
+        waiting = next((node for node in ordered if node["status"] != "done"), None)
+        return waiting or next(node for node in reversed(ordered) if node["status"] == "done")
+    return None
+
+
+def _run(observations, kinds):
+    ranked = [
+        item
+        for item in observations
+        if item.get("kind") in kinds and isinstance(item.get("runId"), str) and item["runId"].strip()
+    ]
+    if not ranked:
+        return None
+    primary = [item for item in ranked if item.get("kind") == kinds[0]]
+    chosen = max(primary or ranked, key=lambda item: (stamp(item.get("updatedAt")), item["runId"]))
+    identity = chosen["runId"].strip()
+    if len(identity) > 160:
+        return None
+    started = stamp(chosen.get("startedAt"))
+    return {"id": identity, "startedAt": started or None, "status": normalize(chosen.get("status"))}
+
+
+def _pipelines(nodes, edges, observations, updated):
+    result = []
+    for definition in definitions():
+        stages = set(definition["stages"])
+        sliced, sliced_edges = _slice(nodes, edges, stages)
+        touched = [item for item in observations if stages.intersection(_targets(item))]
+        latest = max((stamp(item.get("updatedAt")) for item in touched), default=0)
+        if latest == 0 and any(node["status"] != "pending" for node in sliced):
+            latest = updated or 0
+        stage = _focus(sliced)
+        result.append(
+            {
+                "id": definition["id"],
+                "name": definition["name"],
+                "workers": list(definition["workers"]),
+                "status": _pipeline_status(sliced),
+                "stage": (
+                    {"id": stage["id"], "title": stage["title"], "status": stage["status"]}
+                    if stage
+                    else None
+                ),
+                "updatedAt": latest,
+                "run": _run(observations, definition["runs"]),
+                "nodes": sliced,
+                "edges": sliced_edges,
+            }
+        )
+    return result
+
+
 def view(session_id, observations):
     if session_id is not None and not slug(session_id):
         raise ValueError("Invalid session")
@@ -546,7 +696,17 @@ def view(session_id, observations):
             "nodes": empty_nodes,
             "edges": empty_edges,
         }
-    return {"schemaVersion": 1, "source": "job-records", "sessions": sessions, "manifest": manifest}
+    selected_rows = grouped.get(selected, []) if selected else []
+    pipelines = _pipelines(
+        manifest["nodes"], manifest["edges"], selected_rows, manifest.get("updatedAt") or 0
+    )
+    return {
+        "schemaVersion": 1,
+        "source": "job-records",
+        "sessions": sessions,
+        "manifest": manifest,
+        "pipelines": pipelines,
+    }
 
 
 def session_of(item):

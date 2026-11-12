@@ -335,7 +335,7 @@ def handler(event, _context):
                 for stage in item.get("stages") or []:
                     if isinstance(stage, dict) and isinstance(stage.get("id"), str):
                         stages.append({"id": stage["id"], "status": stage.get("status"), "outputKey": stage.get("outputKey"), "message": stage.get("message")})
-                observations.append({"sessionId": sid, "kind": item.get("kind"), "status": item.get("status"), "updatedAt": item.get("reportedAt") or item.get("observedAt") or item.get("createdAt") or 0, "message": item.get("note") if item.get("status") == "failed" else None, "stages": stages, "label": item.get("title")})
+                observations.append({"sessionId": sid, "kind": item.get("kind"), "status": item.get("status"), "updatedAt": item.get("reportedAt") or item.get("observedAt") or item.get("createdAt") or 0, "startedAt": item.get("createdAt") or 0, "runId": item.get("id") if isinstance(item.get("id"), str) else None, "message": item.get("note") if item.get("status") == "failed" else None, "stages": stages, "label": item.get("title")})
             if q.get("sessionId") is not None and not q.get("sessionId"):
                 raise ValueError("Invalid session")
             body = session_view(q.get("sessionId"), observations)

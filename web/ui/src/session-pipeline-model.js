@@ -17,3 +17,45 @@ export function statusText(status, id) {
 export function workerLabel(id) {
   return {editorial: "Editorial", playback: "Playback", model: "Model"}[id] || id;
 }
+
+export function sessionHeadline(title, id) {
+  const source = String(title || id || "").trim();
+  const dated = source.match(/^(?:session-)?(20\d{2}-\d{2}-\d{2})$/);
+  if (dated) return dated[1];
+  return source || "Session";
+}
+
+export function cardTone(status) {
+  if (status === "failed") return "failed";
+  if (status === "done") return "done";
+  if (status === "running" || status === "queued") return "running";
+  if (status === "paused") return "paused";
+  return "pending";
+}
+
+export function cardText(pipeline) {
+  const status = pipeline?.status || "pending";
+  const stage = pipeline?.stage;
+  if (status === "pending") return "Not started";
+  if (status === "done") return stage?.title ? `Done · ${stage.title}` : "Done";
+  if (!stage) return statusText(status);
+  if (status === "failed") return `Failed · ${stage.title}`;
+  if (status === "running" || status === "queued") return `Running · ${stage.title}`;
+  if (status === "started") return stage.title;
+  return `${statusText(stage.status, stage.id)} · ${stage.title}`;
+}
+
+export function formatWhen(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const date = new Date(n > 1e12 ? n : n * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"}).format(date);
+}
+
+export function runIdentity(run) {
+  if (!run?.id) return null;
+  const id = String(run.id).trim();
+  const bare = id.includes("~") ? id.slice(id.indexOf("~") + 1) : id;
+  return bare || null;
+}
