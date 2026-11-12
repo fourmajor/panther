@@ -194,77 +194,79 @@ def test_unknown_session_is_shown_not_started_and_bad_ids_fail():
         pipeline.view("Session One", [])
 
 
-def test_pipelines_keep_a_definition_separate_from_its_run():
+def test_sessions_share_one_branching_pipeline_and_reused_stages_stay_done():
     result = pipeline.view(
         "session-2026-10-15",
         [
             {
                 "sessionId": "session-2026-10-15",
-                "kind": "playback",
-                "status": "done",
-                "updatedAt": 10,
-                "runId": "playback~listen",
-                "startedAt": 4,
-                "outputKey": "games/example/listen.mp3",
+                "sessionTitle": "2026-10-15",
+                "kind": "recording",
+                "status": "complete",
+                "updatedAt": 1,
             },
             {
                 "sessionId": "session-2026-10-15",
                 "kind": "editorial",
                 "status": "FAILED",
-                "updatedAt": 30,
-                "runId": "editorial~66d4b374",
-                "startedAt": 12,
-                "message": "Novel branch failed.",
+                "updatedAt": 10,
+                "runId": "editorial~aaaa1111",
+                "startedAt": 4,
                 "stages": [
                     {"id": "context", "status": "DONE"},
-                    {
-                        "id": "novel-chapter",
-                        "status": "FAILED",
-                        "message": "Novel branch failed.",
-                    },
+                    {"id": "correction", "status": "FAILED", "message": "Names slipped."},
                 ],
             },
-        ],
-    )
-    by_id = {item["id"]: item for item in result["pipelines"]}
-    story = by_id["story"]
-    assert story["name"] == "Transcript → story & screen planning"
-    assert story["workers"] == ["editorial"]
-    assert story["status"] == "failed"
-    assert story["stage"]["id"] == "novel-chapter"
-    assert story["run"] == {
-        "id": "editorial~66d4b374",
-        "startedAt": 12.0,
-        "status": "failed",
-    }
-    assert "listening-copy" not in {node["id"] for node in story["nodes"]}
-    assert "transcription" not in {node["id"] for node in story["nodes"]}
-    assert by_id["listening"]["status"] == "done"
-    assert by_id["listening"]["workers"] == ["playback"]
-    assert by_id["listening"]["run"]["id"] == "playback~listen"
-    assert all(node["status"] != "failed" for node in by_id["listening"]["nodes"])
-    assert by_id["transcript"]["status"] == "pending"
-    assert by_id["transcript"]["run"] is None
-    assert by_id["video"]["workers"] == []
-    assert by_id["video"]["status"] == "pending"
-    partial = pipeline.view(
-        "session-2026-10-15",
-        [
             {
                 "sessionId": "session-2026-10-15",
                 "kind": "editorial",
-                "status": "running",
-                "updatedAt": 8,
-                "runId": "editorial~abcdef",
-                "startedAt": 3,
-                "stages": [{"id": "context", "status": "DONE"}],
+                "status": "FAILED",
+                "updatedAt": 20,
+                "runId": "editorial~bbbb2222",
+                "startedAt": 15,
+                "reusedStages": ["context", "correction"],
+                "stages": [
+                    {"id": "novel-chapter", "status": "FAILED", "message": "Draft failed."},
+                ],
+            },
+            {
+                "sessionId": "session-other",
+                "sessionTitle": "Night one",
+                "kind": "recording",
+                "status": "complete",
+                "updatedAt": 3,
+            },
+        ],
+    )
+    current = next(item for item in result["sessions"] if item["id"] == "session-2026-10-15")
+    assert current["status"] == "failed"
+    assert current["stage"]["id"] == "novel-chapter"
+    assert [item["id"] for item in current["finals"]] == ["novel-chapter", "session-video"]
+    assert [item["status"] for item in current["finals"]] == ["failed", "pending"]
+    assert [item["id"] for item in result["runs"]] == ["editorial~bbbb2222", "editorial~aaaa1111"]
+    latest = {node["id"]: node["status"] for node in result["runs"][0]["nodes"]}
+    older = {node["id"]: node["status"] for node in result["runs"][1]["nodes"]}
+    assert latest["session-audio"] == "done"
+    assert latest["context"] == "done"
+    assert latest["correction"] == "done"
+    assert latest["novel-chapter"] == "failed"
+    assert latest["session-video"] == "pending"
+    assert older["correction"] == "failed"
+    assert older["novel-chapter"] == "pending"
+    assert "editorial" in result["runs"][0]["workers"]
+    other = pipeline.view(
+        "session-other",
+        [
+            {
+                "sessionId": "session-other",
+                "kind": "recording",
+                "status": "complete",
+                "updatedAt": 3,
             }
         ],
-    )["pipelines"]
-    started = next(item for item in partial if item["id"] == "story")
-    assert started["status"] == "started"
-    assert started["stage"]["id"] == "correction"
-    assert started["run"]["startedAt"] == 3.0
+    )
+    assert other["workersNeeded"] == ["playback"]
+    assert other["runs"] == []
 
 
 def test_title_suffix_is_not_a_short_plan_id():

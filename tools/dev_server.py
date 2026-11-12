@@ -1406,7 +1406,9 @@ class Store:
                 stages.append({"id": "storyboard-approval", "status": "done" if approved else "paused", "message": None if approved else "Paid video stays blocked until this storyboard revision is approved."})
             if session_pipeline.normalize(job.get("status")) == "failed" and not any(session_pipeline.normalize(stage.get("status")) == "failed" for stage in stages) and isinstance(job.get("currentStage"), str):
                 stages.append({"id": job["currentStage"], "status": "failed", "message": job.get("message")})
-            observations.append({"sessionId": sid, "kind": "editorial", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("createdAt"), "label": (job.get("creation") or {}).get("title"), "message": job.get("message") if session_pipeline.normalize(job.get("status")) == "failed" else None, "stages": stages, **job_run("editorial", job)})
+            recovery = job.get("recovery") if isinstance(job.get("recovery"), dict) else {}
+            reused = recovery.get("reusedStages") if isinstance(recovery.get("reusedStages"), list) else []
+            observations.append({"sessionId": sid, "kind": "editorial", "status": job.get("status"), "updatedAt": job.get("updatedAt") or job.get("createdAt"), "label": (job.get("creation") or {}).get("title"), "message": job.get("message") if session_pipeline.normalize(job.get("status")) == "failed" else None, "stages": stages, "reusedStages": [name for name in reused if isinstance(name, str)][:80], **job_run("editorial", job)})
         def episode_session(job):
             sid = job.get("sessionId")
             if session_pipeline.slug(sid):

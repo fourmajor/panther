@@ -120,10 +120,15 @@ def source_view(kind, key):
         job = {"jobId": recording, "gameId": game, "status": state, "createdAt": min((w.get("createdAt", 0) for w in windows), default=0), **({"sessionId": session_id} if session_id else {})}
         title = "Final transcription · " + plan.get("sessionName", "Recording")
         note = "Speakers are unassigned until a separate player-attribution step."
-    return {"schemaVersion": 1, "id": kind + "~" + job["jobId"], "kind": kind, "gameId": job["gameId"],
-            "title": title[:240], "status": status(job["status"]), "sourceStatus": job["status"],
-            "createdAt": job.get("createdAt", 0), "sessionId": job.get("sessionId"), "stages": stages,
-            "note": note, "observedAt": int(time.time()), "source": "durable-job", "workflowVersion": job.get("workflowVersion")}
+    result = {"schemaVersion": 1, "id": kind + "~" + job["jobId"], "kind": kind, "gameId": job["gameId"],
+              "title": title[:240], "status": status(job["status"]), "sourceStatus": job["status"],
+              "createdAt": job.get("createdAt", 0), "sessionId": job.get("sessionId"), "stages": stages,
+              "note": note, "observedAt": int(time.time()), "source": "durable-job", "workflowVersion": job.get("workflowVersion")}
+    recovery = job.get("recovery") if kind == "editorial" and isinstance(job.get("recovery"), dict) else {}
+    reused = recovery.get("reusedStages")
+    if isinstance(reused, list):
+        result["reusedStages"] = [name for name in reused if isinstance(name, str)][:80]
+    return result
 
 
 def type_inventory(game, kind):
@@ -335,7 +340,8 @@ def handler(event, _context):
                 for stage in item.get("stages") or []:
                     if isinstance(stage, dict) and isinstance(stage.get("id"), str):
                         stages.append({"id": stage["id"], "status": stage.get("status"), "outputKey": stage.get("outputKey"), "message": stage.get("message")})
-                observations.append({"sessionId": sid, "kind": item.get("kind"), "status": item.get("status"), "updatedAt": item.get("reportedAt") or item.get("observedAt") or item.get("createdAt") or 0, "startedAt": item.get("createdAt") or 0, "runId": item.get("id") if isinstance(item.get("id"), str) else None, "message": item.get("note") if item.get("status") == "failed" else None, "stages": stages, "label": item.get("title")})
+                reused = item.get("reusedStages") if isinstance(item.get("reusedStages"), list) else []
+                observations.append({"sessionId": sid, "kind": item.get("kind"), "status": item.get("status"), "updatedAt": item.get("reportedAt") or item.get("observedAt") or item.get("createdAt") or 0, "startedAt": item.get("createdAt") or 0, "runId": item.get("id") if isinstance(item.get("id"), str) else None, "reusedStages": [name for name in reused if isinstance(name, str)][:80], "message": item.get("note") if item.get("status") == "failed" else None, "stages": stages, "label": item.get("title")})
             if q.get("sessionId") is not None and not q.get("sessionId"):
                 raise ValueError("Invalid session")
             body = session_view(q.get("sessionId"), observations)

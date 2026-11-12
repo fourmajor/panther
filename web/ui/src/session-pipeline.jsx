@@ -84,45 +84,47 @@ function Detail({node, onPreview, onClose}) {
   </Dialog>;
 }
 
-function listedPipelines(data) {
-  if (Array.isArray(data?.pipelines)) return data.pipelines;
-  const manifest = data?.manifest;
-  if (!manifest?.nodes) return [];
-  return [{id: 'story', name: 'Transcript → story & screen planning', workers: ['editorial'], status: 'pending', stage: null, updatedAt: manifest.updatedAt || 0, run: null, nodes: manifest.nodes, edges: manifest.edges || []}];
+function Finals({finals}) {
+  if (!finals?.length) return null;
+  return <div className="pipeline-finals" role="list" aria-label="Final artifacts">{finals.map(final => <span key={final.id} role="listitem" className="pipeline-chip" data-status={cardTone(final.status)}>{final.title}</span>)}</div>;
 }
 
 export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, onPreview, embedded=false}) {
   const [open, setOpen] = React.useState(null);
-  const [pipelineId, setPipelineId] = React.useState(null);
+  const [picked, setPicked] = React.useState(null);
   const back = React.useRef(null);
   const query = useQuery({
     queryKey: ['session-pipeline', scope, gameId, sessionId || ''],
     queryFn: ({signal}) => onLoad({sessionId: sessionId || null, signal}),
-    refetchInterval: current => listedPipelines(current.state.data).flatMap(item => item.nodes || []).some(node => node.status === 'running' || node.status === 'queued') ? 5000 : 15000,
+    refetchInterval: current => (current.state.data?.manifest?.nodes || []).some(node => node.status === 'running' || node.status === 'queued') ? 5000 : 15000,
     retry: false,
   });
-  const manifest = query.data?.manifest;
-  const sessions = query.data?.sessions || [];
-  const workers = query.data?.workers || [];
-  const pipelines = listedPipelines(query.data);
-  const selected = sessionId || manifest?.sessionId || '';
-  const headline = sessionHeadline(manifest?.title, selected);
-  const pipeline = pipelines.find(item => item.id === pipelineId) || null;
-  const needed = new Set(pipeline?.workers || []);
-  const [trackedSession, setTrackedSession] = React.useState(selected);
-  if (trackedSession !== selected) {
-    setTrackedSession(selected);
-    setPipelineId(null);
+  const data = query.data;
+  const sessions = data?.sessions || [];
+  const workers = data?.workers || [];
+  const runs = data?.runs || [];
+  const opened = Boolean(sessionId);
+  const session = sessions.find(item => item.id === sessionId) || null;
+  const headline = opened ? sessionHeadline(session?.title || data?.manifest?.title, sessionId) : 'Sessions';
+  const [tracked, setTracked] = React.useState(sessionId || '');
+  if (tracked !== (sessionId || '')) {
+    setTracked(sessionId || '');
+    setPicked(null);
     setOpen(null);
   }
-  React.useEffect(() => { if (pipelineId) back.current?.focus(); }, [pipelineId]);
+  const active = runs.find(item => item.id === picked) || runs[0] || null;
+  const nodes = active?.nodes || data?.manifest?.nodes || [];
+  const edges = active?.edges || data?.manifest?.edges || [];
+  const needed = new Set(active?.workers || data?.workersNeeded || []);
+  React.useEffect(() => { if (opened) back.current?.focus(); }, [opened, sessionId]);
   const Heading = embedded ? 'h2' : 'h1';
-  const updated = pipeline ? formatWhen(pipeline.updatedAt) : null;
-  return <section className={`pipeline-page${embedded ? ' pipeline-embedded' : ''}`} aria-label="Session">
+  const listPath = `/games/${encodeURIComponent(gameId)}/pipeline`;
+  return <section className={`pipeline-page${embedded ? ' pipeline-embedded' : ''}`} aria-label={opened ? 'Session' : 'Sessions'}>
     <header className="page-heading pipeline-heading">
       <div>
-        {headline !== 'Session' && <p className="pipeline-kicker">Session</p>}
+        {opened && headline !== 'Session' && <p className="pipeline-kicker">Session</p>}
         <Heading>{headline}</Heading>
+        {opened && <Finals finals={session?.finals}/>}
       </div>
       <div className="pipeline-tools">
         {workers.length > 0 && <ul className="pipeline-workers" aria-label="Workers">{workers.map(worker => {
@@ -130,41 +132,30 @@ export function SessionPipeline({gameId, scope, sessionId, onLoad, onNavigate, o
           const label = `${workerLabel(worker.id)} ${online ? 'online' : 'offline'}`;
           return <li key={worker.id} className="pipeline-worker" data-status={online ? 'online' : 'offline'} title={worker.message || label}>{label}</li>;
         })}</ul>}
-        {sessions.length > 0 && <Select value={selected ? `option:${selected}` : undefined} onValueChange={value => onNavigate(`/games/${encodeURIComponent(gameId)}/pipeline/${encodeURIComponent(value.slice(7))}`)}>
-          <SelectTrigger aria-label="Session"><SelectValue placeholder="Session"/></SelectTrigger>
-          <SelectContent>{sessions.map(session => <SelectItem key={session.id} value={`option:${session.id}`}>{sessionHeadline(session.title, session.id)}</SelectItem>)}</SelectContent>
+        {opened && runs.length > 1 && <Select value={`run:${active?.id || runs[0].id}`} onValueChange={value => setPicked(value.slice(4))}>
+          <SelectTrigger aria-label="Run"><SelectValue/></SelectTrigger>
+          <SelectContent>{runs.map(run => <SelectItem key={run.id} value={`run:${run.id}`}>{runIdentity(run)?.slice(0, 8) || 'Run'}{formatWhen(run.startedAt) ? ` · ${formatWhen(run.startedAt)}` : ''}</SelectItem>)}</SelectContent>
         </Select>}
       </div>
     </header>
-    {pipeline && workers.filter(worker => needed.has(worker.id) && worker.status && worker.status !== 'ready').map(worker => <p role="alert" className="pipeline-error" key={`${worker.id}-alert`}><CircleAlert size={16}/>{worker.message}</p>)}
-    {query.isPending && <div className="pipeline-loading" aria-label="Loading session"><div/><div/><div/><div/></div>}
-    {query.error && <div><p role="alert" className="pipeline-error"><CircleAlert size={16}/>{query.error.message || 'The session could not be loaded.'}</p><Button variant="outline" onClick={() => query.refetch()}>Retry session</Button></div>}
-    {query.data && !pipeline && <div>
-      <h2 id="pipeline-list-title" className="pipeline-section">Pipelines</h2>
-      <ul className="pipeline-cards" aria-labelledby="pipeline-list-title">{pipelines.map(item => {
-        const tone = cardTone(item.status);
-        const when = formatWhen(item.updatedAt);
-        return <li key={item.id}><button type="button" className="pipeline-card" data-status={tone} aria-label={`${item.name}, ${cardText(item)}`} onClick={() => setPipelineId(item.id)}>
-          <span className="pipeline-mark" aria-hidden="true">{tone === 'failed' ? '×' : ''}</span>
-          <span className="pipeline-card-copy">
-            <strong className="pipeline-card-name">{item.name}</strong>
-            <span className="pipeline-card-stage">{cardText(item)}</span>
-            {when && <span className="pipeline-card-time">Updated {when}</span>}
-          </span>
-        </button></li>;
-      })}</ul>
-    </div>}
-    {pipeline && <div className="pipeline-run">
-      <Button ref={back} variant="outline" className="pipeline-back" onClick={() => { setPipelineId(null); setOpen(null); }}>Pipelines</Button>
-      <p className="pipeline-kicker">Pipeline</p>
-      <h2>{pipeline.name}</h2>
-      <dl className="pipeline-facts">
-        <div><dt>Run</dt><dd className="pipeline-run-id">{runIdentity(pipeline.run) || 'No run yet'}</dd></div>
-        <div><dt>Started</dt><dd>{formatWhen(pipeline.run?.startedAt) || 'Not started'}</dd></div>
-        <div><dt>Status</dt><dd data-status={cardTone(pipeline.status)}>{cardText(pipeline)}</dd></div>
-      </dl>
-      {updated && <p className="pipeline-card-time">Updated {updated}</p>}
-      <Graph nodes={pipeline.nodes || []} edges={pipeline.edges || []} onOpen={setOpen} label={`${pipeline.name} stages`}/>
+    {opened && workers.filter(worker => needed.has(worker.id) && worker.status && worker.status !== 'ready').map(worker => <p role="alert" className="pipeline-error" key={`${worker.id}-alert`}><CircleAlert size={16}/>{worker.message}</p>)}
+    {query.isPending && <div className="pipeline-loading" aria-label="Loading sessions"><div/><div/><div/></div>}
+    {query.error && <div><p role="alert" className="pipeline-error"><CircleAlert size={16}/>{query.error.message || 'The sessions could not be loaded.'}</p><Button variant="outline" onClick={() => query.refetch()}>Retry sessions</Button></div>}
+    {data && !opened && sessions.length > 0 && <ul className="pipeline-cards" aria-label="Sessions">{sessions.map(item => {
+      const tone = cardTone(item.status);
+      return <li key={item.id}><button type="button" className="pipeline-card" data-status={tone} aria-label={`${sessionHeadline(item.title, item.id)}, ${cardText(item)}`} onClick={() => onNavigate(`${listPath}/${encodeURIComponent(item.id)}`)}>
+        <span className="pipeline-mark" aria-hidden="true">{tone === 'failed' ? '×' : ''}</span>
+        <span className="pipeline-card-copy">
+          <strong className="pipeline-card-name">{sessionHeadline(item.title, item.id)}</strong>
+          <span className="pipeline-card-stage">{cardText(item)}</span>
+          <Finals finals={item.finals}/>
+        </span>
+      </button></li>;
+    })}</ul>}
+    {data && !opened && sessions.length === 0 && <p className="pipeline-card-stage">No sessions yet.</p>}
+    {opened && data && <div className="pipeline-run">
+      <Button ref={back} variant="outline" className="pipeline-back" onClick={() => { setOpen(null); onNavigate(listPath); }}>Sessions</Button>
+      <Graph nodes={nodes} edges={edges} onOpen={setOpen} label="Session pipeline"/>
       <Detail node={open} onPreview={onPreview} onClose={() => setOpen(null)}/>
     </div>}
   </section>;

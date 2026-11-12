@@ -1,6 +1,8 @@
-"""Per-session pipelines. A pipeline is a named definition; a run is one execution for a session.
+"""One branching session pipeline. A run is one execution of that pipeline for a session.
 
-Topology matches the deployed stages. Status, stage, and run identity come from job records.
+The graph starts at the session recording and branches to the final artifacts. Append a row to
+FINALS to add another artifact. Status comes from job records. A later run keeps reused stages
+done instead of painting them as not started.
 """
 
 import json
@@ -74,6 +76,12 @@ LABELS = {
     "video-production-plan": ("Planning", "Production plan", "list"),
     "video-preflight": ("Review", "Preflight", "shield"),
 }
+# Final artifacts share the last column, one row each. The stage column has three rows,
+# so append one tuple here to add the next artifact.
+FINALS = (
+    ("novel-chapter", "Final", "Novel chapter", "book"),
+    ("session-video", "Final", "Session video", "film"),
+)
 KIND_NODE = {
     "recording": "session-audio",
     "playback": "listening-copy",
@@ -167,28 +175,18 @@ def graph():
             }
         )
         column += 1
-    nodes.append(
-        {
-            "id": "novel-chapter",
-            "type": "Final",
-            "title": "Novel chapter",
-            "icon": "book",
-            "column": column,
-            "row": 0,
-            "final": True,
-        }
-    )
-    nodes.append(
-        {
-            "id": "session-video",
-            "type": "Final",
-            "title": "Session video",
-            "icon": "film",
-            "column": column,
-            "row": 1,
-            "final": True,
-        }
-    )
+    for row, (identity, kind, title, icon) in enumerate(FINALS):
+        nodes.append(
+            {
+                "id": identity,
+                "type": kind,
+                "title": title,
+                "icon": icon,
+                "column": column,
+                "row": row,
+                "final": True,
+            }
+        )
     story = next((node for node in nodes if node["id"] == "video-storyboards"), None)
     if story:
         nodes.append(
@@ -491,157 +489,114 @@ def rollup(nodes):
         return "running"
     if "queued" in states:
         return "queued"
-    finals = {node["id"]: node["status"] for node in nodes if node["final"]}
-    if finals.get("novel-chapter") == "done" and finals.get("session-video") == "done":
+    finals = [node for node in nodes if node["final"]]
+    if finals and all(node["status"] == "done" for node in finals):
         return "done"
-    return "pending"
-
-
-def definitions():
-    """Named pipelines. Workers are the heartbeats that pipeline actually needs."""
-    plan = plan_document()
-    return (
-        {
-            "id": "listening",
-            "name": "Listening copy",
-            "workers": ("playback",),
-            "runs": ("playback",),
-            "stages": ("session-audio", "listening-copy"),
-        },
-        {
-            "id": "transcript",
-            "name": "Speech → transcript",
-            "workers": (),
-            "runs": ("transcription",),
-            "stages": ("transcription", "speaker-match", "raw-transcript"),
-        },
-        {
-            "id": "story",
-            "name": "Transcript → story & screen planning",
-            "workers": ("editorial",),
-            "runs": ("editorial", "chapter"),
-            "stages": (*plan["correction"], *plan["novel"], *plan["video"], "storyboard-approval"),
-        },
-        {
-            "id": "video",
-            "name": "Narration and session video",
-            "workers": (),
-            "runs": (
-                "episode-render",
-                "scene-render",
-                "narration",
-                "video-generation",
-                "video-production",
-                "asset-generation",
-            ),
-            "stages": (
-                "still-images",
-                "narration",
-                "video-generation",
-                "sound-delivery",
-                "session-video",
-            ),
-        },
-    )
-
-
-def _targets(observation):
-    kind = observation.get("kind")
-    found = []
-    for stage in observation.get("stages") or []:
-        if not isinstance(stage, dict) or not isinstance(stage.get("id"), str):
-            continue
-        dest = target(kind, stage["id"])
-        if dest and dest not in found:
-            found.append(dest)
-    if not found and kind in KIND_NODE:
-        found.append(KIND_NODE[kind])
-    return found
-
-
-def _slice(nodes, edges, stage_ids):
-    chosen = [node for node in nodes if node["id"] in stage_ids]
-    columns = sorted({node["column"] for node in chosen})
-    remap = {column: index for index, column in enumerate(columns)}
-    sliced = [{**node, "column": remap[node["column"]]} for node in chosen]
-    present = {node["id"] for node in sliced}
-    return sliced, [dict(edge) for edge in edges if edge["from"] in present and edge["to"] in present]
-
-
-def _pipeline_status(nodes):
-    states = [node["status"] for node in nodes]
-    if not states or set(states) <= {"pending", "unknown"}:
-        return "pending"
-    if "failed" in states:
-        return "failed"
-    if "running" in states or "queued" in states:
-        return "running"
-    if "paused" in states:
-        return "paused"
-    if states.count("done") == len(states):
-        return "done"
-    if "done" in states:
+    if any(node["status"] not in {"pending", "unknown"} for node in nodes):
         return "started"
     return "pending"
 
 
-def _focus(nodes):
-    ordered = sorted(nodes, key=lambda node: (node["column"], node["row"], node["id"]))
-    for status in ("failed", "running", "queued", "paused"):
-        found = next((node for node in ordered if node["status"] == status), None)
-        if found:
-            return found
-    if any(node["status"] == "done" for node in ordered):
-        waiting = next((node for node in ordered if node["status"] != "done"), None)
-        return waiting or next(node for node in reversed(ordered) if node["status"] == "done")
+def _run_id(row):
+    if row.get("kind") != "editorial":
+        return None
+    identity = row.get("runId")
+    if not isinstance(identity, str):
+        return None
+    identity = identity.strip()
+    if not identity or len(identity) > 160:
+        return None
+    return identity
+
+
+def _reused(row):
+    values = row.get("reusedStages")
+    if not isinstance(values, list):
+        return []
+    return [name for name in values if isinstance(name, str) and name in NODE_IDS][:80]
+
+
+def _paint(rows, reused):
+    nodes, edges, _, _ = project(rows)
+    if not reused:
+        return nodes, edges
+    wanted = set(reused)
+    painted = []
+    for node in nodes:
+        if node["id"] in wanted and node["status"] in {"pending", "queued", "unknown"}:
+            painted.append(
+                {**node, "status": "done", "message": node["message"] or "Reused from the previous run."}
+            )
+        else:
+            painted.append(node)
+    by_id = {node["id"]: node for node in painted}
+    return painted, [{**edge, "status": by_id[edge["from"]]["status"]} for edge in edges]
+
+
+def _rows_for(rows, run_id):
+    if run_id is None:
+        return rows
+    return [row for row in rows if _run_id(row) in {None, run_id}]
+
+
+def _worker_for(stage_id):
+    if stage_id == "listening-copy":
+        return "playback"
+    if stage_id in EDITORIAL_IDS:
+        return "editorial"
     return None
 
 
-def _run(observations, kinds):
-    ranked = [
-        item
-        for item in observations
-        if item.get("kind") in kinds and isinstance(item.get("runId"), str) and item["runId"].strip()
-    ]
-    if not ranked:
-        return None
-    primary = [item for item in ranked if item.get("kind") == kinds[0]]
-    chosen = max(primary or ranked, key=lambda item: (stamp(item.get("updatedAt")), item["runId"]))
-    identity = chosen["runId"].strip()
-    if len(identity) > 160:
-        return None
-    started = stamp(chosen.get("startedAt"))
-    return {"id": identity, "startedAt": started or None, "status": normalize(chosen.get("status"))}
-
-
-def _pipelines(nodes, edges, observations, updated):
-    result = []
-    for definition in definitions():
-        stages = set(definition["stages"])
-        sliced, sliced_edges = _slice(nodes, edges, stages)
-        touched = [item for item in observations if stages.intersection(_targets(item))]
-        latest = max((stamp(item.get("updatedAt")) for item in touched), default=0)
-        if latest == 0 and any(node["status"] != "pending" for node in sliced):
-            latest = updated or 0
-        stage = _focus(sliced)
-        result.append(
-            {
-                "id": definition["id"],
-                "name": definition["name"],
-                "workers": list(definition["workers"]),
-                "status": _pipeline_status(sliced),
-                "stage": (
-                    {"id": stage["id"], "title": stage["title"], "status": stage["status"]}
-                    if stage
-                    else None
-                ),
-                "updatedAt": latest,
-                "run": _run(observations, definition["runs"]),
-                "nodes": sliced,
-                "edges": sliced_edges,
-            }
+def _needed_workers(nodes, edges):
+    """Workers for stages that are ready to run. Later gray stages do not count."""
+    by_id = {node["id"]: node for node in nodes}
+    incoming = {}
+    for edge in edges:
+        incoming.setdefault(edge["to"], []).append(edge["from"])
+    needed = []
+    for node in nodes:
+        worker = _worker_for(node["id"])
+        if not worker or node["status"] in {"done", "failed"}:
+            continue
+        predecessors = incoming.get(node["id"], [])
+        ready = node["status"] in {"queued", "running"} or not predecessors or any(
+            by_id[name]["status"] in {"done", "running", "queued"} for name in predecessors
         )
-    return result
+        if node["status"] == "pending" and not ready:
+            continue
+        if worker not in needed:
+            needed.append(worker)
+    return needed
+
+
+def _progress(nodes):
+    ordered = sorted(nodes, key=lambda node: (node["column"], node["row"], node["id"]))
+    failed = [node for node in ordered if node["status"] == "failed"]
+    reached = [node for node in ordered if node["status"] not in {"pending", "unknown"}]
+    chosen = failed[-1] if failed else (reached[-1] if reached else None)
+    stage = (
+        {"id": chosen["id"], "title": chosen["title"], "status": chosen["status"]} if chosen else None
+    )
+    finals = [
+        {"id": node["id"], "title": node["title"], "status": node["status"]}
+        for node in sorted((node for node in nodes if node["final"]), key=lambda node: node["row"])
+    ]
+    return stage, finals
+
+
+def _run_graph(rows, row):
+    identity = _run_id(row)
+    nodes, edges = _paint(_rows_for(rows, identity), _reused(row))
+    started = stamp(row.get("startedAt"))
+    return {
+        "id": identity,
+        "startedAt": started or None,
+        "updatedAt": stamp(row.get("updatedAt")),
+        "status": rollup(nodes),
+        "workers": _needed_workers(nodes, edges),
+        "nodes": nodes,
+        "edges": edges,
+    }
 
 
 def view(session_id, observations):
@@ -653,59 +608,96 @@ def view(session_id, observations):
         if slug(session):
             grouped.setdefault(session, []).append(observation)
     sessions = []
-    manifests = {}
+    graphs = {}
     for session, rows in grouped.items():
-        session_nodes, session_edges, session_titles, session_latest = project(rows)
-        title = session_titles.get(session) or session
-        updated = session_latest.get(session, 0)
-        sessions.append(
-            {"id": session, "title": title, "updatedAt": updated, "status": rollup(session_nodes)}
+        _, _, titles, latest = project(rows)
+        title = titles.get(session) or session
+        updated = latest.get(session, 0)
+        run_rows = sorted(
+            (row for row in rows if _run_id(row)),
+            key=lambda row: (
+                stamp(row.get("startedAt")) or stamp(row.get("updatedAt")),
+                stamp(row.get("updatedAt")),
+                _run_id(row),
+            ),
         )
-        manifests[session] = {
-            "schemaVersion": 1,
-            "sessionId": session,
+        runs = [_run_graph(rows, row) for row in run_rows]
+        runs.reverse()
+        if runs:
+            nodes, edges = runs[0]["nodes"], runs[0]["edges"]
+        else:
+            nodes, edges = _paint(rows, [])
+        stage, finals = _progress(nodes)
+        sessions.append(
+            {
+                "id": session,
+                "title": title,
+                "updatedAt": updated,
+                "status": rollup(nodes),
+                "stage": stage,
+                "finals": finals,
+            }
+        )
+        graphs[session] = {
             "title": title,
             "updatedAt": updated,
-            "nodes": session_nodes,
-            "edges": session_edges,
+            "nodes": nodes,
+            "edges": edges,
+            "runs": runs,
         }
-    if session_id and session_id not in manifests:
-        empty_nodes, empty_edges, _, _ = project([])
+    if session_id and session_id not in graphs:
+        nodes, edges = _paint([], [])
+        stage, finals = _progress(nodes)
         sessions.append(
-            {"id": session_id, "title": session_id, "updatedAt": 0, "status": "pending"}
+            {
+                "id": session_id,
+                "title": session_id,
+                "updatedAt": 0,
+                "status": "pending",
+                "stage": stage,
+                "finals": finals,
+            }
         )
-        manifests[session_id] = {
-            "schemaVersion": 1,
-            "sessionId": session_id,
+        graphs[session_id] = {
             "title": session_id,
             "updatedAt": 0,
-            "nodes": empty_nodes,
-            "edges": empty_edges,
+            "nodes": nodes,
+            "edges": edges,
+            "runs": [],
         }
     sessions.sort(key=lambda item: (-item["updatedAt"], item["id"]))
     selected = session_id or (sessions[0]["id"] if sessions else None)
     if selected:
-        manifest = manifests[selected]
+        chosen = graphs[selected]
+        manifest = {
+            "schemaVersion": 1,
+            "sessionId": selected,
+            "title": chosen["title"],
+            "updatedAt": chosen["updatedAt"],
+            "nodes": chosen["nodes"],
+            "edges": chosen["edges"],
+        }
+        runs = chosen["runs"]
+        workers_needed = runs[0]["workers"] if runs else _needed_workers(chosen["nodes"], chosen["edges"])
     else:
-        empty_nodes, empty_edges, _, _ = project([])
+        nodes, edges = _paint([], [])
         manifest = {
             "schemaVersion": 1,
             "sessionId": None,
             "title": None,
             "updatedAt": 0,
-            "nodes": empty_nodes,
-            "edges": empty_edges,
+            "nodes": nodes,
+            "edges": edges,
         }
-    selected_rows = grouped.get(selected, []) if selected else []
-    pipelines = _pipelines(
-        manifest["nodes"], manifest["edges"], selected_rows, manifest.get("updatedAt") or 0
-    )
+        runs = []
+        workers_needed = []
     return {
         "schemaVersion": 1,
         "source": "job-records",
         "sessions": sessions,
         "manifest": manifest,
-        "pipelines": pipelines,
+        "runs": runs,
+        "workersNeeded": workers_needed,
     }
 
 

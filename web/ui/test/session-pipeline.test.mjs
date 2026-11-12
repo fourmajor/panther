@@ -22,7 +22,7 @@ test('storyboard approval stays a gate and does not look finished or running', (
   assert.equal(statusText('pending', 'video-generation'), 'Not started');
 });
 
-test('a session headline is its name or date, and a pipeline card keeps the run separate', () => {
+test('a session card uses the session name or date and names the failed stage', () => {
   assert.equal(sessionHeadline('Night one', 'session-one'), 'Night one');
   assert.equal(sessionHeadline('session-2026-10-15', 'session-2026-10-15'), '2026-10-15');
   assert.equal(sessionHeadline('', ''), 'Session');
