@@ -253,7 +253,7 @@ on the laptop. Independent AI sessions can share biases; automatic review is not
 
 ## Operations
 
-### Recovery and independent branches (workflow 8)
+### Recovery and independent branches (workflow 9)
 
 Novel and screen planning now have separate failure boundaries. A failed novel step does
 not cancel video preparation; a failed video step does not cancel the chapter. Readiness
@@ -270,7 +270,7 @@ panther editorial recover --job-id FAILED_JOB_ID --target video
 Use `novel` or `both` for the other branches. Explicit creation requests retain their
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
-execution at plan version 8. It replays the requested planning branch from source; it does not
+execution at plan version 9. It replays the requested planning branch from source; it does not
 relabel or reuse older-version stage outputs as newly reviewed results. The new job
 records its parent and recovery mode. The recovery id is the failed parent, the target,
 and the plan version, so the same parent and target at a new version is a different job.
@@ -286,11 +286,19 @@ Upgrade the pinned laptop worker from reviewed merged main before submitting rec
 The worker's branch-scoped input selection and lossless transcript-overlay projection
 prevent older duplicated transcript/audit bundles from growing with both branches.
 Inputs still have a hard prompt limit. No speech is silently truncated to fit. The
-corrected-transcript review splits a transcript that would exceed 1,000,000 bytes into
-contiguous utterance windows, keeps each prompt under that limit, and merges every window
-back into one transcript. Prior context carried again inside `priorStages` is reduced to
-the selection already present on the stage input. Other stages are checked the same way
-and, when one prompt still cannot fit, fail before Codex runs.
+correction stage reviews a long transcript in contiguous windows of at most 80 utterances,
+and both correction and corrected-transcript split any prompt that would exceed 1,000,000
+bytes. Every window is merged. Before the model runs, unambiguous capitalized catalog-name
+repairs are applied in code and recorded as edits; ordinary words such as talent and Remix
+are not treated as names. A round that still leaves a clear catalog-name misspelling fails
+with the segment id, the word, and the catalog spelling. Prior context carried again inside
+`priorStages` is reduced to the selection already present on the stage input. Other stages
+are checked the same way and, when one prompt still cannot fit, fail before Codex runs.
+Each editorial stage calls Codex with an explicit model and reasoning effort: high for
+correction and corrected-transcript, medium for novel and video planning. The model defaults
+to the signed-in Codex configuration unless `PANTHER_EDITORIAL_MODEL` overrides it.
+`PANTHER_EDITORIAL_REASONING` can override the effort. Fast mode and a priority tier are
+refused. The stage artifact records the model and effort that actually ran.
 After deployment, run `panther workflows rebuild` and verify all games to refresh
 historical observations. Older executions omit stages that did not exist in their
 protocol, rather than displaying invented pending work. Their saved source jobs
