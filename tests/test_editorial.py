@@ -839,6 +839,7 @@ def test_windowed_correction_edits_late_segments(tmp_path, monkeypatch):
 
 
 def test_editorial_codex_sets_model_and_reasoning(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHER_EDITORIAL_BACKEND", "codex")
     monkeypatch.setenv("PANTHER_EDITORIAL_MODEL", "gpt-5.4")
     monkeypatch.delenv("PANTHER_EDITORIAL_REASONING", raising=False)
     captured = []
@@ -860,14 +861,15 @@ def test_editorial_codex_sets_model_and_reasoning(tmp_path, monkeypatch):
     worker.agent(correction, "correction", inputs, lambda: None)
     worker.agent(novel, "novel-draft", inputs, lambda: None)
     assert captured[0][captured[0].index("-m") + 1] == "gpt-5.4"
-    assert 'model_reasoning_effort="high"' in captured[0]
+    assert 'model_reasoning_effort="medium"' in captured[0]
     assert 'model_reasoning_effort="medium"' in captured[1]
     assert "--ignore-user-config" in captured[0]
     for command in captured:
         text = " ".join(command).casefold()
         assert "fast" not in text and "priority" not in text
-    recorded = json.loads((correction / "codex-invocation.json").read_text())
-    assert recorded["model"] == "gpt-5.4" and recorded["reasoningEffort"] == "high"
+    recorded = json.loads((correction / "inference-invocation.json").read_text())
+    assert recorded["model"] == "gpt-5.4" and recorded["reasoningEffort"] == "medium"
+    assert recorded["backend"] == "codex"
     assert recorded["fastMode"] is False and recorded["serviceTier"] == "default"
     monkeypatch.delenv("PANTHER_EDITORIAL_MODEL")
     home = tmp_path / "home"
@@ -886,6 +888,108 @@ def test_editorial_codex_sets_model_and_reasoning(tmp_path, monkeypatch):
     monkeypatch.setenv("PANTHER_EDITORIAL_REASONING", "fast")
     with pytest.raises(worker.DeterministicFailure, match="Fast"):
         worker.agent(tmp_path / "refused", "correction", inputs, lambda: None)
+
+
+def test_claude_is_the_default_and_grok_records_cache_tokens(tmp_path, monkeypatch):
+    monkeypatch.delenv("PANTHER_EDITORIAL_BACKEND", raising=False)
+    monkeypatch.delenv("PANTHER_EDITORIAL_MODEL", raising=False)
+    monkeypatch.delenv("PANTHER_EDITORIAL_REASONING", raising=False)
+    captured = []
+
+    def run(command, **kwargs):
+        captured.append(command)
+        kwargs["log"].write_text(json.dumps({
+            "type": "result",
+            "result": json.dumps(report()),
+            "model": "claude-sonnet-4-6",
+            "usage": {"input_tokens": 20, "output_tokens": 5, "cache_read_input_tokens": 11},
+        }))
+        return 0
+
+    monkeypatch.setattr(worker.local, "run_process", run)
+    folder = tmp_path / "claude"
+    folder.mkdir()
+    inputs = {"raw": raw(), "context": {"catalog": {"characters": [{"name": "Endrik"}]}}, "priorStages": {}}
+    worker.agent(folder, "novel-draft", inputs, lambda: None)
+    assert captured[0][0].endswith("claude") or captured[0][0] == "claude"
+    assert "--output-format" in captured[0] and "json" in captured[0]
+    assert "claude-sonnet-4-6" in captured[0]
+    assert "-fast" not in " ".join(captured[0])
+    recorded = json.loads((folder / "inference-invocation.json").read_text())
+    assert recorded["backend"] == "claude"
+    assert recorded["usage"]["cacheReadTokens"] == 11
+    assert recorded["reasoningEffort"] == "medium"
+
+    monkeypatch.setenv("PANTHER_EDITORIAL_BACKEND", "grok")
+    monkeypatch.setenv("XAI_API_KEY", "secret-key-value")
+    calls = []
+
+    class Response:
+        def __init__(self):
+            self.payload = json.dumps({
+                "model": "grok-4.7",
+                "choices": [{"message": {"content": json.dumps(report())}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3, "prompt_tokens_details": {"cached_tokens": 4}},
+            }).encode()
+
+        def read(self, _size):
+            block, self.payload = self.payload, b""
+            return block
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def opener(request, timeout=0):
+        calls.append(request)
+        assert timeout
+        assert request.get_header("Authorization") == "Bearer secret-key-value"
+        return Response()
+
+    from panther_journal import inference
+
+    grok_dir = tmp_path / "grok"
+    grok_dir.mkdir()
+    inference.complete(
+        "grok",
+        "grok-4.7",
+        "medium",
+        "prompt",
+        grok_dir / "schema.json",
+        grok_dir / "agent-result.json",
+        grok_dir,
+        lambda: None,
+        opener=opener,
+    )
+    assert calls and "secret-key-value" not in (grok_dir / "agent.jsonl").read_text()
+    with pytest.raises(worker.DeterministicFailure, match="Fast"):
+        inference.reject_fast("grok-4-fast", None)
+
+
+def test_stable_prefix_is_shared_and_novel_stages_use_excerpts():
+    segments = [
+        {"start": index, "end": index + 1, "text": "Endrik waited." if index < 3 else f"Unrelated table chatter {index}.", "playerId": None}
+        for index in range(30)
+    ]
+    document = {"entityType": "PlayerTranscript", "segments": segments}
+    catalog = {"characters": [{"name": "Endrik"}]}
+    brief = {"markdown": "Endrik reaches the harbor.", "passed": True, "evidenceIds": ["catalog"], "decisions": [], "title": "Brief"}
+    inputs = {
+        "raw": document,
+        "context": {"catalog": catalog, "notes": {"content": "Shared notes"}},
+        "priorStages": {"novel-brief": brief},
+    }
+    outline = worker._stage_prompt("novel-outline", inputs)
+    draft = worker._stage_prompt("novel-draft", inputs)
+    assert outline.split("STAGE INSTRUCTIONS", 1)[0] == draft.split("STAGE INSTRUCTIONS", 1)[0]
+    assert outline.index("CATALOG") < outline.index("TRANSCRIPT") < outline.index("STAGE INPUT")
+    assert outline.index("STAGE INPUT") < outline.index("STAGE INSTRUCTIONS")
+    assert "Unrelated table chatter 20" not in outline
+    assert "Endrik waited." in outline
+    correction = worker._stage_prompt("correction", {"raw": document, "context": {"catalog": catalog}, "priorStages": {}})
+    assert "Unrelated table chatter 20" in correction
 
 
 def test_invalid_ai_edits_cannot_escape_guards(tmp_path, monkeypatch):
@@ -1708,6 +1812,7 @@ def test_map_agent_attaches_verified_image_to_codex(tmp_path, monkeypatch):
         (attempt / "agent-result.json").write_text(json.dumps(report()))
         return 0
 
+    monkeypatch.setenv("PANTHER_EDITORIAL_BACKEND", "codex")
     monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
     monkeypatch.setattr(worker.local, "run_process", run)
     inputs = {"context": {}, "creation": {}, "mapInput": {"key":"games/test-game/assets/map/original/map.png", "contentType": "image/png"}}

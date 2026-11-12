@@ -159,6 +159,21 @@ def test_local_reports_conflict_guard_and_strict_sanitization(workshop):
     assert request(m, "POST /workflow-progress", body={**body, "taskToken": "secret"}, username="example-worker")["statusCode"] == 400
 
 
+def test_speaker_floor_message_is_accepted_on_a_stage(workshop):
+    body = local_body()
+    body["kind"] = "session-finalization"
+    body["status"] = "failed"
+    body["stages"] = [{
+        "id": "match-players",
+        "label": "Match players",
+        "status": "failed",
+        "message": "Below the 25% floor, so this transcript is not handed to adaptation.",
+    }]
+    saved = unpack(request(workshop, "POST /workflow-progress", body=body, username="example-worker"))["workflow"]
+    assert "25% floor" in saved["stages"][0]["message"]
+    assert saved["activeStages"][0]["message"].startswith("Below the 25%")
+
+
 def test_local_reporter_records_only_real_stage_events(tmp_path, monkeypatch):
     from panther_journal import workflows as w
     monkeypatch.setattr(w.cloud, "configuration", lambda: {})

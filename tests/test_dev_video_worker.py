@@ -73,9 +73,10 @@ def test_unknown_post_never_repeats_or_publishes_video(tmp_path):
 
 
 def test_model_routes_are_explicit_by_scene_type():
-    assert worker.model_for({'sceneType': 'action'}) == 'kling-3-pro'
-    assert worker.model_for({'sceneType': 'dialogue'}) == 'h3-max'
-    assert worker.model_for({'sceneType': 'general'}) == 'veo-3.1-fast'
+    assert worker.model_for({'sceneType': 'action'}) == 'veo-3.1-fast-silent'
+    assert worker.model_for({'sceneType': 'dialogue'}) == 'veo-3.1-fast-silent'
+    assert worker.model_for({'sceneType': 'general'}) == 'veo-3.1-fast-silent'
+    assert worker.model_for({'sceneType': 'action', 'model': 'kling-3-pro'}) == 'kling-3-pro'
     assert worker.model_for({'sceneType': 'map', 'mapPin': {'key': 'example'}}) == 'veo-3.1-fast-image-silent'
 
 
@@ -205,25 +206,25 @@ def test_reference_render_keeps_actual_endpoint_on_resume_and_selected_cast(tmp_
         def request(self, method, url, **kwargs):
             if method == 'POST':
                 self.calls.append((method, url, kwargs))
-                prefix = 'https://queue.fal.run/minimax/h3-max/requests/request-example'
+                prefix = 'https://queue.fal.run/fal-ai/veo3.1/fast/reference-to-video/requests/request-example'
                 return {'request_id': 'request-example', 'status_url': prefix + '/status', 'response_url': prefix}
             return super().request(method, url, **kwargs)
 
     client = ReferenceFal(pending=True)
     root = worker.private_root(tmp_path / 'work')
     assert not worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
-    assert store.get('scene-render', identity)['endpoint'] == 'minimax/h3-max/reference-to-video'
+    assert store.get('scene-render', identity)['endpoint'] == 'fal-ai/veo3.1/fast/reference-to-video'
     client.pending = False
     assert worker.process(store, identity, root, client, downloader=fake_download, media_probe=fake_probe)
     assert len([call for call in client.calls if call[0] == 'POST']) == 1
     finished = store.get('scene-render', identity)
     metadata, _ = store.object(finished['outputKey'])
     assert metadata['characterIds'] == ['hero']
-    assert metadata['extra']['generation']['model'] == 'MiniMax H3 Max (post-trained by fal)'
+    assert metadata['extra']['generation']['model'] == 'Veo 3.1 Fast'
     assert metadata['extra']['generation']['cost']['status'] == 'unknown'
     assert 'costEstimate' not in metadata['extra']  # Never reuse a different endpoint's price.
     request = json.loads((root / identity / 'request.json').read_text())
-    assert len(request['payload']['reference_image_urls']) == 1
+    assert len(request['payload']['image_urls']) == 1
     assert 'Absent' not in request['payload']['prompt']
 
 

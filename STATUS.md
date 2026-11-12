@@ -46,7 +46,7 @@ Status below is the code that exists, not a claim that a live session has been r
 | Sound and delivery | Selected takes, real stems if they exist | 1280×720 24 fps browser MP4, master, captions | `video_production.py` on the laptop | Local ffmpeg. Checkpoints are reported; AWS does not encode. | Needs actual shot media. |
 | Session video | Finished delivery | Episode/master the browser can play | `dev_episode_worker.py` for ordered scene outputs; production delivery for the laptop film | Assembly is local. | Cannot be completed without the paid shots or already rendered scene outputs. |
 
-The editorial state machine is built in `infra/lib/editorial-processing.ts` from `editorial-plan.json` version 10: context, then correction, then a parallel novel branch and video branch. Each stage is a Lambda callback (`WAIT_FOR_TASK_TOKEN`) lasting up to 30 days. There is no ECS or Batch stage. Playback and 3D model jobs have their own small Standard state machines (`playback-processing.ts`, `model-processing.ts`). Recovery of a failed run reuses parent stages whose artifacts still validate, and dispatches those stages as already done.
+The editorial state machine is built in `infra/lib/editorial-processing.ts` from `editorial-plan.json` version 11: context, then correction, then a parallel novel branch and video branch. Each stage is a Lambda callback (`WAIT_FOR_TASK_TOKEN`) lasting up to 30 days. There is no ECS or Batch stage. Playback and 3D model jobs have their own small Standard state machines (`playback-processing.ts`, `model-processing.ts`). Recovery of a failed run reuses parent stages whose artifacts still validate, and dispatches those stages as already done.
 
 The Pipeline page reads those job and task records (local SQLite, or the workflow index projected from the DynamoDB job tables). It does not call `states:DescribeExecution`. The workshop reader is deliberately not allowed to read Step Functions. Task status is the callback result the state machine is waiting on.
 
@@ -57,12 +57,12 @@ Do not invent a look or a voice for a session.
 - Visual style is per game (`visualStyle`), default `photorealistic` for new games. Presets and prompt text are in `infra/lambda/media-api/visual_styles.py`. Generation must use the saved game style. Identity references do not override it.
 - Novel voice is chosen inside each run by the `novel-options` stage (an original voice bible, no imitation of a living writer). There is no fixed chapter length.
 - Narration is ElevenLabs Eleven v3 through fal, stock voices only. Trailer reads are paced, not neutral. Recording consent is not cloning consent.
-- Video model policy is Veo 3.1 Fast / MiniMax H3 Max / Kling 3 Pro as above, recorded on the plan. It is not an automatic router and it is not spending approval.
+- First-cut video defaults to one silent Veo 3.1 Fast take (`PANTHER_VIDEO_MODEL`, default `veo-3.1-fast-silent`). Dialogue is ElevenLabs, mixed in the edit. A hero shot can override the model. One retry is allowed only after a failed or invalid generation. This is not spending approval.
 - Browser delivery that already exists is a 1280×720, 24 fps MP4.
 
 ## Providers, keys, hardware
 
-From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`, `PANTHER_EDITORIAL_MODEL=gpt-5-mini`, optional `XAI_API_KEY` (unused by the current workers). Never commit them.
+From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`. The laptop editorial worker defaults to a Claude Code login. Optional `XAI_API_KEY` selects the grok-4.7 backend and must stay out of Git. `PANTHER_EDITORIAL_MODEL` and `PANTHER_EDITORIAL_BACKEND` override a stage when set. Never commit them.
 
 Laptop session finalization also needs local Whisper weights, pyannote model and runtime, enrolled speaker profiles, ffmpeg/ffprobe, and a signed-in Panther CLI. Browser transcription needs the us-west-2 Secrets Manager ARN deployed on the media stack. Native recording needs macOS and a named input device.
 

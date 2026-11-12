@@ -44,6 +44,7 @@ def test_selected_model_style_and_real_title_are_durable(tmp_path, model, monkey
     assert client.image_calls[0]["model"] == model
     assert "Visual style: watercolor" in client.image_calls[0]["prompt"]
     assert client.image_calls[0]["output_format"] == "png"
+    assert client.image_calls[0]["quality"] == "medium"
     assert request["titleGeneration"]["evidence"]["usage"]["total_tokens"] == 6
     result.unlink()
     recovered_job = job(model=model)

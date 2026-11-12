@@ -92,6 +92,13 @@ PROFILES = {
         "multiplier": "1",
         "source": "https://fal.ai/models/fal-ai/veo3.1/fast",
     },
+    "veo-3.1-fast-silent": {
+        "endpoint": "fal-ai/veo3.1/fast",
+        "floor": "0.10",
+        "multiplier": "1",
+        "reviewedBase": "0.15",
+        "source": "https://fal.ai/models/fal-ai/veo3.1/fast",
+    },
     "kling-3-pro": {
         "endpoint": "fal-ai/kling-video/v3/pro/text-to-video",
         "floor": "0.21",
@@ -630,8 +637,8 @@ def validate_manifest(value, *, check_prompt_policy=True):
                 fail("Invalid image path or checksum.")
         if not isinstance(shot["prompt"], str) or not shot["prompt"].strip():
             fail("Prompts must contain text.")
-        if type(shot["maxAttempts"]) is not int or not 1 <= shot["maxAttempts"] <= 3:
-            fail("Each shot allows at most three attempts, all charged to the same budget.")
+        if type(shot["maxAttempts"]) is not int or not 1 <= shot["maxAttempts"] <= 2:
+            fail("Each shot allows one take and at most one retry, both charged to the same budget.")
     return value
 
 
@@ -645,14 +652,38 @@ def fit_prompt(text, limit=2500):
     return prefix[:boundary].rstrip() if boundary >= limit * .9 else prefix.rstrip()
 
 
+DEFAULT_VIDEO_MODEL = "veo-3.1-fast-silent"
+
+
+def configured_video_model():
+    """One profile for the first cut. Hero shots pass their own model instead."""
+    value = os.environ.get("PANTHER_VIDEO_MODEL", DEFAULT_VIDEO_MODEL).strip() or DEFAULT_VIDEO_MODEL
+    if value not in PROFILES:
+        raise ValueError("PANTHER_VIDEO_MODEL is not a reviewed video profile")
+    folded = value.casefold()
+    if folded.endswith("-fast") and not folded.startswith("veo-3.1-fast"):
+        raise ValueError("Video model cannot select a Fast tier")
+    return value
+
+
 def scene_model(job):
     kind = job.get('sceneType', job.get('type', 'general'))
     if kind == 'map':
         if not job.get('mapPin'):
             raise ValueError('Choose a map asset for this scene')
         return 'veo-3.1-fast-image-silent'
-    model = 'kling-3-pro' if kind == 'action' else 'h3-max' if kind == 'dialogue' else 'veo-3.1-fast'
-    return model + '-image' if job.get('storyboardFramePin') else model
+    override = job.get("model")
+    model = override.strip() if isinstance(override, str) and override.strip() else configured_video_model()
+    if model not in PROFILES:
+        raise ValueError("Unsupported scene video model")
+    framed = bool(job.get("storyboardFramePin") or job.get("mapPin"))
+    if framed and model == "veo-3.1-fast-silent":
+        return "veo-3.1-fast-image-silent"
+    if framed and "image" not in model:
+        image_model = model + "-image"
+        if image_model in PROFILES:
+            return image_model
+    return model
 
 
 def generation_duration(model, planned):
@@ -949,6 +980,12 @@ def submit(plan_id, shot_id, ordinal, reason, fal):
                 fail("Retries require the previous attempt and an explicit reason.")
             if prior["state"] == "UNAVAILABLE":
                 fail("Unavailable results cannot be retried; inspect provider history first.")
+            folded = reason.casefold()
+            rejected = any(word in folded for word in ("invalid", "failed", "rejected"))
+            if prior["state"] != "FAILED" and not (prior["state"] == "COMPLETED" and rejected):
+                fail("A retry is only for a failed or invalid generation.")
+            if ordinal > 2:
+                fail("At most one retry is allowed.")
         check_budget(db, plan, reserve)
         db.execute(
             "INSERT INTO attempts VALUES (?,?,?,?,?,?,?)",

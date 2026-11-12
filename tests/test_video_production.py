@@ -390,14 +390,11 @@ def test_preparation_selects_profiles_and_never_approves(tmp_path):
     assert sound["suppliedCueCounts"] == dict(dialogue=0, music=0, effects=0, ambience=0)
     assert "Captions are not spoken dialogue" in sound["notice"]
     generated = json.loads(next(folder.glob("preparation/*/generation-manifest.json")).read_text())
-    assert generated["shots"][0]["model"] == "veo-3.1-fast"
-    assert generated["shots"][0]["maxAttempts"] == 1
-    for purpose, expected in (
-        ("dialogue", "h3-max"),
-        ("action", "kling-3-pro"),
-        ("default", "veo-3.1-fast"),
-    ):
-        assert p.model_for(plan.shots[0].model_copy(update={"use": purpose})) == expected
+    assert generated["shots"][0]["model"] == "veo-3.1-fast-silent"
+    assert generated["shots"][0]["maxAttempts"] == 2
+    for purpose in ("dialogue", "action", "default"):
+        assert p.model_for(plan.shots[0].model_copy(update={"use": purpose})) == "veo-3.1-fast-silent"
+    assert p.model_for(plan.shots[0].model_copy(update={"model": "kling-3-pro"})) == "kling-3-pro"
 
 
 def test_preparation_checks_selected_appearance_start_and_end(media, tmp_path):

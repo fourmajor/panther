@@ -660,20 +660,15 @@ def transcribe(folder, model, sole_player, roster, blind, publish):
             isolation = blind_audio.manifest(image, digest(joined), digest(model))
             write_new(target / "blind-inputs.json", isolation)
         else:
-            command = [
+            from panther_journal import whisper_runtime as whisper
+
+            command = whisper.command(
                 executable("whisper-cli"),
-                "-m",
-                str(model.resolve()),
-                "-f",
-                str(joined.resolve()),
-                "-l",
-                "en",
-                "-t",
-                "4",
-                "-ojf",
-                "-of",
-                str((outputs / "transcription").resolve()),
-            ]
+                model.resolve(),
+                joined.resolve(),
+                (outputs / "transcription").resolve(),
+                use_gpu=whisper.gpu_default(),
+            )
         subprocess.run(command, stdout=log, stderr=log, check=True, timeout=43200)
     combined = record.parts[0].model_copy(
         update={"duration": sum(p.duration for p in record.parts)}

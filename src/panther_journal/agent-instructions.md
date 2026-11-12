@@ -356,18 +356,15 @@ live completion, exact request identity, result HTTP 404 and a matching zero-cha
 It retains the full reservation and audit trail, records outcome unknown/output unavailable, and
 forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
 
-Standing production selection policy: default to **Veo 3.1 Fast through fal**, explicitly for
-city/urban establishing shots. Use **MiniMax H3 Max (not Turbo) through fal for dialogue** and
-**Kling 3 Pro through fal for battle/action**. H3 Max replaces the earlier Veo dialogue preference.
-Select per shot: action in a city uses Kling; dialogue close-ups between combat beats use H3 Max,
-including dialogue in a city. For an inseparable mixed shot, use Kling if action drives the shot,
-H3 Max if dialogue drives it, otherwise Veo; record the reason.
-Use explicit `veo-3.1-fast` / `h3-max` / `kling-3-pro` manifest profiles, or their `-image` variants when using
-an approved starting image. The CLI does not automatically classify shots or fill a missing model.
-This policy guides post-preproduction plan preparation; it does not change the provider-neutral
-editorial worker or authorize spending, reference sharing, model upgrades or failure fallbacks.
-Other models require an explicit owner-directed exception/comparison. Preserve historical plans
-and actual model provenance; never relabel old videos to match today's preference.
+First-cut video uses one configured model, `PANTHER_VIDEO_MODEL`, defaulting to **Veo 3.1 Fast
+through fal** with audio off (`veo-3.1-fast-silent`, or `veo-3.1-fast-image-silent` when a starting
+frame is pinned). Dialogue is voiced separately with ElevenLabs and mixed in the edit. Each clip
+is one take; a failed or invalid generation may be retried once. A hero shot may override that
+model with **Kling 3 Pro** or an audio variant. The CLI does not automatically classify shots or
+fill a missing model. This policy does not change the editorial worker or authorize spending, reference sharing,
+model upgrades or failure fallbacks. Historical comparison profiles, including MiniMax H3 Max and Kling, stay
+available as explicit overrides. Preserve historical plans and actual model provenance; never
+relabel old videos to match today's preference.
 
 Use `panther video --help` and the trusted `docs/fal-video-comparison.md` for the separate local
 comparison integration. `video check` checks live pricing and balance without generation;

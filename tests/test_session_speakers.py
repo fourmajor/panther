@@ -175,6 +175,53 @@ def test_saved_centroid_diarization_is_not_reused():
     assert saved["turnSource"] == EXCLUSIVE_TURN_SOURCE
 
 
+def test_four_speakers_clear_the_assignment_floor():
+    speakers = [f"SPEAKER_0{index}" for index in range(4)]
+    players = [f"player-{index}" for index in range(4)]
+
+    def basis(index):
+        vector = [0.0] * 16
+        vector[index] = 1.0
+        return vector
+
+    segments, turns = [], []
+    cursor = 0.0
+    for index, speaker in enumerate(speakers):
+        for _copy in range(2):
+            segments.append(dict(start=cursor, end=cursor + 10, text=f"Line from {speaker}.", playerId=None))
+            turns.append(dict(start=cursor, end=cursor + 8, speaker=speaker))
+            cursor += 10
+    segments.append(dict(start=cursor, end=cursor + 10, text="Everyone talked at once.", playerId=None))
+    document = dict(
+        recordingId="synthetic-recording",
+        gameId="synthetic-game",
+        sourceParts=[{"duration": cursor + 10}],
+        players=[{"id": player} for player in players],
+        segments=segments,
+    )
+    profiles = dict(
+        gameId="synthetic-game",
+        modelFiles={"pin": "synthetic"},
+        profiles=[dict(playerId=player, embedding=basis(index)) for index, player in enumerate(players)],
+    )
+    evidence = dict(
+        recordingId=document["recordingId"],
+        sourceParts=document["sourceParts"],
+        modelFiles=profiles["modelFiles"],
+        embeddings={speaker: basis(index) for index, speaker in enumerate(speakers)},
+        turns=turns,
+        turnSource=EXCLUSIVE_TURN_SOURCE,
+        embeddingMethod=REFERENCE_EMBEDDING_METHOD,
+    )
+    result = reconcile(document, evidence, profiles)
+    summary = result["speakerAttributionSummary"]
+    assert summary["assignedSegments"] >= 8
+    assert summary["segments"] == 9
+    assert 100 * summary["assignedSegments"] / summary["segments"] >= 25
+    assert result["segments"][-1]["playerId"] is None
+    assert_assignment_rate(result)
+
+
 def test_out_of_recording_turn_is_rejected():
     document, evidence, profiles = fixture()
     evidence["turns"][0]["end"] = 32.0

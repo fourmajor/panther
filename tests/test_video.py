@@ -398,7 +398,7 @@ def manifest():
                 "id": "scene-veo",
                 "model": "veo-3.1-fast",
                 "prompt": "A fictional harbor at dusk.",
-                "maxAttempts": 3,
+                "maxAttempts": 2,
             }
         ],
     }
@@ -437,6 +437,28 @@ def test_production_quote_and_payload_use_exact_duration(setup, model, duration,
         assert v.totals(db)["reservationCents"] == 0
 
 
+def test_default_take_is_silent_and_a_second_attempt_requires_failure(setup):
+    body = v.payload({"id": "scene", "model": "veo-3.1-fast-silent", "prompt": "A fictional harbor.", "durationSeconds": 8, "maxAttempts": 2})
+    assert body["generate_audio"] is False
+    assert v.scene_model({"sceneType": "dialogue"}) == "veo-3.1-fast-silent"
+    assert v.scene_model({"sceneType": "action", "model": "kling-3-pro"}) == "kling-3-pro"
+    from panther_journal import narration as n
+    n.create_budget("test-film", "synthetic-game", "15", "13", "Synthetic approval", setup)
+    m = manifest()
+    m.update(projectId="test-film")
+    m["shots"][0]["model"] = "veo-3.1-fast-silent"
+    pid = v.prepare(m, setup)["planId"]
+    CliRunner().invoke(main, ["video", "approve", pid, "--models-and-rights-approved", "--auto-topup-disabled"])
+    first = v.submit(pid, "scene-veo", 1, "", setup)
+    setup.status = "COMPLETED"
+    assert v.poll(first["attemptId"], setup)["state"] == "COMPLETED"
+    with pytest.raises(click.ClickException, match="failed or invalid"):
+        v.submit(pid, "scene-veo", 2, "another look", setup)
+    v.update_attempt(first["attemptId"], "FAILED", {"providerErrorTypes": ["no_media_generated"]})
+    second = v.submit(pid, "scene-veo", 2, "invalid first take", setup)
+    assert second["attempt"] == 2
+
+
 def test_mixed_durations_pin_separate_quotes_and_all_attempts(setup):
     from panther_journal import narration as n
     n.create_budget("test-film", "synthetic-game", "4", "3.99", "Synthetic approval", setup)
@@ -451,7 +473,7 @@ def test_mixed_durations_pin_separate_quotes_and_all_attempts(setup):
     assert reads == ["veo-3.1-fast"]
     assert set(result["quotes"]) == {"veo-3.1-fast@4s", "veo-3.1-fast@6s"}
     assert result["worstCaseReservationUsd"] == "3.01"
-    m["shots"][1]["maxAttempts"] = 3
+    m["shots"].append({**m["shots"][1], "id": "scene-extra", "maxAttempts": 2})
     with pytest.raises(click.ClickException, match="allowance"):
         v.prepare(m, setup)
 
@@ -638,7 +660,7 @@ def approved(fal):
 def test_prepare_never_generates_and_approval_is_explicit(setup):
     fal = setup
     plan = v.prepare(manifest(), fal)
-    assert plan["worstCaseReservationUsd"] == "4.50"
+    assert plan["worstCaseReservationUsd"] == "3.00"
     assert plan["quotes"]["veo-3.1-fast"]["reserveCents"] == 150
     with pytest.raises(click.ClickException, match="not approved"):
         v.submit(plan["planId"], "scene-veo", 1, "", fal)

@@ -112,9 +112,9 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                 if job['storyboardShotRef']['revision'] != board['revision'] or job.get('sceneContext', {}).get('shots') != [shot]:
                     raise ValueError('The pinned storyboard shot differs from this generation request')
         model = job.get('model') or model_for(job)
-        allowed = {'veo-3.1-fast', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
+        allowed = {'veo-3.1-fast', 'veo-3.1-fast-silent', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if standalone:
-            allowed = {'veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
+            allowed = {'veo-3.1-fast', 'veo-3.1-fast-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
         if model not in allowed:
             raise ValueError('Unsupported selected video model')
         endpoint = job.get('endpoint') or v.PROFILES[model]['endpoint']

@@ -118,8 +118,8 @@ BRIEFS["video-source-brief"] += (
 BRIEFS["video-generation-packets"] += (
     " Include coherent structured scene and cast information from the pinned revisions in each packet."
     " Keep the same character identity, appearance selection and wardrobe across shots unless an explicit source supports a change."
-    " Recommend the standing production profile per shot: action Kling 3 Pro, dialogue MiniMax H3 Max (not Turbo),"
-    " otherwise Veo 3.1 Fast for city/opener shots; action takes precedence over city setting."
+    " The first cut uses one configured model, currently Veo 3.1 Fast with no audio."
+    " Dialogue is voiced separately and mixed in the edit. A hero shot may name Kling 3 Pro or an audio variant as an override."
     " Travel/map shots must cite actual map and location references, not invented geography."
     " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
 )

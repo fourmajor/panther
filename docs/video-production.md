@@ -155,10 +155,12 @@ identity. The starting image must be a prepared full 16:9 composition, not a cro
 The preparation step validates/reviews existing plates; it does **not** create missing imagery.
 Use the authorized image creation process to make missing plates before preparation.
 
-`use` selects the owner's model policy: city/default → Veo 3.1 Fast; dialogue → H3 Max (not Turbo);
-action → Kling 3 Pro. Mixed scenes should be broken into shots with one dominant purpose. A pinned
-starting frame selects the corresponding image adapter. `endImage` is currently accepted only for
-Kling action image shots. Preparation has no billing client, permission declarations or submit path.
+`use` is planning metadata. The executable model is `PANTHER_VIDEO_MODEL` (default
+`veo-3.1-fast-silent`) unless the shot sets `model`. A pinned starting frame selects the silent
+image adapter. `endImage` stays on the Kling action image adapter. Preparation writes two
+attempts: the take, and one retry that `panther video` accepts only after a failed or invalid
+generation. Dialogue is an ElevenLabs cue mixed in the edit, not audio inside the clip.
+Preparation has no billing client, permission declarations or submit path.
 Reports can flag unready compositions; a generated manifest is never itself approval to use them.
 
 Each sound cue supplies `role` (dialogue/music/effects/ambience), `source`, `at` (original shot time),

@@ -91,6 +91,7 @@ class Shot(Record):
     nativeAudio: Literal["mute", "keep-mixed"] = "mute"
     sounds: list[Sound] = Field(default_factory=list, max_length=30)
     captions: list[Caption] = Field(default_factory=list, max_length=30)
+    model: str | None = None
 
     @model_validator(mode="after")
     def consistent(self):
@@ -489,8 +490,19 @@ def sheets(path, start, duration, folder, prefix, *, fps=4):
 
 
 def model_for(shot):
-    name = {"dialogue": "h3-max", "action": "kling-3-pro"}.get(shot.use, "veo-3.1-fast")
-    return name + ("-image" if shot.startImage else "")
+    """First cut uses one configured silent model. An end frame stays on the Kling adapter."""
+    if shot.endImage:
+        return "kling-3-pro-image"
+    chosen = shot.model or video.configured_video_model()
+    if chosen not in video.PROFILES:
+        raise click.ClickException("Shot model is not a reviewed video profile")
+    if shot.startImage and chosen == "veo-3.1-fast-silent":
+        return "veo-3.1-fast-image-silent"
+    if shot.startImage and "image" not in chosen:
+        image_model = chosen + "-image"
+        if image_model in video.PROFILES:
+            return image_model
+    return chosen
 
 
 def prepare(plan, folder, refs, reviewer=review):
@@ -519,7 +531,7 @@ def prepare(plan, folder, refs, reviewer=review):
             )
             validate_review(report)
             reports.append({"shotId": shot.id, "report": report})
-        entry = {"id": shot.id, "model": model_for(shot), "prompt": shot.prompt, "maxAttempts": 1}
+        entry = {"id": shot.id, "model": model_for(shot), "prompt": shot.prompt, "maxAttempts": 2}
         for attr, field in (("startImage", "image"), ("endImage", "endImage")):
             ref = getattr(shot, attr)
             if ref:
@@ -552,7 +564,7 @@ def prepare(plan, folder, refs, reviewer=review):
                 role: sum(c.role == role for s in plan.shots for c in s.sounds)
                 for role in ("dialogue", "music", "effects", "ambience")
             },
-            "notice": "Captions are not spoken dialogue. Native mixed audio does not guarantee speech, music or effects; inspect the approved prompts and supplied audio before generation.",
+            "notice": "Captions are not spoken dialogue. The first cut is silent; dialogue is voiced separately with ElevenLabs and mixed in the edit. Native mixed audio does not guarantee speech, music or effects.",
         },
         "generation": generation.subscription(),
     }

@@ -158,6 +158,10 @@ def transcript(folder, job, options, target, report):
     ids = {p["id"] for p in game["players"]}
     if not {p["playerId"] for p in profiles["profiles"]} <= ids:
         raise click.ClickException("Enrolled speakers are not in this game")
+    from panther_journal import whisper_runtime as whisper
+
+    base_prompt = whisper.catalog_names(game.get("catalog") or {}, game.get("players") or [])
+    carried_prompt = base_prompt
     raw, attributed, evidence = [], [], []
     started = time.monotonic()
     target.mkdir(mode=0o700, exist_ok=True)
@@ -192,7 +196,9 @@ def transcript(folder, job, options, target, report):
                         break
                 if lines is None:
                     try:
-                        lines = live.transcribe_part(folder, part, model, attempt, use_gpu=True)
+                        lines = live.transcribe_part(
+                            folder, part, model, attempt, use_gpu=True, prompt=carried_prompt
+                        )
                     except live.PreviewOutputError:
                         lines = uncertain_timing(attempt, part)
                     pins = {"recognizerSha256": audio.digest(attempt / "recognizer.json")}
@@ -216,12 +222,32 @@ def transcript(folder, job, options, target, report):
                 for line in assigned:
                     if line.get("timingMethod") == "verified-chunk-boundaries":
                         line.update(playerId=None, attribution="unassigned")
-                value = {"part": part.model_dump(), "modelSha256": model_hash, "profilesSha256": profiles_hash, "raw": clean, "attributed": assigned, "evidence": pins, "speakerResultPath": str(result_file.relative_to(target)), "speakerResultSha256": audio.digest(result_file)}
+                recognizer = attempt / "recognizer.json"
+                raw_recognizer = None
+                if recognizer.is_file() and not recognizer.is_symlink():
+                    try:
+                        raw_recognizer = json.loads(recognizer.read_text())
+                    except json.JSONDecodeError:
+                        raw_recognizer = None
+                carried_prompt, reset = whisper.carry(base_prompt, clean, raw_recognizer)
+                value = {
+                    "part": part.model_dump(),
+                    "modelSha256": model_hash,
+                    "profilesSha256": profiles_hash,
+                    "raw": clean,
+                    "attributed": assigned,
+                    "evidence": pins,
+                    "speakerResultPath": str(result_file.relative_to(target)),
+                    "speakerResultSha256": audio.digest(result_file),
+                    "nextPrompt": carried_prompt,
+                    "contextReset": reset,
+                }
                 checkpoint_write(checkpoint, value)
             # Do not silently trust modified local speaker evidence after a restart.
             evidence_file = target / value["speakerResultPath"]
             if evidence_file.is_symlink() or not evidence_file.resolve().is_relative_to(target.resolve()) or audio.digest(evidence_file) != value["speakerResultSha256"]:
                 raise click.ClickException("Speaker evidence changed")
+            carried_prompt = value.get("nextPrompt") or base_prompt
             raw.extend(value["raw"])
             attributed.extend(value["attributed"])
             evidence.append({"chunk": part.file, "checkpointSha256": audio.digest(checkpoint)})
@@ -295,6 +321,17 @@ def process(job, options, root):
         report.stage("start-adaptations", "done")
         report.close("done")
     except click.ClickException as exc:
+        message = str(exc).strip()[:500]
+        with report.mutex:
+            marked = False
+            for stage in report.stages:
+                if stage["status"] == "running":
+                    stage["status"] = "failed"
+                    stage["message"] = message
+                    marked = True
+            if not marked and report.stages:
+                report.stages[0]["status"] = "failed"
+                report.stages[0]["message"] = message
         write_json(
             target / "failure.json",
             {"status": "failed", "failedAt": time.time(), "message": str(exc)},
