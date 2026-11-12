@@ -480,3 +480,66 @@ def test_novel_ready_recovery_replans_video_and_keeps_the_novel(editorial):
     replanned = editorial.read("TASKS", f"{recovered['jobId']}:video-source-brief")
     assert replanned["status"] == "QUEUED"
     assert "reusedFrom" not in replanned
+
+
+def test_video_recovery_reuses_stages_inherited_from_a_prior_recovery(editorial):
+    original = submitted(editorial)[1]
+    payloads = {
+        "context": {"selection": {"title": "Context"}, "evidence": {"catalog": {}}},
+        "correction": {"markdown": "Names fixed", "edits": [], "passed": True},
+        "corrected-transcript": {"transcript": {"segments": []}, "review": {"markdown": "Kept"}},
+        "novel-proof": {"markdown": "The river chapter.", "passed": True, "title": "River"},
+    }
+    kept = {
+        stage: done_stage(editorial, original, stage, payload) for stage, payload in payloads.items()
+    }
+    editorial.table.put_item(
+        Item={
+            "pk": "TASKS",
+            "sk": f"{original['jobId']}:novel-chapter",
+            "jobId": original["jobId"],
+            "stage": "novel-chapter",
+            "status": "FAILED",
+        }
+    )
+    editorial.internal({"operation": "fail", "jobId": original["jobId"]})
+    novel = unpack(
+        request(
+            editorial,
+            "POST /editorial-jobs",
+            {"recovery": {"jobId": original["jobId"], "target": "novel"}},
+        )
+    )
+    for stage in novel["recovery"]["reusedStages"]:
+        editorial.internal(
+            {
+                "operation": "dispatch",
+                "jobId": novel["jobId"],
+                "stage": stage,
+                "taskToken": f"token-{stage}",
+            }
+        )
+        stored = editorial.read("TASKS", f"{novel['jobId']}:{stage}")
+        assert stored["status"] == "DONE"
+        assert stored["reusedFrom"] == original["jobId"]
+    chapter = done_stage(
+        editorial,
+        novel,
+        "novel-chapter",
+        {"markdown": "The finished chapter.", "passed": True, "title": "River"},
+    )
+    editorial.internal({"operation": "finish", "jobId": novel["jobId"]})
+    assert editorial.read("RUNS", novel["jobId"])["status"] == "NOVEL_READY"
+    recovered = unpack(
+        request(
+            editorial,
+            "POST /editorial-jobs",
+            {"recovery": {"jobId": novel["jobId"], "target": "video"}},
+        )
+    )
+    assert recovered["videoGenerationAuthorized"] is False
+    reused = set(recovered["recovery"]["reusedStages"])
+    assert {"context", "correction", "corrected-transcript", "novel-proof", "novel-chapter"} <= reused
+    assert recovered["recovery"]["reusedOutputs"]["context"]["sha256"] == kept["context"]["sha256"]
+    assert recovered["recovery"]["reusedOutputs"]["novel-chapter"]["sha256"] == chapter["sha256"]
+    assert "video-source-brief" not in reused
