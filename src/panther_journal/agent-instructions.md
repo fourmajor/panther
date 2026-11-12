@@ -358,7 +358,8 @@ It retains the full reservation and audit trail, records outcome unknown/output 
 forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
 
 First-cut video uses **`h3-max-image`** for every scene: MiniMax H3 Max through fal, audio on,
-768P, one take. A full cut is 90 seconds or less, about 14–16 shots of 2–7 seconds. A take that
+768P, one take. A full session cut is 14–16 shots of 2–7 seconds, targeting 60–80 seconds
+and staying within 60–90. A scene cut stays at most 16 shots and 90 seconds. A take that
 fails review is kept and flagged; it is not a paid retry. `480P` is an explicit option on the
 same model. Start frames default to `gpt-image-2` at quality medium through the API. A Blender
 render is allowed. ElevenLabs is only for speech that the clip itself should not generate.

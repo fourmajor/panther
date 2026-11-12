@@ -538,8 +538,12 @@ def context_page(game, cursor, cutoff):
     return {"items": items, "cursor": result["cursor"]}
 
 
-def reusable_outputs(parent):
-    """Completed parent stages whose bytes and envelope still match. Failed stages rerun."""
+def reusable_outputs(parent, target=None):
+    """Completed parent stages whose bytes and envelope still match. Failed stages rerun.
+
+    A finished novel can be recovered into video planning. That replans every video stage
+    and keeps the novel.
+    """
     found = {}
     for task in query("TASKS"):
         if task.get("jobId") != parent["jobId"] or task.get("status") != "DONE":
@@ -576,6 +580,9 @@ def reusable_outputs(parent):
             "sha256": current["sha256"],
             "size": int(current["size"]),
         }
+    if parent.get("status") == "NOVEL_READY" and target == "video":
+        video_stages = set(PLAN["video"])
+        found = {stage: pin for stage, pin in found.items() if stage not in video_stages}
     return found
 
 
@@ -602,6 +609,8 @@ def _recovery_parent(parent, target):
     if status == "FAILED":
         return
     if status in {"READY_FOR_VIDEO_DISCUSSION", "NOVEL_READY"}:
+        if status == "NOVEL_READY" and target == "video" and not novel_failed:
+            return
         if target == "novel" and novel_failed:
             return
         if target == "video" and video_failed:
@@ -646,7 +655,7 @@ def recover(body, actor):
     if existing:
         return public(existing)
     now = int(time.time())
-    reused = reusable_outputs(parent)
+    reused = reusable_outputs(parent, body["target"])
     recovery = {
         "schemaVersion": 1,
         "parentJobId": parent["jobId"],

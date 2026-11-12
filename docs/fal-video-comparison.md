@@ -77,7 +77,7 @@ and cost $2.54. New plans use that shape:
 | Default model | `h3-max-image` (MiniMax H3 Max, not Turbo), every scene |
 | Audio | On. The clip's own mix is the dialogue baseline |
 | Resolution | `768P` by default. `480P` is an explicit cheaper option on the same model |
-| Cut | 90 seconds or less, about 14–16 shots, each 2–7 seconds |
+| Cut | Full session: 14–16 shots of 2–7 seconds, target 60–80 seconds, bounds 60–90. A scene cut stays at most 16 shots and 90 seconds |
 | Takes | One. A take that fails review is kept and flagged. No paid retry |
 | Start frame | `gpt-image-2` at quality `medium` through the OpenAI API, or a Blender render |
 | Session budget | `panther narration allocate`. The plan stores its estimated cost; the allocation is the cap |

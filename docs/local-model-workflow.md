@@ -140,6 +140,16 @@ expire for recovery. To upgrade, stop the old service, preserve its plist, and i
 main again. The installer refuses to overwrite a differing service or incomplete release.
 Old releases and logs are retained for explicit cleanup, not silently deleted.
 
+On Kiwi, install both the playback and model workers with
+`.venv/bin/python ops/kiwi-workers/install.py --repo "$PWD" --allow-unsandboxed-blender`.
+The host is a 14 GiB household server, so the installer does not raise
+`panther.slice` MemoryMax=3G, the per-worker MemoryMax=1.5G, or
+OOMScoreAdjust=900. A tick waits when MemAvailable is below 1.5 GiB or the
+other worker holds `~/.local/state/panther/workers.lock`. Stop the loaded units
+before upgrading. If a unit file differs, move it aside; the installer will not
+overwrite it. `--retire` disables the units and leaves every release, including
+`32de295` and `2bb9136`, on disk.
+
 ## Candidate, checks, and publication
 
 1. Download and checksum-verify the eight pinned references into a private job directory.

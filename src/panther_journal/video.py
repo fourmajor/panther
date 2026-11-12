@@ -738,18 +738,22 @@ def scene_model(job):
     return model
 
 
-def assert_planned_cut(shots):
-    """A full cut is 90 seconds or less: about 14–16 shots, each 2–7 seconds."""
-    if len(shots) > PLANNED_SHOT_COUNT:
-        raise ValueError("A cut is at most 16 shots")
+def assert_planned_cut(shots, *, session=False):
+    """A cut is at most 16 shots and 90 seconds. A session cut is 14–16 shots and 60–90 seconds."""
+    if len(shots) > PLANNED_SHOT_COUNT or (session and len(shots) < 14):
+        raise ValueError("A session cut is 14–16 shots" if session else "A cut is at most 16 shots")
     total = 0
     for shot in shots:
         duration = shot.get("durationSeconds")
-        if type(duration) is bool or type(duration) not in (int, float) or not PLANNED_SHOT_MIN <= duration <= PLANNED_SHOT_MAX:
+        if (
+            type(duration) is bool
+            or type(duration) not in (int, float)
+            or not PLANNED_SHOT_MIN <= duration <= PLANNED_SHOT_MAX
+        ):
             raise ValueError("Each planned shot is 2–7 seconds")
         total += duration
-    if total > PLANNED_CUT_SECONDS:
-        raise ValueError("A cut is 90 seconds or less")
+    if total > PLANNED_CUT_SECONDS or (session and total < 60):
+        raise ValueError("A session cut is 60–90 seconds" if session else "A cut is 90 seconds or less")
 
 
 def h3_resolution(shot):

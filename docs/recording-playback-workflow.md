@@ -81,6 +81,13 @@ gui/$(id -u)/place.panther.playback-worker`; stop with `launchctl bootout
 gui/$(id -u)/place.panther.playback-worker`. Upgrades refuse to overwrite an existing service;
 preserve the old plist/release and explicitly stop it before installing reviewed new code.
 
+On Kiwi, use `ops/kiwi-workers/install.py` instead of this LaunchAgent. It keeps the household
+limits: `panther.slice` MemoryMax 3G, each worker 1.5G, OOMScoreAdjust 900, a
+MemAvailable gate, and one shared lock. Stop the units first. If a unit file
+differs, move it aside; the installer will not overwrite it. Releases
+`32de295` and `2bb9136` stay on disk. `--retire` disables the units without
+deleting them.
+
 ## Failure boundaries
 
 Initial limits: 1,000 parts, 200 KB Recording manifest, 300 KB completed-set record and Panther's

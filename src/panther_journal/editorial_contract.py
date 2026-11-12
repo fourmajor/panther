@@ -189,7 +189,7 @@ BRIEFS["video-generation-packets"] += (
 # without changing previously approved storyboards or authorizing inference.
 for _stage in ('video-shot-list', 'video-storyboards', 'video-generation-packets'):
     BRIEFS[_stage] += (
-        " Default a full cut to 90 seconds or less: about 14 to 16 shots, each 2 to 7 seconds, one take and no paid retry."
+        " A full session cut targets 60–80 seconds and stays at or under 90: 14 to 16 shots, each 2 to 7 seconds, H3 Max, audio on, 768P, one take and no paid retry."
         " A take that fails review is kept and flagged. Use timed shot sequences where supported. Split overlong sequences"
         " into separate items while permitting explicit timed cuts within an item; avoid asking a take to"
         " perform several unclear simultaneous interactions. Keep every consequential source action across"

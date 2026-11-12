@@ -43,8 +43,9 @@ evidence. No method here authorizes a new model, paid retry, voice clone or serv
    plates only where the verified adapter supports them. Never reuse a defective generated closing
    frame just to gain continuity; review it first.
 6. **Review a timed storyboard.** Inspect frame order, narrative causality, action coverage and sound
-   intent at intended duration. A full cut defaults to 90 seconds or less: about 14–16 shots of
-   2–7 seconds, one H3 Max take each. The owner reviews the actual storyboard in Panther. An optional
+   intent at intended duration. A full session cut is 14–16 shots of 2–7 seconds, targeting
+   60–80 seconds and staying within 60–90, one H3 Max take each. A scene cut stays at most
+   16 shots and 90 seconds. The owner reviews the actual storyboard in Panther. An optional
    timed animatic is clearly previsualization, not a finished movie or replacement for native review.
    H3 Max audio is the dialogue baseline. Prepare a separate voice audition only when a shot needs
    speech the clip should not generate; no system-TTS shortcut.
