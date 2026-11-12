@@ -1,0 +1,8 @@
+node_modules/
+out/
+sessions/*
+!sessions/README.md
+agent-run.*
+usage-log.md
+*.wav
+*.mp4

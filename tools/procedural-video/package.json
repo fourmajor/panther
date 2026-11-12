@@ -1,0 +1,20 @@
+{
+  "name": "procedural-recap",
+  "private": true,
+  "version": "3.0.0",
+  "description": "Session recap videos rendered entirely by code: three.js scenes, a procedural orchestral score, word-synced captions",
+  "scripts": {
+    "voices": "node tools/voices.js",
+    "timing": "node tools/build-timing.js",
+    "score": "node tools/score-engine.js",
+    "mix": "node tools/mix.js",
+    "audio": "node tools/build-timing.js && node tools/score-engine.js && node tools/mix.js",
+    "frames": "node tools/capture.js",
+    "stills": "node tools/build-timing.js && node tools/capture.js --stills auto --tag sheet --cols 4 --w 480",
+    "render": "node tools/build-timing.js && node tools/score-engine.js && node tools/mix.js && node tools/capture.js"
+  },
+  "dependencies": {
+    "puppeteer": "^25.17.0",
+    "three": "^0.187.0"
+  }
+}
