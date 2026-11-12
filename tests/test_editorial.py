@@ -1811,6 +1811,117 @@ def test_corrected_transcript_reviews_every_utterance_under_the_prompt_limit(tmp
     assert "No utterance was omitted." in merged["markdown"]
 
 
+def _corrected_candidate(document):
+    candidate = copy.deepcopy(document)
+    edits = []
+    for index, segment in enumerate(candidate["segments"]):
+        after = f"{index} kept"
+        edits.append(
+            {
+                "segmentIndex": index,
+                "before": segment["text"],
+                "after": after,
+                "reason": "Pinned spelling",
+                "evidenceIds": ["catalog"],
+            }
+        )
+        segment["text"] = after
+    candidate["artifactType"] = "corrected-transcript"
+    candidate["reviewStatus"] = "ai-reviewed-unverified"
+    candidate["corrections"] = edits
+    candidate["uncertainties"] = []
+    return candidate
+
+
+def _windowed_inputs(count=24):
+    document = _long_transcript(count, "table talk " * 1400)
+    candidate = _corrected_candidate(document)
+    return worker.trim_prior_stages(
+        "corrected-transcript",
+        {
+            "raw": document,
+            "candidate": candidate,
+            "context": {"catalog": {"game": {"id": "test-game"}}},
+            "priorStages": {
+                "context": {"selection": {"title": "Context"}, "content": "x" * 200_000},
+                "correction": {
+                    "markdown": "y" * 80_000,
+                    "edits": copy.deepcopy(candidate["corrections"]),
+                    "passed": True,
+                    "evidenceIds": ["catalog"],
+                    "title": "Correction",
+                    "uncertainties": [],
+                    "decisions": [],
+                },
+            },
+        },
+    )
+
+
+def test_multi_window_review_merges_produced_edits(tmp_path, monkeypatch):
+    inputs = _windowed_inputs()
+    assert worker.render_prompt_size("corrected-transcript", inputs) > worker.PROMPT_LIMIT
+    reviews = {}
+
+    def ai(folder, stage, data, heartbeat):
+        window = data["reviewWindow"]
+        start = window["start"]
+        if stage == "correction":
+            source = data["raw"]["segments"][0]["text"]
+            return report(
+                edits=[
+                    {
+                        "segmentIndex": 0,
+                        "before": source,
+                        "after": f"{start} audited",
+                        "reason": "Repeated name",
+                        "evidenceIds": ["catalog"],
+                    }
+                ]
+            )
+        reviews[start] = reviews.get(start, 0) + 1
+        assert "empty edit list" in worker._stage_prompt(stage, data)
+        accepted = data["candidate"]["segments"][0]["text"] == f"{start} audited"
+        return report(passed=accepted, markdown="Audit the slice" if not accepted else "Consistent")
+
+    monkeypatch.setattr(worker, "agent", ai)
+    merged, transcript, history, publication = worker.paginated_review(
+        tmp_path, "corrected-transcript", inputs, lambda: None
+    )
+    assert publication == "accepted" and merged["passed"]
+    assert len(reviews) > 1
+    for index, segment in enumerate(transcript["segments"]):
+        edit = next(item for item in transcript["corrections"] if item["segmentIndex"] == index)
+        expected = f"{index} audited" if index in reviews else f"{index} kept"
+        assert segment["text"] == expected
+        assert edit["after"] == expected
+        assert edit["before"] == inputs["raw"]["segments"][index]["text"]
+    assert merged["edits"] == []
+    assert history[-1]["windows"] == len(reviews)
+    assert all(not text.startswith("Automatic fallback") for text in merged["uncertainties"])
+
+
+def test_windowed_disagreement_keeps_validated_corrections(tmp_path, monkeypatch):
+    inputs = _windowed_inputs(count=16)
+
+    def ai(folder, stage, data, heartbeat):
+        if stage == "correction":
+            return report(markdown="conservative raw fallback", edits=[])
+        return report(passed=False, markdown="conservative raw fallback")
+
+    monkeypatch.setattr(worker, "agent", ai)
+    merged, transcript, _, publication = worker.paginated_review(
+        tmp_path, "corrected-transcript", inputs, lambda: None
+    )
+    assert publication == "accepted-with-notes" and merged["passed"] is False
+    assert any("were not replaced with an empty raw transcript" in text for text in merged["uncertainties"])
+    assert len(transcript["corrections"]) == 16
+    for index, segment in enumerate(transcript["segments"]):
+        assert segment["text"] == f"{index} kept"
+        assert transcript["corrections"][index]["after"] == segment["text"]
+        assert segment["text"] != inputs["raw"]["segments"][index]["text"]
+
+
 def test_short_transcript_stays_one_review(tmp_path, monkeypatch):
     calls = []
 

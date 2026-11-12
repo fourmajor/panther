@@ -61,7 +61,7 @@ against the immutable raw text; chapter-review failures rerun the proof/revision
 actual manuscript. Each revised candidate is reviewed again. Generic stages revise their own output
 using feedback. All outputs preserve a structured decision ledger and revision history. After three
 rounds, a structurally valid working draft continues as `accepted-with-notes`, without pretending its
-review `passed`. Transcript disagreement instead preserves raw wording, with explicit uncertainty.
+review `passed`. Transcript disagreement keeps the validated candidate corrections and records the uncertainty. It does not replace that candidate with an empty raw transcript. A correction proposal that never produced edits still leaves the raw wording unchanged.
 Invalid structures, citations, or locked shot sequences cannot be accepted. They retry later when no
 valid candidate exists. Credentials, subscription limits and infrastructure failures remain real
 operational constraints, not editorial decisions. No routine ambiguity requires owner approval.
