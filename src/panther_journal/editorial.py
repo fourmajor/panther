@@ -2159,7 +2159,7 @@ def submit(game, raw_key):
 @click.option("--job-id", required=True)
 @click.option("--target", type=click.Choice(["novel", "video", "both"]), required=True)
 def recover(job_id, target):
-    """Replay failed planning from pinned inputs; preserve the original run and never spend."""
+    """Replay a failed run or failed branch from pinned inputs. Finished stages are reused."""
     click.echo(json.dumps(cloud.api(cloud.configuration(), "POST", "/editorial-jobs",
                                    json={"recovery": {"jobId": job_id, "target": target}}), indent=2))
 

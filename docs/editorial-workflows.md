@@ -267,7 +267,11 @@ reusing an expired Step Functions callback:
 panther editorial recover --job-id FAILED_JOB_ID --target video
 ```
 
-Use `novel` or `both` for the other branches. Explicit creation requests retain their
+Use `novel` or `both` for the other branches. A run that reached
+`READY_FOR_VIDEO_DISCUSSION` or `NOVEL_READY` with `novelFailed` or `videoFailed`
+is recoverable too: pass `--target novel` or `--target video` for the branch that
+failed. Finished stages are reused and the successful branch is not replayed.
+Explicit creation requests retain their
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
 execution at plan version 10. A parent stage that completed with a still-valid envelope
