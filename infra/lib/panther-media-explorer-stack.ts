@@ -44,7 +44,6 @@ import { PlaybackProcessing } from "./playback-processing";
 import { BrowserRecordings } from "./browser-recordings";
 import { WorkflowWorkshop } from "./workflow-workshop";
 import { PipelineWatch } from "./pipeline-watch";
-import { Notifications } from "./notifications";
 
 import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
 
@@ -479,7 +478,8 @@ export class PantherMediaExplorerStack extends Stack {
     }
     const gameCatalog = new GameCatalog(this, "GameCatalog", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, browseTable:assetBrowse.table });
     CharacterAppearances.grantProducer(mediaApiFunction,assetBrowse.table,gameCatalog.table);
-    const notifications = new Notifications(this, "Notifications", { api: mediaApi, authorizer });
+    const workshop = new WorkflowWorkshop(this,"WorkflowWorkshop",{api:mediaApi,authorizer});
+    const notifications = workshop.notifications;
     const modeling = new ModelProcessing(this, "ModelProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment,browseTable:assetBrowse.table,catalogTable:gameCatalog.table, executionLogs: notifications.executionLogs });
     new CharacterAppearances(this,"CharacterAppearances",{bucket:privateAssets,api:mediaApi,authorizer,
       browseTable:assetBrowse.table,catalogTable:gameCatalog.table,accessEnvironment});
@@ -493,7 +493,7 @@ export class PantherMediaExplorerStack extends Stack {
     new AssetArchive(this,"AssetArchive",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,catalogTable:gameCatalog.table,jobTables:[modeling.table,editorial.table,assetGeneration.table],accessEnvironment});
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, executionLogs: notifications.executionLogs });
     const browserRecording = new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
-    const workshop = new WorkflowWorkshop(this,"WorkflowWorkshop",{api:mediaApi,authorizer,accessEnvironment,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table},notifications});
+    workshop.bind({accessEnvironment,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table}});
     new PipelineWatch(notifications, "PipelineWatch", {
       api: mediaApi,
       authorizer,

@@ -23,7 +23,7 @@ function mediaExplorerTemplate(context = {}, notifications = false): Template {
     domainName: "panther.place",
     hostedZoneId: "Z1234567890",
   });
-  return Template.fromStack(notifications ? stack.node.findChild("Notifications") as NestedStack : stack);
+  return Template.fromStack(notifications ? stack.node.findChild("WorkflowWorkshop").node.findChild("Notifications") as NestedStack : stack);
 }
 
 test("notifications retain per-account history with authenticated bounded reads and owned event processing",()=>{
@@ -883,7 +883,7 @@ test("session pipeline logs executions and alarms when a worker or callback stal
     assert.equal(logging.Level, "ALL");
     assert.equal(logging.IncludeExecutionData, false);
   }
-  const watch = Template.fromStack(stack.node.findChild("Notifications") as NestedStack);
+  const watch = Template.fromStack(stack.node.findChild("WorkflowWorkshop").node.findChild("Notifications") as NestedStack);
   for (const route of ["POST /workflows/heartbeat", "POST /editorial-jobs/fail", "POST /model-jobs/fail"]) {
     watch.hasResourceProperties("AWS::ApiGatewayV2::Route", {RouteKey: route, AuthorizationType: "JWT"});
   }

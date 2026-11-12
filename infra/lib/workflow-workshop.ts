@@ -12,10 +12,19 @@ import {Notifications} from "./notifications";
 
 /** Read-time views never enumerate source storage or invoke a worker. */
 export class WorkflowWorkshop extends Construct {
-  readonly index: dynamodb.Table;
-  readonly reader: lambda.Function;
-  constructor(scope:Construct,id:string,props:{api:api.HttpApi;authorizer:api.IHttpRouteAuthorizer;accessEnvironment:Record<string,string>;tables:Record<string,dynamodb.Table>;notifications:Notifications}) {
+  index!: dynamodb.Table;
+  reader!: lambda.Function;
+  /** Kept at WorkflowWorkshop/Notifications so the deployed nested stack and its History table are not replaced. */
+  readonly notifications: Notifications;
+  private readonly api: api.HttpApi;
+  private readonly authorizer: api.IHttpRouteAuthorizer;
+  constructor(scope:Construct,id:string,props:{api:api.HttpApi;authorizer:api.IHttpRouteAuthorizer}) {
     super(scope,id);
+    this.api=props.api;
+    this.authorizer=props.authorizer;
+    this.notifications=new Notifications(this,"Notifications",{api:props.api,authorizer:this.authorizer});
+  }
+  bind(props:{accessEnvironment:Record<string,string>;tables:Record<string,dynamodb.Table>}) {
     const index=this.index=new dynamodb.Table(this,"Index",{
       partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},sortKey:{name:"sk",type:dynamodb.AttributeType.STRING},
       billingMode:dynamodb.BillingMode.PAY_PER_REQUEST,encryption:dynamodb.TableEncryption.AWS_MANAGED,removalPolicy:RemovalPolicy.RETAIN,
@@ -35,9 +44,9 @@ export class WorkflowWorkshop extends Construct {
       writer.addEventSource(new sources.DynamoEventSource(table,{startingPosition:lambda.StartingPosition.TRIM_HORIZON,batchSize:10,bisectBatchOnError:true,reportBatchItemFailures:true,retryAttempts:-1}));
     }
     const view=new integrations.HttpLambdaIntegration("WorkshopView",reader);
-    props.api.addRoutes({path:"/workflows",methods:[api.HttpMethod.GET],authorizer:props.authorizer,integration:view});
-    props.api.addRoutes({path:"/workflow-progress",methods:[api.HttpMethod.POST],authorizer:props.authorizer,integration:view});
-    props.api.addRoutes({path:"/workflows/rebuild",methods:[api.HttpMethod.POST],authorizer:props.authorizer,integration:new integrations.HttpLambdaIntegration("WorkshopRebuild",writer)});
-    props.notifications.bind({environment,index});
+    this.api.addRoutes({path:"/workflows",methods:[api.HttpMethod.GET],authorizer:this.authorizer,integration:view});
+    this.api.addRoutes({path:"/workflow-progress",methods:[api.HttpMethod.POST],authorizer:this.authorizer,integration:view});
+    this.api.addRoutes({path:"/workflows/rebuild",methods:[api.HttpMethod.POST],authorizer:this.authorizer,integration:new integrations.HttpLambdaIntegration("WorkshopRebuild",writer)});
+    this.notifications.bind({environment,index});
   }
 }
