@@ -543,3 +543,15 @@ def test_video_recovery_reuses_stages_inherited_from_a_prior_recovery(editorial)
     assert recovered["recovery"]["reusedOutputs"]["context"]["sha256"] == kept["context"]["sha256"]
     assert recovered["recovery"]["reusedOutputs"]["novel-chapter"]["sha256"] == chapter["sha256"]
     assert "video-source-brief" not in reused
+
+
+def test_video_stages_keep_only_an_excerpt_of_earlier_sessions():
+    from panther_journal import editorial
+
+    prior = {"content": "x" * 50_000}
+    inputs = {"context": {"catalog": {}, "prior.txt": prior}, "priorStages": {}}
+    selected, notes = editorial.select_stage_inputs("video-treatment", inputs)
+    assert len(selected["context"]["prior.txt"]["content"]) == editorial.PRIOR_SESSION_VIDEO_BYTES
+    assert notes and notes[0]["action"] == "excerpted"
+    kept, _ = editorial.select_stage_inputs("novel-brief", inputs)
+    assert len(kept["context"]["prior.txt"]["content"]) == 50_000

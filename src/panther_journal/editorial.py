@@ -1251,10 +1251,34 @@ def transcript_excerpt(raw, context, prior, limit_segments=40):
     }
 
 
+# Video plans one session. Earlier sessions are continuity hints, not source footage. A full
+# prior transcript beside this session's speech overflowed Claude's window and leaked its events.
+PRIOR_SESSION_VIDEO_BYTES = 4_000
+
+
+def _excerpt_prior_sessions(context, notes):
+    if not isinstance(context, dict):
+        return
+    for key, value in context.items():
+        if key == "catalog" or not isinstance(value, dict):
+            continue
+        content = value.get("content")
+        if isinstance(content, str) and len(content.encode()) > PRIOR_SESSION_VIDEO_BYTES:
+            value["content"] = content.encode()[:PRIOR_SESSION_VIDEO_BYTES].decode("utf-8", "ignore")
+            value["excerpt"] = (
+                "Earlier-session continuity excerpt only. Do not depict its events in this session's video."
+            )
+            notes.append(
+                {"part": "context", "key": key, "action": "excerpted", "bytes": PRIOR_SESSION_VIDEO_BYTES}
+            )
+
+
 def select_stage_inputs(stage, inputs):
     """Keep the evidence a stage reviews. novel-chapter does not carry the raw transcript."""
     selected = trim_prior_stages(stage, inputs)
     notes = []
+    if stage in PLAN["video"]:
+        _excerpt_prior_sessions(selected.get("context"), notes)
     novel_after_brief = set(PLAN["novel"][PLAN["novel"].index("novel-brief") + 1:]) - {"novel-chapter"}
     if stage in novel_after_brief and isinstance(selected.get("raw"), dict):
         selected["transcriptExcerpt"] = transcript_excerpt(
