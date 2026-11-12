@@ -4,6 +4,7 @@ import * as cdk from "aws-cdk-lib";
 import { PantherAccessStack } from "../lib/panther-access-stack";
 import { PantherDomainStack } from "../lib/panther-domain-stack";
 import { PantherFoundationStack } from "../lib/panther-foundation-stack";
+import { PantherGitHubDeployStack } from "../lib/panther-github-deploy-stack";
 import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 import { PantherCostAnomaliesStack } from "../lib/panther-cost-anomalies-stack";
 import { loadIdentities } from "../lib/deployment-identities";
@@ -115,6 +116,17 @@ if (accessContext.some(Boolean) && !accessContext.every(Boolean)) {
     "administratorEmail, identityCenterInstanceArn, and identityStoreId must be provided together",
   );
 }
+
+const configuredProvider = app.node.tryGetContext("githubOidcProviderArn");
+new PantherGitHubDeployStack(app, "PantherGitHubDeploy", {
+  env: { account, region },
+  repository: "fourmajor/panther",
+  providerArn:
+    typeof configuredProvider === "string" && configuredProvider.includes(":oidc-provider/")
+      ? configuredProvider
+      : undefined,
+  description: "GitHub Actions OIDC deploy role for fourmajor/panther main",
+});
 
 if (administratorEmail && identityCenterInstanceArn && identityStoreId) {
   new PantherAccessStack(app, "PantherAccess", {

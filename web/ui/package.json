@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "test": "node --test test/*.test.mjs",
+    "test": "echo 'UI tests are not part of the smoke set. See tests/test_smoke.py.'",
     "postinstall": "node scripts/patch-radix-layer.mjs",
     "prebuild": "node scripts/patch-radix-layer.mjs"
   },

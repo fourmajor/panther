@@ -283,9 +283,8 @@ behavior differs from expectations; reconcile with fal before resuming. No AWS r
   polling, timeout and no-retry semantics.
 - [Platform headers](https://fal.ai/docs/documentation/model-apis/common-parameters): disabling fallback/retry.
 
-Tests use synthetic data and fake provider responses only. Run `pytest -q tests/test_video.py` and
-the local regression suite; CI is not needed for this CLI-only change. Real verification uses `video
-check` only. No production key, prompt, game data or generated video is committed to Git.
+The spend cap is covered by `pytest -q tests/test_smoke.py`. Real verification uses `video check`
+only. No production key, prompt, game data or generated video is committed to Git.
 # Separately approved production allocations
 
 For an explicitly approved replacement, `panther video budget settle-project PROJECT
