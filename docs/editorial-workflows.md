@@ -271,7 +271,8 @@ Use `novel` or `both` for the other branches. Explicit creation requests retain 
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
 execution at plan version 10. A parent stage that completed with a still-valid envelope
-is carried forward: the bytes, checksum, stage, and publication decision must still match.
+is carried forward, including a completed novel-chapter and completed video stages:
+the bytes, checksum, stage, and publication decision must still match.
 Dispatch marks that stage done and points at the parent's artifact. The worker does not
 run Codex for it. A failed stage, a changed checksum, or an envelope that no longer
 validates is run again. The new job records its parent, the recovery mode, and the reused

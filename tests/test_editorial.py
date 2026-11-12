@@ -1954,6 +1954,64 @@ def test_recovery_reuses_valid_stages_and_reruns_only_the_failed_one(editorial):
     assert claimed["artifacts"]["correction"]["key"] == kept["correction"]["key"]
 
 
+def test_recovery_reuses_completed_novel_chapter_and_video_stages(editorial):
+    m = editorial
+    _body, parent = submitted(m)
+    payloads = {
+        "context": {"selection": {"title": "Context"}, "evidence": {"catalog": {}}},
+        "correction": {"markdown": "Names fixed", "edits": [], "passed": True},
+        "corrected-transcript": {"transcript": {"segments": []}, "review": {"markdown": "Kept"}},
+        "novel-brief": {"markdown": "A brief.", "passed": True},
+        "novel-proof": {"markdown": "The river chapter.", "passed": True, "title": "River"},
+        "novel-chapter": {"markdown": "The finished chapter.", "passed": True, "title": "River"},
+        "video-source-brief": {"markdown": "Usable dialogue from the enrolled players.", "passed": True},
+        "video-treatment": {"markdown": "Treatment.", "passed": True},
+    }
+    kept = {stage: _done_stage(m, parent, stage, payload) for stage, payload in payloads.items()}
+    m.table.put_item(
+        Item={
+            "pk": "TASKS",
+            "sk": f"{parent['jobId']}:video-preflight",
+            "jobId": parent["jobId"],
+            "stage": "video-preflight",
+            "status": "FAILED",
+        }
+    )
+    m.internal({"operation": "fail", "jobId": parent["jobId"]})
+    recovered = unpack(
+        request(m, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "both"}})
+    )
+    assert recovered["recovery"]["mode"] == "reuse-valid-stages"
+    assert {"novel-chapter", "video-source-brief", "video-treatment"} <= set(
+        recovered["recovery"]["reusedStages"]
+    )
+    for stage in ("novel-chapter", "video-source-brief", "video-treatment"):
+        m.internal(
+            {
+                "operation": "dispatch",
+                "jobId": recovered["jobId"],
+                "stage": stage,
+                "taskToken": f"token-{stage}",
+            }
+        )
+        stored = m.read("TASKS", f"{recovered['jobId']}:{stage}")
+        assert stored["status"] == "DONE"
+        assert stored["reusedFrom"] == parent["jobId"]
+        assert stored["output"]["sha256"] == kept[stage]["sha256"]
+    m.internal(
+        {
+            "operation": "dispatch",
+            "jobId": recovered["jobId"],
+            "stage": "video-preflight",
+            "taskToken": "token-video-preflight",
+        }
+    )
+    claimed = unpack(request(m, "POST /editorial-jobs/claim", {"workflowVersion": PLAN["version"]}))
+    assert claimed["task"]["stage"] == "video-preflight"
+    assert claimed["artifacts"]["novel-chapter"]["key"] == kept["novel-chapter"]["key"]
+    assert claimed["artifacts"]["video-treatment"]["key"] == kept["video-treatment"]["key"]
+
+
 def test_plan_version_bump_mints_a_new_recovery_and_skips_the_old_run(editorial):
     m = editorial
     _, parent = submitted(m)

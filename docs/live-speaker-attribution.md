@@ -78,8 +78,12 @@ and recognition gaps block finalization rather than silently producing an incomp
 Live preview itself does not launch full-session analysis. Completed-set finalization now
 adds session-wide enrolled reconciliation before adaptation handoff. It keeps the same
 conservative identity gates (0.75 cosine / 0.15 margin); attribution coverage is not accuracy.
-An exclusive speaker needs 65% of a segment with a 25% lead and at most 10% overlapping
-speech. Whole-chunk approximate timing is never assigned. Speech/text is never rewritten.
+Turns come from exclusive diarization so overlapping speech does not erase every label.
+Each speaker's embedding is the enrollment extractor on that speaker's exclusive speech,
+not the clustering centroid. An exclusive speaker needs 65% of a segment with a 25% lead
+and at most 10% overlapping speech. Whole-chunk approximate timing is never assigned.
+Speech/text is never rewritten. If fewer than 25% of segments receive a player, finalization
+stops instead of publishing an unassigned transcript.
 
 Existing completed transcripts can be repaired explicitly, preserving the earlier versions:
 
