@@ -13,6 +13,7 @@ COPY infra/lambda ./infra/lambda
 COPY src/panther_journal/editorial-plan.json ./src/panther_journal/editorial-plan.json
 COPY web/media-explorer ./web/media-explorer
 RUN cd infra && npm run build
+# viewer.spec.cjs is the runtime model QA check, not a merge-gate test. Keep it.
 # Catch missing runtime inputs before an actual character job consumes its retries.
 RUN cd infra && npx playwright test browser-tests/viewer.spec.cjs --list
 WORKDIR /opt/panther/infra
