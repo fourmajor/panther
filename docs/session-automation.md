@@ -106,9 +106,12 @@ of previous transcript or chapter editions. Independent review receives one comp
 transcript plus a verified correction overlay, not two duplicate copies of its speech. The
 overlay is emitted only when its edits exactly reconstruct the candidate and all non-text
 speech fields are unchanged. Full corrected assets remain stored unchanged. Prompts stay below
-the observed one-Mi-character CLI transport limit. Corrected-transcript review that would exceed
-1,000,000 bytes runs in contiguous utterance windows and merges every window. Each window's
+the observed one-Mi-character CLI transport limit. Correction reviews at most 80 utterances
+per call, and both correction and corrected-transcript split a prompt that would exceed
+1,000,000 bytes. Each window is merged. Unambiguous capitalized catalog names are repaired
+in code before the model runs. Each window's
 candidate corrections are the edits for that slice; a review edit replaces the same utterance,
 and an empty edit list does not revert the slice to raw wording. An empty correction while a
-catalog name is still misspelled fails the job instead of continuing on raw speech. A prompt that still cannot fit
+catalog name is still misspelled fails the job instead of continuing on raw speech, and the
+failure names the segment, the word, and the catalog spelling. A prompt that still cannot fit
 fails once, with the measured size stored on the task, and is not retried as a subscription failure.

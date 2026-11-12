@@ -27,6 +27,48 @@ from panther_journal.editorial_contract import (
 
 # The observed CLI turn/start transport rejects prompts above 1,048,576 characters.
 PROMPT_LIMIT = 1_000_000
+# A long correction is sliced even when the bytes fit, so a late utterance is actually reviewed.
+CORRECTION_WINDOW = 80
+# Capitalized ordinary words that are not catalog names. "talent" and "Remix" are the known collisions.
+NAME_STOPLIST = frozenset(
+    {
+        "about",
+        "after",
+        "again",
+        "another",
+        "around",
+        "because",
+        "before",
+        "being",
+        "could",
+        "every",
+        "first",
+        "great",
+        "little",
+        "never",
+        "other",
+        "people",
+        "remix",
+        "right",
+        "should",
+        "something",
+        "still",
+        "talent",
+        "their",
+        "there",
+        "these",
+        "thing",
+        "think",
+        "those",
+        "through",
+        "under",
+        "where",
+        "which",
+        "while",
+        "would",
+    }
+)
+_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 
 
 class DeterministicFailure(click.ClickException):
@@ -158,7 +200,114 @@ def stage_schema(stage, inputs):
     return schema
 
 
+def _reject_fast_selection(model, tier):
+    if isinstance(tier, str) and tier.casefold() in {"priority", "fast"}:
+        raise DeterministicFailure("Codex selected a priority or Fast tier. The stage was not accepted.")
+    if isinstance(model, str) and model.casefold().endswith("-fast"):
+        raise DeterministicFailure("Codex selected a Fast model. The stage was not accepted.")
+
+
+def _checked_effort(value):
+    if not isinstance(value, str):
+        raise DeterministicFailure("Editorial reasoning effort must be a string.")
+    effort = value.strip().casefold()
+    if effort in {"fast", "priority", "none", "minimal"} or "fast" in effort or "priority" in effort:
+        raise DeterministicFailure("Editorial reasoning cannot select Fast mode or a priority tier.")
+    if effort not in _REASONING_EFFORTS:
+        raise DeterministicFailure("Editorial reasoning effort must be low, medium, high, or xhigh.")
+    return effort
+
+
+def _reasoning_effort(stage):
+    raw = os.environ.get("PANTHER_EDITORIAL_REASONING", "").strip()
+    chosen = None
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise DeterministicFailure("PANTHER_EDITORIAL_REASONING is not valid JSON.") from exc
+        if not isinstance(parsed, dict):
+            raise DeterministicFailure("PANTHER_EDITORIAL_REASONING must map stages to an effort.")
+        chosen = parsed.get(stage)
+        if chosen is None and stage in PLAN["novel"]:
+            chosen = parsed.get("novel")
+        if chosen is None and stage in PLAN["video"]:
+            chosen = parsed.get("video")
+        if chosen is None and stage in PLAN["correction"]:
+            chosen = parsed.get("correction")
+    elif raw:
+        chosen = raw
+    if chosen is None:
+        chosen = "high" if stage in {"correction", "corrected-transcript"} else "medium"
+    return _checked_effort(chosen)
+
+
+def _configured_codex_model():
+    path = Path.home() / ".codex" / "config.toml"
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r'(?m)^model\s*=\s*"([^"]+)"', text)
+    if not match:
+        match = re.search(r"(?m)^model\s*=\s*'([^']+)'", text)
+    if not match:
+        match = re.search(r"(?m)^model\s*=\s*([A-Za-z0-9_.:-]+)\s*$", text)
+    return match.group(1).strip() if match else None
+
+
+def _editorial_model():
+    override = os.environ.get("PANTHER_EDITORIAL_MODEL", "").strip()
+    model = override or _configured_codex_model()
+    source = "environment" if override else "codex-config" if model else "unspecified"
+    if model and (model.casefold() in {"fast", "priority"} or model.casefold().endswith("-fast")):
+        raise DeterministicFailure("Editorial model cannot select Fast mode or a priority tier.")
+    return model or None, source
+
+
+def _model_arguments(model, effort):
+    arguments = ["-c", f'model_reasoning_effort="{effort}"']
+    if model:
+        arguments = ["-m", model, *arguments]
+    return arguments
+
+
+def _scan_codex_event(event, depth=0):
+    model = tier = None
+    if depth > 4 or not isinstance(event, dict):
+        return model, tier
+    if isinstance(event.get("model"), str):
+        model = event["model"]
+    for key in ("service_tier", "serviceTier"):
+        if isinstance(event.get(key), str):
+            tier = event[key]
+    for value in event.values():
+        if isinstance(value, dict):
+            nested_model, nested_tier = _scan_codex_event(value, depth + 1)
+            model = nested_model or model
+            tier = nested_tier or tier
+    return model, tier
+
+
+def _observed_codex(log_path):
+    model = tier = None
+    if not log_path.is_file():
+        return model, tier
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        found_model, found_tier = _scan_codex_event(event)
+        if found_model:
+            model = found_model
+        if found_tier:
+            tier = found_tier
+    return model, tier
+
+
 def agent(folder, stage, inputs, heartbeat):
+    model, source = _editorial_model()
+    effort = _reasoning_effort(stage)
     schema = folder / "schema.json"
     contract = stage_schema(stage, inputs)
     write_json(schema, contract)
@@ -167,9 +316,19 @@ def agent(folder, stage, inputs, heartbeat):
     size = len(prompt.encode())
     if size > PROMPT_LIMIT:
         raise DeterministicFailure(limit_message(stage, inputs, size))
+    invocation = {
+        "requestedModel": model,
+        "model": model,
+        "modelSource": source,
+        "reasoningEffort": effort,
+        "fastMode": False,
+        "serviceTier": "default",
+    }
+    write_json(folder / "codex-invocation.json", invocation)
     command = [
         *local.codex_base(),
         "exec",
+        *_model_arguments(model, effort),
         "--ignore-user-config",
         "--ephemeral",
         "--skip-git-repo-check",
@@ -217,6 +376,12 @@ def agent(folder, stage, inputs, heartbeat):
     )
     if code:
         raise local.Deferred("Codex paused/failed; preserve checkpoints, no paid fallback.")
+    observed, tier = _observed_codex(folder / "agent.jsonl")
+    _reject_fast_selection(observed, tier)
+    if observed:
+        invocation["requestedModel"] = model
+        invocation["model"] = observed
+        write_json(folder / "codex-invocation.json", invocation, replace=True)
     if result.is_symlink() or result.stat().st_size > 2 * 1024**2:
         raise ValueError("Invalid stage result file")
     value = json.loads(result.read_text())
@@ -258,31 +423,138 @@ def _edit_distance(left, right):
     return previous[-1]
 
 
+def _name_match(token, canonical):
+    """Unique catalog spelling for a capitalized token. Ordinary words and ties stay untouched."""
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Z][A-Za-z'-]{4,}", token):
+        return None
+    folded = token.casefold()
+    if folded in NAME_STOPLIST or folded in canonical:
+        return None
+    choices = []
+    for name_key, spelled in canonical.items():
+        limit = 1 if min(len(folded), len(name_key)) <= 5 else 2
+        if _edit_distance(folded, name_key) <= limit:
+            choices.append(spelled)
+    unique = set(choices)
+    if len(unique) != 1:
+        return None
+    name = unique.pop()
+    return None if name == token else name
+
+
 def _catalog_misspellings(segments, catalog):
-    """Unambiguous near-misses of catalog names. Ties and exact spellings are not errors."""
+    """Unambiguous near-misses of catalog names. Ties, exact spellings, and ordinary words are not errors."""
     canonical = _catalog_name_tokens(catalog)
     if not canonical or not isinstance(segments, list):
         return []
-    exact = set(canonical)
     problems = []
     for index, segment in enumerate(segments):
         text = segment.get("text") if isinstance(segment, dict) else None
         if not isinstance(text, str):
             continue
         for match in re.finditer(r"[A-Za-z][A-Za-z'-]{4,}", text):
-            token = match.group(0)
-            folded = token.casefold()
-            if folded in exact:
-                continue
-            choices = []
-            for name_key, spelled in canonical.items():
-                limit = 1 if min(len(folded), len(name_key)) <= 5 else 2
-                distance = _edit_distance(folded, name_key)
-                if distance <= limit:
-                    choices.append(spelled)
-            if len(set(choices)) == 1:
-                problems.append({"segmentIndex": index, "token": token, "name": choices[0]})
+            name = _name_match(match.group(0), canonical)
+            if name:
+                problems.append({"segmentIndex": index, "token": match.group(0), "name": name})
     return problems
+
+
+def _deterministic_name_edits(segments, catalog):
+    """Replace each unambiguous capitalized near-miss. One edit per utterance, against the raw text."""
+    canonical = _catalog_name_tokens(catalog)
+    if not canonical or not isinstance(segments, list):
+        return []
+    edits = []
+    for index, segment in enumerate(segments):
+        text = segment.get("text") if isinstance(segment, dict) else None
+        if not isinstance(text, str):
+            continue
+        pieces, cursor, replaced = [], 0, []
+        for match in re.finditer(r"[A-Za-z][A-Za-z'-]{4,}", text):
+            name = _name_match(match.group(0), canonical)
+            pieces.append(text[cursor:match.start()])
+            pieces.append(name if name else match.group(0))
+            if name:
+                replaced.append((match.group(0), name))
+            cursor = match.end()
+        if not replaced:
+            continue
+        pieces.append(text[cursor:])
+        reason = "Catalog spelling: " + ", ".join(f"{wrong} is {right}" for wrong, right in replaced) + "."
+        edits.append(
+            {
+                "segmentIndex": index,
+                "before": text,
+                "after": "".join(pieces),
+                "reason": reason,
+                "evidenceIds": ["catalog"],
+            }
+        )
+    return edits
+
+
+def _attach_catalog_repairs(inputs):
+    """Apply deterministic repairs to the prompt text and keep the original wording on each edit."""
+    if "catalogRepairs" in inputs:
+        return inputs
+    raw = inputs.get("raw")
+    segments = raw.get("segments") if isinstance(raw, dict) else None
+    edits = _deterministic_name_edits(segments, _catalog(inputs)) if isinstance(segments, list) else []
+    if isinstance(raw, dict) and isinstance(segments, list):
+        for edit in edits:
+            raw["segments"][edit["segmentIndex"]]["text"] = edit["after"]
+    inputs["catalogRepairs"] = edits
+    return inputs
+
+
+def _source_segments(inputs):
+    """Utterances as spoken, before deterministic repairs replaced the prompt text."""
+    raw = inputs.get("raw") if isinstance(inputs, dict) else None
+    segments = raw.get("segments") if isinstance(raw, dict) else None
+    copied = copy.deepcopy(segments) if isinstance(segments, list) else []
+    for edit in inputs.get("catalogRepairs") or []:
+        index = edit.get("segmentIndex") if isinstance(edit, dict) else None
+        if type(index) is int and 0 <= index < len(copied) and isinstance(edit.get("before"), str):
+            copied[index]["text"] = edit["before"]
+    return copied
+
+
+def _publish_correction_edits(data, proposal):
+    """Store edits against immutable raw text, and keep repairs the model did not restate."""
+    repairs = {}
+    for edit in data.get("catalogRepairs") or []:
+        if isinstance(edit, dict) and type(edit.get("segmentIndex")) is int:
+            repairs[edit["segmentIndex"]] = edit
+    shown = data["raw"]["segments"]
+    published, seen = [], set()
+    for edit in proposal.get("edits") or []:
+        index = edit["segmentIndex"]
+        repair = repairs.get(index)
+        before = repair["before"] if repair else shown[index]["text"]
+        published.append({**edit, "before": before})
+        seen.add(index)
+    for index in sorted(repairs):
+        if index not in seen:
+            published.append(copy.deepcopy(repairs[index]))
+    return {**proposal, "edits": published}
+
+
+def _absolute_segment(inputs, index):
+    window = inputs.get("reviewWindow") if isinstance(inputs, dict) else None
+    start = window.get("start") if isinstance(window, dict) else 0
+    return index + start if type(start) is int else index
+
+
+def _name_error_message(inputs, problems):
+    shown = problems[:30]
+    parts = [
+        f"segment {_absolute_segment(inputs, item['segmentIndex'])} "
+        f"word {item['token']!r} should be {item['name']!r}"
+        for item in shown
+    ]
+    extra = len(problems) - len(shown)
+    suffix = f"; {extra} more" if extra else ""
+    return "Catalog-name errors remain: " + "; ".join(parts) + suffix
 
 
 def _catalog(inputs):
@@ -297,7 +569,7 @@ def _spoken_segments(stage, inputs, report):
     raw = inputs.get("raw") if isinstance(inputs, dict) else None
     raw_segments = raw.get("segments") if isinstance(raw, dict) else None
     if stage == "correction":
-        segments = copy.deepcopy(raw_segments) if isinstance(raw_segments, list) else []
+        segments = _source_segments(inputs)
         for edit in (report or {}).get("edits") or []:
             index = edit.get("segmentIndex") if isinstance(edit, dict) else None
             if (
@@ -324,6 +596,8 @@ def _remaining_name_errors(stage, inputs, report):
 def autonomous_stage(folder, stage, inputs, heartbeat):
     """Bounded editorial revisions; deterministic guards remain non-negotiable."""
     inputs = copy.deepcopy(inputs)
+    if stage == "correction":
+        inputs = _attach_catalog_repairs(inputs)
     history = []
     calls = 0
     report = None
@@ -343,6 +617,9 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
             history.append({"stage": role, "validationError": str(exc)[:2000]})
             raise
         entry = {"stage": role, "result": copy.deepcopy(value)}
+        invocation = attempt / "codex-invocation.json"
+        if invocation.is_file():
+            entry["codex"] = json.loads(invocation.read_text())
         history.append(entry)
         try:
             jsonschema.validate(value, stage_schema(role, data))
@@ -367,6 +644,8 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                         raise ValueError("Source fact must cite an existing source-local utterance")
             if role == "correction":
                 apply_corrections(data["raw"], value, evidence)
+                value = _publish_correction_edits(data, value)
+                entry["result"] = copy.deepcopy(value)
             if role in {"video-shot-list", "video-storyboards"}:
                 storyboard(value["shots"])
             if role == "video-storyboards":
@@ -406,11 +685,9 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 )
                 inputs["candidate"] = candidate
             report = call(stage, inputs)
-            if _remaining_name_errors(stage, inputs, report):
-                raise ValueError(
-                    "Clear catalog-name errors remain and this round returned no correction. "
-                    "Refusing the transcript because audio is absent fails this round."
-                )
+            problems = _remaining_name_errors(stage, inputs, report)
+            if problems:
+                raise ValueError(_name_error_message(inputs, problems))
             valid = (report, copy.deepcopy(candidate))
             if report["passed"]:
                 return report, candidate, history, "accepted"
@@ -424,18 +701,35 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 "instruction": "Repair the invalid output; do not bypass the guard.",
             }
 
+    repairs = inputs.get("catalogRepairs") or []
+    if stage == "correction" and valid is None and repairs:
+        valid = ({"edits": copy.deepcopy(repairs), "passed": False}, candidate)
+    checked = valid[0] if valid is not None else {"edits": repairs}
+    problems = _remaining_name_errors(stage, inputs, checked)
     if stage == "correction" and valid is not None and valid[0].get("edits"):
-        if _remaining_name_errors(stage, inputs, valid[0]):
+        if problems:
             raise DeterministicFailure(
-                "Correction ended with catalog names still misspelled. "
-                "The job stops here so novel and video are not written from the raw transcript."
+                _name_error_message(inputs, problems)
+                + " The job stops here so novel and video are not written from the raw transcript."
             )
-        report, _ = valid
-        return report, candidate, history, "accepted" if report["passed"] else "accepted-with-notes"
-    if _remaining_name_errors(stage, inputs, None):
+        report = valid[0]
+        if not report.get("markdown"):
+            report = {
+                "passed": False,
+                "title": "Catalog names repaired",
+                "markdown": "Deterministic catalog-name repairs were kept.",
+                "evidenceIds": ["catalog"],
+                "uncertainties": ["Deterministic catalog-name repairs were kept."],
+                "selectedKeys": [],
+                "shots": [],
+                "edits": report["edits"],
+                "decisions": [],
+            }
+        return report, candidate, history, "accepted" if report.get("passed") else "accepted-with-notes"
+    if problems:
         raise DeterministicFailure(
-            "Correction ended with catalog names still misspelled and no applied edits. "
-            "The job stops here so novel and video are not written from the raw transcript."
+            _name_error_message(inputs, problems)
+            + " The job stops here so novel and video are not written from the raw transcript."
         )
     if stage == "corrected-transcript" and _candidate_keeps_speech(inputs.get("raw"), candidate):
         # The correction stage already validated these edits. A window that does not
@@ -871,7 +1165,8 @@ def _stage_prompt(stage, inputs):
         "is not in the utterance. A wholesale refusal to edit, including because audio is absent, fails the round. "
         "For adaptations, choose a coherent interpretation "
         "and disclose inventions separately. When revisionFeedback is supplied, actually revise the deliverable, "
-        "not just its pass flag. Return the COMPLETE replacement, including ALL edits against original raw segments. "
+        "not just its pass flag. Return the COMPLETE replacement. Each edit's before must equal the utterance "
+        "text in this input, including a catalog name already repaired there. "
         + _window_note(inputs)
         + "A bounded revision loop follows rejection. An imperfect working draft may proceed with explicit notes, "
         "but do not claim that an unresolved quality failure passed review.\n"
@@ -980,6 +1275,15 @@ def _window_inputs(inputs, start, end):
             ],
         }
         window["priorStages"] = prior
+    repairs = window.get("catalogRepairs")
+    if isinstance(repairs, list):
+        window["catalogRepairs"] = [
+            {**edit, "segmentIndex": edit["segmentIndex"] - start}
+            for edit in repairs
+            if isinstance(edit, dict)
+            and type(edit.get("segmentIndex")) is int
+            and start <= edit["segmentIndex"] < end
+        ]
     window["reviewWindow"] = {"start": start, "end": end, "total": len(inputs["raw"]["segments"])}
     return window
 
@@ -1001,6 +1305,8 @@ def _excerpt_context(inputs, limit):
 
 def _fitting_end(stage, inputs, start):
     total = len(inputs["raw"]["segments"])
+    if stage == "correction":
+        total = min(total, start + CORRECTION_WINDOW)
 
     def fits(end, excerpt=None):
         window = _window_inputs(inputs, start, end)
@@ -1057,10 +1363,18 @@ def _window_edits(report, start, end):
 
 
 def paginated_review(folder, stage, inputs, heartbeat):
-    """Review every utterance. Split only when one prompt cannot carry the whole transcript."""
-    if render_prompt_size(stage, inputs) <= PROMPT_LIMIT:
-        return autonomous_stage(folder, stage, inputs, heartbeat)
+    """Review every utterance. Split when one prompt cannot carry the transcript.
+
+    Correction also splits after a fixed number of utterances so a late line is edited,
+    not only when the byte limit is already exceeded.
+    """
+    if stage == "correction":
+        inputs = _attach_catalog_repairs(copy.deepcopy(inputs))
     segments = (inputs.get("raw") or {}).get("segments")
+    count = len(segments) if isinstance(segments, list) else 0
+    covers_every_line = stage != "correction" or count <= CORRECTION_WINDOW
+    if render_prompt_size(stage, inputs) <= PROMPT_LIMIT and covers_every_line:
+        return autonomous_stage(folder, stage, inputs, heartbeat)
     if not isinstance(segments, list) or not segments:
         raise DeterministicFailure(f"{stage} has no transcript utterances to review.")
     total = len(segments)
@@ -1082,6 +1396,13 @@ def paginated_review(folder, stage, inputs, heartbeat):
         report, candidate, history, publication = autonomous_stage(
             window_folder, stage, window, heartbeat
         )
+        if stage == "correction":
+            new_edits.extend(_window_edits(report, start, end))
+            reports.append(report)
+            histories.extend(history)
+            publications.append(publication)
+            start = end
+            continue
         window_segments = candidate.get("segments") if isinstance(candidate, dict) else None
         expected = end - start
         got = len(window_segments) if isinstance(window_segments, list) else 0
@@ -1102,6 +1423,29 @@ def paginated_review(folder, stage, inputs, heartbeat):
         histories.extend(history)
         publications.append(publication)
         start = end
+    publication = (
+        "accepted"
+        if publications and all(item == "accepted" for item in publications)
+        else "accepted-with-notes"
+    )
+    histories.append({"stage": stage, "windows": len(reports), "segments": total})
+    if stage == "correction":
+        passed = all(report.get("passed") for report in reports)
+        note = f"Corrected all {total} utterances in {len(reports)} windows. No utterance was omitted."
+        merged = {
+            "passed": passed,
+            "title": "Transcript correction",
+            "markdown": note,
+            "evidenceIds": sorted(
+                {item for report in reports for item in report.get("evidenceIds", [])} or {"catalog"}
+            ),
+            "uncertainties": [note, *[item for report in reports for item in report.get("uncertainties", [])]][:40],
+            "decisions": [item for report in reports for item in report.get("decisions", [])][:40],
+            "selectedKeys": [],
+            "shots": [],
+            "edits": new_edits,
+        }
+        return merged, None, histories, publication
     if len(merged_segments) != total:
         raise DeterministicFailure(f"{stage} reviewed {len(merged_segments)} of {total} utterances.")
     base = inputs.get("candidate") if isinstance(inputs.get("candidate"), dict) else inputs["raw"]
@@ -1130,12 +1474,6 @@ def paginated_review(folder, stage, inputs, heartbeat):
         "shots": [],
         "edits": new_edits,
     }
-    histories.append({"stage": stage, "windows": len(reports), "segments": total})
-    publication = (
-        "accepted"
-        if publications and all(item == "accepted" for item in publications)
-        else "accepted-with-notes"
-    )
     return merged, transcript, histories, publication
 
 
@@ -1342,7 +1680,7 @@ def process(config, root, claim):
         if stage == "video-source-brief":
             inputs["sourceTranscripts"] = transcript_context(raw_documents, raw_references)
         inputs = trim_prior_stages(stage, inputs)
-        if stage == "corrected-transcript":
+        if stage in {"correction", "corrected-transcript"}:
             report, candidate, history, publication = paginated_review(folder, stage, inputs, heartbeat)
         else:
             report, candidate, history, publication = autonomous_stage(folder, stage, inputs, heartbeat)
@@ -1412,6 +1750,10 @@ def process(config, root, claim):
     )
     kind = stage
     sources.extend(ref["key"] for name, ref in claim["artifacts"].items() if name in needed)
+    invocations = [
+        json.loads(path.read_text())
+        for path in sorted(folder.rglob("codex-invocation.json"))
+    ]
     envelope = {
         "schemaVersion": 1,
         "entityType": "EditorialArtifact",
@@ -1435,6 +1777,9 @@ def process(config, root, claim):
         "rawReferences": raw_references,
         "creation": job.get("creation"),
         "engine": "codex-cli-chatgpt",
+        "model": (invocations[-1].get("model") if invocations else None),
+        "reasoningEffort": (invocations[-1].get("reasoningEffort") if invocations else None),
+        "codexInvocations": invocations,
         "reviewStatus": "ai-reviewed-unverified",
         "payload": payload,
     }

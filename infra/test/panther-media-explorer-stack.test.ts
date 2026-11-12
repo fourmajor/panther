@@ -402,7 +402,7 @@ test("editorial workflow has separate review stages, parallel adaptations, and n
   template.hasResourceProperties("AWS::Lambda::Function", {
     Handler: "editorial_jobs.handler", Environment: { Variables: Match.objectLike({
       CATALOG_READERS: "example-operator,example-editor,example-member",
-      EDITORIAL_PLAN: Match.serializedJson(Match.objectLike({version:8})),
+      EDITORIAL_PLAN: Match.serializedJson(Match.objectLike({version:9})),
     }) },
   });
   const policies = JSON.stringify(Object.entries(template.findResources("AWS::IAM::Policy"))

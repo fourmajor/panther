@@ -634,7 +634,7 @@ def test_misspelled_catalog_names_become_corrections(tmp_path, monkeypatch):
     assert all(segment["speakerLabel"].startswith("SPEAKER_") for segment in corrected["segments"])
 
 
-def test_wholesale_name_refusal_fails_the_round_and_blocks_raw_publication(tmp_path, monkeypatch):
+def test_wholesale_name_refusal_keeps_deterministic_repairs(tmp_path, monkeypatch):
     document, catalog = _catalog_name_transcript()
 
     def ai(folder, stage, data, heartbeat):
@@ -645,13 +645,241 @@ def test_wholesale_name_refusal_fails_the_round_and_blocks_raw_publication(tmp_p
         )
 
     monkeypatch.setattr(worker, "agent", ai)
-    with pytest.raises(worker.DeterministicFailure, match="no applied edits"):
-        worker.autonomous_stage(
-            tmp_path,
-            "correction",
-            {"raw": document, "context": {"catalog": catalog}, "priorStages": {}},
-            lambda: None,
+    result, candidate, _, status = worker.autonomous_stage(
+        tmp_path,
+        "correction",
+        {"raw": document, "context": {"catalog": catalog}, "priorStages": {}},
+        lambda: None,
+    )
+    assert status == "accepted-with-notes" and result["passed"] is False
+    corrected = apply_corrections(document, result, {"catalog"})
+    spoken = " ".join(segment["text"] for segment in corrected["segments"])
+    assert "Endrik" not in spoken and "Remick" not in spoken and "Damien" not in spoken
+    assert "Endrin" in spoken and "Remic" in spoken and "Damian" in spoken
+    assert candidate is None
+
+
+def _session_name_fixture():
+    """The misspellings from the 2,642-utterance correction, including the false positives."""
+    spoken = {
+        20: "We have known gusses.",
+        276: "The talent arrived.",
+        428: "Andrick waited.",
+        1528: "Giano called.",
+        1630: "Hendrik answered.",
+        1702: "Gianna left.",
+        2036: "Remix started.",
+        2049: "Remick warned.",
+        2259: "Damien stood.",
+        2293: "Giano and Gianna met.",
+        2448: "Andrick and Hendrik stood.",
+        2450: "Remick saw Remix.",
+        2617: "Gianna waved.",
+    }
+    document = {
+        "entityType": "PlayerTranscript",
+        "artifactType": "raw-transcript",
+        "gameId": "test-game",
+        "sessionId": "test-session",
+        "recordingId": "recording-" + "c" * 32,
+        "segments": [
+            {
+                "start": index,
+                "end": index + 1,
+                "playerId": None,
+                "speakerLabel": "SPEAKER_00",
+                "text": spoken.get(index, "Okay."),
+            }
+            for index in range(2618)
+        ],
+    }
+    catalog = {
+        "characters": [
+            {"name": "Endrik"},
+            {"name": "Gianno"},
+            {"name": "Remic"},
+            {"name": "Damian"},
+            {"name": "Jalento"},
+        ]
+    }
+    return document, catalog
+
+
+def test_catalog_repairs_fix_capitalized_names_and_ignore_ordinary_words(tmp_path, monkeypatch):
+    document, catalog = _session_name_fixture()
+    problems = worker._catalog_misspellings(document["segments"], catalog)
+    flagged = {item["token"] for item in problems}
+    assert {"Andrick", "Hendrik", "Giano", "Gianna", "Remick", "Damien"} <= flagged
+    assert "talent" not in flagged and "Remix" not in flagged
+    monkeypatch.setattr(worker, "agent", lambda *args: report(passed=True, edits=[]))
+    result, _, _, status = worker.autonomous_stage(
+        tmp_path,
+        "correction",
+        {"raw": document, "context": {"catalog": catalog}, "priorStages": {}},
+        lambda: None,
+    )
+    assert status == "accepted"
+    corrected = apply_corrections(document, result, {"catalog"})
+    text = {index: segment["text"] for index, segment in enumerate(corrected["segments"])}
+    assert text[428] == "Endrik waited."
+    assert text[1630] == "Endrik answered."
+    assert text[2448] == "Endrik and Endrik stood."
+    assert text[1528] == "Gianno called."
+    assert text[1702] == "Gianno left."
+    assert text[2293] == "Gianno and Gianno met."
+    assert text[2617] == "Gianno waved."
+    assert text[2049] == "Remic warned."
+    assert text[2259] == "Damian stood."
+    assert text[2450] == "Remic saw Remix."
+    assert text[276] == "The talent arrived."
+    assert text[2036] == "Remix started."
+    assert text[20] == "We have known gusses."
+    assert not worker._catalog_misspellings(corrected["segments"], catalog)
+
+
+def test_name_guard_feedback_names_the_segment_word_and_target(tmp_path, monkeypatch):
+    document = {
+        "entityType": "PlayerTranscript",
+        "artifactType": "raw-transcript",
+        "gameId": "test-game",
+        "sessionId": "test-session",
+        "recordingId": "recording-" + "d" * 32,
+        "segments": [{"start": 428, "end": 429, "playerId": None, "text": "Andrick waited."}],
+    }
+    catalog = {"characters": [{"name": "Endrik"}]}
+    seen = []
+
+    def ai(folder, stage, data, heartbeat):
+        feedback = data.get("revisionFeedback")
+        if feedback:
+            seen.append(feedback["validationError"])
+            return report(passed=True, edits=[])
+        shown = data["raw"]["segments"][0]["text"]
+        return report(
+            passed=True,
+            edits=[
+                {
+                    "segmentIndex": 0,
+                    "before": shown,
+                    "after": "Andrick waited.",
+                    "reason": "Restore the recognizer text",
+                    "evidenceIds": ["catalog"],
+                }
+            ],
         )
+
+    monkeypatch.setattr(worker, "agent", ai)
+    result, _, _, status = worker.autonomous_stage(
+        tmp_path,
+        "correction",
+        {"raw": document, "context": {"catalog": catalog}, "priorStages": {}},
+        lambda: None,
+    )
+    assert seen and "segment 0" in seen[0] and "Andrick" in seen[0] and "Endrik" in seen[0]
+    assert "Catalog-name errors remain" in seen[0]
+    assert status == "accepted"
+    assert result["edits"][0]["after"] == "Endrik waited."
+
+
+def test_windowed_correction_edits_late_segments(tmp_path, monkeypatch):
+    count = worker.CORRECTION_WINDOW + 5
+    document = {
+        "entityType": "PlayerTranscript",
+        "artifactType": "raw-transcript",
+        "gameId": "test-game",
+        "sessionId": "test-session",
+        "recordingId": "recording-" + "e" * 32,
+        "segments": [
+            {"start": index, "end": index + 1, "playerId": None, "text": f"Line {index} stays."}
+            for index in range(count)
+        ],
+    }
+    document["segments"][-1]["text"] = "Andrick waited."
+    starts = []
+
+    def ai(folder, stage, data, heartbeat):
+        window = data["reviewWindow"]
+        starts.append(window["start"])
+        source = data["raw"]["segments"][0]["text"]
+        return report(
+            passed=True,
+            edits=[
+                {
+                    "segmentIndex": 0,
+                    "before": source,
+                    "after": f"edited {window['start']}",
+                    "reason": "Slice marker",
+                    "evidenceIds": ["catalog"],
+                }
+            ],
+        )
+
+    monkeypatch.setattr(worker, "agent", ai)
+    merged, _, history, publication = worker.paginated_review(
+        tmp_path,
+        "correction",
+        {"raw": document, "context": {"catalog": {"characters": [{"name": "Endrik"}]}}, "priorStages": {}},
+        lambda: None,
+    )
+    assert publication == "accepted"
+    assert any(start > 0 for start in starts)
+    edited = {edit["segmentIndex"]: edit["after"] for edit in merged["edits"]}
+    assert edited[0] == "edited 0"
+    late = next(start for start in starts if start > 0)
+    assert edited[late] == f"edited {late}"
+    assert edited[count - 1] == "Endrik waited."
+    assert history[-1]["windows"] == len(set(starts))
+    assert history[-1]["segments"] == count
+
+
+def test_editorial_codex_sets_model_and_reasoning(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHER_EDITORIAL_MODEL", "gpt-5.4")
+    monkeypatch.delenv("PANTHER_EDITORIAL_REASONING", raising=False)
+    captured = []
+
+    def run(command, **kwargs):
+        captured.append(command)
+        result = Path(command[command.index("--output-last-message") + 1])
+        result.write_text(json.dumps(report()))
+        kwargs["log"].write_text(json.dumps({"type": "turn.completed", "model": "gpt-5.4"}) + "\n")
+        return 0
+
+    monkeypatch.setattr(worker.local, "run_process", run)
+    monkeypatch.setattr(worker.local, "codex_base", lambda: ["codex"])
+    correction = tmp_path / "correction"
+    novel = tmp_path / "novel"
+    correction.mkdir()
+    novel.mkdir()
+    inputs = {"raw": raw(), "context": {"catalog": {}}, "priorStages": {}}
+    worker.agent(correction, "correction", inputs, lambda: None)
+    worker.agent(novel, "novel-draft", inputs, lambda: None)
+    assert captured[0][captured[0].index("-m") + 1] == "gpt-5.4"
+    assert 'model_reasoning_effort="high"' in captured[0]
+    assert 'model_reasoning_effort="medium"' in captured[1]
+    assert "--ignore-user-config" in captured[0]
+    for command in captured:
+        text = " ".join(command).casefold()
+        assert "fast" not in text and "priority" not in text
+    recorded = json.loads((correction / "codex-invocation.json").read_text())
+    assert recorded["model"] == "gpt-5.4" and recorded["reasoningEffort"] == "high"
+    assert recorded["fastMode"] is False and recorded["serviceTier"] == "default"
+    monkeypatch.delenv("PANTHER_EDITORIAL_MODEL")
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "config.toml").write_text(
+        'model = "gpt-5.4"\nmodel_reasoning_effort = "low"\nservice_tier = "priority"\n'
+    )
+    monkeypatch.setattr(worker.Path, "home", lambda: home)
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    worker.agent(configured, "corrected-transcript", inputs, lambda: None)
+    command = captured[-1]
+    assert command[command.index("-m") + 1] == "gpt-5.4"
+    assert 'model_reasoning_effort="high"' in command
+    assert "priority" not in " ".join(command).casefold()
+    monkeypatch.setenv("PANTHER_EDITORIAL_REASONING", "fast")
+    with pytest.raises(worker.DeterministicFailure, match="Fast"):
+        worker.agent(tmp_path / "refused", "correction", inputs, lambda: None)
 
 
 def test_invalid_ai_edits_cannot_escape_guards(tmp_path, monkeypatch):
