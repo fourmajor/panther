@@ -151,12 +151,13 @@ class SpeakerWorker:
             raise
 
 
-def label_lines(lines, result, profiles, offset):
-    turns = [audio.SpeakerTurn(start=float(t['start']) + offset,
-                              end=float(t['end']) + offset, speaker=t['speaker'])
-             for t in result['turns']]
+def map_speakers(result, profiles):
+    """Match enrolled voices. Unavailable or empty embeddings stay unknown for that label only."""
     mapping, unavailable = {}, set()
-    for label, embedding in result['embeddings'].items():
+    embeddings = result.get('embeddings')
+    if not isinstance(embeddings, dict):
+        raise click.ClickException('Session-wide speaker embeddings are missing; rerun the separate speaker pass')
+    for label, embedding in embeddings.items():
         evidence = result.get('unavailableEmbeddings', {}).get(label, {})
         if embedding is None and evidence.get('reason') == 'non-finite-runtime-output':
             values = evidence.get('values')
@@ -176,6 +177,14 @@ def label_lines(lines, result, profiles, offset):
             unavailable.add(label)
         else:
             mapping[label] = match(candidate, profiles)
+    return mapping, unavailable
+
+
+def label_lines(lines, result, profiles, offset):
+    turns = [audio.SpeakerTurn(start=float(t['start']) + offset,
+                              end=float(t['end']) + offset, speaker=t['speaker'])
+             for t in result['turns']]
+    mapping, unavailable = map_speakers(result, profiles)
     labeled = audio.attributed_lines(lines, turns, mapping)
     for line in labeled:
         line['attribution'] = 'provisional-enrolled-voice' if line['playerId'] else 'unassigned'

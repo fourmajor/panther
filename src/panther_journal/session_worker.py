@@ -45,9 +45,11 @@ def save_transcript(destination, document):
         write_json(json_file, document)
     elif json_file.is_symlink() or json.loads(json_file.read_text()) != document:
         raise click.ClickException("Saved transcript changed; refusing overwrite")
-    people = {p["id"]: p["name"] for p in document["players"]}
     text = "# Transcript — unreviewed\n\nPlayer identity is separate from character voice or table chatter.\n\n"
-    text += "".join(f"[{line['start']:.2f}–{line['end']:.2f}] {people.get(line['playerId'], 'Unassigned')}: {line['text']}\n\n" for line in document["segments"])
+    text += "".join(
+        f"[{line['start']:.2f}–{line['end']:.2f}] {audio.speaker_caption(line, document['players'])}: {line['text']}\n\n"
+        for line in document["segments"]
+    )
     md = destination / f"{identity}.md"
     if md.exists():
         if md.is_symlink() or md.read_text() != text:
