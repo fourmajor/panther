@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><title>procedural recap</title>
+<style>
+html,body{margin:0;background:#000;overflow:hidden;width:1920px;height:1080px}
+#c{position:absolute;left:0;top:0;width:1920px;height:1080px;display:block}
+.o{position:absolute;left:0;width:1920px;text-align:center;color:#e9e2d2;pointer-events:none;opacity:0;-webkit-font-smoothing:antialiased}
+#slug{top:196px;left:132px;width:auto;text-align:left;font:500 17px/1 "Optima","Gill Sans",sans-serif;letter-spacing:.42em;text-transform:uppercase;color:#d8cdb6;padding-bottom:14px;border-bottom:1px solid rgba(208,160,96,.55);text-shadow:0 1px 8px rgba(0,0,0,.8)}
+#spk{top:966px;font:500 17px/1 "Optima","Gill Sans",sans-serif;letter-spacing:.5em;text-transform:uppercase;color:#c79a5e}
+#cap{top:996px;font:italic 400 35px/1.15 "Hoefler Text","Baskerville","Georgia",serif;color:#ece6d8;letter-spacing:.01em}
+#title{top:392px}
+#title .t{font:400 124px/1 "Didot","Bodoni 72","Hoefler Text",serif;letter-spacing:.2em;margin-left:.2em;color:#efe6d2;text-shadow:0 0 44px rgba(255,150,70,.33),0 2px 30px rgba(0,0,0,.9)}
+#title .r{width:420px;height:1px;margin:38px auto 30px;background:linear-gradient(90deg,transparent,#c9995a,transparent)}
+#title .s{font:500 19px/1 "Optima","Gill Sans",sans-serif;letter-spacing:.5em;text-transform:uppercase;color:#cdbf9f;margin-left:.5em;text-shadow:0 1px 12px rgba(0,0,0,.9)}
+#end{top:330px}
+#end .t{font:400 92px/1 "Didot","Bodoni 72","Hoefler Text",serif;letter-spacing:.22em;margin-left:.22em;color:#efe6d2;text-shadow:0 2px 40px rgba(0,0,0,.95)}
+#end .q{font:italic 400 34px/1.3 "Hoefler Text","Baskerville",serif;color:#e4dcc8;margin-top:36px;text-shadow:0 1px 16px rgba(0,0,0,.95)}
+#end .s{font:500 16px/1.9 "Optima","Gill Sans",sans-serif;letter-spacing:.46em;text-transform:uppercase;color:#d9cba6;margin-top:20px;margin-left:.46em;text-shadow:0 1px 12px rgba(0,0,0,.95)}
+</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<div id="slug" class="o"></div>
+<div id="title" class="o"><div class="t ttl"></div><div class="r"></div><div class="s" id="sub"></div></div>
+<div id="end" class="o"><div class="t ttl"></div><div class="r" style="width:420px;height:1px;margin:34px auto 0;background:linear-gradient(90deg,transparent,#c9995a,transparent)"></div><div class="q" id="endq"></div><div class="s" id="credit" style="white-space:pre-line"></div></div>
+<div id="spk" class="o"></div><div id="cap" class="o"></div>
+<script type="module" src="./main.js"></script>
+</body></html>
