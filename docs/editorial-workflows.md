@@ -242,8 +242,10 @@ The autonomous revision prompts also apply [OpenAI's model guidance](https://dev
 on explicit initiative and concrete verification. Panther enforces bounded loops and source guards
 in code; prompting alone is not a guarantee of correctness.
 Shell, apps, web, multi-agent and image tools are disabled when Codex is the selected backend.
-Trusted Python performs downloads, validation and uploads. The default backend is Claude Code on
-this Mac (`claude -p`), after `claude` has been signed in for the same user. `grok` calls the xAI
+Trusted Python performs downloads, validation and uploads. The default backend is the Claude Code
+CLI on this Mac (`claude -p`), using the Claude subscription login (`claude auth status` reports
+`authMethod` `claude.ai`). An Anthropic API key is not read and must not override that login.
+`grok` calls the xAI
 API with `grok-4.7`; the key is `XAI_API_KEY` or the OS keychain service `panther-xai`, account
 `api-key`, and it is never logged. Codex remains available with `PANTHER_EDITORIAL_BACKEND=codex`
 and its ChatGPT login. No backend may use a Fast model or a priority tier. There is no automatic
@@ -373,8 +375,12 @@ now takes an exclusive lock on `~/.local/state/panther/cli-refresh.lock` and rea
 again inside that lock before refreshing. Recovery from a token that was already invalidated is
 `panther login`. There is no API-key fallback for this worker.
 
-Inference defaults to Claude Code on this Mac. Sign in once with `claude` as the same user the
-LaunchAgent runs as. `panther editorial worker` refuses to start when `claude` is not on `PATH`.
+Inference defaults to the Claude Code CLI already signed in with the Claude subscription on
+this Mac. The installer resolves `claude` under the LaunchAgent PATH
+(`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`) and records that absolute
+path as `PANTHER_CLAUDE`. A binary that exists only on a shell PATH is not accepted. The worker
+runs `claude -p` with that binary and refuses to start unless `claude auth status` reports
+`authMethod` `claude.ai`. `ANTHROPIC_API_KEY` is not read and is not put in the plist.
 Select Codex with `PANTHER_EDITORIAL_BACKEND=codex`; that path still requires `codex login status`
 to report `Logged in using ChatGPT`. Select xAI with `PANTHER_EDITORIAL_BACKEND=grok` and put the
 key in `XAI_API_KEY` or the keychain, not in the plist. A replacement machine needs a new

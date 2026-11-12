@@ -3,6 +3,7 @@ import importlib
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,15 @@ from panther_journal.editorial_contract import (
 )
 from panther_journal.capture_audit import audit, packet_gaps
 from test_model_jobs import broker, put, request, unpack  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def claude_subscription_binary(tmp_path, monkeypatch):
+    """Stage runs resolve an absolute CLI. Tests never invoke the real subscription login."""
+    binary = tmp_path / ".claude-stub"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PANTHER_CLAUDE", str(binary))
 
 
 @pytest.fixture
@@ -894,10 +904,18 @@ def test_claude_is_the_default_and_grok_records_cache_tokens(tmp_path, monkeypat
     monkeypatch.delenv("PANTHER_EDITORIAL_BACKEND", raising=False)
     monkeypatch.delenv("PANTHER_EDITORIAL_MODEL", raising=False)
     monkeypatch.delenv("PANTHER_EDITORIAL_REASONING", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    binary = tmp_path / "bin" / "claude"
+    binary.parent.mkdir()
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PANTHER_CLAUDE", str(binary))
     captured = []
+    envs = []
 
     def run(command, **kwargs):
         captured.append(command)
+        envs.append(kwargs.get("env") or {})
         kwargs["log"].write_text(json.dumps({
             "type": "result",
             "result": json.dumps(report()),
@@ -911,8 +929,10 @@ def test_claude_is_the_default_and_grok_records_cache_tokens(tmp_path, monkeypat
     folder.mkdir()
     inputs = {"raw": raw(), "context": {"catalog": {"characters": [{"name": "Endrik"}]}}, "priorStages": {}}
     worker.agent(folder, "novel-draft", inputs, lambda: None)
-    assert captured[0][0].endswith("claude") or captured[0][0] == "claude"
+    assert captured[0][0] == str(binary)
+    assert captured[0][1] == "-p"
     assert "--output-format" in captured[0] and "json" in captured[0]
+    assert "ANTHROPIC_API_KEY" not in envs[0]
     assert "claude-sonnet-4-6" in captured[0]
     assert "-fast" not in " ".join(captured[0])
     recorded = json.loads((folder / "inference-invocation.json").read_text())
@@ -2805,4 +2825,51 @@ def test_editorial_launch_agent_is_one_resident_process():
     assert definition["KeepAlive"] is True
     assert "StartInterval" not in definition
     assert definition["ThrottleInterval"] == 30
-    assert not any("AWS" in key or "CODEX" in key for key in definition["EnvironmentVariables"])
+    assert definition["EnvironmentVariables"]["PATH"] == install["LAUNCHD_PATH"]
+    assert "PANTHER_CLAUDE" not in definition["EnvironmentVariables"]
+    assert not any("AWS" in key or "CODEX" in key or "API_KEY" in key for key in definition["EnvironmentVariables"])
+
+
+def test_installer_records_the_launchd_claude_path(tmp_path):
+    import runpy
+
+    install = runpy.run_path(str(Path(__file__).parents[1] / "ops/editorial-worker/install.py"))
+    binary = tmp_path / "opt" / "claude"
+    binary.parent.mkdir()
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    found = install["claude_executable"](str(binary.parent))
+    assert found == str(binary)
+    with pytest.raises(SystemExit, match="LaunchAgent PATH"):
+        install["claude_executable"]("/usr/bin:/bin")
+    definition = install["service_definition"](Path("/release"), Path("/state"), Path("/home/example"))
+    install["attach_claude"](definition, found)
+    assert definition["EnvironmentVariables"]["PANTHER_CLAUDE"] == found
+    assert definition["EnvironmentVariables"]["PATH"] == install["LAUNCHD_PATH"]
+    definition["EnvironmentVariables"]["ANTHROPIC_API_KEY"] = "sk-test"
+    with pytest.raises(SystemExit, match="API key"):
+        install["attach_claude"](definition, found)
+
+
+def test_claude_worker_requires_the_subscription_login(monkeypatch):
+    from panther_journal import inference
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert "ANTHROPIC_API_KEY" not in inference.subscription_environment()
+
+    def signed_in(command, **kwargs):
+        assert command == ["/opt/homebrew/bin/claude", "auth", "status"]
+        assert "ANTHROPIC_API_KEY" not in kwargs["env"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"loggedIn": True, "authMethod": "claude.ai", "email": "hidden@example.test"}),
+        )
+
+    assert inference.require_subscription("/opt/homebrew/bin/claude", signed_in) == "claude.ai"
+
+    def api_key(_command, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"loggedIn": True, "authMethod": "api_key"}))
+
+    with pytest.raises(worker.DeterministicFailure, match="subscription login") as caught:
+        inference.require_subscription("/opt/homebrew/bin/claude", api_key)
+    assert "hidden@example.test" not in str(caught.value)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import urllib.error
 import urllib.request
 
@@ -28,6 +29,15 @@ GROK_MODEL = "grok-4.7"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 KEY_SERVICE = "panther-xai"
 KEY_ACCOUNT = "api-key"
+# These switch Claude Code off the subscription login and onto API billing.
+API_OVERRIDE_NAMES = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+)
 
 
 def reject_fast(model, tier=None):
@@ -141,9 +151,55 @@ def codex_command(model, effort, schema, result, folder, image):
     return command
 
 
+def subscription_environment():
+    """The headless CLI reads the Mac subscription login. An API key must not override it."""
+    env = local.clean_environment()
+    for name in API_OVERRIDE_NAMES:
+        env.pop(name, None)
+    return env
+
+
+def claude_executable():
+    """Absolute CLI. Launchd records it in PANTHER_CLAUDE because it has no shell PATH."""
+    override = os.environ.get("PANTHER_CLAUDE", "").strip()
+    if override:
+        if not os.path.isabs(override) or not os.access(override, os.X_OK):
+            _failure("PANTHER_CLAUDE must be the absolute Claude Code executable on the LaunchAgent PATH.")
+        return override
+    found = shutil.which("claude")
+    if not found or not os.path.isabs(found):
+        _failure(
+            "Claude Code is not on PATH. The editorial installer records its absolute path for launchd."
+        )
+    return found
+
+
 def claude_command(model):
-    executable = shutil.which("claude") or "claude"
-    return [executable, "-p", "--output-format", "json", "--model", model]
+    # -p is the subscription-authenticated headless mode. No API key is passed.
+    return [claude_executable(), "-p", "--output-format", "json", "--model", model]
+
+
+def require_subscription(executable, runner=None):
+    """Refuse to start unless the CLI is the Claude subscription login."""
+    run = runner or subprocess.run
+    status = run(
+        [executable, "auth", "status"],
+        env=subscription_environment(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if status.returncode:
+        _failure("Sign in to Claude Code with the Claude subscription. The editorial worker does not use an API key.")
+    try:
+        payload = json.loads(status.stdout)
+    except json.JSONDecodeError:
+        _failure("Claude Code auth status was not JSON. Sign in with the Claude subscription.")
+    if not isinstance(payload, dict) or payload.get("loggedIn") is not True or payload.get("authMethod") != "claude.ai":
+        _failure(
+            "Claude Code must be the subscription login (authMethod claude.ai). An API key is not the editorial backend."
+        )
+    return payload.get("authMethod")
 
 
 def _scan(event, depth=0):
@@ -263,7 +319,15 @@ def complete(backend, model, effort, prompt, schema, result, folder, heartbeat, 
         command = claude_command(model)
         last = None
         for _attempt in range(2):
-            code = local.run_process(command, folder=folder, log=log, heartbeat=heartbeat, timeout=1800, stdin=prompt)
+            code = local.run_process(
+                command,
+                folder=folder,
+                log=log,
+                heartbeat=heartbeat,
+                timeout=1800,
+                stdin=prompt,
+                env=subscription_environment(),
+            )
             if code:
                 raise local.Deferred("Claude Code paused/failed; preserve checkpoints, no paid fallback.")
             try:

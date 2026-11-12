@@ -2256,8 +2256,6 @@ def jobs(job_id):
 
 def _require_inference():
     """Check the configured backends. A missing login stops the worker before it claims a stage."""
-    import shutil
-
     from panther_journal import inference
 
     raw = os.environ.get("PANTHER_EDITORIAL_BACKEND", "claude").strip() or "claude"
@@ -2281,10 +2279,11 @@ def _require_inference():
         )
         if status.returncode or "Logged in using ChatGPT" not in status.stdout + status.stderr:
             raise click.ClickException("Sign in to Codex using ChatGPT before selecting the codex backend.")
-    if "claude" in names and not shutil.which("claude"):
-        raise click.ClickException(
-            "Install Claude Code and sign in on this Mac. The editorial worker uses claude -p."
-        )
+    if "claude" in names:
+        try:
+            inference.require_subscription(inference.claude_executable())
+        except DeterministicFailure as exc:
+            raise click.ClickException(str(exc)) from exc
     if "grok" in names and not inference.xai_key():
         raise click.ClickException(
             "Set XAI_API_KEY or store the key in the OS keychain service panther-xai, account api-key."

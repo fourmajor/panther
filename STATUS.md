@@ -62,7 +62,7 @@ Do not invent a look or a voice for a session.
 
 ## Providers, keys, hardware
 
-From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`. The laptop editorial worker defaults to a Claude Code login. Optional `XAI_API_KEY` selects the grok-4.7 backend and must stay out of Git. `PANTHER_EDITORIAL_MODEL` and `PANTHER_EDITORIAL_BACKEND` override a stage when set. Never commit them.
+From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`. The laptop editorial worker defaults to the Claude Code CLI signed in with the Claude subscription. The installer records that binary's absolute path (`PANTHER_CLAUDE`) from the LaunchAgent PATH. An Anthropic API key is not used. Optional `XAI_API_KEY` selects the grok-4.7 backend and must stay out of Git. `PANTHER_EDITORIAL_MODEL` and `PANTHER_EDITORIAL_BACKEND` override a stage when set. Never commit them.
 
 Laptop session finalization also needs local Whisper weights, pyannote model and runtime, enrolled speaker profiles, ffmpeg/ffprobe, and a signed-in Panther CLI. Browser transcription needs the us-west-2 Secrets Manager ARN deployed on the media stack. Native recording needs macOS and a named input device.
 
@@ -90,7 +90,7 @@ Eleven open issues, not thirteen: #209 transcript selection storage, #206 durabl
 
 The laptop LaunchAgent `place.panther.editorial-worker` had been exiting every minute since the Cognito refresh token was invalidated on 2026-10-16. Refresh lifetime in the app client is already 3650 days. The failure mode is a rotated refresh token used again after Cognito invalidates it. The CLI now locks refresh across processes and re-reads the saved session inside that lock. A token that is already dead still needs `panther login`.
 
-That worker's inference is subscription Codex through a ChatGPT login. It does not fall back to an API key. `codex login status` must report `Logged in using ChatGPT` for the same user. The local development worker in `tools/dev_editorial_worker.py` is a different path and still uses the server-side OpenAI key.
+That worker's inference is the Claude Code CLI signed in with the Claude subscription (`claude auth status` reports `authMethod` `claude.ai`). It does not fall back to an API key. Codex remains optional and, when selected, still requires `codex login status` to report `Logged in using ChatGPT`. The local development worker in `tools/dev_editorial_worker.py` is a different path and still uses the server-side OpenAI key.
 
 Corrected-transcript review that does not fit in 1,000,000 bytes now runs in utterance windows and merges all of them. A deterministic preflight error is stored on the DynamoDB task and shown on the failed Pipeline step. It is not claimed three times.
 
