@@ -96,10 +96,9 @@ desktop and mobile.
 
 ## Verification and operations
 
-Run focused Python tests with `.venv/bin/pytest` and React component tests with
-`npm test --prefix web/ui`. Frontend changes also require isolated desktop/mobile Playwright checks
-on the repository's self-hosted Docker runner. See [runner setup](docs/self-hosted-runner.md) and
-[repository instructions](AGENTS.md) for the readiness gate.
+The smoke set is `.venv/bin/pytest tests/test_smoke.py`. It covers pipeline hand-offs, the fal
+spend cap, the session budget, and recovery that reuses finished stages. It does not block merges.
+See [repository instructions](AGENTS.md).
 
 AWS infrastructure is defined in CDK, with near-zero idle compute cost as a standing goal.
 Administrative deployment uses short-lived credentials; game files, private inventories,

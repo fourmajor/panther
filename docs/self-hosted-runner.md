@@ -1,5 +1,8 @@
 # Panther self-hosted runner
 
+Merges to `main` deploy with GitHub-hosted Actions and OIDC. This runner is no longer the test
+or deploy gate. The notes below describe the machine if it is still installed.
+
 ## Kiwi production runner
 
 Kiwi runs a persistent, repository-scoped runner in a restricted Docker
@@ -23,7 +26,7 @@ gh api --method POST repos/fourmajor/panther/actions/runners/registration-token 
 The Kiwi checkout must be updated to the reviewed commit before running this
 command. Once registered, jobs can be dispatched through GitHub without
 Dandelion running. Verify `panther-kiwi-ci` is online in GitHub and dispatch a
-representative `ci.yml` run. Container logs and status are available with
+representative run. `ci.yml` is no longer the test workflow. Container logs and status are available with
 `docker logs panther-kiwi-ci` and `docker inspect panther-kiwi-ci`. Docker's
 `unless-stopped` policy starts the container after a normal Docker restart;
 an actual host reboot still requires Stu's separate authorization.
@@ -47,8 +50,6 @@ permission, and a reviewed checkout. Start Docker Desktop with `docker desktop s
 
 ```sh
 bash ops/runner/start.sh
-gh workflow run ci.yml --repo fourmajor/panther --ref main
-gh run list --repo fourmajor/panther --workflow ci.yml --limit 1
 ```
 
 Frontend-affecting changes must pass Playwright **on this self-hosted runner before merge**.

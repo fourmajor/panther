@@ -121,5 +121,5 @@ nor retries: prepare/approve a new take only when the owner explicitly authorize
   2026-09-14 at $0.10 per 1,000 characters; preparation/submission check again.
 - [ElevenLabs voice design and performance](https://elevenlabs.io/docs/eleven-creative/voices/voice-design)
 
-Verify locally with `pytest tests/test_narration.py tests/test_video.py`. Tests use synthetic
-manifests and fake billing/generation only. No hosted CI or AWS deployment is needed for this CLI.
+The session budget guard is covered by `pytest tests/test_smoke.py`. It uses a synthetic ledger
+only. No hosted CI or AWS deployment is needed for this CLI.

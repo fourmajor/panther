@@ -191,9 +191,7 @@ new assets with original provenance; never relabel existing comparison footage a
 
 ## Verification and sources
 
-`pytest -q tests/test_video_production.py tests/test_video.py` tests contracts, exact source checks,
-no-overwrite/resume behavior, real FFmpeg audio replacement/normalization, caption pixels, codecs,
-working drafts and paid-adapter isolation using synthetic media. No cloud credentials or real
+Budget and pipeline hand-offs are covered by `pytest -q tests/test_smoke.py`. No cloud credentials or real
 generation in tests. An opt-in laptop-only `PANTHER_VIDEO_AI_SMOKE=1` test additionally exercises
 the real subscription reviewer; never enable it in CI or mount personal credentials in a runner.
 
@@ -265,6 +263,4 @@ before a browser file exceeding 1 GiB and preserves the local output. Interrupte
 already have succeeded: storage rejects duplicate writes, so inspect Panther metadata and retain
 the original upload identity rather than choosing another identity to hide the uncertainty.
 
-`pytest -q tests/test_episode_rendering.py` exercises real synthetic colored scenes and different
-audio tones, checking visible scene order, audible tone order, continuous duration, unchanged
-sources, strict checksums and no-overwrite behavior. It performs no cloud or paid calls.
+Episode assembly still refuses to overwrite sources. The smoke set does not render media.

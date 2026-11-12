@@ -1,5 +1,19 @@
 # Repository Agent Instructions
 
+## Rapid development
+
+Panther is a hobby project. Rapid development beats almost everything else.
+
+- Prefer small, direct changes.
+- Do not add tests by default. The only tests to add or keep are smoke tests for budget and cost
+  guards (the fal spend cap and the session budget) and for pipeline hand-offs, including recovery
+  that reuses finished stages. That set is `tests/test_smoke.py` and `infra/test/github-deploy.test.ts`.
+- Do not use Fast mode, or any other model fast or priority tier.
+- Tests do not block merges. The smoke job runs after a push to `main` with `continue-on-error` and
+  is not a dependency of deploy.
+- A merge to `main` deploys this repository with GitHub OIDC. That workflow runs only for
+  `fourmajor/panther` on `main`. Do not run it for pull requests, forks, or other branches.
+
 ## Application and UI contracts
 
 - The game selector owns the current game. Dashboard links to actual recent records; Settings
@@ -236,81 +250,38 @@
 - Make all repository changes on a branch and deliver them through a pull request.
 - Never push changes directly to `main`.
 - Use the `codex/` branch prefix unless the task requires a different name.
-- Run relevant local checks before opening the pull request.
-- After opening a pull request, inspect its diff and available checks.
-- Nightly CI on reviewed `main` is owner-authorized for ongoing quality checks on the owned
-  self-hosted runner. Branch CI remains manually dispatched after review. Never enable automatic
-  PR/fork or arbitrary-branch execution. Local verification remains the normal backend readiness gate;
-  frontend-affecting changes also require self-hosted Playwright verification below.
+- Run `pytest tests/test_smoke.py` when a change touches the pipeline, a budget guard, or deploy.
+  Do not add tests otherwise, and do not wait on the smoke job before merging.
+- After opening a pull request, inspect its diff.
+- Never enable automatic PR, fork, or arbitrary-branch execution. The only automatic workflow is
+  the main-branch deploy in `.github/workflows/deploy.yml`.
 - This repository is AI-agent led: the owner gives direction and agents implement, verify,
-  merge and deploy in-scope changes autonomously. When a PR's required checks pass on its
-  current SHA and its diff is reviewed, merge it without a routine owner approval request.
-  This standing authorization does not waive tests, CDK diff review, authentication,
-  source-integrity guards, destructive-action boundaries or separately required spending
-  and exact storyboard approvals.
+  merge and deploy in-scope changes autonomously. Merge without a routine owner approval request.
+  This standing authorization does not waive authentication, source-integrity guards,
+  destructive-action boundaries, or separately required spending and exact storyboard approvals.
 - Commit/push ready changes on the trusted branch without a routine permission question. In a shared
   checkout inspect `git diff --cached` first so another agent's staged files are not swept in.
-- Run `yarn review:smart` before every push (`--staged` for the index; `--offline` without model access).
-  It is advisory and does not replace required tests or readiness gates.
-- Push all current changes before marking a draft Ready for Review. Shepherd the resulting checks
-  on the exact current SHA with `shepherd-pr` and background `yarn shepherd:wait --pr N`; fix failures
-  rather than stopping at the first red check. Do not replace this with timed checks polling.
 - Do not automatically run review reflection after a merge. Batch reflection is a separately
   requested/scheduled task; individual feedback is not automatic authority to change project rules.
 - After an explicitly authorized merge, update local `main` when practical.
 
 ## Frontend verification
 
-- A successful API response, signed URL, download, build or fixture screenshot is not proof that
-  the user's deployed page works. Reproduce navigation, visible content, media decoding, usable
-  controls and error recovery. Each reported UI bug needs a regression for the original failure.
-- Follow `docs/continuous-quality.md`. Source tests, deployed-shell journeys and authenticated
-  private-data checks are separate evidence. Synthetic browser tokens never establish real
-  production authentication; never copy an owner's credentials or game media into CI.
-- Before handing off a page/link, verify its actual reader/player in the isolated browser, deployed
-  release identity and authenticated source availability where relevant. State untested layers.
-  A local workaround is not a deployed repair. Finish required all-game migrations before calling
-  a rollout complete. Review desktop/mobile screenshots and update the user-story coverage matrix.
-- Exercise blocked media, slow/failing responses, stale URLs, sparse pagination, missing metadata,
-  long text, keyboard access and repeat visits where relevant. Never force clicks, skip a failed
-  journey or invent content to get green checks. A missed run/offline runner is unknown coverage,
-  not a healthy result; the daily quality review must surface sustained gaps and new failures.
-
-- Playwright is a required readiness gate for changes that affect the frontend, including UI,
-  styling, navigation, browser authentication, asset loading, and backend/infrastructure changes
-  that alter browser behavior (such as API contracts, CSP, CORS, or static hosting).
-- Add or update focused Playwright regression tests for the affected user behavior; do not rely
-  only on the existing suite when it does not exercise the change.
-- Run Playwright on the project's self-hosted Docker runner, not directly on the laptop host or
-  GitHub-hosted runners. The manual `ci.yml` workflow installs Chromium and runs
-  `npm run test:browser` from `infra/` inside the runner.
-- Review the branch diff before dispatching CI. Push the trusted `codex/` branch, then dispatch
-  `gh workflow run ci.yml --repo fourmajor/panther --ref BRANCH`. Wait for a successful run on the
-  PR's latest commit before declaring it ready to merge; rerun after frontend/test changes.
-  Record the run URL in the PR. Start a fresh runner when needed using `ops/runner/start.sh`.
-- Use isolated test browsers inside that runner, never the user's personal browser or
-  profile. Use synthetic fixtures and test credentials; keep private game assets out of Git.
-- For visual/layout changes, verify relevant desktop and mobile sizes, inspect rendered output,
-  and assert actual visibility and usability. Do not let automatic scrolling or forced clicks
-  conceal clipping, overlays, or otherwise inaccessible controls.
-- If a required browser test cannot run, report the blocker and do not claim frontend verification
-  or routine merge readiness. Static checks and mocked API tests alone are not substitutes.
-- The CI workflow already runs Playwright. The separately owner-authorized nightly main check
-  does not enable automatic branch/PR execution or require manual CI for docs-only/backend changes.
+- A successful API response, signed URL, or download is not proof that the page works. When a change
+  is user-visible, exercise the affected flow. Do not invent content to make a check pass.
+- Synthetic browser tokens never establish real production authentication. Never copy an owner's
+  credentials or game media into CI.
+- Finish required all-game migrations before calling a rollout complete. Do not add a Playwright
+  or regression-test gate. Browser tests are not required for a merge.
 
 ## Tooling and CI/CD
 
 - Prefer command-line tools and APIs. Do not operate the user's browser for repository work.
-- Avoid running CI unless it adds material confidence beyond the relevant local checks.
-- A Docker-based, repository-scoped runner can run on the owner's MacBook. Start it with
-  `bash ops/runner/start.sh`; it accepts one job and exits. See `docs/self-hosted-runner.md`.
-- CI runs nightly on reviewed `main`, or is manually triggered by trusted collaborators with
-  repository write access on reviewed `main` or `codex/` branches in this repo.
-  Do not dispatch untrusted contributor code, including code copied from forks. Never enable
-  automatic fork/PR execution on a personal runner. Containers are not a complete security boundary.
-- Do not mount personal directories, AWS credentials, or the Docker socket into the runner.
-- Prefer this owned compute over GitHub-hosted runners; do not enable automatic hosted CI without
-  explicit approval. Continue deploying from the laptop with short-lived AWS credentials.
+- Do not dispatch untrusted contributor code, including code copied from forks. Never enable
+  automatic fork or pull-request execution. The approved exception is `.github/workflows/deploy.yml`:
+  GitHub-hosted Actions on `main` only, using OIDC, with no AWS keys and no private game files.
+- A local fast deploy is `bash ops/deploy.sh`. It hotswaps code-only changes and uses a full
+  CloudFormation deploy when `infra/lib` or `infra/bin` changed. See `docs/aws-foundation-runbook.md`.
 - Avoid always-on hosted compute solely to reduce build latency.
 - AWS infrastructure is defined with AWS CDK and committed alongside the application.
 - Owner-approved unattended laptop administration uses the CDK-managed IAM Roles Anywhere

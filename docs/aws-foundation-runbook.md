@@ -277,6 +277,10 @@ individual bearer API tokens or disable revocation to avoid login prompts.
 CDK configures both Panther AWS permission sets with the supported maximum `PT12H` role session.
 Deploy `PantherAccess` with its existing `administratorEmail`, `identityCenterInstanceArn`, and
 `identityStoreId` context values; inspect the diff to ensure that no user or assignment is recreated.
+If a live permission set is still shorter, run `ops/lengthen-sso-session.sh` once with admin
+credentials (`AWS_PROFILE=panther-sso-admin`). It calls `sso-admin update-permission-set` and
+`provision-permission-set` for `PantherAdministrator` and `PantherAssetUploader`. A later
+`PantherAccess` deploy keeps `PT12H`. The script does not change the console-only interactive session.
 Use the modern AWS CLI `sso_session` profile configuration so role credentials and SSO tokens can
 renew within the underlying interactive SSO session. Never create permanent access keys as a workaround.
 For owner-approved unattended laptop administration, use [renewable certificate-backed access](laptop-aws-access.md)
@@ -301,3 +305,38 @@ There is no always-on session server, database, NAT gateway, or new fixed comput
 References: [Identity Center interactive sessions](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-interactive-sessions.html),
 [permission-set limits](https://docs.aws.amazon.com/singlesignon/latest/userguide/howtosessionduration.html),
 [AWS CLI session prerequisites](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-session-duration-prereqs-considerations.html).
+
+## Deploy on merge to main
+
+A push to `main` in `fourmajor/panther` assumes `PantherGitHubDeploy` with GitHub OIDC and deploys
+account `223663280572` in `us-west-2`. No AWS access keys and no SSO login are stored in GitHub.
+The role trusts only `repo:fourmajor/panther:ref:refs/heads/main`.
+
+One-time setup, with `AWS_PROFILE=panther-sso-admin` and `PANTHER_IDENTITIES_FILE` set:
+
+```bash
+bash ops/bootstrap-github-deploy.sh
+```
+
+That deploys the OIDC provider and role, then runs `cdk bootstrap --trust` for that role in
+`us-west-2` and `us-east-1`. If the provider already exists, redeploy with
+`--context githubOidcProviderArn=arn:aws:iam::223663280572:oidc-provider/token.actions.githubusercontent.com`.
+
+Then set one GitHub secret, `PANTHER_IDENTITIES`, to the private identities JSON. See
+`docs/private-account-configuration.md`. That is the only secret.
+
+Code-only changes use `cdk deploy --hotswap-fallback` on `PantherMediaExplorer`. Changes under
+`infra/lib` or `infra/bin` use a full CloudFormation deploy of `PantherMediaExplorer` and
+`PantherGitHubDeploy` so the template stays current. `PantherDomain` is included only when
+`infra/lib/panther-domain-stack.ts` itself changes. Hotswap does not update the template by
+itself; the next infrastructure change reconciles it. The same choice is available locally:
+
+```bash
+PANTHER_IDENTITIES_FILE=/private/path/identities.json AWS_PROFILE=panther-sso-admin bash ops/deploy.sh
+bash ops/deploy.sh --full
+bash ops/deploy.sh --hotswap
+```
+
+A full media-explorer deploy is a CloudFormation update of many Lambdas and bucket deployments,
+commonly on the order of 10–20 minutes. A Lambda-only hotswap is commonly about one to two minutes.
+Changes CDK cannot hotswap, including the website bucket deployment, fall back to the full deploy.

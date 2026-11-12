@@ -33,6 +33,12 @@ AWS_PROFILE=panther-sso-admin npm run diff -- PantherMediaExplorer --context acc
 AWS_PROFILE=panther-sso-admin npm run deploy -- PantherMediaExplorer --context account=ACCOUNT_ID --exclusively
 ```
 
+Automatic deploy on `main` reads this same JSON from the GitHub Actions secret
+`PANTHER_IDENTITIES`. The workflow writes it to a mode-600 file outside the checkout and points
+`PANTHER_IDENTITIES_FILE` at that path. Stu or the repository owner sets the secret once, under
+Settings → Secrets and variables → Actions. Do not commit the file, paste it into a workflow, or
+store AWS access keys in GitHub. It is the only secret the deploy needs.
+
 Production synthesis refuses missing, malformed, in-repository or broadly readable configuration.
 Only the non-deployable `000000000000` account permits synthetic CI defaults. Tests pass fictional
 configuration explicitly. Never give the CI runner the production file or publish production synth
