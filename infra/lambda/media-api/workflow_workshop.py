@@ -288,8 +288,10 @@ def handler(event, _context):
                 raise ValueError("Invalid stages")
             ids = set()
             for stage in body["stages"]:
-                if set(stage) != {"id", "label", "status"} or not re.fullmatch(SLUG, stage["id"]) or stage["status"] not in STATES or not isinstance(stage["label"], str) or not 0 < len(stage["label"]) <= 160 or stage["id"] in ids:
+                if set(stage) - {"message"} != {"id", "label", "status"} or not re.fullmatch(SLUG, stage["id"]) or stage["status"] not in STATES or not isinstance(stage["label"], str) or not 0 < len(stage["label"]) <= 160 or stage["id"] in ids:
                     raise ValueError("Invalid stage record")
+                if "message" in stage and (not isinstance(stage["message"], str) or not 0 < len(stage["message"]) <= 500):
+                    raise ValueError("Invalid stage message")
                 ids.add(stage["id"])
             identity = body["kind"] + "~" + body["runId"]
             previous = get(INDEX, "GAME#" + body["gameId"], identity)

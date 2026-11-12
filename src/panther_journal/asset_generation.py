@@ -97,6 +97,66 @@ def ensure_title(job, folder, client=None):
     return title, provenance
 
 
+START_FRAME_MODEL = "gpt-image-2"
+START_FRAME_QUALITY = "medium"
+START_FRAME_SIZE = "1536x1024"
+
+
+def start_frame_source(kind=None):
+    """Opening plates come from the image API. A Blender render is the other allowed source."""
+    if kind in (None, "gpt-image-2"):
+        return {"generator": "openai", "model": START_FRAME_MODEL, "quality": START_FRAME_QUALITY}
+    if kind == "blender":
+        return {"generator": "blender", "model": None, "quality": None}
+    raise ValueError("Start frames use gpt-image-2 medium or a Blender render")
+
+
+def start_frame_request(prompt):
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("A start frame needs the shot composition")
+    return {
+        "model": START_FRAME_MODEL,
+        "prompt": (
+            "Create one opening composition for this shot, framed for 16:9. "
+            "Not a portrait contact sheet.\n" + prompt.strip()
+        ),
+        "n": 1,
+        "size": START_FRAME_SIZE,
+        "quality": START_FRAME_QUALITY,
+        "output_format": "png",
+    }
+
+
+def fit_start_frame(data):
+    """Center-crop an API image to 16:9. No second paid request."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.open(BytesIO(data))
+    image.load()
+    if image.mode not in {"RGB", "RGBA"}:
+        image = image.convert("RGB")
+    width, height = image.size
+    if width < 1 or height < 1:
+        raise ValueError("Start frame is empty")
+    target = 16 / 9
+    if abs(width / height - target) > 0.02:
+        if width / height > target:
+            fitted = int(height * target)
+            left = (width - fitted) // 2
+            image = image.crop((left, 0, left + fitted, height))
+        else:
+            fitted = int(width / target)
+            top = (height - fitted) // 2
+            image = image.crop((0, top, width, top + fitted))
+    if image.width < 1280 or image.height < 720:
+        raise ValueError("Start frame must be 16:9 and at least 1280x720 after fitting")
+    out = BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
 def generate(job, folder, heartbeat, *, client=None):
     if folder.is_symlink() or any((folder / name).is_symlink() for name in ("generation-started.json", "generation-result.json", "image.png", "image-request.json", "image-response.json", "image-failure.json", "title-request.json", "title-response.json", "title-failure.json")):
         raise ValueError("Symlinked image checkpoint rejected")

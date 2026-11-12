@@ -77,7 +77,7 @@ process; keep its terminal open. Ctrl+C finalizes the recording.
 
 ```sh
 panther recording start --game GAME_ID --session SESSION_ID --device 'EXACT MICROPHONE NAME' --sync
-panther recording transcribe RECORDING_DIR --model /private/path/ggml-small.bin --sole-player PLAYER_ID --blind
+panther recording transcribe RECORDING_DIR --model /private/path/ggml-large-v3-turbo.bin --sole-player PLAYER_ID --blind
 panther recording audit RECORDING_DIR
 ```
 
@@ -180,11 +180,12 @@ processes at most one newly available chunk for diagnostics; subsequent invocati
 To join current audio while retaining an older preview's backlog, choose a new
 `--preview-name NAME`. Reuse that name to resume it. This never skips or alters source audio.
 
-It defaults to the existing local weights at `~/.cache/whisper.cpp/ggml-small.bin`; specify
-`--model /private/path/WEIGHTS.bin` when installed elsewhere. It never downloads models, uses a paid
-service or sends audio to an inference provider. Web publishing uses Panther login, not AWS login;
+It defaults to `~/.cache/whisper.cpp/ggml-large-v3-turbo.bin`. The session installer downloads that
+file once if it is missing. Specify `--model /private/path/WEIGHTS.bin` when the weights live
+elsewhere. Live preview never downloads a model itself, uses a paid service, or sends audio to an
+inference provider. Web publishing uses Panther login, not AWS login;
 `--local-only` disables all network publishing, and `--once` is always local-only. Decoding and local Whisper run at
-reduced priority, with two CPU threads, GPU disabled and bounded subprocess timeouts. A slow preview
+reduced priority, with beam size 5, best-of 5, up to eight threads, and Metal on the Mac. A slow preview
 queues work and reports lag; it cannot signal, stop, recover or finalize the independent recorder.
 Resource contention is still possible on a busy laptop; stop the preview if capture health degrades.
 The preview refuses new inference when less than 1 GiB disk space remains. This is a buffer, not a
@@ -272,7 +273,7 @@ Use their normal table voice and seating. These introductions help map anonymous
 people; they are not permanent voiceprints or a guarantee of future recognition.
 
 ```sh
-panther recording transcribe RECORDING_DIR --model /private/path/ggml-small.bin --local-only
+panther recording transcribe RECORDING_DIR --model /private/path/ggml-large-v3-turbo.bin --local-only
 panther recording diarize RECORDING_DIR --speakers NUMBER_ACTUALLY_PRESENT
 panther recording attribute TRANSCRIPT_DIR --diarization SPEAKER_RUN/diarization.json --mapping /private/path/speaker-map.json
 panther recording upload RECORDING_DIR --transcript ATTRIBUTED_TRANSCRIPT_DIR

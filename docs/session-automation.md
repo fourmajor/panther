@@ -102,8 +102,12 @@ From clean, fetched and reviewed merged main:
 
 The session LaunchAgent is `place.panther.session-worker`; it performs one pass per minute
 while logged in and awake. The editorial worker is a separate resident LaunchAgent. It uses the
-same pinned release and Panther authentication. Its inference is subscription Codex through a
-ChatGPT login on that machine, with no API-key fallback. Upgrades require explicitly stopping
+same pinned release and Panther authentication. Its inference defaults to the Claude Code
+CLI signed in with the Claude subscription. The editorial installer checks that `claude` is on the
+LaunchAgent PATH and records the absolute path. Grok is the alternative
+(`PANTHER_EDITORIAL_BACKEND=grok`, key in `XAI_API_KEY` or keychain service `panther-xai`).
+Codex is optional, not the default. The session installer also caches
+`~/.cache/whisper.cpp/ggml-large-v3-turbo.bin`. Upgrades require explicitly stopping
 old services and preserving their plists/releases. A failed Panther refresh stops the worker
 heartbeat; Workshop and the pipeline SNS alarm show that worker as offline. Never replace an
 authentication error with AWS asset writes or a paid inference fallback.

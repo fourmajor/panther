@@ -77,6 +77,33 @@ def test_recorded_jobs_color_nodes_without_painting_later_stages():
     assert result["sessions"][0]["status"] == "failed"
 
 
+def test_speaker_floor_message_is_on_the_dashboard_node():
+    message = (
+        "Speaker assignment gave players 0 of 8 segments (0.0%), "
+        "and 8 segments have a diarized label. Below the 25% floor, "
+        "so this transcript is not handed to adaptation."
+    )
+    manifest = pipeline.view(
+        "session-one",
+        [
+            {
+                "sessionId": "session-one",
+                "kind": "session-finalization",
+                "status": "failed",
+                "updatedAt": 20,
+                "stages": [
+                    {"id": "verify-inputs", "status": "done"},
+                    {"id": "match-players", "status": "failed", "message": message},
+                ],
+            }
+        ],
+    )["manifest"]
+    speaker = node(manifest, "speaker-match")
+    assert speaker["status"] == "failed"
+    assert "25% floor" in speaker["message"]
+    assert "not handed to adaptation" in speaker["message"]
+
+
 def test_newer_success_replaces_failure_and_pending_reports_do_not_erase_it():
     manifest = pipeline.view(
         "session-one",

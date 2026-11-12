@@ -21,11 +21,12 @@ import click
 from contextlib import nullcontext
 
 from panther_journal import recording as audio, generation_metadata as generation
+from panther_journal import whisper_runtime as whisper
 from panther_journal.audio_storage import lock, write_json
 from panther_journal.model_workflow import clean_environment
 
 VERSION = 1
-DEFAULT_MODEL = Path.home() / ".cache/whisper.cpp/ggml-small.bin"
+DEFAULT_MODEL = whisper.DEFAULT_MODEL
 NOTICE = "LIVE PREVIEW — provisional text and speaker labels; not the final transcript."
 GAP_NOTICE = "Preview gap: invalid recognizer output for this audio chunk. Original audio retained; not silence."
 
@@ -126,12 +127,13 @@ def initialize(folder, model, from_start, preview_name=None, speaker_settings=No
         "captureSha256": audio.digest(folder / "capture.json"),
         "modelSha256": model_hash,
         "fromStart": from_start,
-        "threads": 2,
+        "threads": whisper.threads(),
         "gpu": use_gpu,
         "language": "en",
-        "beamSize": 1,
-        "bestOf": 1,
-        "context": "one-completed-chunk",
+        "beamSize": whisper.BEAM_SIZE,
+        "bestOf": whisper.BEST_OF,
+        "context": "carried-between-chunks",
+        "modelName": whisper.MODEL_NAME,
     }
     if preview_name is not None:
         audio.cloud.slug(preview_name)
@@ -173,7 +175,8 @@ def initialize(folder, model, from_start, preview_name=None, speaker_settings=No
 def run_process(command, attempt, log_name, *, timeout=180):
     """Low priority, bounded work; Ctrl+C kills only this preview subprocess group."""
     with (attempt / log_name).open("xb") as log:
-        env = {**clean_environment(), "OMP_NUM_THREADS": "2", "VECLIB_MAXIMUM_THREADS": "2"}
+        count = str(whisper.threads())
+        env = {**clean_environment(), "OMP_NUM_THREADS": count, "VECLIB_MAXIMUM_THREADS": count}
         child = subprocess.Popen(
             [audio.executable("nice"), "-n", "15", *command],
             stdin=subprocess.DEVNULL,
@@ -202,7 +205,11 @@ def run_process(command, attempt, log_name, *, timeout=180):
                     child.wait()
 
 
-def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
+def transcribe_part(folder, part, model, attempt, *, use_gpu=False, prompt=None):
+    if prompt is None:
+        carried_file = attempt.parent / "carried-prompt.txt"
+        if carried_file.is_file() and not carried_file.is_symlink():
+            prompt = carried_file.read_text(encoding="utf-8")[: whisper.PROMPT_CHARS]
     source = check_part(folder, part)
     source_format = source.suffix.removeprefix('.')
     if source_format not in {'flac', 'wav'}:
@@ -243,30 +250,14 @@ def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
         "decode.log",
     )
     run_process(
-        [
+        whisper.command(
             audio.executable("whisper-cli"),
-            "-m",
-            str(model),
-            "-f",
-            str(wav),
-            "-l",
-            "en",
-            "-t",
-            "2",
-            "-p",
-            "1",
-            *([] if use_gpu else ['-ng']),
-            "-bs",
-            "1",
-            "-bo",
-            "1",
-            "-nf",
-            "-mc",
-            "0",
-            "-ojf",
-            "-of",
-            str(attempt / "recognizer"),
-        ],
+            model,
+            wav,
+            attempt / "recognizer",
+            prompt=prompt,
+            use_gpu=use_gpu,
+        ),
         attempt,
         "recognizer.log",
     )
@@ -275,7 +266,17 @@ def transcribe_part(folder, part, model, attempt, *, use_gpu=False):
         raw = read_json(attempt / "recognizer.json", 8 * 1024 * 1024)
     except json.JSONDecodeError as exc:
         raise PreviewOutputError("Malformed recognizer JSON") from exc
-    return preview_lines(raw, part)
+    lines = preview_lines(raw, part)
+    decision_prompt, reset = whisper.carry(prompt or "", lines, raw)
+    write_json(
+        attempt / "context-decision.json",
+        {"reset": reset, "nextPrompt": decision_prompt},
+        replace=True,
+    )
+    carried_file = attempt.parent / "carried-prompt.txt"
+    if not carried_file.is_symlink():
+        carried_file.write_text(decision_prompt)
+    return lines
 
 
 def preview_lines(raw, part):

@@ -308,8 +308,10 @@ def test_real_decode_and_bounded_whisper_invocation(capture, monkeypatch):
     def run(command, directory, log_name, **kwargs):
         if log_name == "decode.log":
             return original_run(command, directory, log_name, **kwargs)
-        assert "-ng" in command and command[command.index("-t") + 1] == "2"
-        assert "--prompt" not in command and "-mc" in command
+        assert "-ng" in command and command[command.index("-t") + 1] == str(live.whisper.threads())
+        assert command[command.index("-bs") + 1] == "5"
+        assert command[command.index("-bo") + 1] == "5"
+        assert "--prompt" not in command and command[command.index("-mc") + 1] == "224"
         assert str(file) not in command  # Whisper gets only a decoded audio-only WAV.
         assert (directory / "input.wav").exists()
         (directory / "recognizer.json").write_text(json.dumps({"transcription": []}))
@@ -378,7 +380,7 @@ def test_timeout_terminates_only_preview_child_group(tmp_path, monkeypatch):
     command, options = launched[0]
     assert command[1:3] == ["-n", "15"]
     assert options["start_new_session"] is True
-    assert options["env"]["VECLIB_MAXIMUM_THREADS"] == "2"
+    assert options["env"]["VECLIB_MAXIMUM_THREADS"] == str(live.whisper.threads())
 
 
 def test_web_snapshot_contains_recent_text_not_audio_and_capture_health(capture, monkeypatch):

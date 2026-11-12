@@ -129,6 +129,7 @@ Use `production schema` for the complete strict JSON Schema. A synthetic minimal
   "gameId": "synthetic-game",
   "sessionId": null,
   "title": "Harbor scene",
+  "projectId": "synthetic-project",
   "complete": false,
   "sourceKeys": [],
   "shots": [{
@@ -139,8 +140,8 @@ Use `production schema` for the complete strict JSON Schema. A synthetic minimal
     "continuity": "Late afternoon, ships remain on screen left; warm neutral palette.",
     "appearances": [],
     "inSeconds": 0,
-    "outSeconds": 8,
-    "nativeAudio": "mute",
+    "outSeconds": 6,
+    "nativeAudio": "keep-mixed",
     "sounds": [],
     "captions": []
   }]
@@ -155,10 +156,14 @@ identity. The starting image must be a prepared full 16:9 composition, not a cro
 The preparation step validates/reviews existing plates; it does **not** create missing imagery.
 Use the authorized image creation process to make missing plates before preparation.
 
-`use` selects the owner's model policy: city/default → Veo 3.1 Fast; dialogue → H3 Max (not Turbo);
-action → Kling 3 Pro. Mixed scenes should be broken into shots with one dominant purpose. A pinned
-starting frame selects the corresponding image adapter. `endImage` is currently accepted only for
-Kling action image shots. Preparation has no billing client, permission declarations or submit path.
+`use` is planning metadata. The executable model is `h3-max-image` unless the shot sets
+`model`. A missing start frame blocks the manifest: the default plate is `gpt-image-2` at
+quality `medium`, and a Blender render is allowed. `endImage` is an explicit Kling image
+override. Preparation writes one attempt. A failed review is kept and flagged. H3 Max audio
+stays in the edit unless the shot mutes it. Add an ElevenLabs cue only when the shot needs
+separately generated speech. The preparation result includes `estimatedCost`; submitting it
+requires a `projectId` from `panther narration allocate`.
+Preparation has no billing client, permission declarations or submit path.
 Reports can flag unready compositions; a generated manifest is never itself approval to use them.
 
 Each sound cue supplies `role` (dialogue/music/effects/ambience), `source`, `at` (original shot time),

@@ -68,23 +68,32 @@ Reference: https://fal.ai/models/fal-ai/veo3.1/lite/api
 
 ### Production model selection
 
-The owner's standing production policy (2026-09-10) is:
+The owner's production decision of 2026-10-05, recorded against the October 1 cut, is **H3 Max for every shot**.
+That cut was 14 clips of 2–7 seconds, `h3-max-image` at 768P, native audio on, one take, `maxAttempts` 1,
+and cost $2.54. New plans use that shape:
 
-| Shot use | Model through fal | Text-only CLI profile | Image-anchored CLI profile |
-| --- | --- | --- | --- |
-| Default / other shots | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
-| Dialogue | MiniMax H3 Max (not Turbo) | `h3-max` | `h3-max-image` |
-| City / urban establishing shots | Veo 3.1 Fast | `veo-3.1-fast` | `veo-3.1-fast-image` |
-| Battle / action | Kling 3 Pro | `kling-3-pro` | `kling-3-pro-image` |
+| Decision | Value |
+| --- | --- |
+| Default model | `h3-max-image` (MiniMax H3 Max, not Turbo), every scene |
+| Audio | On. The clip's own mix is the dialogue baseline |
+| Resolution | `768P` by default. `480P` is an explicit cheaper option on the same model |
+| Cut | 90 seconds or less, about 14–16 shots, each 2–7 seconds |
+| Takes | One. A take that fails review is kept and flagged. No paid retry |
+| Start frame | `gpt-image-2` at quality `medium` through the OpenAI API, or a Blender render |
+| Session budget | `panther narration allocate`. The plan stores its estimated cost; the allocation is the cap |
+| Other models | Veo 3.1 Fast and Kling 3 Pro remain explicit per-shot overrides only |
 
-Select per shot, not per whole film. Action takes precedence over city setting; dialogue close-ups
-between action beats use H3 Max, as does dialogue in a city. For an inseparable mixed shot, choose
-Kling if action drives the shot, H3 Max if dialogue drives it, otherwise Veo, and record why.
-H3 Max supersedes the earlier Veo dialogue preference. Agents must write the explicit profile into each new manifest;
-the CLI still requires `model` and does not infer scene types or silently default a missing field.
-These preferences do not authorize new paid requests, reference sharing, extra attempts, automatic
-fallbacks or model upgrades. Owner-approved comparison experiments may intentionally use other
-models. Historical comparison manifests and actual generation metadata remain unchanged.
+The CLI does not classify a shot as city, dialogue, or action and then pick a model. A missing model
+on a new scene is `h3-max-image`. Agents write that profile into the manifest. This does not authorize
+a new paid request, reference sharing, a second take, or a model upgrade. Historical comparison
+manifests and their actual generation metadata stay unchanged. ElevenLabs is used only when a shot
+needs separately generated speech, not as the default dialogue track.
+
+`480P` uses the reviewed $0.0125/second base. The quote still takes the greater of that floor and the
+live base times 1.6, then adds 25% headroom. `768P` keeps the regular $0.08/second floor. The plan's
+`estimatedCostUsd` is the settings estimate before headroom. `worstCaseReservationUsd` remains the
+reservation. A version-2 production manifest charges only the video allowance inside the narration
+project allocation.
 
 ### Supported comparison adapters
 
@@ -140,7 +149,8 @@ until September 14, then $0.08/second. The bounded quote takes the greater of li
 or the regular $0.08/second rate, then adds 25% headroom: **$0.80 reserved per eight-second
 attempt**, despite the current expected $0.16 bill. This avoids relying on an expiring promotion.
 The [API schema](https://fal.ai/models/minimax/h3-max/image-to-video/api) is the payload reference.
-H3 Max is the selected dialogue model under the production policy above. Adapter availability
+H3 Max image-to-video is the production default under the policy above, at 768P unless a shot
+asks for 480P. Adapter availability
 does not authorize new spending or additional comparisons.
 
 `seedance-2.0-image` uses `bytedance/seedance-2.0/image-to-video`, with exactly one
@@ -365,8 +375,9 @@ binding and cumulative reservations under the shared SQLite transaction. Unknown
 requests block both media types. Never reset the ledger or create a project alias
 to recover budget. Omitted project IDs retain the historical comparison scope.
 
-Explicit profiles `veo-3.1-fast-image-silent` and `kling-3-pro-image-silent` generate
-eight seconds without native audio, for separately narrated productions. The public
+Explicit profiles `veo-3.1-fast-image-silent` and `kling-3-pro-image-silent` remain available
+as per-shot overrides. They generate eight seconds without native audio. They are not the
+production default. The public
 fal model pages list $0.10/second (Veo 720p) and $0.112/second (Kling Pro), reviewed
 2026-09-15 against API base prices $0.15/$0.14. These profiles fail closed if that
 base changes; the base is not a binding settings-aware quote. Reservations include
