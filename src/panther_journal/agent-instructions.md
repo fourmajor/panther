@@ -481,8 +481,11 @@ use local `recording diarize` and a confirmed anonymous-speaker-label to player-
 character dialogue, cluster numbering, or another run. Unknown and overlapping speech stays
 unassigned. Keep table chatter and mark speech context separately. Preserve every earlier version.
 For previously enrolled players, `recording reconcile-speakers` performs offline session-wide
-matching and writes a new candidate without changing text. Inspect actual coverage and identity
-evidence before publishing through `upload --new-version-of`; never lower gates simply to fill names.
+matching and writes a new candidate without changing text. Each diarized speaker maps to a
+different enrolled player. Keep the match when it leads the runner-up by at least 0.1 or its cosine
+is at least 0.75; a tie stays unknown. The 25% segment floor still stops the handoff. Low absolute
+scores are a prompt to re-enroll, not a reason to drop that floor. Inspect actual coverage and identity
+evidence before publishing through `upload --new-version-of`.
 See `docs/local-audio.md` for setup, consent, evaluation, and current conservative alignment limits.
 `recording diarize-nemotron` is an explicit pinned local experiment, not player identification.
 `recording evaluate-speakers` scores independently confirmed private intervals by correct,

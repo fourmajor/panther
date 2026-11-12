@@ -2137,6 +2137,32 @@ def test_recovery_reuses_completed_novel_chapter_and_video_stages(editorial):
     assert claimed["artifacts"]["video-treatment"]["key"] == kept["video-treatment"]["key"]
 
 
+def test_partial_branch_failure_recovers_only_that_branch(editorial):
+    m = editorial
+    _body, parent = submitted(m)
+    _done_stage(m, parent, "context", {"selection": {"title": "Context"}, "evidence": {"catalog": {}}})
+    _done_stage(m, parent, "novel-proof", {"markdown": "The river chapter.", "passed": True, "title": "River"})
+    m.internal({"operation": "fail", "jobId": parent["jobId"]})
+    m.table.update_item(
+        Key={"pk": "RUNS", "sk": parent["jobId"]},
+        UpdateExpression="SET #s = :status, novelFailed = :yes",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":status": "READY_FOR_VIDEO_DISCUSSION", ":yes": True},
+    )
+    video = request(m, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "video"}})
+    assert video["statusCode"] == 400 and "target novel" in video["body"]
+    both = request(m, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "both"}})
+    assert both["statusCode"] == 400
+    recovered = unpack(
+        request(m, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "novel"}})
+    )
+    assert recovered["target"] == "novel"
+    assert recovered["status"] == "SUBMITTED"
+    assert "novelFailed" not in recovered
+    assert recovered["recovery"]["mode"] == "reuse-valid-stages"
+    assert {"context", "novel-proof"} <= set(recovered["recovery"]["reusedStages"])
+
+
 def test_plan_version_bump_mints_a_new_recovery_and_skips_the_old_run(editorial):
     m = editorial
     _, parent = submitted(m)

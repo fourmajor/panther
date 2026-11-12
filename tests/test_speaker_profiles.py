@@ -10,6 +10,58 @@ def embedding(x=1, y=0):
     return [x, y] + [0] * 14
 
 
+def _axis(index, cosine, other=None, other_cosine=0.0):
+    values = [0.0] * 16
+    values[index] = cosine
+    if other is not None:
+        values[other] = other_cosine
+    residual = 1 - sum(value * value for value in values)
+    if residual > 0:
+        values[15] = math.sqrt(residual)
+    return values
+
+
+def test_one_to_one_assignment_accepts_a_clear_margin_below_0_75():
+    profiles = [
+        {'playerId': 'brian', 'embedding': _axis(0, 1)},
+        {'playerId': 'english-stu', 'embedding': _axis(1, 1)},
+        {'playerId': 'mike', 'embedding': _axis(2, 1)},
+        {'playerId': 'dan', 'embedding': _axis(3, 1)},
+    ]
+    embeddings = {
+        'SPEAKER_00': _axis(0, 0.731, 1, 0.279),
+        'SPEAKER_03': _axis(1, 0.507, 0, -0.004),
+        'SPEAKER_02': _axis(2, 0.306, 3, 0.095),
+        'SPEAKER_01': _axis(3, 0.221, 2, 0.068),
+    }
+    mapping, _unavailable, reports = speakers.map_speakers({'embeddings': embeddings}, profiles)
+    assert mapping == {
+        'SPEAKER_00': 'brian',
+        'SPEAKER_01': 'dan',
+        'SPEAKER_02': 'mike',
+        'SPEAKER_03': 'english-stu',
+    }
+    assert all(item['reenroll'] for item in reports)
+    by_speaker = {item['speaker']: item for item in reports}
+    assert by_speaker['SPEAKER_00']['bestCosine'] == pytest.approx(0.731, abs=1e-3)
+    assert by_speaker['SPEAKER_00']['runnerUpCosine'] == pytest.approx(0.279, abs=1e-3)
+    assert by_speaker['SPEAKER_01']['bestCosine'] == pytest.approx(0.221, abs=1e-3)
+    assert by_speaker['SPEAKER_03']['bestCosine'] == pytest.approx(0.507, abs=1e-3)
+
+
+def test_two_speakers_do_not_share_one_player():
+    profiles = [
+        {'playerId': 'brian', 'embedding': _axis(0, 1)},
+        {'playerId': 'dan', 'embedding': _axis(1, 1)},
+    ]
+    same = _axis(0, 1)
+    mapping, _unavailable, _reports = speakers.map_speakers(
+        {'embeddings': {'SPEAKER_00': same, 'SPEAKER_01': same}}, profiles
+    )
+    assert list(mapping.values()).count('brian') == 1
+    assert list(mapping.values()).count(None) == 1
+
+
 def test_match_requires_threshold_and_margin_not_just_nearest():
     profiles = [{'playerId': 'alex', 'embedding': embedding()},
                 {'playerId': 'sam', 'embedding': embedding(0, 1)}]

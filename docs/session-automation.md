@@ -52,7 +52,11 @@ utterances unassigned with an attribution warning. The session diarization file 
 unavailable-embedding record as the chunk pass, so one non-finite speaker does not discard the
 other speakers. Transcript text shows the diarized speaker label when the player is unknown.
 Unassigned means there is no player and no speaker label. Malformed evidence and invalid enrolled
-profiles still fail closed. After reconciliation, a player-assignment rate below 25% of segments fails the handoff.
+profiles still fail closed. Reconciliation assigns each diarized speaker to a different enrolled
+player. A match is kept when its cosine leads the runner-up by at least 0.1, or when the cosine
+is at least 0.75. A tie stays unknown. After reconciliation, a player-assignment rate below 25% of
+segments fails the handoff. An accepted cosine below 0.75 is logged as a prompt to re-enroll that
+profile from a clean sample.
 The local candidate and the cosine for each diarized speaker are kept; the transcript is
 not published and adaptation does not start. A near-zero rate is a broken mapping, not a
 successful unknown.
