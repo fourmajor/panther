@@ -538,6 +538,60 @@ def context_page(game, cursor, cutoff):
     return {"items": items, "cursor": result["cursor"]}
 
 
+def reusable_outputs(parent):
+    """Completed parent stages whose bytes and envelope still match. Failed stages rerun."""
+    found = {}
+    for task in query("TASKS"):
+        if task.get("jobId") != parent["jobId"] or task.get("status") != "DONE":
+            continue
+        stage = task.get("stage")
+        output = task.get("output")
+        if stage not in STAGES or stage in found or not isinstance(output, dict):
+            continue
+        if not isinstance(output.get("key"), str):
+            continue
+        try:
+            current, _head = asset(output["key"], parent["gameId"])
+            stored_size = int(output.get("size", -1))
+            if (
+                current["key"] != output.get("key")
+                or current["sha256"] != output.get("sha256")
+                or int(current["size"]) != stored_size
+            ):
+                continue
+            doc = document(current)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError, ClientError):
+            continue
+        if (
+            doc.get("entityType") != "EditorialArtifact"
+            or doc.get("stage") != stage
+            or doc.get("jobId") != parent["jobId"]
+            or doc.get("structuralValidation") != "passed"
+            or doc.get("publicationStatus") not in {"accepted", "accepted-with-notes"}
+            or doc.get("videoGenerationAuthorized") is not False
+        ):
+            continue
+        found[stage] = {
+            "key": current["key"],
+            "sha256": current["sha256"],
+            "size": int(current["size"]),
+        }
+    return found
+
+
+def _reused_pin(job, stage):
+    recovery = job.get("recovery")
+    if not isinstance(recovery, dict):
+        return None
+    outputs = recovery.get("reusedOutputs")
+    if not isinstance(outputs, dict):
+        return None
+    pin = outputs.get(stage)
+    if not isinstance(pin, dict) or not {"key", "sha256", "size"} <= set(pin):
+        return None
+    return {"key": pin["key"], "sha256": pin["sha256"], "size": int(pin["size"])}
+
+
 def recover(body, actor):
     """An explicit, idempotent replay; never mutate a failed execution or its artifacts."""
     if set(body) != {"jobId", "target"} or body["target"] not in {"novel", "video", "both"}:
@@ -570,6 +624,17 @@ def recover(body, actor):
     if existing:
         return public(existing)
     now = int(time.time())
+    reused = reusable_outputs(parent)
+    recovery = {
+        "schemaVersion": 1,
+        "parentJobId": parent["jobId"],
+        "parentWorkflowVersion": parent["workflowVersion"],
+        "requestedAt": now,
+        "mode": "reuse-valid-stages" if reused else "replay-pinned-inputs",
+    }
+    if reused:
+        recovery["reusedOutputs"] = reused
+        recovery["reusedStages"] = sorted(reused)
     job = {
         **parent,
         "sk": job_id,
@@ -579,13 +644,7 @@ def recover(body, actor):
         "createdAt": now,
         "target": body["target"],
         "videoGenerationAuthorized": False,
-        "recovery": {
-            "schemaVersion": 1,
-            "parentJobId": parent["jobId"],
-            "parentWorkflowVersion": parent["workflowVersion"],
-            "requestedAt": now,
-            "mode": "replay-pinned-inputs",
-        },
+        "recovery": recovery,
         "actor": actor,
     }
     for field in ("novelFailed", "videoFailed", "completedAt", "failure"):
@@ -906,18 +965,26 @@ def internal(event):
         stage = event["stage"]
         if stage not in STAGES or job["status"] in TERMINAL:
             raise ValueError("Invalid dispatch")
+        reused = _reused_pin(job, stage)
+        now = int(time.time())
         task = {
             "pk": "TASKS",
             "sk": f"{job_id}:{stage}",
             "jobId": job_id,
             "gameId": job["gameId"],
             "stage": stage,
-            "status": "QUEUED",
+            "status": "DONE" if reused else "QUEUED",
             "taskToken": event["taskToken"],
             "leaseUntil": 0,
             "attempts": 0,
-            "queuedAt": int(time.time()),
+            "queuedAt": now,
         }
+        if reused:
+            task.update(
+                completedAt=now,
+                output=reused,
+                reusedFrom=(job.get("recovery") or {}).get("parentJobId"),
+            )
         try:
             table.put_item(Item=task, ConditionExpression="attribute_not_exists(pk)")
         except ClientError as exc:
