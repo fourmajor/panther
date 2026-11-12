@@ -27,7 +27,21 @@ const night = {
   ],
 };
 
+function wideNight() {
+  const titles = ['Session audio', 'Transcription', 'Transcript cleanup', 'Storyboard approval', 'Video generation', 'Sound and delivery', 'Narration', 'Novel chapter', 'Session video', 'Still images', 'Listening copy', 'Corrected transcript'];
+  return {
+    schemaVersion: 1,
+    sessionId: 'session-wide',
+    title: 'Long night',
+    nodes: titles.map((title, index) => node(`wide-${index}`, 'Stage', title, index, index % 3, 'pending', null)),
+    edges: titles.slice(1).map((_, index) => ({from: `wide-${index}`, to: `wide-${index + 1}`, status: 'pending'})),
+  };
+}
+
 function pipelineBody(sessionId) {
+  if (sessionId === 'session-wide') {
+    return {schemaVersion: 1, source: 'job-records', sessions: [{id: 'session-wide', title: 'Long night', updatedAt: 30, status: 'pending'}], workers: [], manifest: wideNight()};
+  }
   const selected = sessionId === 'session-dawn' ? 'session-dawn' : 'session-night';
   const dawn = {
     ...night,
@@ -74,6 +88,36 @@ async function openHome(page) {
   });
 }
 
+async function expectGraphNode(graph, label, {fitsWithoutScroll = false} = {}) {
+  const placed = await graph.locator('.pipeline-scroll').evaluate((el, args) => {
+    const target = [...el.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === args.label);
+    const measure = () => {
+      const box = target.getBoundingClientRect();
+      const port = el.getBoundingClientRect();
+      const title = target.querySelector('strong').getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + Math.min(24, box.width / 2), box.top + box.height / 2);
+      return {
+        inside: box.width >= 160 && box.left >= port.left - 1 && box.right <= port.right + 1 && box.top >= port.top - 1 && box.bottom <= port.bottom + 1 && box.left >= -1 && box.right <= window.innerWidth + 1,
+        titleInside: title.left >= box.left - 1 && title.right <= box.right + 1 && title.top >= box.top - 1 && title.bottom <= box.bottom + 1,
+        pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+        hit: Boolean(hit && target.contains(hit)),
+        scrollLeft: el.scrollLeft,
+      };
+    };
+    if (args.fitsWithoutScroll) el.scrollLeft = 0;
+    const reading = measure();
+    if (!reading.inside && !args.fitsWithoutScroll) {
+      target.scrollIntoView({block: 'nearest', inline: 'nearest'});
+      return measure();
+    }
+    return reading;
+  }, {label, fitsWithoutScroll});
+  expect(placed.inside, label).toBe(true);
+  expect(placed.titleInside, label).toBe(true);
+  expect(placed.pageOverflow, label).toBe(false);
+  expect(placed.hit, label).toBe(true);
+}
+
 for (const width of [1280, 390]) {
   test(`session pipeline is the landing graph at ${width}px`, async ({page}) => {
     await page.setViewportSize({width, height: 900});
@@ -101,6 +145,14 @@ for (const width of [1280, 390]) {
     expect(await color(waiting)).toBe('rgb(109, 106, 98)');
     expect(await color(gate)).toBe('rgb(230, 183, 92)');
     expect(await running.evaluate(node => getComputedStyle(node).animationName)).toBe('pipeline-pulse');
+    await expectGraphNode(graph, 'Session audio, Done', {fitsWithoutScroll: true});
+    await expectGraphNode(graph, 'Video generation, Not started', {fitsWithoutScroll: width === 1280});
+    const scrollport = await graph.locator('.pipeline-scroll').evaluate(el => {
+      const box = el.getBoundingClientRect();
+      return {overflows: el.scrollWidth > el.clientWidth + 1, barVisible: box.bottom <= window.innerHeight + 1 && box.top >= 0};
+    });
+    expect(scrollport.overflows).toBe(width !== 1280);
+    if (width === 390) expect(scrollport.barVisible).toBe(true);
     await expect(graph.getByRole('list', {name: 'Workers'})).toContainText('Editorial online');
     await expect(graph.getByRole('listitem').filter({hasText: 'Playback offline'})).toBeVisible();
     await expect(graph.getByRole('alert')).toContainText('Worker offline or its Panther sign-in expired.');
@@ -130,5 +182,28 @@ for (const width of [1280, 390]) {
     await page.getByRole('link', {name: 'Panther home'}).click();
     await expect(page).toHaveURL('https://panther.place/games/campaign-a/pipeline');
     await expect(graph.getByRole('button', {name: 'Transcription, Failed'})).toBeVisible();
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`a long session pipeline scrolls inside the graph at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width, height: 900});
+    await openHome(page);
+    await page.goto('https://panther.place/games/campaign-a/pipeline/session-wide');
+    const graph = page.getByRole('region', {name: 'Pipeline'});
+    await expect(graph.locator('.pipeline-session')).toHaveText('Long night');
+    const scroller = graph.locator('.pipeline-scroll');
+    const last = graph.getByRole('button', {name: 'Corrected transcript, Not started'});
+    const columnWidth = await graph.locator('.pipeline-column').first().evaluate(node => node.getBoundingClientRect().width);
+    expect(columnWidth).toBeGreaterThanOrEqual(180);
+    const clipped = await scroller.evaluate(el => {
+      const target = [...el.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Corrected transcript, Not started');
+      const box = target.getBoundingClientRect();
+      return box.right > el.getBoundingClientRect().right + 1;
+    });
+    expect(clipped).toBe(true);
+    await expectGraphNode(graph, 'Corrected transcript, Not started');
+    expect(await last.evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThanOrEqual(160);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   });
 }
