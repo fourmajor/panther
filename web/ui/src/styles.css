@@ -388,7 +388,7 @@
 .scene-order-row:has(.scene-card:hover){background:var(--accent);}
 .scene-order-row:has(.scene-card:focus-visible){outline:2px solid var(--ring);outline-offset:2px;}
 
-.pipeline-page{padding-bottom:2rem;}
+.pipeline-page{max-width:100%;min-width:0;padding-bottom:2rem;}
 .pipeline-embedded{padding-bottom:1rem;}
 .pipeline-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;}
 .pipeline-heading h1,.pipeline-heading h2{margin:0;}
@@ -402,18 +402,18 @@
 .pipeline-worker[data-status=online]::before{background:#1f8a56;box-shadow:0 0 0 3px color-mix(in srgb,#1f8a56 28%,transparent);}
 .pipeline-worker[data-status=offline]{border-color:#c43c3c;color:var(--danger);}
 .pipeline-worker[data-status=offline]::before{background:#c43c3c;box-shadow:0 0 0 3px color-mix(in srgb,#c43c3c 28%,transparent);}
-.pipeline-scroll{overflow:auto;min-height:min(72vh,820px);border:1px solid var(--line);border-radius:22px;padding:1.6rem 1.2rem 2rem;background-color:color-mix(in srgb,var(--panel) 86%,#000);background-image:radial-gradient(circle,color-mix(in srgb,var(--ink) 18%,transparent) 1px,transparent 1px);background-size:22px 22px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent),0 18px 50px rgb(0 0 0 / .18);}
+.pipeline-scroll{width:100%;max-width:100%;min-width:0;overflow:auto;overscroll-behavior:contain;scrollbar-color:#8a867c transparent;min-height:min(72vh,820px);border:1px solid var(--line);border-radius:22px;padding:1.6rem 1.2rem 2rem;background-color:color-mix(in srgb,var(--panel) 86%,#000);background-image:radial-gradient(circle,color-mix(in srgb,var(--ink) 18%,transparent) 1px,transparent 1px);background-size:22px 22px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent),0 18px 50px rgb(0 0 0 / .18);}
 .pipeline-embedded .pipeline-scroll{min-height:420px;}
 .pipeline-scroll:focus-visible{outline:2px solid #3b82f6;outline-offset:3px;}
-.pipeline-canvas{position:relative;min-width:max-content;}
+.pipeline-canvas{position:relative;width:max-content;min-width:100%;}
 .pipeline-edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;}
 .pipeline-edges path{fill:none;stroke:#6d6a62;stroke-width:2;stroke-linejoin:round;}
 .pipeline-edges path[data-status=done]{stroke:#1f8a56;}
 .pipeline-edges path[data-status=failed]{stroke:#c43c3c;}
 .pipeline-edges path[data-status=running]{stroke:#3b82f6;stroke-dasharray:7 6;animation:pipeline-dash 1s linear infinite;}
 .pipeline-edges path[data-status=gate]{stroke:#e6b75c;}
-.pipeline-columns{position:relative;z-index:1;display:flex;gap:72px;align-items:start;}
-.pipeline-column{display:grid;grid-template-rows:repeat(3,104px);align-items:center;width:220px;gap:10px;}
+.pipeline-columns{position:relative;z-index:1;display:flex;gap:16px;align-items:start;width:max-content;min-width:100%;}
+.pipeline-column{display:grid;grid-template-rows:repeat(3,112px);align-items:center;flex:1 0 188px;width:188px;min-width:188px;max-width:210px;gap:10px;}
 .pipeline-node{position:relative;display:flex;align-items:center;gap:.75rem;width:100%;min-height:84px;padding:.75rem .85rem;border:1px solid #6d6a62;border-radius:16px;background:color-mix(in srgb,var(--panel) 92%,#000);color:var(--ink);text-align:left;box-shadow:0 12px 28px rgb(0 0 0 / .2);cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}
 .pipeline-node:hover{transform:translateY(-2px);}
 .pipeline-node:focus-visible{outline:2px solid #3b82f6;outline-offset:3px;}
@@ -446,9 +446,8 @@
 @keyframes pipeline-pulse{0%,100%{box-shadow:0 0 0 1px #3b82f6,0 10px 24px rgb(0 0 0 / .18);}50%{box-shadow:0 0 0 5px color-mix(in srgb,#3b82f6 45%,transparent),0 10px 24px rgb(0 0 0 / .18);}}
 @keyframes pipeline-dash{to{stroke-dashoffset:-26;}}
 @media(max-width:720px){
-  .pipeline-column{width:min(220px,78vw);}
   .pipeline-heading h1{font-size:1.8rem;}
   .pipeline-tools{width:100%;justify-content:flex-start;margin-left:0;}
-  .pipeline-scroll{min-height:62vh;padding:1rem .7rem 1.4rem;}
+  .pipeline-scroll{min-height:0;padding:1rem .7rem 1.4rem;}
 }
 @media(prefers-reduced-motion:reduce){.pipeline-node,.pipeline-node[data-status=running],.pipeline-loading div,.pipeline-edges path{animation:none;transition:none;}}
