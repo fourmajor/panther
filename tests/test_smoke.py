@@ -64,6 +64,38 @@ def test_fal_cap_and_session_budget_refuse_overspend(tmp_path, monkeypatch):
         narration.create_budget(
             "session-one", "test-game", "10.00", "5.00", "A different allowance", Billing()
         )
+    shots = [
+        {
+            "id": f"shot-{index}",
+            "model": "h3-max-image",
+            "durationSeconds": 5,
+            "resolution": "768P",
+            "maxAttempts": 1,
+        }
+        for index in range(16)
+    ]
+    video.assert_planned_cut(shots, session=True)
+    estimate = video.reviewed_estimate(shots)
+    assert estimate["estimatedCents"] == 640
+    assert estimate["estimatedCents"] <= 900
+    with pytest.raises(ValueError, match="14–16"):
+        video.assert_planned_cut(shots[:13], session=True)
+    under = [{**shot, "durationSeconds": 4} for shot in shots[:14]]
+    with pytest.raises(ValueError, match="60–90"):
+        video.assert_planned_cut(under, session=True)
+    video.assert_planned_cut([shots[0]])
+    guard = narration.create_budget(
+        "session-cut", "test-game", "20.00", "9.00", "Session video guard", Billing()
+    )
+    assert guard["otherHeldCents"] == 900
+    guarded = {
+        "manifest": {"projectId": "session-cut", "gameId": "test-game"},
+        "billingAccount": "fal-example",
+    }
+    with video.database() as db:
+        video.check_budget(db, guarded, estimate["estimatedCents"])
+        with pytest.raises(click.ClickException, match="narration remains protected"):
+            video.check_budget(db, guarded, 901)
 
 
 def test_deploy_choice_hotswaps_code_and_fully_deploys_infrastructure():
@@ -384,3 +416,67 @@ def test_recovery_reuses_completed_novel_chapter_and_video_stages(editorial):
     )
     assert claimed["task"]["stage"] == "video-preflight"
     assert claimed["artifacts"]["novel-chapter"]["key"] == kept["novel-chapter"]["key"]
+
+
+def test_novel_ready_recovery_replans_video_and_keeps_the_novel(editorial):
+    parent = submitted(editorial)[1]
+    payloads = {
+        "context": {"selection": {"title": "Context"}, "evidence": {"catalog": {}}},
+        "correction": {"markdown": "Names fixed", "edits": [], "passed": True},
+        "corrected-transcript": {"transcript": {"segments": []}, "review": {"markdown": "Kept"}},
+        "novel-chapter": {"markdown": "The finished chapter.", "passed": True, "title": "River"},
+        "video-source-brief": {"markdown": "The old cut.", "passed": True},
+    }
+    kept = {
+        stage: done_stage(editorial, parent, stage, payload) for stage, payload in payloads.items()
+    }
+    editorial.table.update_item(
+        Key={"pk": "RUNS", "sk": parent["jobId"]},
+        UpdateExpression="SET #target = :target",
+        ExpressionAttributeNames={"#target": "target"},
+        ExpressionAttributeValues={":target": "novel"},
+    )
+    editorial.internal({"operation": "finish", "jobId": parent["jobId"]})
+    assert editorial.read("RUNS", parent["jobId"])["status"] == "NOVEL_READY"
+    recovered = unpack(
+        request(
+            editorial,
+            "POST /editorial-jobs",
+            {"recovery": {"jobId": parent["jobId"], "target": "video"}},
+        )
+    )
+    assert recovered["videoGenerationAuthorized"] is False
+    assert recovered["target"] == "video"
+    refused = request(
+        editorial,
+        "POST /editorial-jobs",
+        {"recovery": {"jobId": parent["jobId"], "target": "both"}},
+    )
+    assert refused["statusCode"] == 400
+    reused = set(recovered["recovery"]["reusedStages"])
+    assert {"context", "correction", "corrected-transcript", "novel-chapter"} <= reused
+    assert "video-source-brief" not in reused
+    assert "video-preflight" not in reused
+    editorial.internal(
+        {
+            "operation": "dispatch",
+            "jobId": recovered["jobId"],
+            "stage": "novel-chapter",
+            "taskToken": "token-novel-chapter",
+        }
+    )
+    stored = editorial.read("TASKS", f"{recovered['jobId']}:novel-chapter")
+    assert stored["status"] == "DONE"
+    assert stored["reusedFrom"] == parent["jobId"]
+    assert stored["output"]["sha256"] == kept["novel-chapter"]["sha256"]
+    editorial.internal(
+        {
+            "operation": "dispatch",
+            "jobId": recovered["jobId"],
+            "stage": "video-source-brief",
+            "taskToken": "token-video-source-brief",
+        }
+    )
+    replanned = editorial.read("TASKS", f"{recovered['jobId']}:video-source-brief")
+    assert replanned["status"] == "QUEUED"
+    assert "reusedFrom" not in replanned

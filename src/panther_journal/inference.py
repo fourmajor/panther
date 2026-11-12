@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -179,27 +181,112 @@ def claude_command(model):
     return [claude_executable(), "-p", "--output-format", "json", "--model", model]
 
 
-def require_subscription(executable, runner=None):
-    """Refuse to start unless the CLI is the Claude subscription login."""
-    run = runner or subprocess.run
-    status = run(
-        [executable, "auth", "status"],
-        env=subscription_environment(),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+AUTH_TIMEOUT = 90
+AUTH_ATTEMPTS = 2
+AUTH_CACHE_SECONDS = 15 * 60
+
+
+def auth_cache_path():
+    """A recent subscription check. Launchd can reuse it when the CLI is slow to answer."""
+    override = os.environ.get("PANTHER_CLAUDE_AUTH_CACHE", "").strip()
+    if override:
+        path = Path(override)
+        if not path.is_absolute():
+            _failure("PANTHER_CLAUDE_AUTH_CACHE must be an absolute path.")
+        return path
+    home = Path.home()
+    if os.name == "posix" and Path("/Library").exists() and (home / "Library").is_dir():
+        root = home / "Library/Application Support/Panther"
+    else:
+        root = home / ".local/state/panther"
+    return root / "claude-auth.json"
+
+
+def _subscription_payload(status):
     if status.returncode:
-        _failure("Sign in to Claude Code with the Claude subscription. The editorial worker does not use an API key.")
+        return None
     try:
         payload = json.loads(status.stdout)
     except json.JSONDecodeError:
-        _failure("Claude Code auth status was not JSON. Sign in with the Claude subscription.")
-    if not isinstance(payload, dict) or payload.get("loggedIn") is not True or payload.get("authMethod") != "claude.ai":
+        return None
+    if (
+        isinstance(payload, dict)
+        and payload.get("loggedIn") is True
+        and payload.get("authMethod") == "claude.ai"
+    ):
+        return payload
+    return None
+
+
+def _remember_subscription(path, now):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"loggedIn": True, "authMethod": "claude.ai", "checkedAt": now}),
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
+def _cached_subscription(path, now):
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    checked = payload.get("checkedAt")
+    fresh = isinstance(checked, (int, float)) and 0 <= now - checked <= AUTH_CACHE_SECONDS
+    if payload.get("loggedIn") is True and payload.get("authMethod") == "claude.ai" and fresh:
+        return payload["authMethod"]
+    return None
+
+
+def require_subscription(executable, runner=None, clock=None, cache_path=None):
+    """Refuse to start unless the CLI is the Claude subscription login.
+
+    A slow host gets a longer timeout and one retry. A check that still does not
+    finish can use a success cached within the last fifteen minutes. An explicit
+    logout is never treated as success.
+    """
+    run = runner or subprocess.run
+    now = (clock or time.time)()
+    path = cache_path if cache_path is not None else auth_cache_path()
+    answered = False
+    for _attempt in range(AUTH_ATTEMPTS):
+        try:
+            status = run(
+                [executable, "auth", "status"],
+                env=subscription_environment(),
+                capture_output=True,
+                text=True,
+                timeout=AUTH_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        answered = True
+        payload = _subscription_payload(status)
+        if payload:
+            try:
+                _remember_subscription(path, now)
+            except OSError:
+                pass
+            return payload.get("authMethod")
+        if status.returncode == 0:
+            break
+    if not answered:
+        cached = _cached_subscription(path, now)
+        if cached:
+            return cached
         _failure(
-            "Claude Code must be the subscription login (authMethod claude.ai). An API key is not the editorial backend."
+            "Claude Code auth status did not answer in time. "
+            "Sign in with the Claude subscription and retry."
         )
-    return payload.get("authMethod")
+    _failure(
+        "Sign in to Claude Code with the Claude subscription. "
+        "The editorial worker does not use an API key."
+    )
 
 
 def _scan(event, depth=0):

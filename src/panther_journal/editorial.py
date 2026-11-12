@@ -614,6 +614,10 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 entry["result"] = copy.deepcopy(value)
             if role in {"video-shot-list", "video-storyboards"}:
                 storyboard(value["shots"])
+                if data.get("sessionCut"):
+                    from panther_journal.video import assert_planned_cut
+
+                    assert_planned_cut(value["shots"], session=True)
             if role == "video-storyboards":
                 expected = data["priorStages"]["video-shot-list"]["shots"]
 
@@ -2064,6 +2068,7 @@ def process(config, root, claim):
             if stage == "novel-chapter"
             else None
         )
+        creation = job.get("creation") or {}
         inputs = {
             "context": evidence,
             "priorStages": prior,
@@ -2073,6 +2078,9 @@ def process(config, root, claim):
             "sourceChapter": chapter,
             "episodeDestination": bool(job.get("episodeDestination")),
             "productionSourceKeys": list(dict.fromkeys(sources)),
+            "sessionCut": stage in {"video-shot-list", "video-storyboards"}
+            and not creation.get("sceneRef")
+            and not creation.get("storyboardShotRef"),
         }
         if stage not in {*PLAN["video"], "novel-chapter"}:
             inputs["raw"] = raw
@@ -2124,7 +2132,10 @@ def process(config, root, claim):
         if stage in {"video-shot-list", "video-storyboards"}:
             from panther_journal.video import assert_planned_cut
 
-            assert_planned_cut(report.get("shots") or [])
+            session_cut = not (job.get("creation") or {}).get("sceneRef") and not (
+                job.get("creation") or {}
+            ).get("storyboardShotRef")
+            assert_planned_cut(report.get("shots") or [], session=session_cut)
         if stage == "video-storyboards":
             expected = previous["video-shot-list"]["payload"]["shots"]
             if [(s["shotId"], s["sceneId"], s["durationSeconds"]) for s in report["shots"]] != [
@@ -2245,7 +2256,7 @@ def submit(game, raw_key):
 @click.option("--job-id", required=True)
 @click.option("--target", type=click.Choice(["novel", "video", "both"]), required=True)
 def recover(job_id, target):
-    """Replay a failed run or failed branch from pinned inputs. Finished stages are reused."""
+    """Replay a failed run, a failed branch, or video planning from a finished novel."""
     click.echo(json.dumps(cloud.api(cloud.configuration(), "POST", "/editorial-jobs",
                                    json={"recovery": {"jobId": job_id, "target": target}}), indent=2))
 

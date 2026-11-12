@@ -89,7 +89,8 @@ auto-submit preproduction packets, or replace subscription-backed planning with 
 ### Video model selection policy
 
 The first cut is `h3-max-image` for every scene: MiniMax H3 Max through fal, audio on, 768P,
-one take of 2–7 seconds, and a cut of 90 seconds or less (about 14–16 shots). `480P` is an
+one take of 2–7 seconds. A full session cut is 14–16 shots, targeting 60–80 seconds and
+staying within 60–90. A scene cut stays at most 16 shots and 90 seconds. `480P` is an
 explicit option on that model. A take that fails review is kept and flagged; it is not bought
 again. Veo 3.1 Fast and Kling 3 Pro are per-shot overrides only (`PANTHER_VIDEO_MODEL` can name
 one, and a shot `model` wins). Start frames default to `gpt-image-2` at quality `medium`; a

@@ -57,7 +57,7 @@ Do not invent a look or a voice for a session.
 - Visual style is per game (`visualStyle`), default `photorealistic` for new games. Presets and prompt text are in `infra/lambda/media-api/visual_styles.py`. Generation must use the saved game style. Identity references do not override it.
 - Novel voice is chosen inside each run by the `novel-options` stage (an original voice bible, no imitation of a living writer). There is no fixed chapter length.
 - Narration is ElevenLabs Eleven v3 through fal, stock voices only. Trailer reads are paced, not neutral. Recording consent is not cloning consent.
-- First-cut video is `h3-max-image` for every shot: H3 Max, audio on, 768P (480P is an option), one take of 2–7 seconds, about 14–16 shots and 90 seconds or less. A failed review is kept and flagged. Start frames are `gpt-image-2` medium or a Blender render. The plan stores the estimate; the session budget is `panther narration allocate`. This is not spending approval.
+- First-cut video is `h3-max-image` for every shot: H3 Max, audio on, 768P (480P is an option), one take of 2–7 seconds. A full session cut is 14–16 shots, targeting 60–80 seconds and staying within 60–90. A scene cut stays at most 16 shots and 90 seconds. A failed review is kept and flagged. Start frames are `gpt-image-2` medium or a Blender render. The plan stores the estimate; the session budget is `panther narration allocate`. This is not spending approval.
 - Browser delivery that already exists is a 1280×720, 24 fps MP4.
 
 ## Providers, keys, hardware

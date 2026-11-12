@@ -1,8 +1,9 @@
 # Shot prompt preparation
 
 A storyboard item is one independently rendered shot and one editable cut, not an
-entire scene. New planning stages default to a cut of 90 seconds or less: about 14–16 shots
-of 2–7 seconds, one H3 Max take each. An item may describe a
+entire scene. A full session cut is 14–16 shots of 2–7 seconds, targeting 60–80 seconds and
+staying within 60–90, one H3 Max take each. A scene cut stays at most 16 shots and 90 seconds.
+An item may describe a
 clearly timed sequence such as `[shot 1, 0-4s]`, with achievable actions in each beat. The cut duration controls when
 the action must finish; extra source-take time holds the ending rather than delaying
 an event beyond the cut.

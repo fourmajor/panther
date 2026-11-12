@@ -8,6 +8,8 @@ Panther is a hobby project. Rapid development beats almost everything else.
 - Do not add tests by default. The only tests to add or keep are smoke tests for budget and cost
   guards (the fal spend cap and the session budget) and for pipeline hand-offs, including recovery
   that reuses finished stages. That set is `tests/test_smoke.py` and `infra/test/github-deploy.test.ts`.
+- Runtime files are not part of that test set. Keep `infra/browser-tests/viewer.spec.cjs`. The
+  model worker Docker image runs it as its runtime model check; deleting it breaks that image.
 - Do not use Fast mode, or any other model fast or priority tier.
 - Tests do not block merges. The smoke job runs after a push to `main` with `continue-on-error` and
   is not a dependency of deploy.
@@ -206,7 +208,8 @@ Panther is a hobby project. Rapid development beats almost everything else.
   Frame-sampled visual checks and technical sound checks must disclose their coverage limits.
 
 - Video production model policy: every new shot is MiniMax H3 Max through fal (`h3-max-image`),
-  audio on, 768P, one take of 2–7 seconds, in a cut of about 14–16 shots and 90 seconds or less.
+  audio on, 768P, one take of 2–7 seconds. A full session cut is 14–16 shots, targeting
+  60–80 seconds and staying within 60–90. A scene cut stays at most 16 shots and 90 seconds.
   `480P` is an explicit option. Veo 3.1 Fast and Kling 3 Pro are explicit per-shot overrides only.
   A take that fails review is kept and flagged. Start frames default to `gpt-image-2` medium;
   a Blender render is allowed. The plan stores its estimated cost, and the session budget is the
