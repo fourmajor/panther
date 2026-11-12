@@ -555,6 +555,105 @@ def test_persistent_disagreement_continues_honestly_with_notes(tmp_path, monkeyp
         assert not candidate["corrections"]
 
 
+def _catalog_name_transcript():
+    speech = [
+        "Endrik asked Gianno for the gate.",
+        "Remick warned Damien about the bridge.",
+        "Endrik and Gianno waited with Remick.",
+        "Damien answered Endrik before Gianno left.",
+    ]
+    document = {
+        "entityType": "PlayerTranscript",
+        "artifactType": "raw-transcript",
+        "gameId": "test-game",
+        "sessionId": "test-session",
+        "recordingId": "recording-" + "b" * 32,
+        "players": [{"id": "person", "name": "Person"}],
+        "segments": [
+            {
+                "start": index,
+                "end": index + 1,
+                "playerId": None,
+                "speakerLabel": f"SPEAKER_{index % 2:02d}",
+                "text": speech[index % len(speech)],
+            }
+            for index in range(12)
+        ],
+    }
+    catalog = {
+        "characters": [
+            {"name": "Endrin"},
+            {"name": "Giano"},
+            {"name": "Remic"},
+            {"name": "Damian"},
+        ]
+    }
+    return document, catalog
+
+
+def test_misspelled_catalog_names_become_corrections(tmp_path, monkeypatch):
+    document, catalog = _catalog_name_transcript()
+    replacements = {"Endrik": "Endrin", "Gianno": "Giano", "Remick": "Remic", "Damien": "Damian"}
+    found = worker._catalog_misspellings(document["segments"], catalog)
+    assert {item["token"] for item in found} == set(replacements)
+
+    def ai(folder, stage, data, heartbeat):
+        prompt = worker._stage_prompt(stage, data)
+        assert "No audio is available or expected" in prompt
+        assert "failed round" in prompt
+        edits = []
+        for index, segment in enumerate(data["raw"]["segments"]):
+            after = segment["text"]
+            for wrong, right in replacements.items():
+                after = after.replace(wrong, right)
+            if after != segment["text"]:
+                edits.append(
+                    {
+                        "segmentIndex": index,
+                        "before": segment["text"],
+                        "after": after,
+                        "reason": "Catalog spelling",
+                        "evidenceIds": ["catalog"],
+                    }
+                )
+        return report(passed=True, edits=edits, evidenceIds=["catalog"])
+
+    monkeypatch.setattr(worker, "agent", ai)
+    result, _, _, status = worker.autonomous_stage(
+        tmp_path,
+        "correction",
+        {"raw": document, "context": {"catalog": catalog}, "priorStages": {}},
+        lambda: None,
+    )
+    assert status == "accepted" and result["passed"] and len(result["edits"]) == 12
+    corrected = apply_corrections(document, result, {"catalog"})
+    assert not worker._catalog_misspellings(corrected["segments"], catalog)
+    spoken = " ".join(segment["text"] for segment in corrected["segments"])
+    assert "Endrik" not in spoken and "Gianno" not in spoken and "Remick" not in spoken and "Damien" not in spoken
+    assert "Endrin" in spoken and "Giano" in spoken and "Remic" in spoken and "Damian" in spoken
+    assert all(segment["speakerLabel"].startswith("SPEAKER_") for segment in corrected["segments"])
+
+
+def test_wholesale_name_refusal_fails_the_round_and_blocks_raw_publication(tmp_path, monkeypatch):
+    document, catalog = _catalog_name_transcript()
+
+    def ai(folder, stage, data, heartbeat):
+        return report(
+            passed=False,
+            markdown="No correction overlay is issued without audio evidence. Retaining raw is safer.",
+            edits=[],
+        )
+
+    monkeypatch.setattr(worker, "agent", ai)
+    with pytest.raises(worker.DeterministicFailure, match="no applied edits"):
+        worker.autonomous_stage(
+            tmp_path,
+            "correction",
+            {"raw": document, "context": {"catalog": catalog}, "priorStages": {}},
+            lambda: None,
+        )
+
+
 def test_invalid_ai_edits_cannot_escape_guards(tmp_path, monkeypatch):
     original = raw()
     invalid = report(

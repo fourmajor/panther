@@ -61,6 +61,30 @@ def test_foreign_or_missing_evidence_fails_closed(fault):
         reconcile(document, evidence, profiles)
 
 
+def test_one_unavailable_embedding_keeps_the_matched_speaker():
+    document, evidence, profiles = fixture()
+    document["segments"].append(dict(start=12.0, end=20.0, text="Second voice.", playerId=None))
+    evidence["turns"].append(dict(start=12.0, end=20.0, speaker="SPEAKER_01"))
+    evidence["embeddings"]["SPEAKER_01"] = None
+    evidence["unavailableEmbeddings"] = {
+        "SPEAKER_01": {"reason": "non-finite-runtime-output", "values": ["nan"] * 16}
+    }
+    result = reconcile(document, evidence, profiles)
+    assert result["segments"][0]["playerId"] == "example-player"
+    assert result["segments"][1]["playerId"] is None
+    assert result["segments"][1]["speakerLabel"] == "SPEAKER_01"
+    assert result["segments"][1]["text"] == "Second voice."
+
+
+def test_diarized_label_stays_visible_when_the_player_is_unknown():
+    from panther_journal.recording import speaker_caption
+
+    players = [{"id": "example-player", "name": "Example"}]
+    assert speaker_caption({"playerId": "example-player"}, players) == "Example"
+    assert speaker_caption({"playerId": None, "speakerLabel": "SPEAKER_01"}, players) == "SPEAKER_01"
+    assert speaker_caption({"playerId": None, "speakerLabel": None}, players) == "Unassigned"
+
+
 @pytest.mark.parametrize("reason", ["empty", "weak", "overlap", "uncertain-timing"])
 def test_uncertain_speech_never_forces_identity(reason):
     document, evidence, profiles = fixture()

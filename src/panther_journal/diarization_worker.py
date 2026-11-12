@@ -10,8 +10,10 @@ import signal
 
 try:
     from .diarization_progress import Progress
+    from .speaker_profile_worker import runtime_embeddings
 except ImportError:  # Script invocation in the separate audio runtime, not the CLI environment.
     from diarization_progress import Progress
+    from speaker_profile_worker import runtime_embeddings
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -133,10 +135,10 @@ def run(args, progress):
         labels = result.speaker_diarization.labels()
         if len(labels) != len(result.speaker_embeddings):
             raise ValueError('Session speaker embedding labels differ')
-        document['embeddings'] = {
-            label: result.speaker_embeddings[index].tolist()
-            for index, label in enumerate(labels)
-        }
+        embeddings, unavailable = runtime_embeddings(labels, result.speaker_embeddings)
+        document['embeddings'] = embeddings
+        if unavailable:
+            document['unavailableEmbeddings'] = unavailable
     with args.output.open("x") as stream:
         json.dump(document, stream, indent=2, allow_nan=False)
     progress.update('complete', state='complete', force=True)

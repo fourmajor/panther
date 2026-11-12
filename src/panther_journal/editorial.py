@@ -223,6 +223,104 @@ def agent(folder, stage, inputs, heartbeat):
     return value
 
 
+def _catalog_name_tokens(catalog):
+    """Catalog spellings long enough that a one- or two-character ASR slip is meaningful."""
+    found = []
+    if not isinstance(catalog, dict):
+        return found
+    for key in ("characters", "players", "locations"):
+        for item in catalog.get(key) or []:
+            values = [item] if isinstance(item, str) else []
+            if isinstance(item, dict):
+                values.extend(item.get(field) for field in ("name", "title") if isinstance(item.get(field), str))
+                aliases = item.get("aliases")
+                if isinstance(aliases, str):
+                    values.append(aliases)
+                elif isinstance(aliases, list):
+                    values.extend(alias for alias in aliases if isinstance(alias, str))
+            for value in values:
+                found.extend(re.findall(r"[A-Za-z][A-Za-z'-]{4,}", value))
+    canonical = {}
+    for token in found:
+        canonical.setdefault(token.casefold(), token)
+    return canonical
+
+
+def _edit_distance(left, right):
+    if abs(len(left) - len(right)) > 2:
+        return 3
+    previous = list(range(len(right) + 1))
+    for i, a in enumerate(left, 1):
+        current = [i]
+        for j, b in enumerate(right, 1):
+            current.append(min(previous[j] + 1, current[-1] + 1, previous[j - 1] + (a != b)))
+        previous = current
+    return previous[-1]
+
+
+def _catalog_misspellings(segments, catalog):
+    """Unambiguous near-misses of catalog names. Ties and exact spellings are not errors."""
+    canonical = _catalog_name_tokens(catalog)
+    if not canonical or not isinstance(segments, list):
+        return []
+    exact = set(canonical)
+    problems = []
+    for index, segment in enumerate(segments):
+        text = segment.get("text") if isinstance(segment, dict) else None
+        if not isinstance(text, str):
+            continue
+        for match in re.finditer(r"[A-Za-z][A-Za-z'-]{4,}", text):
+            token = match.group(0)
+            folded = token.casefold()
+            if folded in exact:
+                continue
+            choices = []
+            for name_key, spelled in canonical.items():
+                limit = 1 if min(len(folded), len(name_key)) <= 5 else 2
+                distance = _edit_distance(folded, name_key)
+                if distance <= limit:
+                    choices.append(spelled)
+            if len(set(choices)) == 1:
+                problems.append({"segmentIndex": index, "token": token, "name": choices[0]})
+    return problems
+
+
+def _catalog(inputs):
+    context = inputs.get("context") if isinstance(inputs, dict) else None
+    if isinstance(context, dict) and isinstance(context.get("catalog"), dict):
+        return context["catalog"]
+    catalog = inputs.get("catalog") if isinstance(inputs, dict) else None
+    return catalog if isinstance(catalog, dict) else {}
+
+
+def _spoken_segments(stage, inputs, report):
+    raw = inputs.get("raw") if isinstance(inputs, dict) else None
+    raw_segments = raw.get("segments") if isinstance(raw, dict) else None
+    if stage == "correction":
+        segments = copy.deepcopy(raw_segments) if isinstance(raw_segments, list) else []
+        for edit in (report or {}).get("edits") or []:
+            index = edit.get("segmentIndex") if isinstance(edit, dict) else None
+            if (
+                type(index) is int
+                and 0 <= index < len(segments)
+                and edit.get("before") == segments[index].get("text")
+                and isinstance(edit.get("after"), str)
+            ):
+                segments[index]["text"] = edit["after"]
+        return segments
+    candidate = inputs.get("candidate") if isinstance(inputs, dict) else None
+    segments = candidate.get("segments") if isinstance(candidate, dict) else None
+    if isinstance(segments, list):
+        return segments
+    return raw_segments if isinstance(raw_segments, list) else []
+
+
+def _remaining_name_errors(stage, inputs, report):
+    if stage not in {"correction", "corrected-transcript"}:
+        return []
+    return _catalog_misspellings(_spoken_segments(stage, inputs, report), _catalog(inputs))
+
+
 def autonomous_stage(folder, stage, inputs, heartbeat):
     """Bounded editorial revisions; deterministic guards remain non-negotiable."""
     inputs = copy.deepcopy(inputs)
@@ -308,6 +406,11 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 )
                 inputs["candidate"] = candidate
             report = call(stage, inputs)
+            if _remaining_name_errors(stage, inputs, report):
+                raise ValueError(
+                    "Clear catalog-name errors remain and this round returned no correction. "
+                    "Refusing the transcript because audio is absent fails this round."
+                )
             valid = (report, copy.deepcopy(candidate))
             if report["passed"]:
                 return report, candidate, history, "accepted"
@@ -321,6 +424,19 @@ def autonomous_stage(folder, stage, inputs, heartbeat):
                 "instruction": "Repair the invalid output; do not bypass the guard.",
             }
 
+    if stage == "correction" and valid is not None and valid[0].get("edits"):
+        if _remaining_name_errors(stage, inputs, valid[0]):
+            raise DeterministicFailure(
+                "Correction ended with catalog names still misspelled. "
+                "The job stops here so novel and video are not written from the raw transcript."
+            )
+        report, _ = valid
+        return report, candidate, history, "accepted" if report["passed"] else "accepted-with-notes"
+    if _remaining_name_errors(stage, inputs, None):
+        raise DeterministicFailure(
+            "Correction ended with catalog names still misspelled and no applied edits. "
+            "The job stops here so novel and video are not written from the raw transcript."
+        )
     if stage == "corrected-transcript" and _candidate_keeps_speech(inputs.get("raw"), candidate):
         # The correction stage already validated these edits. A window that does not
         # restate them must not publish an empty raw overlay in their place.
@@ -749,8 +865,11 @@ def _stage_prompt(stage, inputs):
         "to raw text; every other speech field is identical. Review all edits against raw and pinned evidence. "
         "This avoids duplicate transcript text, not review coverage.\n"
         "Resolve routine editorial ambiguity autonomously; never wait for user input. Record choices in decisions, "
-        "with concise reasons and evidence IDs. For uncertain speech, retaining raw wording and flagging uncertainty "
-        "IS a valid decision; never reconstruct missing speech. For adaptations, choose a coherent interpretation "
+        "with concise reasons and evidence IDs. No audio recording is attached. Correct a clear name, setting term, "
+        "mishearing, or duplicated phrase from the pinned catalog and context. Retaining raw wording is only for a "
+        "line that is actually uncertain; flag that line and still correct the others. Never reconstruct speech that "
+        "is not in the utterance. A wholesale refusal to edit, including because audio is absent, fails the round. "
+        "For adaptations, choose a coherent interpretation "
         "and disclose inventions separately. When revisionFeedback is supplied, actually revise the deliverable, "
         "not just its pass flag. Return the COMPLETE replacement, including ALL edits against original raw segments. "
         + _window_note(inputs)
@@ -774,7 +893,8 @@ def _window_note(inputs):
         f"of {window['total']}. segmentIndex counts from zero inside this slice. "
         "Candidate corrections already on this slice stay in effect when edits is empty or omits them. "
         "Return an edit only to change that utterance. "
-        "Do not use an empty edit list to revert the slice to raw wording.\n"
+        "Do not use an empty edit list to revert the slice to raw wording. "
+        "An empty edit list does not excuse a catalog name that is still misspelled in this slice.\n"
     )
 
 
@@ -1323,9 +1443,10 @@ def process(config, root, claim):
     # Reader-friendly artifacts are separate from machine-readable provenance.
     markdown = payload.get("chapter", report["markdown"])
     if stage == "corrected-transcript":
-        names = {p["id"]: p["name"] for p in raw.get("players", [])}
+        from panther_journal.recording import speaker_caption
+
         markdown = "# Corrected transcript — AI reviewed, not verified\n\n" + "\n\n".join(
-            f"[{s['start']:.2f}–{s['end']:.2f}] {names.get(s.get('playerId'), 'Unassigned')}: {s['text']}"
+            f"[{s['start']:.2f}–{s['end']:.2f}] {speaker_caption(s, raw.get('players', []))}: {s['text']}"
             for s in payload["transcript"]["segments"]
         )
     if publication == "accepted-with-notes" and stage != "novel-chapter":

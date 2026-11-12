@@ -718,8 +718,23 @@ def transcribe(folder, model, sole_player, roster, blind, publish):
         )
 
 
+def speaker_caption(segment, players):
+    """Roster name, otherwise the diarized label. Unassigned means neither is known."""
+    names = {
+        person["id"]: person["name"]
+        for person in players or []
+        if isinstance(person, dict) and person.get("id") and person.get("name")
+    }
+    player = segment.get("playerId") if isinstance(segment, dict) else None
+    if player and player in names:
+        return names[player]
+    label = segment.get("speakerLabel") if isinstance(segment, dict) else None
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    return "Unassigned"
+
+
 def save_transcript(target, document):
-    people = {p["id"]: p["name"] for p in document["players"]}
     write_new(target / f"{target.name}.json", document)
     with (target / f"{target.name}.md").open("x") as out:
         out.write(
@@ -727,7 +742,7 @@ def save_transcript(target, document):
         )
         for line in document["segments"]:
             out.write(
-                f"[{line['start']:.2f}–{line['end']:.2f}] {people.get(line['playerId'], 'Unassigned')}: {line['text']}\n\n"
+                f"[{line['start']:.2f}–{line['end']:.2f}] {speaker_caption(line, document['players'])}: {line['text']}\n\n"
             )
 
 

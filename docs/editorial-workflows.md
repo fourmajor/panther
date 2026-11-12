@@ -61,7 +61,7 @@ against the immutable raw text; chapter-review failures rerun the proof/revision
 actual manuscript. Each revised candidate is reviewed again. Generic stages revise their own output
 using feedback. All outputs preserve a structured decision ledger and revision history. After three
 rounds, a structurally valid working draft continues as `accepted-with-notes`, without pretending its
-review `passed`. Transcript disagreement keeps the validated candidate corrections and records the uncertainty. It does not replace that candidate with an empty raw transcript. A correction proposal that never produced edits still leaves the raw wording unchanged.
+review `passed`. Transcript disagreement keeps the validated candidate corrections and records the uncertainty. It does not replace that candidate with an empty raw transcript. A correction round that returns no edits while a catalog name is still misspelled fails that round. If the stage still ends that way, the job fails and the execution failure is published on the existing pipeline notification. Novel and video do not run on that raw speech. A proposal that never saw a clear catalog-name error can still leave raw wording unchanged.
 Invalid structures, citations, or locked shot sequences cannot be accepted. They retry later when no
 valid candidate exists. Credentials, subscription limits and infrastructure failures remain real
 operational constraints, not editorial decisions. No routine ambiguity requires owner approval.
@@ -253,7 +253,7 @@ on the laptop. Independent AI sessions can share biases; automatic review is not
 
 ## Operations
 
-### Recovery and independent branches (workflow 7)
+### Recovery and independent branches (workflow 8)
 
 Novel and screen planning now have separate failure boundaries. A failed novel step does
 not cancel video preparation; a failed video step does not cancel the chapter. Readiness
@@ -270,7 +270,7 @@ panther editorial recover --job-id FAILED_JOB_ID --target video
 Use `novel` or `both` for the other branches. Explicit creation requests retain their
 original target. Recovery verifies every pinned source's checksum and size, preserves
 the original context cutoff and any submitted scene/cast snapshots, and starts a new
-execution at plan version 7. It replays the requested planning branch from source; it does not
+execution at plan version 8. It replays the requested planning branch from source; it does not
 relabel or reuse older-version stage outputs as newly reviewed results. The new job
 records its parent and recovery mode. The recovery id is the failed parent, the target,
 and the plan version, so the same parent and target at a new version is a different job.

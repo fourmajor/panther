@@ -42,7 +42,10 @@ Word-timing recovery must demonstrate improvement on the actual session before p
 reusing approximate tokens alone does not guarantee better assignments.
 An all-zero runtime speaker embedding is unavailable identity evidence, not permission to
 choose the nearest player or discard speech. Preserve that analyzer result and mark affected
-utterances unassigned with an attribution warning. Malformed evidence and invalid enrolled
+utterances unassigned with an attribution warning. The session diarization file uses the same
+unavailable-embedding record as the chunk pass, so one non-finite speaker does not discard the
+other speakers. Transcript text shows the diarized speaker label when the player is unknown.
+Unassigned means there is no player and no speaker label. Malformed evidence and invalid enrolled
 profiles still fail closed.
 Very brief speech can also produce non-finite runtime embeddings. The analyzer retains
 those exact values as diagnostic strings in `unavailableEmbeddings`, emits no usable
@@ -106,5 +109,6 @@ speech fields are unchanged. Full corrected assets remain stored unchanged. Prom
 the observed one-Mi-character CLI transport limit. Corrected-transcript review that would exceed
 1,000,000 bytes runs in contiguous utterance windows and merges every window. Each window's
 candidate corrections are the edits for that slice; a review edit replaces the same utterance,
-and an empty edit list does not revert the slice to raw wording. A prompt that still cannot fit
+and an empty edit list does not revert the slice to raw wording. An empty correction while a
+catalog name is still misspelled fails the job instead of continuing on raw speech. A prompt that still cannot fit
 fails once, with the measured size stored on the task, and is not retried as a subscription failure.

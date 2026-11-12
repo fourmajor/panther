@@ -28,16 +28,7 @@ def reconcile(document, diarization, profiles):
     turns = [audio.SpeakerTurn.model_validate(t) for t in diarization["turns"]]
     if any(t.end > sum(p["duration"] for p in document["sourceParts"]) + 1 for t in turns):
         raise click.ClickException("Session speaker turns exceed audio")
-    if "embeddings" not in diarization:
-        raise click.ClickException(
-            "Session-wide speaker embeddings are missing; rerun the separate speaker pass"
-        )
-    mapping = {}
-    for label, embedding in diarization["embeddings"].items():
-        try:
-            mapping[label] = speakers.match(embedding, profiles["profiles"])
-        except speakers.EmptySpeakerEmbedding:
-            mapping[label] = None
+    mapping, _unavailable = speakers.map_speakers(diarization, profiles["profiles"])
     if {t.speaker for t in turns} - mapping.keys():
         raise click.ClickException("Detected speakers lack session embedding evidence")
     result = copy.deepcopy(document)
