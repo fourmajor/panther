@@ -34,17 +34,6 @@ QUEUE = "https://queue.fal.run"
 # Reviewed bounded text/image-to-video profiles only. Do not accept arbitrary model arguments,
 # unreviewed billing units, voice references, multi-shot expansion or automatic prompt rewriting.
 PROFILES = {
-    "veo-3.1-lite": {
-        "endpoint": "fal-ai/veo3.1/lite",
-        "floor": "0.05", "multiplier": "1",
-        "source": "https://fal.ai/models/fal-ai/veo3.1/lite",
-    },
-    "veo-3.1-fast-image-silent": {
-        "endpoint": "fal-ai/veo3.1/fast/image-to-video",
-        "floor": "0.10", "multiplier": "1", "reviewedBase": "0.15",
-        "source": "https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video",
-        "imageField": "image_url",
-    },
     "kling-3-pro-image-silent": {
         "endpoint": "fal-ai/kling-video/v3/pro/image-to-video",
         "floor": "0.112", "multiplier": "1", "reviewedBase": "0.14",
@@ -72,32 +61,12 @@ PROFILES = {
         "source": "https://fal.ai/models/bytedance/seedance-2.0/image-to-video",
         "imageField": "image_url",
     },
-    "veo-3.1-fast-image": {
-        "endpoint": "fal-ai/veo3.1/fast/image-to-video",
-        "floor": "0.15",
-        "multiplier": "1",
-        "source": "https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video",
-        "imageField": "image_url",
-    },
     "kling-3-pro-image": {
         "endpoint": "fal-ai/kling-video/v3/pro/image-to-video",
         "floor": "0.21",
         "multiplier": "1.5",
         "source": "https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video",
         "imageField": "start_image_url",
-    },
-    "veo-3.1-fast": {
-        "endpoint": "fal-ai/veo3.1/fast",
-        "floor": "0.15",
-        "multiplier": "1",
-        "source": "https://fal.ai/models/fal-ai/veo3.1/fast",
-    },
-    "veo-3.1-fast-silent": {
-        "endpoint": "fal-ai/veo3.1/fast",
-        "floor": "0.10",
-        "multiplier": "1",
-        "reviewedBase": "0.15",
-        "source": "https://fal.ai/models/fal-ai/veo3.1/fast",
     },
     "kling-3-pro": {
         "endpoint": "fal-ai/kling-video/v3/pro/text-to-video",
@@ -501,15 +470,13 @@ def production_duration(model, duration):
     """Explicit supported output duration; never silently round a paid request."""
     if type(duration) not in (int, float) or not 1 <= duration <= 15:
         fail("Production duration must be a finite number between 1 and 15 seconds.")
-    if model.startswith(("veo-3.1-fast", "veo-3.1-lite")):
-        valid = duration in (4, 6, 8)
-    elif model.startswith("kling-3-pro"):
+    if model.startswith("kling-3-pro"):
         valid = duration >= 3 and float(duration).is_integer()
     else:
         valid = model in {"h3-max", "h3-max-image"}
     if not valid:
         fail("Unsupported production duration for this model; no automatic rounding or fallback.")
-    return int(duration) if model.startswith(("veo-3.1-fast", "veo-3.1-lite", "kling-3-pro")) else duration
+    return int(duration) if model.startswith("kling-3-pro") else duration
 
 
 def quote_key(manifest, shot):
@@ -706,9 +673,10 @@ H3_RESOLUTIONS = ("768P", "480P")
 # 768P is the reviewed regular rate. 480P is the 2026-09-10 settings base, still raised by the live quote.
 H3_RESOLUTION_FLOORS = {"768P": "0.08", "480P": "0.0125"}
 PLANNED_SHOT_MIN = 2
-PLANNED_SHOT_MAX = 7
+PLANNED_SHOT_MAX = 12
 PLANNED_CUT_SECONDS = 90
 PLANNED_SHOT_COUNT = 16
+PLANNED_SESSION_MIN_SHOTS = 8
 
 
 def configured_video_model():
@@ -717,7 +685,7 @@ def configured_video_model():
     if value not in PROFILES:
         raise ValueError("PANTHER_VIDEO_MODEL is not a reviewed video profile")
     folded = value.casefold()
-    if folded.endswith("-fast") and not folded.startswith("veo-3.1-fast"):
+    if folded.endswith("-fast"):
         raise ValueError("Video model cannot select a Fast tier")
     return value
 
@@ -739,9 +707,13 @@ def scene_model(job):
 
 
 def assert_planned_cut(shots, *, session=False):
-    """A cut is at most 16 shots and 90 seconds. A session cut is 14–16 shots and 60–90 seconds."""
-    if len(shots) > PLANNED_SHOT_COUNT or (session and len(shots) < 14):
-        raise ValueError("A session cut is 14–16 shots" if session else "A cut is at most 16 shots")
+    """A cut is at most 16 shots and 90 seconds. A session cut is 8–16 shots and 60–90 seconds.
+
+    The locked master mix sets the cut length; shots are 2–12 seconds so a dialogue
+    shot can hold a whole line.
+    """
+    if len(shots) > PLANNED_SHOT_COUNT or (session and len(shots) < PLANNED_SESSION_MIN_SHOTS):
+        raise ValueError("A session cut is 8–16 shots" if session else "A cut is at most 16 shots")
     total = 0
     for shot in shots:
         duration = shot.get("durationSeconds")
@@ -750,7 +722,7 @@ def assert_planned_cut(shots, *, session=False):
             or type(duration) not in (int, float)
             or not PLANNED_SHOT_MIN <= duration <= PLANNED_SHOT_MAX
         ):
-            raise ValueError("Each planned shot is 2–7 seconds")
+            raise ValueError("Each planned shot is 2–12 seconds")
         total += duration
     if total > PLANNED_CUT_SECONDS or (session and total < 60):
         raise ValueError("A session cut is 60–90 seconds" if session else "A cut is 90 seconds or less")
@@ -773,9 +745,7 @@ def generation_duration(model, planned):
     import math
     if type(planned) not in (int, float) or not math.isfinite(planned) or planned <= 0:
         raise ValueError('Choose a positive finite video duration')
-    if model.startswith('veo-3.1-fast'):
-        duration = 8
-    elif model.startswith('h3-max'):
+    if model.startswith('h3-max'):
         duration = min(15, max(1, planned))
     elif model.startswith('kling-3-pro'):
         duration = min(15, max(3, math.ceil(planned)))
@@ -798,9 +768,7 @@ def payload(shot, *, duration_seconds=None, check_prompt_policy=True):
     model = shot["model"].removesuffix("-silent")
     if shot["model"].endswith("-silent"):
         body["generate_audio"] = False
-    if model in {"veo-3.1-fast", "veo-3.1-fast-image", "veo-3.1-lite"}:
-        body.update(duration=f"{duration_seconds}s", resolution="720p", auto_fix=False)
-    elif model in {"kling-3-pro", "kling-3-pro-image"}:
+    if model in {"kling-3-pro", "kling-3-pro-image"}:
         body.update(duration=str(duration_seconds), shot_type="customize")
         if model.endswith("-image"):
             body.pop("aspect_ratio")  # The bounded input frame supplies 16:9.

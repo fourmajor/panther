@@ -54,7 +54,7 @@ INTERNAL_KINDS = {
     "context", "correction", "capture-health", "recording-checkpoint", "recording-manifest",
     "recording-playback-manifest", "novel-brief", "novel-options", "novel-outline", "novel-draft",
     "novel-developmental-edit", "novel-revision", "novel-continuity", "novel-line-copyedit", "novel-proof",
-    "video-source-brief", "video-treatment", "video-screenplay", "video-script-edit", "video-shooting-script", "video-breakdown",
+    "video-source-brief", "video-audio-script", "video-cast-lock", "video-treatment", "video-screenplay", "video-script-edit", "video-shooting-script", "video-breakdown",
     "video-design", "video-reference-plan", "video-voice-casting", "video-blocking", "video-shot-list",
     "video-storyboards", "video-generation-packets", "video-edit-sound-vfx", "video-production-plan", "video-preflight",
 }

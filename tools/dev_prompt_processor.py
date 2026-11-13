@@ -144,7 +144,7 @@ def video_prompt(store, job, folder, verifier, client=None):
         'Compare the approved starting frame against visible identity references and the selected style. If it depicts the wrong '
         'cast, costume, props, setting or rendering style, set frameCompatible=false and explain the correction needed; do not animate a mismatched frame. '
         'For text/reference-to-video, establish composition explicitly. Identity portraits supply appearance, never override the selected style. '
-        'H3: explicit actor/action order, observable emotion and sounds. Veo: subject, action, environment, camera, lighting and atmosphere. '
+        'H3: explicit actor/action order, observable emotion and sounds. '
         'Kling: clear actor/prop binding and explicit time ranges for any approved cuts. '
         'A map shot animates the actual cartographic image, preserving geography/labels and its existing visual treatment, '
         'not a live-action landscape. Check map-frame fidelity against that map treatment, not the game live-action character style. '

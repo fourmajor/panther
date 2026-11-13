@@ -9,8 +9,8 @@ IMAGE_MODELS = ('gpt-image-2', 'gpt-image-1', 'gpt-image-1.5', 'gpt-image-1-mini
 CURATED_FAL_IMAGES = (('fal-ai/flux-pro/v1.1', 'FLUX 1.1 Pro'),)
 CURATED_OPENAI_IMAGES = (('gpt-image-2', 'GPT Image 2'),)
 IMAGE_TYPES = {'image', 'map', 'blueprint', 'location', 'portrait'}
-CURATED_VIDEO_MODELS = ('h3-max', 'veo-3.1-fast', 'kling-3-pro')
-VIDEO_MODELS = ('veo-3.1-fast', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image')
+CURATED_VIDEO_MODELS = ('h3-max', 'kling-3-pro')
+VIDEO_MODELS = ('h3-max', 'kling-3-pro', 'h3-max-image', 'kling-3-pro-image')
 
 
 def options(store, game):
@@ -33,7 +33,7 @@ def options(store, game):
     image_model = image_models[0]['id']
     types = [{'id': kind, 'name': kind.title(), 'available': live['images'], 'models': image_models, 'defaultModel': image_model, 'styles': styles, 'defaultStyle': settings['game'].get('visualStyle')} for kind in ('image', 'map', 'blueprint', 'location', 'portrait')]
     video_prices = (store.get('model-pricing', VIDEO_PRICE_ID) or {}).get('prices', {})
-    types.append({'id': 'video', 'name': 'Video', 'available': live['video'], 'models': [{'id': model, 'name': {'veo-3.1-fast': 'Veo 3.1 Fast', 'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model], 'inputs': {'optionalInitialImage': True, 'duration': 8, 'aspectRatio': '16:9'}, 'provider': 'fal', 'providerBasePrice': video_prices.get(video.PROFILES[model]['endpoint']), 'providerImageBasePrice': video_prices.get(video.PROFILES[model + '-image']['endpoint']), 'priceEstimate': cost_estimates.fal(model, video.payload({'model': model, 'prompt': 'Price estimate only'}))} for model in CURATED_VIDEO_MODELS], 'defaultModel': CURATED_VIDEO_MODELS[0], 'styles': styles, 'defaultStyle': settings['game'].get('visualStyle')})
+    types.append({'id': 'video', 'name': 'Video', 'available': live['video'], 'models': [{'id': model, 'name': {'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model], 'inputs': {'optionalInitialImage': True, 'duration': 8, 'aspectRatio': '16:9'}, 'provider': 'fal', 'providerBasePrice': video_prices.get(video.PROFILES[model]['endpoint']), 'providerImageBasePrice': video_prices.get(video.PROFILES[model + '-image']['endpoint']), 'priceEstimate': cost_estimates.fal(model, video.payload({'model': model, 'prompt': 'Price estimate only'}))} for model in CURATED_VIDEO_MODELS], 'defaultModel': CURATED_VIDEO_MODELS[0], 'styles': styles, 'defaultStyle': settings['game'].get('visualStyle')})
     try:
         voices = store.narration_voices()['voices'] if live['narration'] else []
     except Exception:
@@ -79,7 +79,7 @@ def submit(store, body):
         if not character_record:
             raise ValueError('Choose an initialized character from this game')
     media = 'video' if kind == 'video' else 'audio' if kind == 'narration' else 'text' if kind == 'text' else 'image'
-    default = 'veo-3.1-fast' if media == 'video' else 'eleven_v3' if media == 'audio' else (store.get('service', 'editorial' if media == 'text' else 'images') or {}).get('model', 'gpt-5-mini' if media == 'text' else 'gpt-image-2')
+    default = 'h3-max' if media == 'video' else 'eleven_v3' if media == 'audio' else (store.get('service', 'editorial' if media == 'text' else 'images') or {}).get('model', 'gpt-5-mini' if media == 'text' else 'gpt-image-2')
     model = body.get('model', default)
     from dev_fal_image_catalog import selected
     fal_contract = selected(store, model) if media == 'image' and isinstance(model, str) else None

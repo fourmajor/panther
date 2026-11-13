@@ -498,7 +498,7 @@ def sheets(path, start, duration, folder, prefix, *, fps=4):
 
 
 def model_for(shot):
-    """First cut is h3-max-image. Veo and Kling are explicit per-shot overrides."""
+    """First cut is h3-max-image. Kling is an explicit per-shot override."""
     chosen = shot.model or video.DEFAULT_VIDEO_MODEL
     if chosen not in video.PROFILES:
         raise click.ClickException("Shot model is not a reviewed video profile")
@@ -553,7 +553,7 @@ def prepare(plan, folder, refs, reviewer=review):
                 "reason": "Prepare a start frame with gpt-image-2 medium or a Blender render",
             })
         if not video.PLANNED_SHOT_MIN <= duration <= video.PLANNED_SHOT_MAX:
-            blockers.append({"shotId": shot.id, "reason": "Each planned shot is 2–7 seconds"})
+            blockers.append({"shotId": shot.id, "reason": "Each planned shot is 2–12 seconds"})
         for attr, field in (("startImage", "image"), ("endImage", "endImage")):
             ref = getattr(shot, attr)
             if ref:

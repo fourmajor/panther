@@ -10,7 +10,7 @@ URL = 'https://api.fal.ai/v1/models'
 PRICES = URL + '/pricing'
 CATALOG_ID = 'fal-text-to-image-v1'
 VIDEO_PRICE_ID = 'curated-video-prices-v1'
-VIDEO_PRICE_ENDPOINTS = ('minimax/h3-max/text-to-video', 'minimax/h3-max/image-to-video', 'fal-ai/veo3.1/fast', 'fal-ai/veo3.1/fast/image-to-video', 'fal-ai/kling-video/v3/pro/text-to-video', 'fal-ai/kling-video/v3/pro/image-to-video')
+VIDEO_PRICE_ENDPOINTS = ('minimax/h3-max/text-to-video', 'minimax/h3-max/image-to-video', 'fal-ai/kling-video/v3/pro/text-to-video', 'fal-ai/kling-video/v3/pro/image-to-video')
 
 
 def resolved(schema, document):

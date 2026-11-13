@@ -88,14 +88,13 @@ auto-submit preproduction packets, or replace subscription-backed planning with 
 
 ### Video model selection policy
 
-The first cut is `h3-max-image` for every scene: MiniMax H3 Max through fal, audio on, 768P,
-one take of 2–7 seconds. A full session cut is 14–16 shots, targeting 60–80 seconds and
-staying within 60–90. A scene cut stays at most 16 shots and 90 seconds. `480P` is an
-explicit option on that model. A take that fails review is kept and flagged; it is not bought
-again. Veo 3.1 Fast and Kling 3 Pro are per-shot overrides only (`PANTHER_VIDEO_MODEL` can name
-one, and a shot `model` wins). Start frames default to `gpt-image-2` at quality `medium`; a
-Blender render is allowed. ElevenLabs is not the dialogue default. The plan records its
-estimated cost, and the session budget is the video allowance from `panther narration allocate`.
+Session cuts follow plan 14, audio-first, per `docs/ai-video-process.md`.
+On-screen dialogue shots use Seedance 2.5 driven by the locked line audio; every other shot uses
+MiniMax H3 Max. A full session cut is 8–16 shots of 2–12 seconds and 60–90 seconds. One take per
+shot; a re-roll needs a named defect and a shot never exceeds 3 takes. Kling 3 Pro is a per-shot
+override (`PANTHER_VIDEO_MODEL` can name one, and a shot `model` wins). Start frames and reference
+sheets come from an OpenRouter image model; a Blender render is allowed. `tools/ai-video` enforces
+the $9 session budget before every paid call.
 Earlier comparison clips used other profiles; do not relabel them.
 
 This policy guides agents preparing executable video plans after preproduction. The existing
@@ -469,7 +468,7 @@ records without deleting or rewriting technical evidence; old jobs retain their 
 The source indexes themselves keep their existing version and complete-inventory requirement.
 
 Scene types guide planning with the standing per-shot model policy: action recommends Kling
-3 Pro, dialogue recommends MiniMax H3 Max, and city/opener shots recommend Veo 3.1 Fast.
+3 Pro, dialogue recommends Seedance 2.5, and other shots use MiniMax H3 Max.
 Travel/map scenes require actual map/location evidence and preserve unknown geography.
 These recommendations never authorize spending. Planning metadata preserves the exact
 `sceneRef` and episode/scene IDs, while its envelope preserves full scene/cast snapshots.

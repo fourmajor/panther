@@ -1,5 +1,5 @@
 {
-  "version": 13,
+  "version": 14,
   "correction": [
     "context",
     "correction",
@@ -19,20 +19,11 @@
   ],
   "video": [
     "video-source-brief",
-    "video-treatment",
-    "video-screenplay",
-    "video-script-edit",
-    "video-shooting-script",
-    "video-breakdown",
-    "video-design",
-    "video-reference-plan",
-    "video-voice-casting",
-    "video-blocking",
+    "video-audio-script",
+    "video-cast-lock",
     "video-shot-list",
     "video-storyboards",
     "video-generation-packets",
-    "video-edit-sound-vfx",
-    "video-production-plan",
     "video-preflight"
   ]
 }

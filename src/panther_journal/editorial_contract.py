@@ -9,11 +9,11 @@ PLAN = json.loads(files("panther_journal").joinpath("editorial-plan.json").read_
 STAGES = [s for branch in ("correction", "novel", "video") for s in PLAN[branch]]
 
 BRIEFS = {
+    "video-audio-script": "Write the audio script the whole cut is timed from: a numbered line table with lineId, speaker (a pinned character entity ID, or narrator), the exact words, delivery direction, target seconds and the source fact or chapter passage each line comes from. Mark each line as on-screen dialogue (lip-synced) or narration (voice-over). Spoken lines total 45–75 seconds for a 60–90 second cut. Cast each speaker with a designed synthetic voice (a named Gemini TTS voice plus style direction) and keep it for every line; never clone or imitate a real player, celebrity or other real person. Add a music cue sheet (sections, mood, tempo, where it ducks under speech). Trusted tools then synthesize, Whisper-align and master the mix at -14 LUFS; picture is cut to that locked audio, never the other way round.",
+    "video-cast-lock": "Lock the visible cast before any shot is planned. For each on-screen character give the pinned portrait keys, a reference-sheet request (face-on head and shoulders plus front, three-quarter and back full-length views on neutral grey, in the game's painted portrait style, never photoreal) and an identity block: one short paragraph of visible facts (age, build, face, hair, facial hair, skin, costume layers and colours, signature props, handedness) that is pasted verbatim into every prompt showing them. Lock recurring locations and hero props the same way. Describe only what the pinned portraits and sources support; list gaps as uncertainties instead of inventing them.",
     "video-source-brief": "Preprocess optional transcript sources against the user's creative brief and pinned cast. Select only story-relevant events, dialogue, character actions, setting and explicit continuity facts; exclude table chatter, irrelevant rules discussions and audit/provenance documents. Return sourceFacts with exact sourceKey and source-local segmentIndex for each extracted fact plus explicit uncertainty; quote dialogue only when that source actually contains it. Keep factual evidence, creative direction and proposed inventions distinct. With no transcripts, sourceFacts MUST be empty: work from the creative brief and explicit character/background references, without fabricating a transcript, recording session or supposed dialogue evidence. Describe the coherent proposed scene, cast and factual gaps in markdown. Do not generate media or authorize spending.",
-    "video-voice-casting": "Create separate player and character voice casting plans tied to stable entity IDs, plus an independent narrator. A real player's cloned voice requires that person's explicit scoped permission and suitable licensed/consented samples; recording consent is not cloning consent. Character voices may be independently designed and must not silently impersonate a player, celebrity or another real person. Describe timbre, range, accent intent, rhythm, emotion/performance direction and pronunciation lexicon. Specify clean enrollment sample requirements, ownership, revocation, usage scope, versioning and an original non-impersonating fallback where permission is absent. Plan dialogue alignment/lip-sync and consistency testing without training, cloning, generating audio or selecting a paid provider. All profiles remain proposals with no model reference or generation authorization.",
     "novel-options": "Develop three genuinely distinct narrative approaches within the brief (POV, opening, emphasis, structure), compare tradeoffs, and choose one against explicit craft criteria. Create an original voice/style bible and a fact-versus-invention ledger. Do not average options into generic prose or imitate a named living writer. This is creative exploration, not factual correction.",
     "novel-continuity": "Audit the revised chapter against the corrected transcript and pinned game evidence: names, character knowledge, geography, chronology, possessions, injuries, goals and consequential events. Check distinct character voices, POV drift, cliches, repetitive AI phrasing and overexplained themes. Produce a concrete continuity/style ledger and targeted copyedit instructions; don't erase deliberate creative choices merely for uniformity.",
-    "video-reference-plan": "Create an AI reference-asset registry: character plates (front/profile/back, expressions, wardrobe/appearance state), environment plates and hero props, tied to stable character/location IDs. Separate existing verified Panther keys from missing assets. Define reusable reference bundles and per-scene appearance changes. Specify how keyframes must be visually checked before motion generation; no invented asset keys or external calls.",
     "video-generation-packets": "Produce provider-neutral per-shot generation packets tied to locked shot IDs: reference bundle/appearance IDs, initial/end-frame requirements, visual composition, subject action, environmental motion, camera motion and timing, continuity dependencies, proposed duration, acceptance/rejection tests, and bounded candidate/retry counts. Prefer one clear action/camera idea per shot, positive observable instructions, separate image-to-video motion prompts from text-to-video scene descriptions, and flag conflicting instructions. Record provider/model/seed/support as undecided, never assume seeds or camera controls guarantee continuity. Plan candidate comparison and selected-take provenance. Do not generate any image/audio/video or choose a provider.",
     "context": "Select relevant game evidence: character names, aliases, locations, chronology, prior transcripts, ruleset and metadata. Explain relevance and uncertainty. Never select adaptations, held-out scripts or future-session spoilers as factual authority.",
     "correction": "Propose minimal speech-recognition corrections. No audio is available or expected; the pinned catalog and context text are the evidence for names and setting terms. Edit clear ASR errors: a catalog or context name or term spelled wrong in the utterance, an obvious mishearing, and a phrase duplicated by a recognizer hallucination. Use the catalog spelling and cite catalog or the context id on that edit. Set passed true when those edits are the correction. Utterance text may already contain a deterministic catalog-name repair; keep that spelling unless the evidence shows it is wrong, and set before to the utterance text shown in this input. Preserve table talk, hesitations, negation, uncertainty, numbers, player identities and timestamps. Do not invent missing speech, polish style, or delete chatter. Flag only a line you cannot resolve. An empty edit list while a clear catalog-name error remains is a failed round, not a decision to keep the raw wording.",
@@ -26,30 +26,10 @@ BRIEFS = {
     "novel-line-copyedit": "Produce the complete line- and copyedited chapter. Improve sentence rhythm, clarity, dialogue, grammar and consistency without flattening voice. Supply a style sheet for names, capitalization, POV, tense, chronology and terminology.",
     "novel-proof": "Check the copyedited Markdown reading proof, including headings, paragraph breaks and dialogue punctuation. If revisionFeedback exists, revise the actual candidate chapter to address it. Return the COMPLETE final chapter alone in markdown, with proof notes and invention disclosures separately in decisions/uncertainties. This is a digital manuscript proof, not a claim of typeset print proofing.",
     "novel-chapter": "Independently quality-check the supplied candidate chapter (the latest revision, taking precedence over older priorStages) against the novel brief and continuity notes. The raw transcript is not in this prompt. Require compelling scene-level storytelling, coherent POV, resolved developmental issues, faithful consequential outcomes, and disclosed inventions. The title field becomes the published chapter title: use the story's concise literary title, never an audit, assessment, delivery or review label. Return pass/fail with actionable reasons; do not rewrite the chapter in this review. Rejection triggers an automatic actual manuscript revision and fresh audit, not a human approval request.",
-    "video-treatment": "Develop a screen adaptation brief, logline, synopsis/treatment, character arcs, audience/tone, provisional runtime and scene beats. Identify compression, invented dialogue and other dramatization explicitly. This is a creative reimagining, not a transcript or campaign canon.",
-    "video-screenplay": "Write the complete screenplay using scene headings, present-tense action and character/dialogue formatting. Show rather than narrate. Preserve source outcomes and track invented material. Use stable scene IDs.",
-    "video-script-edit": "Independently review screenplay structure, visual storytelling, character motivation, dialogue, pacing, source fidelity and feasibility. Supply concrete revision notes and continuity issues.",
-    "video-shooting-script": "Produce the complete revised screenplay with stable numbered scene IDs and a scene-by-scene change log, addressing script-edit notes. Lock this revision for downstream planning.",
-    "video-breakdown": "Break down every locked scene into cast/character appearances, locations, day/night, props, costumes, makeup, sets, practical/action effects, VFX, sound, music and special requirements. Identify available Panther references versus assets still needed; do not pretend assets exist.",
-    "video-design": "Create the production design and cinematography bible: world/sets, costumes/props, character continuity, reference asset IDs, palette hex colors and emotional progression, contrast, light direction/motivation, aspect ratio, lens/shot language, texture and negative constraints. These are proposed creative choices, not provider capabilities.",
-    "video-blocking": "Plan character blocking, spatial geography, eyelines, entrances/exits, screen direction and continuity/180-degree line for every scene. Give camera coverage strategy and transitions tied to dramatic intention.",
-    "video-shot-list": "Create ordered shots covering all scenes with stable shot IDs, scene ID, durationSeconds, shot size, angle, lens intent, camera movement, action, dialogue cues, lighting/color, continuity and source refs. Include panel descriptions and normalized 0..1 subject positions for schematic storyboards. Do not choose a generation provider or assume its capabilities.",
-    "video-storyboards": "Review shot-list coverage and specify storyboard panels using the SAME shot IDs and durations. Each panel must include sceneId, shotId, durationSeconds, description, camera, color, subjects [{label,x,y}]. Describe framing, action direction and transitions. Trusted code renders schematic SVG panels; these are blocking boards, not finished concept art.",
-    "video-edit-sound-vfx": "Plan the timed storyboard edit/animatic, transitions, dialogue timing, ambience, Foley, sound effects, music cues and VFX/continuity requirements per shot. Provide an edit decision list with shot IDs and durations. Specify rights/consent questions; no voice cloning, music licensing or external generation is authorized.",
-    "video-production-plan": "Prepare a provider-neutral production package: asset dependencies, shot batching/schedule, continuity checks, acceptance criteria, retry limits, budget worksheet with quantities and UNKNOWN unit prices/totals, rights/consent checklist, postproduction plan for assembly/edit, VFX, sound mix, color grade, captions and delivery QC. Provider, model and spend cap remain UNDECIDED. Do not invent quotations or generate video.",
+    "video-shot-list": "Build the shot book on the locked audio script: ordered shots with stable shot IDs, scene ID and durationSeconds that together cover the line table in order. Begin every description with the lineIds it covers, its master-timeline start and end seconds and its kind (dialogue with the one visible speaker, or non-dialogue), then shot size, angle, lens intent, camera movement, one action per timed beat, lighting/color, continuity and source refs. Cut on line or music-section boundaries. Name visible characters by their cast-lock identity. Include normalized 0..1 subject positions for schematic storyboards.",
+    "video-storyboards": "These panels are the first-frame board: each panel describes the composed opening frame to generate from the painted reference sheets. Review shot-book coverage and specify storyboard panels using the SAME shot IDs and durations. Each panel must include sceneId, shotId, durationSeconds, description, camera, color, subjects [{label,x,y}]. Describe framing, action direction and transitions. Trusted code renders schematic SVG panels; these are blocking boards, not finished concept art.",
     "video-preflight": "Independently review the whole preproduction package for story/scene/shot coverage, timing, visual consistency, sound/VFX dependencies, rights and practical feasibility. Distinguish planning completeness from production approval. Video generation MUST remain blocked pending human discussion of provider/model, budget, rights and final plan. No approval can be inferred from passing this review.",
 }
-
-# Standing casting direction, not provider authorization or a workflow-generation trigger.
-BRIEFS["video-voice-casting"] += (
-    " Production policy for separately synthesized speech: plan premium ElevenLabs Eleven v3"
-    " through fal, subject to a separately approved paid narration plan. Never propose Chatterbox"
-    " or system TTS as a preview/fallback. Cast and direct for the intended genre; cinematic trailer"
-    " narration needs resonant tone, deliberate pauses and controlled escalation, not neutral reading."
-    " Plan a separate short audition and pin the accepted voice before full narration. Preserve"
-    " pronunciation and performance-review criteria; successful ASR is not performance approval."
-)
-
 
 def apply_corrections(raw, proposal, evidence_ids):
     result = copy.deepcopy(raw)
@@ -118,11 +98,13 @@ BRIEFS["video-source-brief"] += (
 BRIEFS["video-generation-packets"] += (
     " Include coherent structured scene and cast information from the pinned revisions in each packet."
     " Keep the same character identity, appearance selection and wardrobe across shots unless an explicit source supports a change."
-    " The first cut is MiniMax H3 Max image-to-video for every shot, audio on, 768P, one take."
-    " 480P is an explicit option on that same model. Veo and Kling are per-shot overrides only."
-    " The clip's own audio is the dialogue baseline. Add ElevenLabs only when a shot needs separately generated speech."
-    " Start frames default to gpt-image-2 at medium quality; a Blender render is allowed."
-    " A take that fails review is kept and flagged. Do not plan a paid retry."
+    " Route each shot by kind: an on-screen dialogue shot is Seedance 2.5 reference-to-video driven by its"
+    " locked line audio; every other shot is MiniMax H3 Max image-to-video at 768P with its own audio off."
+    " Paste the cast-lock identity block of every visible character verbatim into the prompt and attach"
+    " the painted reference sheet; never use photoreal identity images."
+    " Start frames are generated by an OpenRouter image model from the reference sheets; a Blender render is allowed."
+    " Plan one take per shot. A re-roll is allowed only for a named defect (lip sync, identity,"
+    " hands or anatomy, wrong action, artefact) and a shot never exceeds 3 takes."
     " Travel/map shots must cite actual map and location references, not invented geography."
     " Recommendations do not select a paid provider or authorize generation; leave execution, rights and budget gated."
 )
@@ -157,8 +139,8 @@ BRIEFS["video-generation-packets"] += (
     " When episodeDestination is true, also return episode with schemaVersion 1, title, synopsis and ordered scenes."
     " Each scene needs a unique slug id, concise title, type (general/opener/travel/map/action/dialogue),"
     " complete render prompt, exact narration words (empty when none), characterIds, referenceKeys and shotIds."
-    " Copy the exact locked video-storyboards shots into the shots field. Partition every prior shot into exactly one scene, preserving shot order. Follow the locked shooting script,"
-    " voice casting and continuity plans. Do not claim audio or footage exists. sourceChapter is a creative"
+    " Copy the exact locked video-storyboards shots into the shots field. Partition every prior shot into exactly one scene, preserving shot order. Follow the locked audio script,"
+    " cast lock and shot book. Do not claim audio or footage exists. sourceChapter is a creative"
     " adaptation source; preserve its consequential story outcomes and disclose inventions separately."
 )
 
@@ -185,20 +167,28 @@ BRIEFS["video-generation-packets"] += (
     " Longer raw takes will be trimmed to the storyboard duration; never claim a short take satisfies a longer item."
 )
 
-# Provider-neutral production discipline: these constraints improve new plans,
+# Audio-first production discipline (plan 14). These constraints improve new plans
 # without changing previously approved storyboards or authorizing inference.
 for _stage in ('video-shot-list', 'video-storyboards', 'video-generation-packets'):
     BRIEFS[_stage] += (
-        " A full session cut targets 60–80 seconds and stays at or under 90: 14 to 16 shots, each 2 to 7 seconds, H3 Max, audio on, 768P, one take and no paid retry."
-        " A take that fails review is kept and flagged. Use timed shot sequences where supported. Split overlong sequences"
-        " into separate items while permitting explicit timed cuts within an item; avoid asking a take to"
-        " perform several unclear simultaneous interactions. Keep every consequential source action across"
-        " those items. Each item must state only its visible cast, relative size and screen positions,"
-        " one clear physical action per timed beat with a start and end, exact prop ownership, setting/time,"
-        " consistent lighting/palette and mood. Express emotion as observable gaze, posture or movement."
-        " Bind character appearance to pinned portraits but apply the same game visual-style guidance"
-        " across all items; identity-reference rendering style does not override it. Include relevant"
-        " setting/story continuity, not the whole cast or unrelated plot. Separate narration from"
-        " on-screen speech. Starting frames depict the composed shot, never a portrait contact sheet."
-        " Specify acceptance checks for visible cast, costume, hands, props, geography and source outcomes."
+        " The locked master mix sets the cut: a full session cut runs 60–90 seconds in 8 to 16 shots,"
+        " each 2 to 12 seconds, and every shot is timed to the line table, never the other way round."
+        " Dialogue shots hold exactly one visible speaker's line on Seedance 2.5; other shots use H3 Max at 768P."
+        " One take per shot; up to two re-rolls only for a named defect, never more than 3 takes."
+        " The whole session render, re-rolls included, stays within the $9 session budget."
+        " Use timed beats within an item; avoid asking a take to perform several unclear simultaneous"
+        " interactions. Keep every consequential source action across items. Each item must state only its"
+        " visible cast, relative size and screen positions, one clear physical action per timed beat with a"
+        " start and end, exact prop ownership, setting/time, consistent lighting/palette and mood."
+        " Express emotion as observable gaze, posture or movement. Bind character appearance to the cast-lock"
+        " identity blocks and painted reference sheets, and apply the same game visual style across all items."
+        " Include relevant setting/story continuity, not the whole cast or unrelated plot. Separate narration"
+        " from on-screen speech. Starting frames depict the composed shot, never a portrait contact sheet."
+        " Specify acceptance checks for lip sync, visible cast, costume, hands, props, geography and source outcomes."
     )
+
+BRIEFS["video-preflight"] += (
+    " Check the plan against the audio-first rules: every on-screen line has exactly one dialogue shot,"
+    " every visible character has a cast-lock identity block and painted reference sheet, the shot timings"
+    " match the line table, and a worst-case render (3 takes per shot) is reported against the $9 session budget."
+)

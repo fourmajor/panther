@@ -60,6 +60,8 @@ LABELS = {
     "novel-proof": ("Review", "Reading proof", "search"),
     "novel-chapter": ("Final", "Novel chapter", "book"),
     "video-source-brief": ("Screen", "Source brief", "clapper"),
+    "video-audio-script": ("Narration", "Audio script", "mic"),
+    "video-cast-lock": ("Planning", "Cast lock", "image"),
     "video-treatment": ("Screen", "Treatment", "clapper"),
     "video-screenplay": ("Screen", "Screenplay", "scroll"),
     "video-script-edit": ("Review", "Script critique", "search"),
@@ -194,8 +196,10 @@ def graph():
     if story:
         link("video-storyboards", "still-images")
         link("still-images", "video-generation")
-    if any(node["id"] == "video-voice-casting" for node in nodes):
-        link("video-voice-casting", "narration")
+    for casting in ("video-audio-script", "video-voice-casting"):
+        if any(node["id"] == casting for node in nodes):
+            link(casting, "narration")
+            break
     return nodes, edges, set(plan["correction"] + plan["novel"] + plan["video"])
 
 

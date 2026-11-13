@@ -67,9 +67,6 @@ def openai(model, usage=None, request=None):
 def fal(model, request, api_base=None):
     """Reviewed settings estimate; live base is evidence, never an automatic settings quote."""
     profiles = {
-        'veo-3.1-fast': ('fal-ai/veo3.1/fast', '0.15', '0.15', '1'),
-        'veo-3.1-fast-image': ('fal-ai/veo3.1/fast/image-to-video', '0.15', '0.15', '1'),
-        'veo-3.1-fast-image-silent': ('fal-ai/veo3.1/fast/image-to-video', '0.10', '0.15', '1'),
         'h3-max': ('minimax/h3-max/text-to-video', '0.128', '0.08', '1.6'),
         'h3-max-image': ('minimax/h3-max/image-to-video', '0.128', '0.08', '1.6'),
         'kling-3-pro': ('fal-ai/kling-video/v3/pro/text-to-video', '0.315', '0.21', '1.5'),
@@ -83,8 +80,6 @@ def fal(model, request, api_base=None):
         duration = number(duration)
         if duration != 8:
             return None
-        if model.startswith('veo') and (request.get('resolution') != '720p' or request.get('generate_audio') is not (not model.endswith('silent'))):
-            return None
         if model.startswith('h3') and request.get('resolution') not in {'768P', '480P'}:
             return None
         if model.startswith('h3') and request.get('resolution') == '480P':
@@ -93,10 +88,7 @@ def fal(model, request, api_base=None):
             return None
         base = number(api_base) if api_base is not None else number(reviewed_base)
         rate = number(settings_rate)
-        if model.startswith('veo') and base != number(reviewed_base):
-            return None  # A changed base invalidates the reviewed audio/settings rate.
-        if not model.startswith('veo'):
-            rate = max(rate, base * number(multiplier))
+        rate = max(rate, base * number(multiplier))
         return result(rate * duration, 'https://fal.ai/models/' + endpoint,
                       {'model': model, 'durationSeconds': str(duration), 'settings': {k: request[k] for k in ('resolution', 'generate_audio', 'aspect_ratio', 'shot_type') if k in request},
                        'usdPerSecond': str(rate), 'pricingApiBaseUsdPerSecond': str(base) if api_base is not None else None},
@@ -131,7 +123,7 @@ def annotate(metadata, request=None, response=None, api_base=None):
         usage = response.get('usage') or evidence.get('usage')
         estimate = openai(model, usage, request)
     elif provider == 'fal':
-        aliases = {'Veo 3.1 Fast': 'veo-3.1-fast', 'MiniMax H3 Max': 'h3-max', 'MiniMax H3 Max (post-trained by fal)': 'h3-max', 'Kling 3 Pro': 'kling-3-pro'}
+        aliases = {'MiniMax H3 Max': 'h3-max', 'MiniMax H3 Max (post-trained by fal)': 'h3-max', 'Kling 3 Pro': 'kling-3-pro'}
         profile = (request or {}).get('model') or aliases.get(model)
         payload = (request or {}).get('payload', request or {})
         estimate = fal(profile, payload, api_base)

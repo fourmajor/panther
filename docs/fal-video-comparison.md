@@ -1,5 +1,8 @@
 # Local fal video comparison
 
+> **2026-11-12:** the Veo profiles were removed (fal drops Veo on 2026-11-17). Veo passages below are
+> history only; the `veo-*` CLI models no longer exist. Session cuts follow `docs/ai-video-process.md`.
+
 Panther's owner-funded comparison starts with a **$50 total ceiling**, not $50 per model, shot or session.
 An explicitly approved one-time extension to **$51** is supported by `panther video budget extend
 --expected-limit 50 --limit 51 --reason 'EXPLICIT APPROVAL EVIDENCE' --owner-approved`.
@@ -55,17 +58,6 @@ ledger, so agents must never use it to recover a previously established but lost
 
 ## Bounded initial profiles
 
-### Owner-directed Veo Lite comparisons
-
-`veo-3.1-lite` is a bounded text-only comparison adapter for `fal-ai/veo3.1/lite`:
-16:9, 720p, native audio, `auto_fix: false`, no references or automatic retries.
-Version 1 retains eight seconds; version 2 accepts exact 4/6/8-second durations
-under an explicitly allocated project budget. The October 5, 2026 reviewed fal
-rate is $0.05/second with audio at 720p. The guard uses the greater of this floor
-and the live per-second USD rate, then adds 25% headroom. Unknown units fail closed.
-This opt-in adapter does not change production defaults or historical plans.
-Reference: https://fal.ai/models/fal-ai/veo3.1/lite/api
-
 ### Production model selection
 
 The owner's production decision of 2026-10-05, recorded against the October 1 cut, is **H3 Max for every shot**.
@@ -81,7 +73,7 @@ and cost $2.54. New plans use that shape:
 | Takes | One. A take that fails review is kept and flagged. No paid retry |
 | Start frame | `gpt-image-2` at quality `medium` through the OpenAI API, or a Blender render |
 | Session budget | `panther narration allocate`. The plan stores its estimated cost; the allocation is the cap |
-| Other models | Veo 3.1 Fast and Kling 3 Pro remain explicit per-shot overrides only |
+| Other models | Kling 3 Pro remains an explicit per-shot override; Veo was removed |
 
 The CLI does not classify a shot as city, dialogue, or action and then pick a model. A missing model
 on a new scene is `h3-max-image`. Agents write that profile into the manifest. This does not authorize
@@ -102,7 +94,6 @@ uploads, voice cloning, voice controls, automatic prompt rewriting or multi-shot
 
 | CLI model | fal endpoint | Settings |
 | --- | --- | --- |
-| `veo-3.1-fast` | `fal-ai/veo3.1/fast` | 720p, 8s, audio on, auto-fix off |
 | `kling-3-pro` | `fal-ai/kling-video/v3/pro/text-to-video` | Pro profile, 8s, audio on, one prompt |
 | `seedance-2.0` | `bytedance/seedance-2.0/text-to-video` | Standard model, 720p, 8s, audio on, standard bitrate |
 
@@ -209,7 +200,7 @@ to fal. Only the explicitly reviewed prompt and fixed settings go to the provide
   "sessionId": "synthetic-session",
   "sourceKeys": [],
   "shots": [
-    {"id": "harbor-veo", "model": "veo-3.1-fast", "prompt": "A fictional harbor at dusk, wide shot, gentle camera movement. Ambient water sounds; no speech.", "maxAttempts": 2},
+    {"id": "harbor-h3", "model": "h3-max", "prompt": "A fictional harbor at dusk, wide shot, gentle camera movement. Ambient water sounds; no speech.", "maxAttempts": 2},
     {"id": "harbor-kling", "model": "kling-3-pro", "prompt": "A fictional harbor at dusk, wide shot, gentle camera movement. Ambient water sounds; no speech.", "maxAttempts": 2}
   ]
 }
@@ -220,7 +211,7 @@ panther video prepare /private/path/comparison.json
 panther video show-plan PLAN_ID
 # Only after actual owner approval of this plan's models, rights and billing settings:
 panther video approve PLAN_ID --models-and-rights-approved --auto-topup-disabled
-panther video submit PLAN_ID --shot harbor-veo --attempt 1
+panther video submit PLAN_ID --shot harbor-h3 --attempt 1
 panther video poll ATTEMPT_ID
 panther video download ATTEMPT_ID
 ```

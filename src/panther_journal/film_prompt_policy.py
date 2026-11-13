@@ -22,7 +22,7 @@ REVIEW_GUIDANCE = (
     "integrated_multimodal_description, overall_soundscape and non_diegetic_music; reference-to-video "
     "is a different mode and must not pretend portraits were supplied as first frames. "
     "Runway-style motion-only guidance is a heuristic, not H3's required syntax. "
-    "Veo and Kling use their verified adapter capabilities, not imagined reference/end-frame controls. "
+    "Kling uses its verified adapter capabilities, not imagined reference/end-frame controls. "
     "Separate diegetic effects/ambience from score and tie each spoken line to its visible speaker. "
     "Identity must persist throughout the action, not just the first tile. Compare actual closing "
     "state with the next opening; flag spatial/prop/creature-count jumps explicitly."

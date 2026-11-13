@@ -294,14 +294,12 @@ Video planning does not authorize video generation, provider choice, licensing o
 
 ### Explicit fal video comparisons
 
-Owner-directed comparisons may use `veo-3.1-lite` (text only, 720p, native audio,
-prompt auto-fix off). It uses the same persistent guard: eight seconds in version 1,
-or exact 4/6/8 seconds in version 2 with an explicitly approved project allocation.
-It is not a production default, automatic fallback, or authorization to spend.
+Veo profiles were removed on 2026-11-12 (fal drops Veo on 2026-11-17); historical Veo assets
+keep their recorded metadata.
 
 Production should not buy an eight-second take merely to trim it to a short shot.
 Use an explicitly approved version-2 `panther video prepare` manifest with an existing
-audited `projectId` and per-shot `durationSeconds`: Veo 4/6/8, Kling integer 3–15,
+audited `projectId` and per-shot `durationSeconds`: Kling integer 3–15,
 H3 Max numeric 1–15. Select a supported duration that covers the whole approved cut;
 never silently shorten a storyboard, stretch/loop footage or change model to fit cost.
 Model-and-duration quotes retain conservative rates, 25% headroom and the original
@@ -357,14 +355,12 @@ live completion, exact request identity, result HTTP 404 and a matching zero-cha
 It retains the full reservation and audit trail, records outcome unknown/output unavailable, and
 forbids retrying that attempt. Never infer a refund or use this for unknown submissions.
 
-First-cut video uses **`h3-max-image`** for every scene: MiniMax H3 Max through fal, audio on,
-768P, one take. A full session cut is 14–16 shots of 2–7 seconds, targeting 60–80 seconds
-and staying within 60–90. A scene cut stays at most 16 shots and 90 seconds. A take that
-fails review is kept and flagged; it is not a paid retry. `480P` is an explicit option on the
-same model. Start frames default to `gpt-image-2` at quality medium through the API. A Blender
-render is allowed. ElevenLabs is only for speech that the clip itself should not generate.
-The CLI does not automatically classify shots or fill a missing model. **Veo 3.1 Fast**
-(`veo-3.1-fast-silent`) and **Kling 3 Pro** stay available as explicit per-shot overrides.
+Session cuts follow the audio-first process in `docs/ai-video-process.md` and run through
+`tools/ai-video`: Seedance 2.5 for on-screen dialogue (driven by the locked line audio), MiniMax
+H3 Max for every other shot, a cast-lock identity block in every prompt, one take per shot with
+at most 3 takes and a re-roll only for a named defect, and a hard $9 session budget. A full
+session cut is 8–16 shots of 2–12 seconds and 60–90 seconds. Scene-level fal generation keeps
+`h3-max-image` as the default, with **Kling 3 Pro** as an explicit per-shot override.
 This policy does not change the editorial worker or authorize spending, reference sharing,
 model upgrades or failure fallbacks. The plan records its estimated cost. The session budget
 is the video allowance from `panther narration allocate`. Preserve historical plans and actual
@@ -547,7 +543,7 @@ operation never replaces an existing profile; inspect `character show` after an 
 The page displays its portrait while no model is published. Model registration/publication follows
 the normal workflow below. Initializing a page does not assert new campaign canon or create a player.
 
-Image-anchored fal comparisons additionally support `veo-3.1-fast-image`, `kling-3-pro-image`,
+Image-anchored fal comparisons additionally support `kling-3-pro-image`
 and `seedance-2.0-image` (standard, fixed 720p/eight seconds, token-based pricing).
 Read the trusted comparison runbook before using them. Each shot pins one same-game uploaded PNG
 via `image` with absolute private `path`, hex `sha256`, and stable `key` also in `sourceKeys`.
@@ -891,7 +887,7 @@ The image laptop worker runs with
 `OPENAI_API_KEY` to call the selected OpenAI Images model directly. Local Generate Asset also supports configured `FAL_API_KEY` text-to-image
 models discovered from the complete active fal catalog. The user-facing image picker offers
 FLUX 1.1 Pro, FLUX 1 Schnell, GPT Image 1.5 and GPT Image Mini only; unsupported or inactive
-fal choices are omitted. Video offers MiniMax H3 Max, Veo 3.1 Fast and Kling 3 Pro, with
+fal choices are omitted. Video offers MiniMax H3 Max and Kling 3 Pro, with
 an optional starting image explicitly choosing the corresponding image-to-video endpoint.
 Older queued selections retain their exact contracts. Jobs pin executable prompt
 contracts, standard defaults and pricing evidence; unknown dispatches are never

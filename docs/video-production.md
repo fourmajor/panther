@@ -200,7 +200,7 @@ the real subscription reviewer; never enable it in CI or mount personal credenti
   deliberate image anchoring, separate sound and finishing; not provider quality benchmarks.
 - [Kling Pro image schema](https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api):
   verified optional `end_image_url` on 2026-09-10. Both images get the same checksum, size, cloud
-  identity, consent and budget guards. The existing Veo Fast/H3 Max adapters do not expose verified
+  identity, consent and budget guards. The existing H3 Max adapter does not expose verified
   ending-frame support, so Panther rejects that request rather than dropping it.
 - [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html): deterministic assembly, mixing,
   ducking, loudness measurement, grading and caption rendering.
