@@ -34,16 +34,6 @@ def condition(store, job, model, body, verifier):
         body['prompt'] = h3_reference_prompt(body['prompt'], [item['name'] for item in labels],
                                              first_frame=bool(body.get('image_url')))
         return endpoint, body, labels
-    elif model.startswith('veo-3.1-fast'):
-        if frame:
-            # This I2V endpoint has no independent identity-image field. The
-            # prepared frame is the actual conditioning image, never a collage.
-            return endpoint, body, labels
-        if len(references) > 3:
-            raise ValueError('Veo supports three identity references; split this shot or prepare its starting frame')
-        endpoint = 'fal-ai/veo3.1/fast/reference-to-video'
-        body['image_urls'] = references
-        bindings = [f"Reference image {i + 1} supplies only {item['name']}'s identity, costume and equipment." for i, item in enumerate(labels)]
     elif model.startswith('kling-3-pro'):
         if not frame:
             raise ValueError('Prepare a starting frame for this action shot before generating; Kling character references require image-to-video')

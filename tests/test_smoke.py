@@ -78,8 +78,11 @@ def test_fal_cap_and_session_budget_refuse_overspend(tmp_path, monkeypatch):
     estimate = video.reviewed_estimate(shots)
     assert estimate["estimatedCents"] == 640
     assert estimate["estimatedCents"] <= 900
-    with pytest.raises(ValueError, match="14–16"):
-        video.assert_planned_cut(shots[:13], session=True)
+    with pytest.raises(ValueError, match="8–16"):
+        video.assert_planned_cut(shots[:7], session=True)
+    video.assert_planned_cut([{**shot, "durationSeconds": 10} for shot in shots[:8]], session=True)
+    with pytest.raises(ValueError, match="2–12"):
+        video.assert_planned_cut([{**shots[0], "durationSeconds": 13}])
     under = [{**shot, "durationSeconds": 4} for shot in shots[:14]]
     with pytest.raises(ValueError, match="60–90"):
         video.assert_planned_cut(under, session=True)
@@ -371,7 +374,7 @@ def test_recovery_reuses_completed_novel_chapter_and_video_stages(editorial):
         "novel-proof": {"markdown": "The river chapter.", "passed": True, "title": "River"},
         "novel-chapter": {"markdown": "The finished chapter.", "passed": True, "title": "River"},
         "video-source-brief": {"markdown": "Usable dialogue from the enrolled players.", "passed": True},
-        "video-treatment": {"markdown": "Treatment.", "passed": True},
+        "video-audio-script": {"markdown": "Treatment.", "passed": True},
     }
     kept = {stage: done_stage(editorial, parent, stage, payload) for stage, payload in payloads.items()}
     editorial.table.put_item(
@@ -387,10 +390,10 @@ def test_recovery_reuses_completed_novel_chapter_and_video_stages(editorial):
     recovered = unpack(
         request(editorial, "POST /editorial-jobs", {"recovery": {"jobId": parent["jobId"], "target": "both"}})
     )
-    assert {"novel-chapter", "video-source-brief", "video-treatment"} <= set(
+    assert {"novel-chapter", "video-source-brief", "video-audio-script"} <= set(
         recovered["recovery"]["reusedStages"]
     )
-    for stage in ("novel-chapter", "video-source-brief", "video-treatment"):
+    for stage in ("novel-chapter", "video-source-brief", "video-audio-script"):
         editorial.internal(
             {
                 "operation": "dispatch",
@@ -550,7 +553,7 @@ def test_video_stages_keep_only_an_excerpt_of_earlier_sessions():
 
     prior = {"content": "x" * 50_000}
     inputs = {"context": {"catalog": {}, "prior.txt": prior}, "priorStages": {}}
-    selected, notes = editorial.select_stage_inputs("video-treatment", inputs)
+    selected, notes = editorial.select_stage_inputs("video-audio-script", inputs)
     assert len(selected["context"]["prior.txt"]["content"]) == editorial.PRIOR_SESSION_VIDEO_BYTES
     assert notes and notes[0]["action"] == "excerpted"
     kept, _ = editorial.select_stage_inputs("novel-brief", inputs)

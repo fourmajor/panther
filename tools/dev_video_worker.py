@@ -112,9 +112,9 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
                 if job['storyboardShotRef']['revision'] != board['revision'] or job.get('sceneContext', {}).get('shots') != [shot]:
                     raise ValueError('The pinned storyboard shot differs from this generation request')
         model = job.get('model') or model_for(job)
-        allowed = {'veo-3.1-fast', 'veo-3.1-fast-silent', 'veo-3.1-fast-image-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
+        allowed = {'h3-max', 'kling-3-pro', 'h3-max-image', 'kling-3-pro-image'}
         if standalone:
-            allowed = {'veo-3.1-fast', 'veo-3.1-fast-silent', 'h3-max', 'kling-3-pro', 'veo-3.1-fast-image', 'h3-max-image', 'kling-3-pro-image'}
+            allowed = {'h3-max', 'kling-3-pro', 'h3-max-image', 'kling-3-pro-image'}
         if model not in allowed:
             raise ValueError('Unsupported selected video model')
         endpoint = job.get('endpoint') or v.PROFILES[model]['endpoint']
@@ -240,7 +240,7 @@ def process(store, identity, root, fal, *, downloader=download, media_probe=prob
         lineage = list(dict.fromkeys([r['key'] for r in inputs] + job.get('sourceKeys', [])))
         generation = fal_metadata(endpoint, rid)
         if standalone:
-            generation['model'] = {'veo-3.1-fast': 'Veo 3.1 Fast', 'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model.removesuffix('-image')]
+            generation['model'] = {'h3-max': 'MiniMax H3 Max', 'kling-3-pro': 'Kling 3 Pro'}[model.removesuffix('-image')]
         title = job['name'] if standalone else scene['record']['name']
         association = {} if standalone else {'sceneRef': ref, 'episodeId': ref['episodeId'], 'sceneId': ref['sceneId']}
         if job.get('storyboardShotRef'):

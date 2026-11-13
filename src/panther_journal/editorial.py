@@ -94,7 +94,7 @@ SHOT = obj(
     {
         "sceneId": TEXT,
         "shotId": TEXT,
-        "durationSeconds": {"type": "number", "minimum": 2, "maximum": 7},
+        "durationSeconds": {"type": "number", "minimum": 2, "maximum": 12},
         "description": TEXT,
         "camera": TEXT,
         "color": {"type": "string", "pattern": r"^#[0-9a-fA-F]{6}$"},
@@ -2135,7 +2135,7 @@ def process(config, root, claim):
             payload = {"chapter": candidate, "review": report}
         if stage == "video-generation-packets" and selected_map:
             payload["mapGenerationPacket"] = map_generation_packet(job, report)
-        if stage == "video-voice-casting":
+        if stage == "video-audio-script":
             payload["voiceProfiles"] = voice_profile_proposals(evidence["catalog"])
         if stage == "video-source-brief":
             source_map = {source["key"]: source for source in inputs["sourceTranscripts"]}

@@ -37,18 +37,17 @@ is used for bounded visual analysis of the actual frame and candidate portraits.
 
 ## Reference modes of the production models
 
-Every new scene uses MiniMax H3 Max image-to-video. Veo 3.1 Fast and Kling 3 Pro are explicit
-per-shot overrides. Input mode is chosen from that model's documented capabilities; there is
+Session cuts follow `docs/ai-video-process.md`: Seedance 2.5 for on-screen dialogue, MiniMax H3 Max
+for everything else. Scene-level generation uses MiniMax H3 Max image-to-video; Kling 3 Pro is an
+explicit per-shot override. Veo was removed on 2026-11-12. Input mode is chosen from that model's documented capabilities; there is
 no provider/model fallback.
 
 | Model | Shot conditioning |
 | --- | --- |
-| Veo 3.1 Fast | Without a starting frame, `reference-to-video` sends only visible portraits through `image_urls` (maximum three). With a frame, the existing I2V endpoint animates that frame; portrait comparison happens during preparation. More visible identities need a composed frame or separate shots; identities are never silently dropped. |
 | MiniMax H3 Max | `reference-to-video` sends visible portraits through `reference_image_urls`, binds them as Image 1, Image 2, etc., and retains an optional exact starting frame. Prompt expansion stays disabled. |
 | Kling 3 Pro | I2V sends the composed starting frame plus visible identity `elements`, bound as @Element1, etc. A character action shot without a starting frame fails instead of quietly reverting to text-only conditioning. |
 
 Exact input schemas:
-[Veo reference-to-video](https://fal.ai/models/fal-ai/veo3.1/fast/reference-to-video/api),
 [H3 Max reference-to-video](https://fal.ai/models/minimax/h3-max/reference-to-video/api),
 [Kling image-to-video](https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api).
 Reference portraits are individual images, never a contact sheet masquerading as a

@@ -59,12 +59,12 @@ alongside manually started processors using the same database.
 | `dev_transcription_worker.py` | Separate complete recording pass from immutable originals | OpenAI `gpt-transcribe` |
 | `dev_summary_worker.py` | Source-cited transcript summaries and regeneration | OpenAI Responses API |
 | `dev_playback_worker.py` | Continuous listening copies of completed WAV sets | Local FFmpeg |
-| `dev_video_worker.py` | Explicit scene and standalone asset video generation | fal: Veo 3.1 Fast, MiniMax H3 Max or Kling 3 Pro |
+| `dev_video_worker.py` | Explicit scene and standalone asset video generation | fal: MiniMax H3 Max or Kling 3 Pro |
 | `dev_narration_worker.py` | Stock-voice narration with performance direction | ElevenLabs `eleven_v3` |
 | `dev_episode_worker.py` | Ordered episode assembly from selected real scene outputs | Local FFmpeg |
 
 A scene requires a title; extra direction is optional. Action uses Kling 3 Pro,
-dialogue uses MiniMax H3 Max, and other scenes use Veo 3.1 Fast. Map scenes pin the
+and other scenes use MiniMax H3 Max. Session cuts use `tools/ai-video` (see `docs/ai-video-process.md`). Map scenes pin the
 selected map as the actual input frame and direct route markers/footprints. Selected
 transcripts are optional sources: prompt composition extracts relevant source-local
 facts with exact segment citations, preserving unknown speaker identities. Character

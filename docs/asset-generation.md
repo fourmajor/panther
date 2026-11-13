@@ -26,7 +26,7 @@ The image worker stores a complete versioned catalog in the local database, sepa
 from processor heartbeats, and refreshes it every six hours. A selected job pins the
 endpoint, schema hash, explicit standard defaults and provider price evidence; later
 catalog changes cannot alter queued generation. Catalog/pricing discovery is read-only.
-Video presents three supported families: MiniMax H3 Max, Veo 3.1 Fast and Kling 3 Pro.
+Video presents two supported families: MiniMax H3 Max and Kling 3 Pro (Veo was removed on 2026-11-12).
 Selecting a starting image explicitly pins the matching image-to-video endpoint; otherwise
 the text-to-video endpoint is used. Both modes use the existing eight-second, 16:9 contract.
 Existing explicit variant IDs remain valid for immutable queued requests.

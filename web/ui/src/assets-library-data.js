@@ -14,7 +14,7 @@ export function assetLibraryType(asset) {
   if(kind&&!['unknown','unclassified','other'].includes(kind))return kind;
   return 'other';
 }
-const processingKinds=new Set(['transcript-summary','episode-composition','context','correction','capture-health','novel-brief','novel-options','novel-outline','novel-developmental-edit','novel-revision','novel-continuity','novel-line-copyedit','novel-proof','video-source-brief','video-treatment','video-screenplay','video-script-edit','video-shooting-script','video-breakdown','video-design','video-voice-casting','video-blocking','video-shot-list','video-edit-sound-vfx','video-preflight']);
+const processingKinds=new Set(['transcript-summary','episode-composition','context','correction','capture-health','novel-brief','novel-options','novel-outline','novel-developmental-edit','novel-revision','novel-continuity','novel-line-copyedit','novel-proof','video-source-brief','video-audio-script','video-cast-lock','video-treatment','video-screenplay','video-script-edit','video-shooting-script','video-breakdown','video-design','video-voice-casting','video-blocking','video-shot-list','video-edit-sound-vfx','video-preflight']);
 export function ordinaryLibraryAsset(asset){
  const kind=asset.kind||asset.metadata?.kind||'',extra=asset.metadata?.extra||{};
  return !processingKinds.has(kind)&&!['processing','intermediate','internal'].includes(extra.relationshipRole)&&extra.browserPart===undefined&&!/(?:^|-)(?:provenance|receipts?|manifest|checkpoint|migration|audit|metadata|plans?|draft|storyboards?|packets?)(?:-|$)|^editorial-/.test(kind);

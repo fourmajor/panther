@@ -207,13 +207,15 @@ Panther is a hobby project. Rapid development beats almost everything else.
   Routine defects yield explicit working drafts, never invented repairs or implicit paid retries.
   Frame-sampled visual checks and technical sound checks must disclose their coverage limits.
 
-- Video production model policy: every new shot is MiniMax H3 Max through fal (`h3-max-image`),
-  audio on, 768P, one take of 2–7 seconds. A full session cut is 14–16 shots, targeting
-  60–80 seconds and staying within 60–90. A scene cut stays at most 16 shots and 90 seconds.
-  `480P` is an explicit option. Veo 3.1 Fast and Kling 3 Pro are explicit per-shot overrides only.
-  A take that fails review is kept and flagged. Start frames default to `gpt-image-2` medium;
-  a Blender render is allowed. The plan stores its estimated cost, and the session budget is the
-  video allowance from `panther narration allocate`. Follow
+- Video production model policy (plan 14, audio-first): follow `docs/ai-video-process.md`.
+  The locked master mix (TTS lines, Whisper timing, score, -14 LUFS) sets the cut; picture is cut
+  to it. On-screen dialogue shots use Seedance 2.5 (OpenRouter, driven by the line audio, painted
+  reference sheets); every other shot uses MiniMax H3 Max image-to-video. Every prompt carries the
+  cast-lock identity block of each visible character. A full session cut is 8–16 shots of 2–12
+  seconds, 60–90 seconds total. One take per shot; a re-roll needs a named defect and a shot never
+  exceeds 3 takes. `tools/ai-video` enforces the $9 session budget before every paid call.
+  Start frames and reference sheets come from an OpenRouter image model; a Blender render is
+  allowed. Veo profiles are removed. The plan stores its estimated cost. Follow
   `docs/fal-video-comparison.md#production-model-selection`. This is not automatic routing or
   spending approval. Do not silently upgrade/fallback models or rewrite historical comparison provenance.
 
