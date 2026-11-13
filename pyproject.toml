@@ -28,7 +28,8 @@ dependencies = [
 dev = [
   "pytest>=8.2",
   "moto[dynamodb,s3]>=5.1,<6",
-  "ruff==0.15.16"
+  "ruff==0.15.16",
+  "numpy>=1.26"
 ]
 openai = [
   "openai>=1.30"

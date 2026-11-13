@@ -565,3 +565,63 @@ def test_claude_stage_thinking_is_bounded_below_the_output_cap():
 
     env = inference.claude_budget_environment({}, "medium")
     assert int(env["MAX_THINKING_TOKENS"]) < int(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"])
+
+
+def test_ai_video_runner_guards_budget_identity_and_takes(tmp_path):
+    import importlib.util
+    import sys as _sys
+
+    folder = Path(__file__).resolve().parents[1] / "tools/ai-video"
+    _sys.path.insert(0, str(folder))
+    spec = importlib.util.spec_from_file_location("ai_video", folder / "ai_video.py")
+    ai = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ai)
+    ident = "A tall paladin in his thirties, black wavy hair, stubble, black feathered pauldrons."
+    book = {
+        "cast": {"hero": {"identity": ident, "sheet": "cast/hero.png"}},
+        "lines": {"L1": {"speaker": "hero", "audio": "audio/L1.wav", "start": 0.6}},
+        "shots": [
+            {"id": "a", "kind": "dialogue", "line": "L1", "start": 0, "duration": 5,
+             "cast": ["hero"], "prompt": "He speaks. " + ident},
+            {"id": "b", "kind": "scene", "start": 5, "duration": 3, "cast": ["hero"], "prompt": "He turns. " + ident},
+        ],
+    }
+    assert ai.validate(book)
+    assert ai.route(book["shots"][0]) == "seedance-2.5" and ai.route(book["shots"][1]) == "h3-max"
+    assert ai.billed_seconds(book["shots"][1]) == 5  # H3 bills at least 5 s; the cut trims
+    assert 0.50 < ai.estimate(book["shots"][0]) < 0.54 and ai.estimate(book["shots"][1]) == 0.4
+    for broken, message in (
+        ({**book["shots"][1], "prompt": "He turns."}, "identity block"),
+        ({**book["shots"][0], "model": "h3-max"}, "Seedance"),
+        ({**book["shots"][1], "start": 6}, "previous shot ends"),
+        ({**book["shots"][1], "duration": 13}, "2-12"),
+    ):
+        shots = [broken, book["shots"][1]] if broken["id"] == "a" else [book["shots"][0], broken]
+        bad = {**book, "shots": shots}
+        with pytest.raises(ai.Refused, match=message):
+            ai.validate(bad)
+
+    ledger = ai.Ledger(tmp_path, 9.0)
+    entry = ledger.reserve("take a#1", 8.5)
+    ledger.settle(entry, 8.4)
+    with pytest.raises(ai.Refused, match="Budget guard"):
+        ledger.reserve("take b#1", 0.65)
+    assert ai.Ledger(tmp_path, 20.0).data["capUsd"] == 9.0  # a later, larger cap never widens the ledger
+
+    state = {}
+    assert ai.check_take(state, "a", None) == 1
+    state["a"] = [{"take": 1}]
+    with pytest.raises(ai.Refused, match="named defect"):
+        ai.check_take(state, "a", None)
+    with pytest.raises(ai.Refused, match="reject a take"):
+        ai.check_take(state, "a", "lip-sync")
+    state["a"][0]["rejected"] = "lip-sync"
+    assert ai.check_take(state, "a", "lip-sync") == 2
+    state["a"] += [{"take": 2, "rejected": "identity"}, {"take": 3, "rejected": "hands-anatomy"}]
+    with pytest.raises(ai.Refused, match="3 takes"):
+        ai.check_take(state, "a", "hands-anatomy")
+
+    import sync
+
+    knots = [[0.2, 0.9], [1.0, 1.5]]
+    assert sync.at(knots, 0.6) == pytest.approx(1.2) and sync.at(knots, 2.0) == pytest.approx(2.5)
