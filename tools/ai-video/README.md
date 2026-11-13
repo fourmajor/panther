@@ -7,7 +7,8 @@ folder holds everything game-specific and is kept with the session artifacts in 
 SESSION/
   shotbook.json      cast (identity blocks, sheets), lines (audio, master start), shots, master mix
   audio/             locked line clips and mix.wav from tools/procedural-video (voices, build-timing, mix)
-  audio-urls.json    {"L06": "https://..."}: presigned HTTPS URLs for dialogue line clips (OpenRouter needs HTTPS)
+  audio/windows/     per dialogue shot: its lines at their master offsets (written by the runner)
+  audio-urls.json    {"S05": "https://..."}: presigned HTTPS URL of each dialogue window (OpenRouter needs HTTPS)
   cast/ frames/      reference sheets and first frames
   takes/<shot>/take-N.mp4, takes.json, ledger.json, cut/, out/
 ```
@@ -35,16 +36,21 @@ python3 tools/ai-video/ai_video.py ledger SESSION
                     "portraits": ["refs/hero-portrait.png"]}},
   "lines": {"L06": {"speaker": "hero", "audio": "audio/L06.wav", "start": 28.8, "text": "..."}},
   "shots": [
-    {"id": "S05", "kind": "dialogue", "line": "L06", "start": 28.2, "duration": 4.5, "cast": ["hero"],
+    {"id": "S05", "kind": "dialogue", "lines": ["L06"], "start": 28.2, "duration": 4.5, "cast": ["hero"],
      "frame": "first-frame composition", "prompt": "... identity block pasted verbatim ..."},
-    {"id": "S06", "kind": "scene", "start": 32.7, "duration": 6.0, "cast": [], "frame": "...", "prompt": "..."}
+    {"id": "S06", "kind": "scene", "start": 32.7, "duration": 6.0, "cast": [], "frame": "...", "prompt": "..."},
+    {"id": "S07", "kind": "still", "start": 38.7, "duration": 5.0, "frame": "establishing matte painting"}
   ]
 }
 ```
 
-- Shots are contiguous on the master timeline, 2–12 s each. `kind` sets the model: `dialogue` uses
-  Seedance 2.5, driven by the line clip, with up to three cast sheets as references; `scene` uses H3 Max.
+- Shots are contiguous on the master timeline, 2–12 s each. `kind` sets the model:
+  - `dialogue` uses Seedance 2.5, driven by the shot's audio window, with up to three cast sheets as
+    references. A dialogue shot holds one visible speaker's consecutive lines.
+  - `scene` uses H3 Max.
+  - `still` is a slow push-in on the first frame and costs nothing beyond the image.
   A `model` override is allowed for scene shots only.
+- A line's `start` is where its clip begins on the master (the speech start minus the clip's lead-in).
 - `validate` refuses a prompt that lacks the identity block of any listed cast member, and a dialogue
   shot whose speaker isn't visible.
 - H3 bills at least 5 s and Seedance at least 4 s. The cut trims to the shot length.

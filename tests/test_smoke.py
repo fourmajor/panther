@@ -621,6 +621,17 @@ def test_ai_video_runner_guards_budget_identity_and_takes(tmp_path):
     with pytest.raises(ai.Refused, match="3 takes"):
         ai.check_take(state, "a", "hands-anatomy")
 
+    still = {"id": "c", "kind": "still", "start": 8, "duration": 2, "cast": ["hero"], "frame": "A wide."}
+    two = {**book, "lines": {**book["lines"], "L2": {"speaker": "hero", "audio": "audio/L2.wav", "start": 2.5}}}
+    two["shots"] = [{**book["shots"][0], "line": None, "lines": ["L1", "L2"]}, book["shots"][1], still]
+    assert ai.validate(two) and ai.estimate(still) == 0.0
+    two["lines"]["L2"]["speaker"] = "villain"
+    two["cast"]["villain"] = {"identity": "A gaunt witch, grey-green skin, long black robes, bare feet.", "sheet": "v"}
+    with pytest.raises(ai.Refused, match="one visible speaker"):
+        ai.validate(two)
+    with pytest.raises(ai.Refused, match="still shot"):
+        ai.run_take(tmp_path, {**book, "shots": [still]}, "c")
+
     import sync
 
     knots = [[0.2, 0.9], [1.0, 1.5]]
