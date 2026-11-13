@@ -11,3 +11,5 @@ export function fbm1(x, seed = 0) { return noise1(x, seed) * 0.6 + noise1(x * 2.
 export const flicker = (t, seed = 0) => 0.8 + 0.2 * fbm1(t * 6.5, seed) + 0.06 * noise1(t * 19, seed + 11);
 // pulse centred at t0: fast attack, exponential decay
 export const pulse = (t, t0, atk = 0.04, dec = 0.5) => t < t0 ? 0 : (t - t0 < atk ? (t - t0) / atk : Math.exp(-(t - t0 - atk) / dec));
+// jerky-but-heavy time: advances in steps of 1/hz, snapping quickly then holding
+export const snapT = (t, hz, k = 0.35) => { const x = t * hz, i = Math.floor(x); return (i + sstep(0, k, x - i)) / hz; };

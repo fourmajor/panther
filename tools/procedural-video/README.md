@@ -34,16 +34,44 @@ Env knobs: `DUCK_DB`, `TARGET_LUFS`, `CEILING_DBTP` (mix); `TTS_MODEL`, `STT_MOD
 
 ```
 scene/index.html     page: WebGL canvas + DOM typography (title card, slugs, word-synced captions, end card)
-scene/main.js        window.renderFrame(t); loads out/timing.json and <session>/scene/index.js; transitions
+scene/main.js        window.renderFrame(t); loads out/timing.json and <session>/scene/index.js; transitions;
+                     window.renderCloseup(name, variant, t) for a session's close-up studio (mode=closeups)
 scene/post.js        HDR pipeline: MSAA + depth -> raymarched volumetric fog / light shafts -> bokeh DoF -> bloom
                      -> ACES, grade, fringe, vignette, grain, letterbox, fades and flashes
 scene/kit.js         batched geometry, world UVs, arched walls, voussoirs, columns, ribs, battlements, GPU particles
-scene/textures.js    procedural PBR masonry (albedo / normal / roughness), net and cloth textures
-scene/figures.js     articulated figure builder (bodies, cloaks, hoods, armour), 2-bone IK, props
-scene/util.js        seeded PRNG, noise, easing
+scene/textures.js    procedural PBR masonry (irregular ashlar / rubble / flags with erosion, cracks, lichen, grime)
+                     plus world-space weathering; net and cloth textures
+scene/sdf.js         signed-distance sculpting kit + surface-nets mesher (heads, skulls, jaws, pelvises, palms)
+scene/face.js        procedural heads from a spec: skull shape, sockets, eyeballs (iris/pupil texture, wet clear-coat),
+                     blinking lids and lashes, brows of individual hairs, nose, lips, jaw, ears, teeth, tongue;
+                     skin shader (wrap/SSS diffuse, back-scatter, pores, wrinkles, freckles, stubble); morph
+                     targets for jaw, lip shapes, smile/frown/snarl, brows, squint
+scene/hair.js        strand-ribbon hair grown over a head's field: hairline, parting, gravity, waves, curls, locks, bun
+scene/hands.js       articulated hands (palm, 4 x 3 phalanges, 3-joint thumb, nails/claws, gloves, bone variant) and a
+                     pose table: relax, fist, grip, rapier, point, open, plead, claw, rope, hold
+scene/skeleton.js    anatomical skeleton (skull + hinged jaw + teeth, vertebrae, ribs, sternum, clavicles, scapulae,
+                     pelvis, long bones, hand/foot bones), aged bone, rusted armour scraps, eye points, jaw chatter
+scene/materials.js   object-space procedural materials: cloth, linen, leather, damask, chain, fur, wood, metal, rust,
+                     bone; soft skin
+scene/figures.js     figure builder from a recipe: jointed body, 2-bone IK, wrist aiming / grasp, head + hair + hands,
+                     wardrobe parts (straps, skirts/coats, collars, fastenings, trim, panels, pauldrons, cuffs, sleeves,
+                     boots, hats with plumes, shields, scabbards, pendants, fetishes, earrings), cloaks, props
+scene/lipsync.js     lip-sync driver: word timings + loudness envelope -> jaw / wide / round / emphasis per speaker
+scene/util.js        seeded PRNG, noise, easing, stepped time
+tools/envelope.js    per-clip loudness envelopes for lip sync -> out/envelopes.json (part of `npm run render`)
+tools/sheet.js       contact sheets for review loops
 tools/session.js     resolves SESSION / --session
 tools/usage-guard.sh generic usage guard (see below)
 ```
+
+Review close-ups (faces, hands, skeletons) render through the same post pipeline as the film:
+
+```
+SESSION=sessions/<name> node tools/capture.js --closeups all --variants front,three --dir out/closeups
+```
+
+A session provides them by exporting `closeups(renderer)` from `scene/index.js` -> `{ names, render(name, variant, t, ctx) }`.
+Shots get lip sync from `ctx.speech('<speaker>')` and apply it with `figure.talk(state, expressionOffsets)`.
 
 Rendering is deterministic: every frame is a pure function of `t` (no wall clock, no `Math.random`; particles are
 stateless and shadow maps are redrawn per frame).
@@ -69,7 +97,7 @@ Create `sessions/<name>/` with:
    with `api.S` (shots), `api.Bt` (beats) and `api.Ln` (lines) for cue times. Without it a plain fallback bed is used.
 
 Then `SESSION=sessions/<name> npm run voices` (optional) and `SESSION=sessions/<name> npm run render`.
-Session folders hold game-specific material (cast, quotes, shot content) and are kept out of this repo; store them with the session's other artifacts.
+Session folders hold game-specific material (cast, portrait mappings, quotes, shot content) and are kept out of this repo; store them with the session's other artifacts.
 
 Timing rules: above the soft maximum, shots give back slack they do not need; pauses between lines are squeezed
 only if the total would still exceed `hard_max`.

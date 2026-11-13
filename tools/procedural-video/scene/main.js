@@ -3,15 +3,18 @@
 import * as THREE from 'three';
 import { Post } from './post.js';
 import { clamp, sstep, ease } from './util.js';
+import { makeSpeech } from './lipsync.js';
 
 const W = 1920, H = 1080;
 const TM = await (await fetch('../out/timing.json')).json();
+const ENV = await fetch('../out/envelopes.json').then(r => r.ok ? r.json() : null).catch(() => null), speech = makeSpeech(TM, ENV);
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(1); renderer.setSize(W, H, false); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap; renderer.toneMapping = THREE.NoToneMapping;
 const post = new Post(renderer, W, H);
 const SESSION = new URLSearchParams(location.search).get('session') || TM.session;
-const sets = await (await import(`../${SESSION}/scene/index.js`)).buildSets(renderer);
+const QS = new URLSearchParams(location.search), MODE = QS.get('mode') || 'film';   // mode=closeups builds only the session's close-up studio
+const SMOD = await import(`../${SESSION}/scene/index.js`), sets = MODE === 'closeups' ? {} : await SMOD.buildSets(renderer);
 const fns = {}; for (const k in sets) Object.assign(fns, sets[k].shots);
 const beats = Object.fromEntries(TM.beats.map(b => [b.name, b.t])), lines = Object.fromEntries(TM.lines.map(l => [l.id, l]));
 const $ = id => document.getElementById(id);
@@ -26,7 +29,7 @@ function setCaption(L) { if (capId === L.id) return; capId = L.id; const c = $('
 const DIS = 0.9, DIP = 0.32;
 function evalShot(i, t, slot, frame) {
   const s = TM.shots[i], lt = t - s.start, d = s.end - s.start;
-  const ctx = { T: t, start: s.start, end: s.end, beat: n => beats[n] ?? s.start, line: id => (lines[id] ? lines[id].start : s.start), lineEnd: id => (lines[id] ? lines[id].end : s.start) };
+  const ctx = { T: t, start: s.start, end: s.end, beat: n => beats[n] ?? s.start, line: id => (lines[id] ? lines[id].start : s.start), lineEnd: id => (lines[id] ? lines[id].end : s.start), speech: who => speech(t, who) };
   const P = fns[s.name](lt, d, ctx);
   P.camera.aspect = W / H; const py = P.camera.projectionMatrix;
   P.camera.updateProjectionMatrix();
@@ -64,4 +67,11 @@ window.renderFrame = function (t) {
   else { $('spk').style.opacity = 0; $('cap').style.opacity = 0; }
   return true;
 };
+// Close-ups: a session may export closeups(renderer) -> { names, render(name, variant, t, ctx) -> frame params }.
+// window.renderCloseup(name, variant, t) draws one through the same post pipeline (no letterbox, no captions).
+const CU = SMOD.closeups && MODE === 'closeups' ? await SMOD.closeups(renderer) : null; window.CLOSEUPS = CU ? CU.names : [];
+window.renderCloseup = function (name, variant = 'front', t = 0) { for (const id of ['slug', 'title', 'end', 'spk', 'cap']) $(id).style.opacity = 0;
+  const P = CU.render(name, variant, t, { T: t, speech: who => speech(t, who) }); P.camera.aspect = W / H; P.camera.updateProjectionMatrix();
+  for (const p of P.parts || []) p.u.uPx.value = H * 0.5 * P.camera.projectionMatrix.elements[5];
+  post.shot(P.scene, P.camera, P, 0, t, Math.round(t * TM.fps)); post.final({ bar: 0, ...P }, 0, 1, 0, Math.round(t * TM.fps)); return true; };
 window.SETS = sets; window.READY = true;
