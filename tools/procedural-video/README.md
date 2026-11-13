@@ -74,10 +74,12 @@ A session provides them by exporting `closeups(renderer)` from `scene/index.js` 
 Shots get lip sync from `ctx.speech('<speaker>')` and apply it with `figure.talk(state, expressionOffsets)`.
 
 When sculpting figures from character portraits (keep the portraits in the session folder, not
-this repo), iterate in several face passes interleaved with scene review loops. After each pass,
-render close-up review sheets for faces, five-fingered hands, lip movement and skeletons, and
-fix from those stills before the next pass or a full-frame capture. `npm run stills` and
-`tools/sheet.js` tile contact sheets for the same kind of review of the whole cut.
+this repo), run six portrait-driven face passes by default (`face_passes` in `defaults.json`; a
+session may override the same key in `timeline.json`). After each pass, render a close-up review
+sheet of the faces against the portraits (also check five-fingered hands, lip movement and
+skeletons) and fix from those stills before the next pass. Stop early only if a pass shows no
+visible improvement against the portraits. Interleave scene review loops as needed. `npm run stills`
+and `tools/sheet.js` tile contact sheets for the same kind of review of the whole cut.
 
 Rendering is deterministic: every frame is a pure function of `t` (no wall clock, no `Math.random`; particles are
 stateless and shadow maps are redrawn per frame).
@@ -87,7 +89,8 @@ stateless and shadow maps are redrawn per frame).
 Create `sessions/<name>/` with:
 
 1. **`timeline.json`** — `title`, `subtitle`, `output`, `fps/width/height/letterbox`, `total_range: [min, softMax]`,
-   optional `hard_max`, `title_card: {shot}`, `end_card: {shot, quote_line, credit}`, optional `speaker_labels`, and
+   optional `hard_max`, `title_card: {shot}`, `end_card: {shot, quote_line, credit}`, optional `speaker_labels`,
+   optional `face_passes` (default 6, from `defaults.json`), and
    `shots: [{name, set, duration, min, transition: cut|dip|flash|dissolve|fade-in, slug, camera, beats}]`.
    A beat is `{name, at}` (seconds from shot start; negative = from the end) or `{name, line, offset}`.
 2. **`lines.json`** — `[{id, speaker, voice_hint, text, source, start, target_duration, shot, audio}]`. `text` is
