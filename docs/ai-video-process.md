@@ -70,8 +70,20 @@ when the provider reports no charge. The ledger lives with the session artifacts
 - Drop each take's first 2 frames, which often hold a blend from the reference.
 - Concatenate the chosen takes on the master timeline.
 - Lay the master mix back at -14 LUFS. The model's own audio is never used in the final mix.
+- Prompt every video model to output voice only, with no music or score. The locked master mix
+  is the only soundtrack in the cut; a take's own audio is used only to measure lip-sync, then
+  discarded.
 
 ## Review
 
 Score each take on lip sync, likeness to the reference sheet, faces and hands, motion and continuity.
 Contact sheets come from `ffmpeg` frame extraction. The cut is reviewed as a whole before delivery.
+
+## Where to run it
+
+Run audio lock, generation, sync and cut on Kiwi, under a memory cap that leaves room for
+household services. Kiwi has 14 GiB, shared with Home Assistant and the existing 3G
+`panther.slice` workers; do not raise those worker limits. Use a Mac only for capabilities only
+it has. When an unattended coding agent is iterating, keep a usage guard beside it (see
+`tools/procedural-video/tools/usage-guard.sh`) and check Claude subscription usage as the work
+runs. For a Discord-inlineable public file, follow [session video sharing](session-video-sharing.md).

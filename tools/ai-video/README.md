@@ -71,7 +71,10 @@ python3 tools/ai-video/ai_video.py ledger SESSION
 own soundtrack (log-mel subsequence DTW), and the cut re-times the picture along that map, so lips land
 on the master words even when the model moved a pause. `syncCost` is reported per take: below about 0.2
 means the model copied the line, 0.2–0.4 means it re-performed it. The take's own audio never reaches
-the final mix. Each take's first 2 frames are dropped.
+the final mix. Each take's first 2 frames are dropped. Prompts tell the video models to output
+voice only, with no music: the locked master mix is the soundtrack.
 
-Runs on a small Linux box. It needs Python 3.11+, numpy and ffmpeg, and decodes one take at a time,
-using about 1 GB for a 12 s 720p take.
+Run this on Kiwi (a 14 GiB household server shared with Home Assistant and the 3G `panther.slice`
+workers), under a memory cap, one take at a time. It needs Python 3.11+, numpy and ffmpeg, and
+uses about 1 GB to decode a 12 s 720p take. Use a Mac only for capabilities only it has. To
+publish a Discord-inlineable file, see `docs/session-video-sharing.md`.
