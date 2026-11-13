@@ -94,7 +94,7 @@ export class Post {
     this.dof = sm(DOF, this.dofU);
     this.finU = { tA: { value: null }, tB: { value: null }, uMix: { value: 0 }, uExposure: { value: 1 }, uFade: { value: 1 }, uFlash: { value: 0 }, uFlashCol: { value: new THREE.Color(1, 0.95, 0.85) }, uFrame: { value: 0 }, uSat: { value: 1.05 }, uVig: { value: 0.75 }, uGrain: { value: 0.032 }, uContrast: { value: 0.55 },
       uBar: { value: (1 - (W / 2.39) / H) / 2 }, uShadow: { value: new THREE.Color(0.9, 0.98, 1.12) }, uHi: { value: new THREE.Color(1.06, 1.0, 0.92) } };
-    this.fin = sm(FIN, this.finU);
+    this.fin = sm(FIN, this.finU); this.bar0 = this.finU.uBar.value;
     this.bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.6, 0.6, 1.0);
   }
   // Renders one shot into rtOut[slot]. P = per-shot post parameters.
@@ -117,7 +117,7 @@ export class Post {
   }
   final(P, mix, fade, flash, frame) {
     const u = this.finU; u.tA.value = this.rtOut[0].texture; u.tB.value = this.rtOut[1].texture; u.uMix.value = mix; u.uFade.value = fade; u.uFlash.value = flash; u.uFrame.value = frame;
-    u.uExposure.value = P.exposure ?? 1; u.uSat.value = P.sat ?? 1.05; u.uVig.value = P.vignette ?? 0.75;
+    u.uExposure.value = P.exposure ?? 1; u.uBar.value = P.bar ?? this.bar0; u.uGrain.value = P.grain ?? 0.032; u.uSat.value = P.sat ?? 1.05; u.uVig.value = P.vignette ?? 0.75;
     u.uShadow.value.fromArray(P.shadowTint || [0.9, 0.98, 1.12]); u.uHi.value.fromArray(P.hiTint || [1.06, 1.0, 0.92]);
     if (P.flashCol) u.uFlashCol.value.fromArray(P.flashCol); else u.uFlashCol.value.setRGB(1, 0.95, 0.85);
     this.r.setRenderTarget(null); this.fin.render(this.r);
