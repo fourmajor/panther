@@ -113,7 +113,10 @@ and pull requests, with current-commit checks and the owner's merge policy.
 - [Continuous recording playback](docs/recording-playback-workflow.md)
 - [Local recording and player attribution](docs/local-audio.md)
 - [Editorial workflows](docs/editorial-workflows.md)
-- [Video production and delivery](docs/video-production.md)
+- [Video production and delivery](docs/video-production.md),
+  [AI session video process](docs/ai-video-process.md),
+  [procedural recap pipeline](tools/procedural-video/README.md),
+  [publishing a video for Discord](docs/session-video-sharing.md)
 - [Asset browsing](docs/asset-browse-index.md), [storage](docs/asset-storage.md),
   [versions](docs/asset-versions.md) and [generation metadata](docs/generation-metadata.md)
 - [AWS foundation runbook](docs/aws-foundation-runbook.md)

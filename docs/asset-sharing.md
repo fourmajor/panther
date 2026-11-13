@@ -49,3 +49,8 @@ Media redirects are short-lived internally; the shared Panther URL itself does n
 
 This is a new opt-in access record, not a change to the asset contract: existing assets are not
 automatically shared and no migration/publication of the library is performed.
+
+The watch page's media URL is a 302 to a signed object, which Discord often fails to embed. For
+a reliable inline player, also publish a direct `.mp4` under `/videos/` as described in
+[session video sharing](session-video-sharing.md). `panther share revoke` does not remove those
+files; taking them down means deleting the site-origin objects and invalidating CloudFront.

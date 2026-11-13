@@ -218,6 +218,10 @@ Panther is a hobby project. Rapid development beats almost everything else.
   allowed. Veo profiles are removed. The plan stores its estimated cost. Follow
   `docs/fal-video-comparison.md#production-model-selection`. This is not automatic routing or
   spending approval. Do not silently upgrade/fallback models or rewrite historical comparison provenance.
+  Prompt video models for voice only, with no music; the locked master mix is the soundtrack.
+  Run pipeline work on Kiwi under a memory cap (14 GiB household server); use a Mac only for
+  capabilities only it has. To publish a Discord-inlineable file, follow
+  `docs/session-video-sharing.md`.
 
 - Novel link previews are separate read-time projections, never manuscript edits. Support hover,
   keyboard focus and touch; keep navigation usable when a preview fails. Use descriptions or clearly

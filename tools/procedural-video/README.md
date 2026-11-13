@@ -22,7 +22,7 @@ Requirements: Node 20+, `npm install` (three, puppeteer), ffmpeg/ffprobe on the 
 
 | Stage | Tool | What it does |
 |---|---|---|
-| Voices (optional) | `tools/voices.js` -> `tools/voice/tts_gemini.py`, `tools/voice/align_whisper.py` | Gemini TTS via OpenRouter, one WAV per line using the session's `voices.json` cast; Whisper word timestamps -> `voices/alignment.json`. The key is read from `OPENROUTER_API_KEY` only; without it the step is skipped. Nothing else in the pipeline touches the network. |
+| Voices (optional) | `tools/voices.js` -> `tools/voice/tts_gemini.py`, `tools/voice/align_whisper.py` | Gemini 3.8 Flash TTS (`google/gemini-3.8-flash-tts`, overridable with `TTS_MODEL`) via OpenRouter, one WAV per line using the session's `voices.json` cast; Whisper word timestamps -> `voices/alignment.json`. The key is read from `OPENROUTER_API_KEY` only; without it the step is skipped. Nothing else in the pipeline touches the network. |
 | Timing | `tools/build-timing.js` | Audio-first clock: line lengths from the real clips, speech in/out and per-word times from Whisper, mapped back onto the canonical `lines.json` text. Re-flows shot boundaries and beats into `out/timing.json`. |
 | Score | `tools/score-engine.js` + `<session>/score.js` | Procedural symphony: the engine provides instruments, sequencing and a hall reverb; the session supplies the composition, keyed to shot/beat/line names. |
 | Mix | `tools/mix.js` | Dialogue placement, sidechain ducking of the score (9 dB, look-ahead, smooth), master to -14 LUFS integrated with a true-peak limiter at -1.2 dBTP. |
@@ -73,6 +73,12 @@ SESSION=sessions/<name> node tools/capture.js --closeups all --variants front,th
 A session provides them by exporting `closeups(renderer)` from `scene/index.js` -> `{ names, render(name, variant, t, ctx) }`.
 Shots get lip sync from `ctx.speech('<speaker>')` and apply it with `figure.talk(state, expressionOffsets)`.
 
+When sculpting figures from character portraits (keep the portraits in the session folder, not
+this repo), iterate in several face passes interleaved with scene review loops. After each pass,
+render close-up review sheets for faces, five-fingered hands, lip movement and skeletons, and
+fix from those stills before the next pass or a full-frame capture. `npm run stills` and
+`tools/sheet.js` tile contact sheets for the same kind of review of the whole cut.
+
 Rendering is deterministic: every frame is a pure function of `t` (no wall clock, no `Math.random`; particles are
 stateless and shadow maps are redrawn per frame).
 
@@ -113,7 +119,12 @@ start above 50 %, stop at 55 %".
 `tools/run-agent.sh` wires this up for Claude Code: `BRIEF=<brief.md> MODEL=claude-fable-5-2 tools/run-agent.sh` checks
 usage with `tools/claude-usage-probe.sh` (headless `/usage`, no tokens), refuses to start at 50 % or more, runs the
 agent headless on the subscription (API-key variables unset, no fast mode), and kills it at 55 %. Keep briefs, which
-are game-specific, with the session rather than in the repo.
+are game-specific, with the session rather than in the repo. Check usage as the work runs, not only at the start.
+
+Run capture, encode and agent loops on Kiwi, under a memory cap that leaves room for household
+services. Kiwi has 14 GiB, shared with Home Assistant and the existing 3G `panther.slice` workers;
+do not raise those worker limits. Use a Mac only for capabilities only it has. For a
+Discord-inlineable public file, follow `docs/session-video-sharing.md`.
 
 ## Not part of the framework
 
