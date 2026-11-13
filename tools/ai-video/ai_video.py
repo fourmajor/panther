@@ -44,7 +44,8 @@ DEFECTS = {
 }
 IMAGE_MODEL = "google/gemini-nano-banana-2.1"
 IMAGE_EST_USD = 0.05
-ROUTES = {"dialogue": "seedance-2.5", "scene": "h3-max"}
+ROUTES = {"dialogue": "seedance-2.5", "scene": "h3-max", "still": None}
+STILL_ZOOM = 0.06  # a still shot pushes in 6% over its length
 MODELS = {
     "seedance-2.5": {
         "id": "bytedance/seedance-2.5",
@@ -77,7 +78,14 @@ def load(session):
     return session, book
 
 
+def shot_lines(shot):
+    """A dialogue shot holds one speaker's consecutive lines; `line` is the one-line shorthand."""
+    return shot.get("lines") or ([shot["line"]] if shot.get("line") else [])
+
+
 def route(shot):
+    if shot["kind"] == "still":
+        return None
     model = shot.get("model") or ROUTES[shot["kind"]]
     if model not in MODELS:
         raise Refused(f"{shot['id']}: unknown model {model}")
@@ -88,16 +96,20 @@ def route(shot):
 
 def billed_seconds(shot):
     model = route(shot)
+    if model is None:
+        return 0
     lo = min(MODELS[model]["durations"])
     return max(lo, math.ceil(shot["duration"] - 1e-9))
 
 
 def resolution(shot):
-    return shot.get("resolution") or MODELS[route(shot)]["default"]
+    return shot.get("resolution") or (MODELS[route(shot)]["default"] if route(shot) else None)
 
 
 def estimate(shot):
     """Conservative USD estimate for one take."""
+    if route(shot) is None:
+        return 0.0
     model, seconds, res = route(shot), billed_seconds(shot), resolution(shot)
     if model == "seedance-2.5":
         w, h = (int(v) for v in MODELS[model]["sizes"][res].split("x"))
@@ -119,7 +131,7 @@ def validate(book):
             raise Refused(f"duplicate or missing shot id {sid!r}")
         seen.add(sid)
         if shot.get("kind") not in ROUTES:
-            raise Refused(f"{sid}: kind must be dialogue or scene")
+            raise Refused(f"{sid}: kind must be dialogue, scene or still")
         if not 2 <= shot.get("duration", 0) <= 12:
             raise Refused(f"{sid}: shots are 2-12 seconds")
         if cursor is not None and abs(shot["start"] - cursor) > 0.05:
@@ -128,18 +140,26 @@ def validate(book):
             )
         cursor = shot["start"] + shot["duration"]
         model = route(shot)
-        if billed_seconds(shot) not in MODELS[model]["durations"]:
+        if model and billed_seconds(shot) not in MODELS[model]["durations"]:
             raise Refused(f"{sid}: {model} cannot make {billed_seconds(shot)} s")
         for cid in shot.get("cast", []):
             if cid not in cast:
                 raise Refused(f"{sid}: cast {cid} is not locked")
-            if cast[cid]["identity"].strip() not in shot.get("prompt", ""):
+            if shot["kind"] != "still" and cast[cid]["identity"].strip() not in shot.get(
+                "prompt", ""
+            ):
                 raise Refused(f"{sid}: prompt lacks the identity block for {cid}")
         if shot["kind"] == "dialogue":
-            if shot.get("line") not in lines:
-                raise Refused(f"{sid}: a dialogue shot needs one locked line")
-            if lines[shot["line"]].get("speaker") not in shot.get("cast", []):
-                raise Refused(f"{sid}: the speaker of {shot['line']} must be visible")
+            ids = shot_lines(shot)
+            if not ids or any(i not in lines for i in ids):
+                raise Refused(f"{sid}: a dialogue shot needs locked lines")
+            speakers = {lines[i].get("speaker") for i in ids}
+            if len(speakers) != 1 or not speakers <= set(shot.get("cast", [])):
+                raise Refused(f"{sid}: a dialogue shot holds one visible speaker's lines")
+            for i in ids:
+                a, b = lines[i]["start"], lines[i]["start"] + lines[i].get("seconds", 0)
+                if a < shot["start"] - 0.05 or b > shot["start"] + shot["duration"] + 0.05:
+                    raise Refused(f"{sid}: line {i} falls outside the shot")
     return True
 
 
@@ -277,6 +297,28 @@ def image(prompt, refs, out, aspect):
     return (r.get("usage") or {}).get("cost")
 
 
+def window(session, book, shot):
+    """The shot's own slice of the dialogue: its lines placed at their master offsets, silence elsewhere."""
+    out = Path(session) / "audio" / "windows" / f"{shot['id']}.wav"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ids = shot_lines(shot)
+    inputs, chains = [], []
+    for k, i in enumerate(ids):
+        line = book["lines"][i]
+        inputs += ["-i", str(Path(session) / line["audio"])]
+        delay = max(0, round((line["start"] - shot["start"]) * 1000))
+        chains.append(
+            f"[{k}:a]aresample=48000,aformat=channel_layouts=mono,adelay={delay}:all=1[d{k}]"
+        )
+    mix = "".join(f"[d{k}]" for k in range(len(ids)))
+    graph = (
+        ";".join(chains)
+        + f";{mix}amix=inputs={len(ids)}:normalize=0,apad,atrim=0:{billed_seconds(shot)}[a]"
+    )
+    ff(*inputs, "-filter_complex", graph, "-map", "[a]", "-ar", "48000", str(out))
+    return out
+
+
 def video_body(session, book, shot):
     model, res = route(shot), resolution(shot)
     frame = Path(session) / "frames" / f"{shot['id']}.png"
@@ -302,7 +344,11 @@ def video_body(session, book, shot):
             }
             for c in shot.get("cast", [])
         ][:3]
-        refs.append({"type": "audio_url", "audio_url": {"url": urls[shot["line"]]}})
+        if shot["id"] not in urls:
+            raise Refused(
+                f"{shot['id']}: no HTTPS URL for audio/windows/{shot['id']}.wav in audio-urls.json"
+            )
+        refs.append({"type": "audio_url", "audio_url": {"url": urls[shot["id"]]}})
         body.update(size=MODELS[model]["sizes"][res], generate_audio=True, input_references=refs)
     else:
         body.update(resolution=res, aspect_ratio="16:9")
@@ -311,6 +357,8 @@ def video_body(session, book, shot):
 
 def run_take(session, book, shot_id, defect=None, poll=15):
     shot = next(s for s in book["shots"] if s["id"] == shot_id)
+    if shot["kind"] == "still":
+        raise Refused(f"{shot_id}: a still shot is rendered from its first frame; no take")
     state = take_state(session)
     n = check_take(state, shot_id, defect)
     ledger = Ledger(session, book.get("budgetUsd", DEFAULT_CAP_USD))
@@ -415,25 +463,39 @@ def decode(path, w, h):
     return np.frombuffer(raw, np.uint8).reshape(-1, h, w, 3)
 
 
-def clip_times(shot, line, knots, fps):
-    """Clip time for each output frame of the shot; dialogue follows the line map, the rest runs at 1x."""
+def still_frames(path, w, h, count, zoom):
+    """A slow centred push-in on a still, as raw RGB frames."""
+    import numpy as np
+
+    big = decode(path, w * 2, h * 2)[0]
+    for k in range(count):
+        z = 1 + zoom * k / max(1, count - 1)
+        cw, ch = int(w * 2 / z), int(h * 2 / z)
+        x0, y0 = (w * 2 - cw) // 2, (h * 2 - ch) // 2
+        crop = big[y0 : y0 + ch, x0 : x0 + cw]
+        ys = (np.arange(h) * ch / h).astype(int)
+        xs = (np.arange(w) * cw / w).astype(int)
+        yield np.ascontiguousarray(crop[ys][:, xs]).tobytes()
+
+
+def clip_times(shot, knots, fps):
+    """Clip time for each output frame; dialogue follows the window map, the rest runs at 1x."""
     from sync import at
 
     times = []
     for k in range(round(shot["duration"] * fps)):
-        master = shot["start"] + k / fps
-        if line is None:
-            times.append(DROP_FRAMES / fps + (master - shot["start"]))
-        else:
-            times.append(at(knots, master - line["start"]))
+        local = k / fps
+        times.append(DROP_FRAMES / fps + local if knots is None else at(knots, local))
     return times
 
 
 def sync_take(session, book, shot, take):
     from sync import line_map
 
-    line = book["lines"][shot["line"]]
-    knots, cost = line_map(Path(session) / take["path"], Path(session) / line["audio"])
+    audio = Path(session) / "audio" / "windows" / f"{shot['id']}.wav"
+    if not audio.exists():
+        window(session, book, shot)
+    knots, cost = line_map(Path(session) / take["path"], audio)
     take["map"], take["syncCost"] = knots, cost
     return knots, cost
 
@@ -476,18 +538,27 @@ def cut(session, book, out=None):
     )
     report = []
     for shot in book["shots"]:
+        if shot["kind"] == "still":
+            frame = session / "frames" / f"{shot['id']}.png"
+            if not frame.exists():
+                enc.kill()
+                raise Refused(f"{shot['id']}: no first frame for the still")
+            count = round(shot["duration"] * fps)
+            for img in still_frames(frame, w, h, count, shot.get("zoom", STILL_ZOOM)):
+                enc.stdin.write(img)
+            report.append({"shot": shot["id"], "still": True})
+            continue
         chosen = next((t for t in state.get(shot["id"], []) if t.get("accepted")), None)
         if not chosen:
             enc.kill()
             raise Refused(f"{shot['id']}: no accepted take")
-        line = book["lines"][shot["line"]] if shot["kind"] == "dialogue" else None
         knots = None
-        if line is not None:
+        if shot["kind"] == "dialogue":
             knots = chosen.get("map") or sync_take(session, book, shot, chosen)[0]
             knots = [[a, b + chosen.get("nudge", 0.0)] for a, b in knots]
         frames = decode(session / chosen["path"], w, h)
         native = probe_fps(session / chosen["path"])
-        times = clip_times(shot, line, knots, fps)
+        times = clip_times(shot, knots, fps)
         idx = [min(max(int(round(t * native)), DROP_FRAMES), len(frames) - 1) for t in times]
         for i in idx:
             enc.stdin.write(frames[i].tobytes())
