@@ -555,3 +555,10 @@ def test_video_stages_keep_only_an_excerpt_of_earlier_sessions():
     assert notes and notes[0]["action"] == "excerpted"
     kept, _ = editorial.select_stage_inputs("novel-brief", inputs)
     assert len(kept["context"]["prior.txt"]["content"]) == 50_000
+
+
+def test_claude_stage_thinking_is_bounded_below_the_output_cap():
+    from panther_journal import inference
+
+    env = inference.claude_budget_environment({}, "medium")
+    assert int(env["MAX_THINKING_TOKENS"]) < int(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"])

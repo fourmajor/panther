@@ -176,6 +176,18 @@ def claude_executable():
     return found
 
 
+# Unbounded thinking filled the 32k output cap three times on one stage without an answer.
+CLAUDE_THINKING = {"low": 4_000, "medium": 16_000, "high": 32_000, "xhigh": 48_000}
+CLAUDE_MAX_OUTPUT = 64_000
+
+
+def claude_budget_environment(env, effort):
+    env = dict(env)
+    env.setdefault("MAX_THINKING_TOKENS", str(CLAUDE_THINKING.get(effort, 16_000)))
+    env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(CLAUDE_MAX_OUTPUT))
+    return env
+
+
 def claude_command(model):
     # -p is the subscription-authenticated headless mode. No API key is passed.
     return [claude_executable(), "-p", "--output-format", "json", "--model", model]
@@ -404,6 +416,7 @@ def complete(backend, model, effort, prompt, schema, result, folder, heartbeat, 
         return {"observedModel": observed, "serviceTier": tier or "default", "usage": usage}
     if backend == "claude":
         command = claude_command(model)
+        env = claude_budget_environment(subscription_environment(), effort)
         last = None
         for _attempt in range(2):
             code = local.run_process(
@@ -413,7 +426,7 @@ def complete(backend, model, effort, prompt, schema, result, folder, heartbeat, 
                 heartbeat=heartbeat,
                 timeout=1800,
                 stdin=prompt,
-                env=subscription_environment(),
+                env=env,
             )
             if code:
                 raise local.Deferred("Claude Code paused/failed; preserve checkpoints, no paid fallback.")
