@@ -1,6 +1,7 @@
 """Private, duration-based speaker evaluation; never converts coverage into accuracy."""
 
 import math
+from collections import Counter
 from pathlib import Path
 
 import click
@@ -20,6 +21,37 @@ def intervals(rows):
     return result
 
 
+class _PredictionSweep:
+    """Visit prediction boundaries once across ordered, non-overlapping truth."""
+
+    def __init__(self, prediction):
+        self.events = sorted(
+            [(p[edge], p.get('playerId'), delta)
+             for p in prediction for edge, delta in (('start', 1), ('end', -1))],
+            key=lambda event: event[0],
+        )
+        self.cursor = 0
+        self.active = Counter()
+
+    def advance(self, time):
+        while self.cursor < len(self.events) and self.events[self.cursor][0] <= time:
+            _, player, delta = self.events[self.cursor]
+            self.active[player] += delta
+            if not self.active[player]:
+                del self.active[player]
+            self.cursor += 1
+
+    def pieces(self, start, end):
+        self.advance(start)
+        position = start
+        while self.cursor < len(self.events) and self.events[self.cursor][0] < end:
+            boundary = self.events[self.cursor][0]
+            yield position, boundary, set(self.active)
+            self.advance(boundary)
+            position = boundary
+        yield position, end, set(self.active)
+
+
 def evaluate(reference, prediction):
     """Score only explicit named single-speaker/playback truth, not inferred ground truth."""
     reference, prediction = intervals(reference), intervals(prediction)
@@ -29,20 +61,15 @@ def evaluate(reference, prediction):
     totals = dict(correctSeconds=0.0, wrongSeconds=0.0, unknownSeconds=0.0,
                   playbackSeconds=0.0, playbackWronglyNamedSeconds=0.0)
     people = {}
+    sweep = _PredictionSweep(prediction)
     for truth in ordered:
         if not truth.get('identityEvidence') or truth.get('confirmed') is not True:
             raise click.ClickException('Evaluation truth must be independently confirmed')
         player = truth.get('playerId')
         if not player and truth.get('context') != 'playback':
             raise click.ClickException('Unknown identity is not accuracy ground truth')
-        cuts = {truth['start'], truth['end']}
-        for p in prediction:
-            if p['start'] < truth['end'] and p['end'] > truth['start']:
-                cuts.update([max(p['start'], truth['start']), min(p['end'], truth['end'])])
-        cuts = sorted(cuts)
         per = people.setdefault(player, dict(correctSeconds=0.0, wrongSeconds=0.0, unknownSeconds=0.0)) if player else None
-        for a, b in zip(cuts, cuts[1:]):
-            active = {p.get('playerId') for p in prediction if p['start'] < b and p['end'] > a}
+        for a, b, active in sweep.pieces(truth['start'], truth['end']):
             duration = b - a
             if not player:
                 totals['playbackSeconds'] += duration
