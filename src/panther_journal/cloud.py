@@ -31,6 +31,13 @@ MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 
 def credential_store():
+    from panther_journal import box_session
+
+    try:
+        if box_session.enabled():
+            return box_session.BoxSessionStore()
+    except keyring.errors.KeyringError as error:
+        raise click.ClickException(str(error)) from error
     encrypted_file = os.environ.get("PANTHER_SESSION_CREDENTIAL_FILE")
     if encrypted_file:
         return EncryptedSessionStore(encrypted_file)
@@ -131,7 +138,7 @@ def refresh_lock():
 
 def token(config):
     store = credential_store()
-    nested = store.refresh_lock() if isinstance(store, EncryptedSessionStore) else nullcontext()
+    nested = store.refresh_lock() if hasattr(store, "refresh_lock") else nullcontext()
     with refresh_lock(), nested:
         session = saved_session()
         if not session or session.get("clientId") != config["clientId"]:

@@ -685,3 +685,47 @@ def test_ai_video_runner_guards_budget_identity_and_takes(tmp_path):
 
     knots = [[0.2, 0.9], [1.0, 1.5]]
     assert sync.at(knots, 0.6) == pytest.approx(1.2) and sync.at(knots, 2.0) == pytest.approx(2.5)
+
+
+def test_box_session_store_is_opt_in_encrypted_and_private(tmp_path, monkeypatch):
+    from keyring.errors import KeyringError
+
+    from panther_journal import box_session, cloud
+
+    secrets_dir, data_dir = tmp_path / "secrets", tmp_path / "data"
+    monkeypatch.setenv("PANTHER_BOX_SESSION_KEY", str(secrets_dir / "panther-session.key"))
+    monkeypatch.setenv("PANTHER_BOX_SESSION_FILE", str(data_dir / "box-session.enc"))
+    monkeypatch.delenv("PANTHER_SESSION_STORE", raising=False)
+    assert not isinstance(_store_or_none(cloud), box_session.BoxSessionStore)
+    monkeypatch.setenv("PANTHER_SESSION_STORE", "box-file")
+    store = cloud.credential_store()
+    assert isinstance(store, box_session.BoxSessionStore)
+    assert store.get_password(cloud.SERVICE, cloud.ACCOUNT) is None
+    cloud.save_session({"idToken": "secret-token-value"})
+    store.set_password("panther.place/fal", "api-key", "other")
+    assert cloud.saved_session() == {"idToken": "secret-token-value"}
+    assert store.get_password("panther.place/fal", "api-key") == "other"
+    key, blob = secrets_dir / "panther-session.key", data_dir / "box-session.enc"
+    assert key.stat().st_mode & 0o777 == 0o600 and blob.stat().st_mode & 0o777 == 0o600
+    assert secrets_dir.stat().st_mode & 0o777 == 0o700
+    assert b"secret-token-value" not in blob.read_bytes()
+    with store.refresh_lock():
+        pass
+    store.delete_password("panther.place/fal", "api-key")
+    assert store.get_password("panther.place/fal", "api-key") is None
+    key.write_bytes(os.urandom(32))
+    with pytest.raises(KeyringError):
+        store.get_password(cloud.SERVICE, cloud.ACCOUNT)
+    blob.chmod(0o644)
+    with pytest.raises(KeyringError):
+        store.get_password(cloud.SERVICE, cloud.ACCOUNT)
+    monkeypatch.setenv("PANTHER_SESSION_STORE", "plaintext")
+    with pytest.raises(click.ClickException):
+        cloud.credential_store()
+
+
+def _store_or_none(cloud):
+    try:
+        return cloud.credential_store()
+    except click.ClickException:
+        return None

@@ -4,6 +4,8 @@
 #   PANTHER   panther CLI (default: ~/panther-editorial/venv/bin/panther)
 #   WORK_DIR  private worker directory outside Git (default: ~/panther-editorial/jobs)
 set -euo pipefail
+# The box has no OS keyring: use the opt-in encrypted file store (key in ~/.secrets/).
+export PANTHER_SESSION_STORE=${PANTHER_SESSION_STORE:-box-file}
 PANTHER=${PANTHER:-$HOME/panther-editorial/venv/bin/panther}
 WORK_DIR=${WORK_DIR:-$HOME/panther-editorial/jobs}
 mkdir -p -m 700 "$WORK_DIR"
