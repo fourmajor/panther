@@ -9,6 +9,7 @@ import { PantherMediaExplorerStack } from "../lib/panther-media-explorer-stack";
 import { PantherCostAnomaliesStack } from "../lib/panther-cost-anomalies-stack";
 import { loadIdentities } from "../lib/deployment-identities";
 import { loadMachineAccess, PantherMachineAccessStack } from "../lib/panther-machine-access-stack";
+import { PantherWatchdogStack } from "../lib/panther-watchdog-stack";
 
 const app = new cdk.App();
 
@@ -116,6 +117,11 @@ if (accessContext.some(Boolean) && !accessContext.every(Boolean)) {
     "administratorEmail, identityCenterInstanceArn, and identityStoreId must be provided together",
   );
 }
+
+new PantherWatchdogStack(app, "PantherWatchdog", {
+  env: { account, region },
+  description: "Read-only IAM identity for unattended Panther pipeline watchdog checks",
+});
 
 const configuredProvider = app.node.tryGetContext("githubOidcProviderArn");
 new PantherGitHubDeployStack(app, "PantherGitHubDeploy", {
