@@ -2269,6 +2269,11 @@ def _require_inference():
             raise click.ClickException(str(exc)) from exc
 
 
+def claim_backoff(failures):
+    """Seconds to wait after the nth consecutive refused claim: 60, 120, 240, then 900."""
+    return min(900, 60 * 2 ** max(0, failures - 1))
+
+
 @editorial.command("worker")
 @click.option("--work-dir", type=click.Path(path_type=Path), required=True)
 @click.option("--once", is_flag=True)
@@ -2285,6 +2290,7 @@ def worker(work_dir, once):
     from panther_journal import inference
 
     os.environ.setdefault(inference.REQUESTS_ENV, str(root / "agent-requests"))
+    refused = 0
     with lock(root, "worker.lock"):
         while True:
             try:
@@ -2300,9 +2306,20 @@ def worker(work_dir, once):
                 cloud.api(config, "POST", "/workflows/heartbeat", json={"worker": "editorial"})
             except click.ClickException as exc:
                 click.echo(str(exc), err=True)
-            claim = cloud.api(
-                config, "POST", "/editorial-jobs/claim", json={"workflowVersion": PLAN["version"]}
-            )
+            try:
+                claim = cloud.api(
+                    config, "POST", "/editorial-jobs/claim", json={"workflowVersion": PLAN["version"]}
+                )
+            except click.ClickException as exc:
+                # A refused or failed claim (403, outage) backs off instead of exiting.
+                if once:
+                    raise
+                refused += 1
+                wait = claim_backoff(refused)
+                click.echo(f"Claim refused ({exc.format_message()}); retrying in {wait}s.", err=True)
+                time.sleep(wait)
+                continue
+            refused = 0
             if claim["task"]:
                 lease = {
                     "jobId": claim["job"]["jobId"],
