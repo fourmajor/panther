@@ -85,7 +85,7 @@ fi
 stacks=(PantherMediaExplorer)
 flags=(--exclusively --require-approval never)
 if [[ "$mode" == full ]]; then
-  stacks+=(PantherGitHubDeploy)
+  stacks+=(PantherGitHubDeploy PantherWatchdog)
   if [[ "$domain" == 1 ]]; then
     stacks+=(PantherDomain)
   fi
