@@ -769,3 +769,34 @@ def test_password_bootstrap_worker_is_created_without_email_or_message(monkeypat
     without["ResourceProperties"].pop("PasswordBootstrap")
     with pytest.raises(ValueError):
         provisioner.handler(without, None)
+
+
+def test_refused_claim_backs_off_instead_of_exiting(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from panther_journal import cloud, editorial
+
+    assert [editorial.claim_backoff(n) for n in (1, 2, 3, 4, 9)] == [60, 120, 240, 480, 900]
+    calls, waits = [], []
+
+    def api(_config, _method, route, **_kwargs):
+        calls.append(route)
+        if route == "/editorial-jobs/claim":
+            raise click.ClickException("Access denied or session expired. Run panther login again.")
+        return {}
+
+    class Stop(Exception):
+        pass
+
+    def sleep(seconds):
+        waits.append(seconds)
+        if len(waits) == 3:
+            raise Stop()
+
+    monkeypatch.setattr(cloud, "configuration", lambda: {})
+    monkeypatch.setattr(cloud, "token", lambda _c: "t")
+    monkeypatch.setattr(cloud, "api", api)
+    monkeypatch.setattr(editorial.time, "sleep", sleep)
+    result = CliRunner().invoke(editorial.editorial, ["worker", "--work-dir", str(tmp_path / "w")])
+    assert isinstance(result.exception, Stop)
+    assert waits == [60, 120, 240] and calls.count("/editorial-jobs/claim") == 3
