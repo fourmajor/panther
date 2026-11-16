@@ -39,6 +39,14 @@ Automatic deploy on `main` reads this same JSON from the GitHub Actions secret
 Settings → Secrets and variables → Actions. Do not commit the file, paste it into a workflow, or
 store AWS access keys in GitHub. It is the only secret the deploy needs.
 
+Optional `passwordBootstrap` lists worker-only accounts (in `workers`, not in `publishers` or
+`migrationAdmins`, and without an invitation email) for headless machines such as Grok Bot's box.
+The provisioner creates them with no email and no message. After CDK, Deploy runs
+`ops/bootstrap-worker-passwords.py`, which sets the first password from the GitHub Actions secret
+`PANTHER_BOOTSTRAP_PASSWORDS` (JSON `{"username": "password"}`) only while the account is still
+`FORCE_CHANGE_PASSWORD`. The password is never printed or stored in AWS; keep the worker's copy
+owner-only on that machine. The current entry is `grokbot-editorial-worker`.
+
 Production synthesis refuses missing, malformed, in-repository or broadly readable configuration.
 Only the non-deployable `000000000000` account permits synthetic CI defaults. Tests pass fictional
 configuration explicitly. Never give the CI runner the production file or publish production synth

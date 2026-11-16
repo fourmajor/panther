@@ -729,3 +729,43 @@ def _store_or_none(cloud):
         return cloud.credential_store()
     except click.ClickException:
         return None
+
+
+def test_password_bootstrap_worker_is_created_without_email_or_message(monkeypatch):
+    import importlib.util
+
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
+    spec = importlib.util.spec_from_file_location("provisioner", ROOT / "infra/lambda/user-provisioner/index.py")
+    provisioner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(provisioner)
+    created, existing = [], set()
+
+    class NotFound(Exception):
+        pass
+
+    class Cognito:
+        exceptions = type("E", (), {"UserNotFoundException": NotFound})
+
+        def admin_get_user(self, UserPoolId, Username):
+            if Username not in existing:
+                raise NotFound()
+
+        def admin_create_user(self, **kwargs):
+            created.append(kwargs)
+            existing.add(kwargs["Username"])
+
+    monkeypatch.setattr(provisioner, "cognito", Cognito())
+    monkeypatch.setattr(provisioner, "_purge_legacy_copy", lambda _name: None)
+    event = {"RequestType": "Create", "ResourceProperties": {
+        "UserPoolId": "pool", "Username": "grokbot-editorial-worker", "CredentialPolicyVersion": "2",
+        "PasswordParameterName": "/panther/media-explorer/users/grokbot-editorial-worker/password",
+        "PasswordBootstrap": "true"}}
+    provisioner.handler(event, None)
+    provisioner.handler({**event, "RequestType": "Update", "OldResourceProperties": event["ResourceProperties"]}, None)
+    (call,) = created
+    assert call["MessageAction"] == "SUPPRESS" and "UserAttributes" not in call
+    without = {**event, "ResourceProperties": {**event["ResourceProperties"], "Username": "other",
+               "PasswordParameterName": "/panther/media-explorer/users/other/password"}}
+    without["ResourceProperties"].pop("PasswordBootstrap")
+    with pytest.raises(ValueError):
+        provisioner.handler(without, None)

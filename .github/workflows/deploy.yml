@@ -74,3 +74,7 @@ jobs:
           PANTHER_DEPLOY_BASE: ${{ github.event.before }}
           PANTHER_AWS_ACCOUNT_ID: "223663280572"
         run: bash ops/deploy.sh
+      - name: Set first passwords for bootstrap worker accounts
+        env:
+          PANTHER_BOOTSTRAP_PASSWORDS: ${{ secrets.PANTHER_BOOTSTRAP_PASSWORDS }}
+        run: python3 ops/bootstrap-worker-passwords.py
