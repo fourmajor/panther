@@ -62,7 +62,7 @@ Do not invent a look or a voice for a session.
 
 ## Providers, keys, hardware
 
-From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`. The laptop editorial worker defaults to the Claude Code CLI signed in with the Claude subscription. The installer records that binary's absolute path (`PANTHER_CLAUDE`) from the LaunchAgent PATH. An Anthropic API key is not used. Optional `XAI_API_KEY` selects the grok-4.7 backend and must stay out of Git. `PANTHER_EDITORIAL_MODEL` and `PANTHER_EDITORIAL_BACKEND` override a stage when set. Never commit them.
+From `.env.example`, server-side only: `OPENAI_API_KEY`, `FAL_API_KEY`, `ELEVENLABS_API_KEY`. The editorial worker uses no model key: Grok Bot answers its requests through files.
 
 Laptop session finalization also needs local Whisper weights, pyannote model and runtime, enrolled speaker profiles, ffmpeg/ffprobe, and a signed-in Panther CLI. Browser transcription needs the us-west-2 Secrets Manager ARN deployed on the media stack. Native recording needs macOS and a named input device.
 
@@ -86,38 +86,27 @@ That lists whether a real recording and its editorial execution exist. It does n
 
 Eleven open issues, not thirteen: #209 transcript selection storage, #206 durable movie delivery, #122 Jev experiments, #85 billing-console access, #83 member/admin roles, #78 character animations, #52 chapter illustrations, #35 Blender characters, #34 Google sign-in, #21 self-service passwords, #9 budget alerts. None of them replace the session pipeline above.
 
-## Stalled editorial worker
+## Editorial worker
 
-The laptop LaunchAgent `place.panther.editorial-worker` had been exiting every minute since the Cognito refresh token was invalidated on 2026-10-16. Refresh lifetime in the app client is already 3650 days. The failure mode is a rotated refresh token used again after Cognito invalidates it. The CLI now locks refresh across processes and re-reads the saved session inside that lock. A token that is already dead still needs `panther login`.
+Since 2026-11-16 the editorial worker runs on Grok Bot's box and makes no LLM calls. Each AI call
+becomes a request folder that a Grok Bot routine answers (`ops/editorial-worker/grok-bot.sh`, then
+`panther editorial agent-answer`). Claude, Codex and the xAI API are no longer editorial backends,
+and the Mac LaunchAgent installer was removed. See
+[Grok Bot handoff](docs/editorial-workflows.md#grok-bot-handoff).
 
-That worker's inference is the Claude Code CLI signed in with the Claude subscription (`claude auth status` reports `authMethod` `claude.ai`). It does not fall back to an API key. Codex remains optional and, when selected, still requires `codex login status` to report `Logged in using ChatGPT`. The local development worker in `tools/dev_editorial_worker.py` is a different path and still uses the server-side OpenAI key.
+A Mac that still has the old `place.panther.editorial-worker` LaunchAgent loaded should have it
+stopped with `launchctl bootout gui/$(id -u)/place.panther.editorial-worker`; with no Claude login
+it can only fail stages. Only one worker should claim stages.
 
-Corrected-transcript review that does not fit in 1,000,000 bytes now runs in utterance windows and merges all of them. A deterministic preflight error is stored on the DynamoDB task and shown on the failed Pipeline step. It is not claimed three times.
+Corrected-transcript review that does not fit the prompt limit runs in utterance windows and merges all of them. A deterministic preflight error is stored on the DynamoDB task and shown on the failed Pipeline step. It is not claimed three times.
 
-After this branch is merged, from the machine that deploys:
-
-```sh
-cd infra
-npx cdk diff PantherMediaExplorer
-npx cdk deploy PantherMediaExplorer
-```
-
-Confirm the account and `us-west-2` in the diff before deploying. Then, on the worker machine, sign in again and replace the loaded agent. The installer only accepts clean merged `main` that matches fetched `origin/main`.
-
-```sh
-panther login --username YOUR_USERNAME
-codex login status
-launchctl bootout gui/$(id -u)/place.panther.editorial-worker
-.venv/bin/python ops/editorial-worker/install.py --repo "$PWD" --start
-```
-
-`codex login status` has to include `Logged in using ChatGPT` before the new agent will stay up. If the editorial run is `FAILED`, replay it from the pinned inputs. Use the full job id shown in Workshop (the investigated id begins `f1aa4820`):
+If an editorial run is `FAILED`, replay it from the pinned inputs with the full job id shown in Workshop:
 
 ```sh
 panther editorial recover --job-id FULL_JOB_ID --target both
 ```
 
-Recovery starts a new execution. It does not rewrite the failed run. A host that should stay up across SSH sessions can use `ops/editorial-worker/panther-editorial-worker.service` as a user unit, with `panther login` and Codex login done once for that user.
+Recovery starts a new execution. It does not rewrite the failed run.
 
 ## Pipeline page
 

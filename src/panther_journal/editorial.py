@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import time
 import uuid
 
@@ -200,13 +199,6 @@ def stage_schema(stage, inputs):
     return schema
 
 
-def _reject_fast_selection(model, tier):
-    if isinstance(tier, str) and tier.casefold() in {"priority", "fast"}:
-        raise DeterministicFailure("Codex selected a priority or Fast tier. The stage was not accepted.")
-    if isinstance(model, str) and model.casefold().endswith("-fast"):
-        raise DeterministicFailure("Codex selected a Fast model. The stage was not accepted.")
-
-
 def _checked_effort(value):
     if not isinstance(value, str):
         raise DeterministicFailure("Editorial reasoning effort must be a string.")
@@ -250,9 +242,14 @@ def _reasoning_effort(stage):
 
 
 def _backend(stage):
-    backend = str(_stage_choice("PANTHER_EDITORIAL_BACKEND", stage, "claude")).strip().casefold()
-    if backend not in {"claude", "grok", "codex"}:
-        raise DeterministicFailure("Editorial backend must be claude, grok, or codex.")
+    """Grok Bot writes every editorial answer. Removed backends fail loudly instead of running."""
+    from panther_journal.inference import BACKEND
+
+    backend = str(_stage_choice("PANTHER_EDITORIAL_BACKEND", stage, BACKEND)).strip().casefold()
+    if backend != BACKEND:
+        raise DeterministicFailure(
+            "Editorial backend must be grok-bot. The Claude, Codex and xAI API backends were removed."
+        )
     return backend
 
 
@@ -262,63 +259,34 @@ def stage_prompt_limit(stage):
     return min(PROMPT_LIMIT, BYTE_LIMITS[_backend(stage)])
 
 
-def _configured_codex_model():
-    path = Path.home() / ".codex" / "config.toml"
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8")
-    match = re.search(r'(?m)^model\s*=\s*"([^"]+)"', text)
-    if not match:
-        match = re.search(r"(?m)^model\s*=\s*'([^']+)'", text)
-    if not match:
-        match = re.search(r"(?m)^model\s*=\s*([A-Za-z0-9_.:-]+)\s*$", text)
-    return match.group(1).strip() if match else None
-
-
-def _editorial_model(stage, backend, effort):
-    from panther_journal.inference import default_model, reject_fast
-
-    override = os.environ.get("PANTHER_EDITORIAL_MODEL", "").strip()
-    if override.startswith("{"):
-        chosen = _stage_choice("PANTHER_EDITORIAL_MODEL", stage, None)
-        source = "environment" if isinstance(chosen, str) else "default"
-    elif override:
-        chosen, source = override, "environment"
-    elif backend == "codex":
-        chosen = _configured_codex_model()
-        source = "codex-config" if chosen else "unspecified"
-    else:
-        chosen, source = default_model(backend, effort), "default"
-    if chosen is None and backend != "codex":
-        chosen, source = default_model(backend, effort), "default"
-    if chosen is not None and not isinstance(chosen, str):
-        raise DeterministicFailure("Editorial model must be a string.")
-    if chosen:
-        reject_fast(chosen, None)
-    return chosen or None, source
+def _job_id(folder):
+    for part in Path(folder).parts:
+        if re.fullmatch(r"[a-f0-9]{64}", part):
+            return part
+    return None
 
 
 def agent(folder, stage, inputs, heartbeat):
+    """Hand one stage call to Grok Bot as files and wait for its validated answer."""
     from panther_journal import inference
 
     backend = _backend(stage)
     effort = _reasoning_effort(stage)
-    model, source = _editorial_model(stage, backend, effort)
     budgeted, notes = plan_prompt_budget(stage, inputs)
     schema = folder / "schema.json"
     contract = stage_schema(stage, budgeted)
     write_json(schema, contract)
     result = folder / "agent-result.json"
-    prompt = _render_prompt(stage, budgeted, schema_text=json.dumps(contract) if backend != "codex" else None)
+    prompt = _render_prompt(stage, budgeted, schema_text=json.dumps(contract))
     size = len(prompt.encode())
     limit = stage_prompt_limit(stage)
     if size > limit:
         raise DeterministicFailure(limit_message(stage, budgeted, size))
     invocation = {
         "backend": backend,
-        "requestedModel": model,
-        "model": model,
-        "modelSource": source,
+        "requestedModel": inference.MODEL,
+        "model": inference.MODEL,
+        "modelSource": "default",
         "reasoningEffort": effort,
         "fastMode": False,
         "serviceTier": "default",
@@ -339,14 +307,10 @@ def agent(folder, stage, inputs, heartbeat):
         if not image.is_file() or image.is_symlink():
             raise ValueError("Pinned map image is missing")
     finished = inference.complete(
-        backend, model, effort, prompt, schema, result, folder, heartbeat, image=image
+        stage, effort, prompt, schema, result, folder, heartbeat, image=image, job_id=_job_id(folder)
     )
-    observed = finished.get("observedModel")
-    inference.reject_fast(observed, finished.get("serviceTier"))
     invocation["usage"] = finished.get("usage") or {}
-    invocation["serviceTier"] = finished.get("serviceTier") or "default"
-    if observed:
-        invocation["model"] = observed
+    invocation["agentRequestId"] = finished.get("requestId")
     write_json(folder / "inference-invocation.json", invocation, replace=True)
     if result.is_symlink() or not result.is_file() or result.stat().st_size > 2 * 1024**2:
         raise ValueError("Invalid stage result file")
@@ -1252,7 +1216,7 @@ def transcript_excerpt(raw, context, prior, limit_segments=40):
 
 
 # Video plans one session. Earlier sessions are continuity hints, not source footage. A full
-# prior transcript beside this session's speech overflowed Claude's window and leaked its events.
+# prior transcript beside this session's speech overflowed the model's window and leaked its events.
 PRIOR_SESSION_VIDEO_BYTES = 4_000
 
 
@@ -2215,7 +2179,7 @@ def process(config, root, claim):
         "rawReference": job.get("raw"),
         "rawReferences": raw_references,
         "creation": job.get("creation"),
-        "engine": (invocations[-1].get("backend") if invocations else None) or "claude",
+        "engine": (invocations[-1].get("backend") if invocations else None) or "grok-bot",
         "model": (invocations[-1].get("model") if invocations else None),
         "reasoningEffort": (invocations[-1].get("reasoningEffort") if invocations else None),
         "stageStats": stats,
@@ -2297,46 +2261,19 @@ def jobs(job_id):
 
 
 def _require_inference():
-    """Check the configured backends. A missing login stops the worker before it claims a stage."""
-    from panther_journal import inference
-
-    raw = os.environ.get("PANTHER_EDITORIAL_BACKEND", "claude").strip() or "claude"
-    if raw.startswith("{"):
+    """Refuse a removed backend before the worker claims a stage."""
+    for stage in STAGES:
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise click.ClickException("PANTHER_EDITORIAL_BACKEND is not valid JSON.") from exc
-        names = {str(value).strip().casefold() for value in parsed.values()}
-    else:
-        names = {raw.casefold()}
-    if not names <= {"claude", "grok", "codex"}:
-        raise click.ClickException("Editorial backend must be claude, grok, or codex.")
-    if "codex" in names:
-        status = subprocess.run(
-            [*local.codex_base(), "login", "status"],
-            env=local.clean_environment(),
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if status.returncode or "Logged in using ChatGPT" not in status.stdout + status.stderr:
-            raise click.ClickException("Sign in to Codex using ChatGPT before selecting the codex backend.")
-    if "claude" in names:
-        try:
-            inference.require_subscription(inference.claude_executable())
+            _backend(stage)
         except DeterministicFailure as exc:
             raise click.ClickException(str(exc)) from exc
-    if "grok" in names and not inference.xai_key():
-        raise click.ClickException(
-            "Set XAI_API_KEY or store the key in the OS keychain service panther-xai, account api-key."
-        )
 
 
 @editorial.command("worker")
 @click.option("--work-dir", type=click.Path(path_type=Path), required=True)
 @click.option("--once", is_flag=True)
 def worker(work_dir, once):
-    """Process leased stages on this laptop; stop before video generation, always."""
+    """Process leased stages; Grok Bot answers each call through files under agent-requests/."""
     root = work_dir.expanduser().resolve()
     if root in {Path.home(), Path("/")} or any(
         (p / ".git").exists() for p in (root, *root.parents)
@@ -2345,6 +2282,9 @@ def worker(work_dir, once):
     os.umask(0o077)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     _require_inference()
+    from panther_journal import inference
+
+    os.environ.setdefault(inference.REQUESTS_ENV, str(root / "agent-requests"))
     with lock(root, "worker.lock"):
         while True:
             try:
@@ -2373,7 +2313,7 @@ def worker(work_dir, once):
                     click.echo(str(process(config, root, claim)))
                 except local.Deferred:
                     cloud.api(config, "POST", "/editorial-jobs/defer", json=lease)
-                    click.echo("Subscription stage paused for at least an hour; no paid fallback.")
+                    click.echo("No Grok Bot answer in time; stage deferred for an hour, no fallback.")
                     return
                 except DeterministicFailure as exc:
                     _report_failure(config, lease, str(exc), deterministic=True)
@@ -2384,6 +2324,59 @@ def worker(work_dir, once):
             if once:
                 return
             time.sleep(5 if claim["task"] else 60)
+
+
+def _worker_running(root):
+    import fcntl
+
+    path = root / "worker.lock"
+    if not path.is_file():
+        return False
+    with path.open("a") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    return False
+
+
+def _log_tail(path, lines=10):
+    if not path.is_file() or path.is_symlink():
+        return []
+    with path.open("rb") as stream:
+        stream.seek(max(0, path.stat().st_size - 8192))
+        return stream.read().decode("utf-8", "replace").splitlines()[-lines:]
+
+
+@editorial.command("agent-requests")
+@click.option("--work-dir", type=click.Path(path_type=Path), required=True)
+def agent_requests(work_dir):
+    """List editorial calls waiting for a Grok Bot answer, oldest first, as JSON."""
+    from panther_journal import inference
+
+    root = work_dir.expanduser().resolve()
+    click.echo(json.dumps({
+        "workerRunning": _worker_running(root),
+        "pending": inference.pending(root / "agent-requests"),
+        "logTail": _log_tail(root / "worker.log"),
+    }, indent=2))
+
+
+@editorial.command("agent-answer")
+@click.option("--work-dir", type=click.Path(path_type=Path), required=True)
+@click.option("--request", "request_id", required=True)
+@click.option("--file", "source", type=click.Path(path_type=Path, exists=True), required=True)
+def agent_answer(work_dir, request_id, source):
+    """Validate an answer against its request's schema.json and hand it to the waiting worker."""
+    from panther_journal import inference
+
+    root = work_dir.expanduser().resolve() / "agent-requests"
+    try:
+        installed = inference.submit_answer(root, request_id, source)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps({"accepted": True, "answer": str(installed)}))
 
 
 def _report_failure(config, lease, message, *, deterministic):
