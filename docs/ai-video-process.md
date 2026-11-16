@@ -84,6 +84,6 @@ Contact sheets come from `ffmpeg` frame extraction. The cut is reviewed as a who
 Run audio lock, generation, sync and cut on Kiwi, under a memory cap that leaves room for
 household services. Kiwi has 14 GiB, shared with Home Assistant and the existing 3G
 `panther.slice` workers; do not raise those worker limits. Use a Mac only for capabilities only
-it has. When an unattended coding agent is iterating, keep a usage guard beside it (see
-`tools/procedural-video/tools/usage-guard.sh`) and check Claude subscription usage as the work
-runs. For a Discord-inlineable public file, follow [session video sharing](session-video-sharing.md).
+it has. Grok Bot does the writing and iteration, with Cursor cloud agents for code; Claude and
+paid model APIs are not used. `tools/procedural-video/tools/usage-guard.sh` stays available for
+any unattended run that has a usage meter. For a Discord-inlineable public file, follow [session video sharing](session-video-sharing.md).

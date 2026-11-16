@@ -7,7 +7,7 @@ import sys
 
 
 def installer():
-    spec = importlib.util.spec_from_file_location("editorial_installer", Path(__file__).parents[1] / "editorial-worker/install.py")
+    spec = importlib.util.spec_from_file_location("release_installer", Path(__file__).with_name("release.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

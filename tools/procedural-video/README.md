@@ -119,10 +119,8 @@ command printing a usage percentage), `MATCH` (a process pattern for the run) an
 markdown table and kills the run at the limit, or exits when the run finishes. Pair it with a rule such as "do not
 start above 50 %, stop at 55 %".
 
-`tools/run-agent.sh` wires this up for Claude Code: `BRIEF=<brief.md> MODEL=claude-fable-5-2 tools/run-agent.sh` checks
-usage with `tools/claude-usage-probe.sh` (headless `/usage`, no tokens), refuses to start at 50 % or more, runs the
-agent headless on the subscription (API-key variables unset, no fast mode), and kills it at 55 %. Keep briefs, which
-are game-specific, with the session rather than in the repo. Check usage as the work runs, not only at the start.
+Session building and iteration is done by Grok Bot, with Cursor cloud agents for code changes. Claude Code
+and paid model APIs are not used. Keep briefs, which are game-specific, with the session rather than in the repo.
 
 Run capture, encode and agent loops on Kiwi, under a memory cap that leaves room for household
 services. Kiwi has 14 GiB, shared with Home Assistant and the existing 3G `panther.slice` workers;

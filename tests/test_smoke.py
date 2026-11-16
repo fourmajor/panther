@@ -560,11 +560,60 @@ def test_video_stages_keep_only_an_excerpt_of_earlier_sessions():
     assert len(kept["context"]["prior.txt"]["content"]) == 50_000
 
 
-def test_claude_stage_thinking_is_bounded_below_the_output_cap():
-    from panther_journal import inference
+def test_grok_bot_handoff_validates_answers_and_resumes(tmp_path, monkeypatch):
+    from click.testing import CliRunner
 
-    env = inference.claude_budget_environment({}, "medium")
-    assert int(env["MAX_THINKING_TOKENS"]) < int(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"])
+    from panther_journal import editorial, inference, model_workflow
+
+    work = tmp_path / "jobs"
+    requests = work / "agent-requests"
+    monkeypatch.setenv(inference.REQUESTS_ENV, str(requests))
+    folder = work / ("a" * 64) / "novel-brief-x" / "revision-01-novel-brief"
+    folder.mkdir(parents=True)
+    schema = folder / "schema.json"
+    schema.write_text(json.dumps({"type": "object", "required": ["markdown"],
+                                  "properties": {"markdown": {"type": "string"}},
+                                  "additionalProperties": False}))
+    beats = []
+    bad, good = tmp_path / "bad.json", tmp_path / "good.json"
+    bad.write_text(json.dumps({"markdown": 3}))
+    good.write_text(json.dumps({"markdown": "Chapter"}))
+    runner = CliRunner()
+
+    def sleep(_seconds):
+        listed = json.loads(runner.invoke(editorial.editorial, ["agent-requests", "--work-dir", str(work)]).output)
+        assert listed["workerRunning"] is False
+        (request,) = listed["pending"]
+        assert request["stage"] == "novel-brief" and request["jobId"] == "a" * 64
+        assert Path(request["prompt"]).read_text() == "PROMPT"
+        args = ["agent-answer", "--work-dir", str(work), "--request", request["requestId"], "--file"]
+        refused = runner.invoke(editorial.editorial, [*args, str(bad)])
+        assert refused.exit_code and "schema.json" in refused.output
+        # A malformed file written by hand is moved aside, not accepted.
+        Path(request["answer"]).write_text("{not json")
+        if len(beats) == 2:
+            assert runner.invoke(editorial.editorial, [*args, str(good)]).exit_code == 0
+
+    result = folder / "agent-result.json"
+    finished = inference.complete("novel-brief", "medium", "PROMPT", schema, result, folder,
+                                  lambda: beats.append(1), sleep=sleep,
+                                  job_id=editorial._job_id(folder))
+    assert json.loads(result.read_text()) == {"markdown": "Chapter"}
+    assert finished["usage"]["costUsd"] == 0 and len(beats) >= 2
+    record = json.loads((requests / finished["requestId"] / "request.json").read_text())
+    assert record["status"] == "answered"
+    assert list((requests / finished["requestId"]).glob("rejected-*.json"))
+    assert inference.pending(requests) == []
+    # A restarted worker reuses the answer to the identical prompt without waiting.
+    again = inference.complete("novel-brief", "medium", "PROMPT", schema, result, folder,
+                               lambda: None, sleep=lambda _s: pytest.fail("waited"))
+    assert again["requestId"] == finished["requestId"]
+    with pytest.raises(model_workflow.Deferred):
+        inference.complete("novel-brief", "medium", "OTHER", schema, result, folder,
+                           lambda: None, wait_seconds=0, sleep=lambda _s: None)
+    monkeypatch.setenv("PANTHER_EDITORIAL_BACKEND", "claude")
+    with pytest.raises(editorial.DeterministicFailure):
+        editorial._backend("novel-brief")
 
 
 def test_ai_video_runner_guards_budget_identity_and_takes(tmp_path):

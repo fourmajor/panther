@@ -237,20 +237,16 @@ professional practice, not certification that an AI produces publishable work.
   prompts. Generation packets separate visual and motion instructions, define acceptance tests and
   bounded attempts, and leave provider-dependent settings unknown until capability checks.
 
-Each AI stage is fresh, structured and least-privilege, following
-[Codex non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
+Each AI stage is fresh, structured and least-privilege: one request folder with one prompt and one
+schema.
 The autonomous revision prompts also apply [OpenAI's model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 on explicit initiative and concrete verification. Panther enforces bounded loops and source guards
 in code; prompting alone is not a guarantee of correctness.
-Shell, apps, web, multi-agent and image tools are disabled when Codex is the selected backend.
-Trusted Python performs downloads, validation and uploads. The default backend is the Claude Code
-CLI on this Mac (`claude -p`), using the Claude subscription login (`claude auth status` reports
-`authMethod` `claude.ai`). An Anthropic API key is not read and must not override that login.
-`grok` calls the xAI
-API with `grok-4.7`; the key is `XAI_API_KEY` or the OS keychain service `panther-xai`, account
-`api-key`, and it is never logged. Codex remains available with `PANTHER_EDITORIAL_BACKEND=codex`
-and its ChatGPT login. No backend may use a Fast model or a priority tier. There is no automatic
-paid fallback. Independent AI sessions can share biases; automatic review is not human endorsement.
+Trusted Python performs downloads, validation and uploads. The worker never calls an LLM. Every
+AI call is written to disk as a request that Grok Bot answers; see
+[Grok Bot handoff](#grok-bot-handoff). Claude, Codex and paid model APIs (including the xAI API)
+are not used and there is no fallback to them. Independent AI calls can share biases; automatic
+review is not human endorsement.
 
 ## Operations
 
@@ -279,7 +275,7 @@ execution at plan version 11. A parent stage that completed with a still-valid e
 is carried forward, including a completed novel-chapter and completed video stages:
 the bytes, checksum, stage, and publication decision must still match.
 Dispatch marks that stage done and points at the parent's artifact. The worker does not
-run Codex for it. A failed stage, a changed checksum, or an envelope that no longer
+ask for it again. A failed stage, a changed checksum, or an envelope that no longer
 validates is run again. The new job records its parent, the recovery mode, and the reused
 stage names. The recovery id is the failed parent, the target, and the plan version, so
 the same parent and target at a new version is a different job. Repeating the same
@@ -291,7 +287,7 @@ before loading a worker, then deploy this plan and reinstall the worker, then re
 failed parent. Original executions, artifacts, failed candidates and logs remain intact.
 No video, speech or spending is authorized.
 
-Upgrade the pinned laptop worker from reviewed merged main before submitting recovery.
+Upgrade the box worker from reviewed merged main before submitting recovery.
 The worker's branch-scoped input selection and lossless transcript-overlay projection
 prevent older duplicated transcript/audit bundles from growing with both branches.
 Inputs still have a hard prompt limit. No speech is silently truncated to fit. The
@@ -305,21 +301,21 @@ with the segment id, the word, and the catalog spelling. Prior context carried a
 receives the novel-proof chapter, the novel brief, and the continuity notes. It does not
 receive the raw transcript or the other prior stages. Any stage whose projected prompt
 would still exceed the limit excerpts or drops the lowest-priority context and prior-stage
-text, and records that budget on the Codex invocation. The candidate and transcript
+text, and records that budget on the stage invocation. The candidate and transcript
 utterances are not dropped to make a prompt fit. A prompt that still cannot fit fails
-before Codex runs. Corrected-transcript keeps a later revision when its edits pass the
+before the request is written. Corrected-transcript keeps a later revision when its edits pass the
 deterministic guards even if one sibling edit does not. After the three review rounds,
 one final review runs on a revision that has not been reviewed yet. A validated superset
 is published when that review does not pass; the first, smaller candidate is not restored
 in its place.
 Each editorial stage records its backend, model, reasoning effort, token counts, and cache-read
 tokens. The edit-proposal stage (`correction`) defaults to medium effort. The review stage
-(`corrected-transcript`) stays high. Novel and video stages stay medium. `PANTHER_EDITORIAL_BACKEND`,
-`PANTHER_EDITORIAL_MODEL`, and `PANTHER_EDITORIAL_REASONING` accept either one value or a JSON
+(`corrected-transcript`) stays high. Novel and video stages stay medium. `PANTHER_EDITORIAL_BACKEND`
+and `PANTHER_EDITORIAL_REASONING` accept either one value or a JSON
 object keyed by stage id (`correction`, `corrected-transcript`) or branch (`novel`, `video`,
-`correction`). A stage key wins over a branch key. Claude defaults are `claude-sonnet-4-6` for
-medium and `claude-opus-4-6` for high. Grok uses `grok-4.7`. Fast mode and a priority tier are
-refused. Cost stays `unknown` unless the backend reports a figure. Prompts put the catalog and
+`correction`). A stage key wins over a branch key. The only backend is `grok-bot`; any other value
+stops the worker before it claims a stage. Reasoning effort is recorded in each request as a hint.
+Cost is recorded as zero with status `no-api`. Prompts put the catalog and
 transcript first, in the same order for every stage that shares them, and the stage instructions
 last. Novel stages after the brief receive a transcript excerpt plus the brief and later outlines,
 not the full transcript. Novel-chapter still receives the proof, brief, and continuity notes only.
@@ -332,8 +328,9 @@ AWS CDK creates retained on-demand DynamoDB jobs, a durable stream outbox, short
 and a Standard Step Functions state machine in `us-west-2`. Each AI stage queues and
 [waits for a callback](https://docs.aws.amazon.com/step-functions/latest/dg/connect-to-resource.html).
 Callback tokens never leave AWS. Only the owner worker can claim jobs; owner and DM can submit/inspect.
-Leases last ten minutes with one-minute heartbeats. Subscription pauses defer one hour without spending
-crash attempts. A deterministic preflight failure, including a prompt that cannot be windowed under
+Leases last ten minutes with one-minute heartbeats, which continue while the worker waits for
+Grok Bot. A request with no answer in six hours defers the stage one hour without spending a
+crash attempt. A deterministic preflight failure, including a prompt that cannot be windowed under
 the safe limit, is recorded immediately on the task as `failure.message` and is not retried. Other
 failures keep that attempt's message and are retried until three attempts, which then fail with those
 messages. Three abandoned attempts with no recorded error still fail a stage. Waiting expires after
@@ -351,27 +348,46 @@ panther editorial worker --work-dir /private/path/editorial-jobs --once
 ```
 
 Without `--once`, it drains available stages while awake and polls once a minute when idle. Polling
-uses a small amount of API/database activity; stop it for literally no idle polls. Sleeping laptops
-delay work, not lose it. Actual artifacts remain outside Git in existing immutable asset storage.
+uses a small amount of API/database activity; stop it for literally no idle polls. A stopped worker or
+unanswered request delays work, not lose it. Actual artifacts remain outside Git in existing immutable asset storage.
 Each run/attempt has unique paths; raw files, earlier outputs and failed candidates are retained.
 
-Install the automatic owner-scoped worker only from clean, fetched, reviewed merged main:
+### Grok Bot handoff
+
+The worker runs on Grok Bot's box, not on a Mac. Install it once from merged main:
 
 ```sh
-.venv/bin/python ops/editorial-worker/install.py --repo "$PWD" --start
+python3 -m venv ~/panther-editorial/venv
+~/panther-editorial/venv/bin/pip install "git+https://github.com/fourmajor/panther@main"
+~/panther-editorial/venv/bin/panther login --username WORKER_USERNAME
 ```
 
-It snapshots the commit and installs a non-editable CLI under the private editorial-worker directory.
-The user LaunchAgent `place.panther.editorial-worker` is one resident process (`KeepAlive`, no
-`--once` and no `StartInterval`). It polls once a minute while idle. An authentication failure is
-printed and the process waits 15 minutes before trying again, instead of exiting every minute.
-Each successful poll posts `POST /workflows/heartbeat`. Workshop shows a worker with no heartbeat
-in 20 minutes as offline: "Worker offline or its Panther sign-in expired." The same absence raises
-the pipeline SNS alarm. The agent never mounts or copies AWS or Codex credentials. Inspect with
-`launchctl print gui/$(id -u)/place.panther.editorial-worker`; stop with
-`launchctl bootout gui/$(id -u)/place.panther.editorial-worker`. Upgrades refuse to silently
-replace a loaded service or existing release. Preserve prior releases/logs when explicitly upgrading.
-An already loaded one-minute agent keeps the old program until it is booted out and reinstalled.
+The Panther user must be in the `MODEL_WORKERS` group. No AWS credentials are used: the worker
+talks only to the Panther API (`/editorial-jobs/claim`, `heartbeat`, `defer`, `complete`, `fail`),
+and completing a stage resumes the Step Functions execution through the existing stream.
+
+A Grok Bot routine then repeats:
+
+1. Run `ops/editorial-worker/grok-bot.sh`. It starts `panther editorial worker` in the background
+   when it is not running and prints JSON: `workerRunning`, `logTail`, and `pending`, the
+   unanswered requests oldest first.
+2. For each pending request, read `prompt` (Markdown; the stage instructions are at the end and the
+   JSON schema is included) and `schema`, and view `image` when it is set. Write one JSON object
+   that satisfies `schema.json` to a scratch file. Write only what the prompt asks for.
+3. Run `panther editorial agent-answer --work-dir ~/panther-editorial/jobs --request ID --file
+   FILE`. It checks UTF-8 JSON, one object, at most 2 MiB and the schema, prints the exact error
+   if any, and otherwise installs `answer.json` atomically.
+4. The waiting worker picks the answer up within 15 seconds, runs the stage's own deterministic
+   checks, and either uploads and completes the stage or writes the next request (a revision, a
+   review, or the next transcript window). Run step 1 again until `pending` is empty.
+
+Each request folder is `jobs/agent-requests/<id>/` with `request.json` (`requestId`, `stage`,
+`jobId`, `reasoningEffort`, `status`, `createdAt`, `lastError`), `prompt.md`, `schema.json` and an
+optional `image.*`. The id is a hash of the stage, prompt and schema, so a restarted worker reuses
+an answer it already has. If the worker finds an invalid `answer.json` it moves it to
+`rejected-N.json`, records `lastError`, and keeps waiting. `PANTHER_AGENT_WAIT_SECONDS` (default
+21600) bounds the wait; after it the stage is deferred, and the worker exits for the routine to
+restart.
 
 The Cognito app client refresh token is already valid for 3650 days. The October 2026 stall was
 not a short refresh lifetime. Cognito rotates a refresh token and the previous token stops working
@@ -379,17 +395,6 @@ about 60 seconds later. Two workers refreshing the same saved session can invali
 now takes an exclusive lock on `~/.local/state/panther/cli-refresh.lock` and reads the saved session
 again inside that lock before refreshing. Recovery from a token that was already invalidated is
 `panther login`. There is no API-key fallback for this worker.
-
-Inference defaults to the Claude Code CLI already signed in with the Claude subscription on
-this Mac. The installer resolves `claude` under the LaunchAgent PATH
-(`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`) and records that absolute
-path as `PANTHER_CLAUDE`. A binary that exists only on a shell PATH is not accepted. The worker
-runs `claude -p` with that binary and refuses to start unless `claude auth status` reports
-`authMethod` `claude.ai`. `ANTHROPIC_API_KEY` is not read and is not put in the plist.
-Select Codex with `PANTHER_EDITORIAL_BACKEND=codex`; that path still requires `codex login status`
-to report `Logged in using ChatGPT`. Select xAI with `PANTHER_EDITORIAL_BACKEND=grok` and put the
-key in `XAI_API_KEY` or the keychain, not in the plist. A replacement machine needs a new
-`panther login` and a new Claude login. Do not copy a refresh token or put an API key in the unit.
 
 Browser room transcription produces an unreviewed `BrowserTranscript`, with unassigned speakers
 and window-boundary timestamps. It can be selected explicitly for editorial creation. Preserve its raw evidence, capture
@@ -554,7 +559,7 @@ modifies raw speech, canonical transcript selection or manuscript text. The summ
 contains a title, concise prose, actual supporting segment indexes and uncertainties.
 Player identities/names and capture timestamps come directly from structured source
 fields; character identities and missing dates are never inferred. A fresh subscription
-Codex candidate followed by an independent fresh review preserves both actual revisions.
+AI candidate followed by an independent fresh review preserves both actual revisions.
 The result is explicitly AI-reviewed/unverified. Generation metadata records subscription
 inference honestly; unknown model versions remain unknown.
 
