@@ -359,8 +359,14 @@ The worker runs on Grok Bot's box, not on a Mac. Install it once from merged mai
 ```sh
 python3 -m venv ~/panther-editorial/venv
 ~/panther-editorial/venv/bin/pip install "git+https://github.com/fourmajor/panther@main"
-~/panther-editorial/venv/bin/panther login --username WORKER_USERNAME
+PANTHER_SESSION_STORE=box-file ~/panther-editorial/venv/bin/panther login --username WORKER_USERNAME
 ```
+
+The box has no OS keyring, so `PANTHER_SESSION_STORE=box-file` opts in to an AES-256-GCM file at
+`~/.local/share/panther/box-session.enc` (override with `PANTHER_BOX_SESSION_FILE`) whose random
+key is `~/.secrets/panther-session.key` (`PANTHER_BOX_SESSION_KEY`). Both must be owner-only;
+the key is created on first sign-in. Without the variable the OS keyring stays the default.
+`grok-bot.sh` sets it for the worker.
 
 The Panther user must be in the `MODEL_WORKERS` group. No AWS credentials are used: the worker
 talks only to the Panther API (`/editorial-jobs/claim`, `heartbeat`, `defer`, `complete`, `fail`),
