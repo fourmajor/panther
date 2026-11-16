@@ -619,6 +619,7 @@ export class PantherMediaExplorerStack extends Stack {
           PasswordParameterName: `${passwordParameterPrefix}/${username}/password`,
           CredentialPolicyVersion: 2,
           ...(identities.invitationEmails?.[username] ? {InvitationEmail: identities.invitationEmails[username]} : {}),
+          ...(identities.passwordBootstrap?.includes(username) ? {PasswordBootstrap: true} : {}),
         },
       });
       account.applyRemovalPolicy(RemovalPolicy.RETAIN);

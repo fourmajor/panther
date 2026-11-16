@@ -64,7 +64,21 @@ def handler(event, _context):
     physical_id = f"{user_pool_id}:{username}"
 
     try:
-        if event["RequestType"] != "Delete" and not _user_exists(user_pool_id, username):
+        if (
+            event["RequestType"] != "Delete"
+            and properties.get("PasswordBootstrap") in (True, "true")
+            and not properties.get("InvitationEmail")
+        ):
+            if not _user_exists(user_pool_id, username):
+                # Worker-only account: no email, no message. The random temporary password is
+                # never stored; Deploy sets the first password from a GitHub secret.
+                cognito.admin_create_user(
+                    UserPoolId=user_pool_id,
+                    Username=username,
+                    TemporaryPassword=_temporary_password(),
+                    MessageAction="SUPPRESS",
+                )
+        elif event["RequestType"] != "Delete" and not _user_exists(user_pool_id, username):
             email = properties.get("InvitationEmail")
             if (
                 not isinstance(email, str)

@@ -9,13 +9,15 @@ export interface DeploymentIdentities {
   workers: string[];
   migrationAdmins: string[];
   invitationEmails?: Record<string, string>;
+  /** Worker-only accounts created without email. Deploy sets their first password from a secret. */
+  passwordBootstrap?: string[];
 }
 
 export function validateIdentities(value: unknown): DeploymentIdentities {
   const v = value as DeploymentIdentities;
   const keys = ["schemaVersion", "users", "publishers", "workers", "migrationAdmins"];
   if (!v || typeof v !== "object" || Array.isArray(v) || keys.some(key => !(key in v)) ||
-      Object.keys(v).some(key => ![...keys, "invitationEmails"].includes(key)) || v.schemaVersion !== 1) {
+      Object.keys(v).some(key => ![...keys, "invitationEmails", "passwordBootstrap"].includes(key)) || v.schemaVersion !== 1) {
     throw new Error("Invalid private identity configuration schema");
   }
   for (const key of ["users", "publishers", "workers", "migrationAdmins"] as const) {
@@ -33,6 +35,12 @@ export function validateIdentities(value: unknown): DeploymentIdentities {
         !v.users.includes(name) || typeof email !== "string" || email.length > 254 ||
         !/^[^\s@\x00-\x1f]+@[^\s@\x00-\x1f]+\.[^\s@\x00-\x1f]+$/.test(email)))) {
     throw new Error("Invalid private invitation email configuration");
+  }
+  if (v.passwordBootstrap !== undefined && (!Array.isArray(v.passwordBootstrap) ||
+      new Set(v.passwordBootstrap).size !== v.passwordBootstrap.length ||
+      v.passwordBootstrap.some(n => typeof n !== "string" || !v.workers.includes(n) ||
+        v.publishers.includes(n) || v.migrationAdmins.includes(n) || Boolean(v.invitationEmails?.[n])))) {
+    throw new Error("Invalid private password bootstrap: worker-only accounts without an invitation email");
   }
   return v;
 }
