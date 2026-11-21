@@ -229,6 +229,20 @@ def test_titles_stay_on_the_session_or_episode_and_cards_get_posters():
     listed = next(item for item in pages.assemble(GAME, [episode], [])["sessions"] if item["id"] == "game-night-2026-09-10")
     detailed = pages.assemble(GAME, [episode, mix], [], session_id="game-night-2026-09-10")["session"]
     assert listed["title"] == detailed["title"] == "The Kitchen That Remembered — Five Against the Fire"
+    corrected = asset("corrected", "corrected-transcript", name="corrected.json", contentType="application/json", size=2400)
+    corrected["metadata"] = {"sessionId": "game-night-2026-09-10", "title": "Corrected transcript", "characterIds": [], "extra": {}}
+    corrected["lastModified"] = "2026-09-10T18:00:00+00:00"
+    listed_recap = next(item for item in pages.assemble(GAME, [episode, corrected], [])["sessions"] if item["id"] == "game-night-2026-09-10")
+    detailed_recap = pages.assemble(GAME, [episode, mix, corrected], [], session_id="game-night-2026-09-10")["session"]
+    assert bool(listed_recap["excerptKey"]) == bool(detailed_recap["excerptKey"])
+    assert listed_recap["excerptKey"] == detailed_recap["excerptKey"]
+    assert listed_recap["excerptKey"].endswith("corrected.json")
+    assert listed_recap["excerptLabel"] == detailed_recap["excerptLabel"] == "Excerpt from the corrected transcript"
+    failed = {"id": "editorial~early", "kind": "editorial", "status": "FAILED", "createdAt": 1_700_000_000, "completedAt": 1_700_000_100, "sessionId": "game-night-2026-09-10"}
+    rerun = {"id": "editorial~retry", "kind": "editorial", "status": "done", "createdAt": 1_700_000_500, "completedAt": 1_700_000_700, "sessionId": "game-night-2026-09-10"}
+    assert pages.assemble(GAME, [episode], [failed, rerun])["sessions"][0]["status"] == "done"
+    abandoned = {"id": "editorial~abandoned", "kind": "editorial", "status": "failed", "createdAt": 1_600_000_000, "sessionId": "game-night-2026-09-10"}
+    assert pages.assemble(GAME, [episode], [abandoned])["sessions"][0]["status"] != "failed"
     assert pages._clean_title("The Kitchen That Remembered — Five Against the Fire — browser") == "The Kitchen That Remembered — Five Against the Fire"
     assert pages._clean_title("Borrowed Trust — procedural") == "Borrowed Trust"
     assert pages._friendly_slug("solo-audio-test-2026-09-09") == "Solo Audio Test"
@@ -288,7 +302,7 @@ def test_sessions_route_renders_list_and_detail_for_every_game():
     assert "Read more" in ui and "<1s" in ui
     assert "canCreateGame !== true" in source
     transcription = (ROOT / "infra/lambda/media-api/browser_transcription.py").read_text()
-    assert 'authorized(claims, "MODEL_PUBLISHERS")' in transcription
+    assert 'authorized(claims, "RECORDING_STARTERS")' in transcription
     page = (ROOT / "web/media-explorer/index.html").read_text()
     assert 'id="nav-menu"' in page
     assert "hidden" in page.split('id="game-create-button"', 1)[1][:160]

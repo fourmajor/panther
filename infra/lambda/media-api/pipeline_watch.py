@@ -69,24 +69,23 @@ def stalled_alerts(now):
     return alerts
 
 
-def _backfill_log(scanned, sent, counts, done, stored):
+def _backfill_log(scanned, sent, counts, seeded, stored):
     kinds = ",".join(f"{name}={count}" for name, count in sorted(counts.items())) or "none"
     # print reaches the Lambda log. The root logger drops INFO.
-    print(f"pipeline backfill: scanned {scanned} runs, published {sent} samples by pipeline {kinds}, marker done={done} stored={stored}", flush=True)
+    print(f"pipeline backfill: scanned {scanned} runs, published {sent} samples by pipeline {kinds}, ledger seeded={seeded} stored={stored}", flush=True)
 
 
 def backfill_metrics(now):
-    """Recent workshop runs, a few pages per timer pass. CloudWatch only accepts 14 days of history."""
-    marker = INDEX.get_item(Key={"pk": "SYSTEM", "sk": "pipeline-metrics-v2"}, ConsistentRead=True).get("Item") or {}
-    stored = int(marker.get("samples") or 0)
-    if marker.get("done"):
-        _backfill_log(0, 0, {}, True, stored)
-        return 0
-    from pipeline_metrics import MAX_AGE, points_for_backfill, publish
+    """Record each sample key once. History already in CloudWatch is claimed, not sent again."""
+    from pipeline_metrics import LEDGER_SK, claim_samples, points_for_backfill, publish, with_sample_keys
     import boto3
+    marker = INDEX.get_item(Key={"pk": "SYSTEM", "sk": LEDGER_SK}, ConsistentRead=True).get("Item") or {}
+    seeded = bool(marker.get("seeded"))
+    started = float(marker.get("startedAt") or now)
+    stored = int(marker.get("samples") or 0)
+    cursor = marker.get("cursor")
     points = []
     scanned = 0
-    cursor = marker.get("cursor")
     finished = False
     for _ in range(8):
         args = {"Limit": 100, "ProjectionExpression": "pk, sk, kind, #s, createdAt, completedAt, reportedAt, observedAt, updatedAt",
@@ -95,25 +94,33 @@ def backfill_metrics(now):
             args["ExclusiveStartKey"] = cursor
         page = INDEX.scan(**args)
         for item in page.get("Items", []):
-            if str(item.get("pk", "")).startswith("GAME#"):
-                scanned += 1
-            points.extend(points_for_backfill(item, now))
+            if not str(item.get("pk", "")).startswith("GAME#"):
+                continue
+            scanned += 1
+            points.extend(with_sample_keys(points_for_backfill(item, now), item["pk"], item.get("sk") or item.get("id") or ""))
         cursor = page.get("LastEvaluatedKey")
         if not cursor:
             finished = True
             break
-    fresh = [point for point in points if now - MAX_AGE < point.get("Timestamp", 0) <= now + 120]
+    if seeded:
+        chosen = points
+        publish_now = True
+    else:
+        # The v2 scan already sent these. Claiming them keeps the next pass from sending them again.
+        chosen = [point for point in points if point.get("Timestamp", 0) < started]
+        publish_now = False
+    claimed = claim_samples(INDEX, chosen, publish=publish_now)
     counts = {}
-    for point in fresh:
+    for point in claimed:
         kind = point["Dimensions"][0]["Value"]
         counts[kind] = counts.get(kind, 0) + 1
-    sent = publish(points, boto3.client("cloudwatch"), now)
-    saved = {"pk": "SYSTEM", "sk": "pipeline-metrics-v2", "seenAt": int(now),
-             "samples": stored + sent, "done": finished}
-    if cursor and not finished:
+    sent = publish(claimed, boto3.client("cloudwatch"), now) if publish_now else 0
+    saved = {"pk": "SYSTEM", "sk": LEDGER_SK, "seenAt": int(now), "startedAt": int(started),
+             "samples": stored + sent, "seeded": seeded or finished}
+    if cursor and not (finished and not seeded):
         saved["cursor"] = cursor
     INDEX.put_item(Item=saved)
-    _backfill_log(scanned, sent, counts, finished, stored + sent)
+    _backfill_log(scanned, sent, counts, bool(saved["seeded"]), stored + sent)
     return sent
 
 

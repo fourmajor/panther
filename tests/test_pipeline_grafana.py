@@ -17,14 +17,14 @@ def test_grafana_dashboard_uses_workshop_metrics():
     assert variables["region"]["current"]["value"] == "us-west-2"
     assert "editorial" not in variables
     assert board["time"]["from"] == "now-30d"
-    assert board["version"] >= 3
+    assert board["version"] >= 4
     query_id = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
     titles = [panel["title"] for panel in board["panels"]]
     assert "Runs by status" in titles
     assert "Failures" in titles
     assert "Duration" in titles
-    assert any(title.startswith("Runs started, last 24") for title in titles)
-    assert any(title.startswith("Runs failed, last 7") for title in titles)
+    for title in ("24h started", "24h ok", "24h failed", "7d started", "7d ok", "7d failed"):
+        assert title in titles
     search = []
     for panel in board["panels"]:
         ids = []
@@ -42,6 +42,15 @@ def test_grafana_dashboard_uses_workshop_metrics():
         assert target["queryMode"] == "Metrics"
         assert target["period"] == "3600"
         assert target["statistic"]
+        if "RunsStarted" in target["expression"]:
+            assert target["label"].endswith(" started")
+        elif "RunsSucceeded" in target["expression"]:
+            assert target["label"].endswith(" succeeded")
+        elif "RunsFailed" in target["expression"]:
+            assert target["label"].endswith(" failed")
+    for panel in board["panels"]:
+        if panel["title"] in {"Runs by status", "Failures"}:
+            assert panel["fieldConfig"]["defaults"]["custom"]["drawStyle"] == "bars"
     expressions = [target.get("expression", "") for target in search]
     blob = "\n".join(expressions)
     assert "Panther/Pipelines" in blob

@@ -183,9 +183,10 @@ def store(value, previous):
             raise ClientError({"Error": {"Code": "ConditionalCheckFailedException", "Message": "Workflow hierarchy revision changed"}}, "PutItem") from exc
         raise
     try:
-        from pipeline_metrics import points_for_transition, publish
+        from pipeline_metrics import claim_samples, points_for_transition, publish, with_sample_keys
         import boto3
-        publish(points_for_transition(previous, value), boto3.client("cloudwatch"))
+        points = with_sample_keys(points_for_transition(previous, value), item["pk"], item["sk"])
+        publish(claim_samples(INDEX, points), boto3.client("cloudwatch"))
     except Exception:
         pass
     return item
