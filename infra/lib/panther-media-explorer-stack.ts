@@ -699,7 +699,8 @@ export class PantherMediaExplorerStack extends Stack {
       value: siteUrl,
       description: "Password-protected Panther media explorer",
     });
-    const readOnlyAccess = new ReadOnlyAccess(this, "ReadOnlyAccess", {userPool});
+    // The parent stack is already at CloudFormation's 500-resource limit.
+    const readOnlyAccess = new ReadOnlyAccess(notifications, "ReadOnlyAccess", {userPool});
     new CfnOutput(this, "ViewerCredentialsSecretArn", {
       value: readOnlyAccess.viewerSecret.secretArn,
       description: "Secrets Manager ARN for the synthetic catalog reader. The value is not an output.",
