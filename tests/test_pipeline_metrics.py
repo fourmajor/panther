@@ -64,6 +64,33 @@ class Clock:
         self.calls.append((Namespace, MetricData))
 
 
+def test_a_sample_key_is_published_once_and_history_is_claimed_without_sending():
+    from moto import mock_aws
+    import boto3
+
+    with mock_aws():
+        table = boto3.resource("dynamodb", region_name="us-west-2").create_table(
+            TableName="workshop",
+            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        point = metrics.with_sample_keys([{
+            "MetricName": "RunsStarted", "Dimensions": [{"Name": "Pipeline", "Value": "editorial"}],
+            "Timestamp": NOW - 100, "Value": 1, "Unit": "Count",
+        }], "GAME#example", "editorial~run")[0]
+        client = Clock()
+        assert metrics.publish(metrics.claim_samples(table, [point]), client, NOW) == 1
+        assert metrics.publish(metrics.claim_samples(table, [point]), client, NOW) == 0
+        assert len(client.calls) == 1
+        historical = metrics.with_sample_keys([{
+            "MetricName": "RunsFailed", "Dimensions": [{"Name": "Pipeline", "Value": "editorial"}],
+            "Timestamp": NOW - 200, "Value": 1, "Unit": "Count",
+        }], "GAME#example", "editorial~old")[0]
+        assert metrics.claim_samples(table, [historical], publish=False) == []
+        assert metrics.claim_samples(table, [historical], publish=True) == []
+
+
 def test_publish_drops_stale_samples_and_keeps_the_namespace():
     client = Clock()
     sent = metrics.publish([

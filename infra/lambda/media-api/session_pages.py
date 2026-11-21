@@ -829,8 +829,20 @@ def organize_library(views, runs, session_title=None):
     }
 
 
+def _current_runs(runs):
+    """Latest non-stale run of each kind. A later success replaces an earlier failure."""
+    ordered = sorted(runs, key=lambda run: (-(run.get("startedAt") or 0), str(run.get("id") or "")))
+    chosen = {}
+    for run in ordered:
+        kind = run.get("kind") or "unknown"
+        if kind in chosen or run.get("stale"):
+            continue
+        chosen[kind] = run
+    return list(chosen.values())
+
+
 def _status(runs, assets):
-    states = {run["status"] for run in runs}
+    states = {run["status"] for run in _current_runs(runs)}
     for state in ("failed", "running", "queued", "paused"):
         if state in states:
             return state

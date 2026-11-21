@@ -9,10 +9,14 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from botocore.exceptions import ClientError
+
 NAMESPACE = "Panther/Pipelines"
 MAX_AGE = 14 * 24 * 3600 - 3600
 MAX_DURATION_MS = 40 * 24 * 3600 * 1000
 RECENT = 30 * 60
+SAMPLE_PREFIX = "pipeline-sample#"
+LEDGER_SK = "pipeline-metrics-ledger"
 
 
 def _kind(item):
@@ -139,6 +143,41 @@ def points_for_backfill(item, now):
         point for point in points
         if now - MAX_AGE < point["Timestamp"] <= now + 120
     ]
+
+
+def sample_key(pk, sk, metric):
+    return f"{pk}#{sk}#{metric}"
+
+
+def with_sample_keys(points, pk, sk):
+    keyed = []
+    for point in points:
+        keyed.append({**point, "SampleKey": sample_key(pk, sk, point["MetricName"])})
+    return keyed
+
+
+def claim_samples(table, points, publish=True):
+    """Keep the first writer of each sample key. A claimed key is never sent again."""
+    if table is None:
+        return list(points)
+    fresh = []
+    for point in points:
+        key = point.get("SampleKey")
+        if not key:
+            fresh.append(point)
+            continue
+        try:
+            table.put_item(
+                Item={"pk": "SYSTEM", "sk": SAMPLE_PREFIX + key, "metric": point["MetricName"], "publish": bool(publish)},
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                continue
+            raise
+        if publish:
+            fresh.append(point)
+    return fresh
 
 
 def publish(points, client, now=None):

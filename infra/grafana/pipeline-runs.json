@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "5m",
   "time": {
     "from": "now-30d",
@@ -55,7 +55,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Runs started, last 24 hours",
+      "title": "24h started",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -80,7 +80,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsStarted\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} started",
           "statistic": "Pipeline} MetricName=\"RunsStarted"
         }
       ],
@@ -106,7 +106,7 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Runs succeeded, last 24 hours",
+      "title": "24h ok",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -131,7 +131,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsSucceeded\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} succeeded",
           "statistic": "Pipeline} MetricName=\"RunsSucceeded"
         }
       ],
@@ -157,7 +157,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Runs failed, last 24 hours",
+      "title": "24h failed",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -182,7 +182,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} failed",
           "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
@@ -208,7 +208,7 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Runs started, last 7 days",
+      "title": "7d started",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -233,7 +233,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsStarted\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} started",
           "statistic": "Pipeline} MetricName=\"RunsStarted"
         }
       ],
@@ -259,7 +259,7 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Runs succeeded, last 7 days",
+      "title": "7d ok",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -284,7 +284,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsSucceeded\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} succeeded",
           "statistic": "Pipeline} MetricName=\"RunsSucceeded"
         }
       ],
@@ -310,7 +310,7 @@
     {
       "id": 6,
       "type": "stat",
-      "title": "Runs failed, last 7 days",
+      "title": "7d failed",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${datasource}"
@@ -335,7 +335,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} failed",
           "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
@@ -386,7 +386,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsStarted\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} started",
           "statistic": "Pipeline} MetricName=\"RunsStarted"
         },
         {
@@ -402,7 +402,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsSucceeded\"', 'Sum', 3600)",
           "id": "b",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} succeeded",
           "statistic": "Pipeline} MetricName=\"RunsSucceeded"
         },
         {
@@ -418,13 +418,27 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "c",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} failed",
           "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "lineWidth": 0,
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
         },
         "overrides": []
       },
@@ -468,13 +482,27 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} failed",
           "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "lineWidth": 0,
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
         },
         "overrides": []
       },
@@ -518,7 +546,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunDuration\"', 'Average', 3600)",
           "id": "a",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} average",
           "statistic": "Pipeline} MetricName=\"RunDuration"
         },
         {
@@ -534,7 +562,7 @@
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunDuration\"', 'p90', 3600)",
           "id": "b",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}",
+          "label": "${PROP('Dim.Pipeline')} p90",
           "statistic": "Pipeline} MetricName=\"RunDuration"
         }
       ],

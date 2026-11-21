@@ -6,6 +6,7 @@ import {Input} from './components/ui/input.jsx';
 import {SessionDownload} from './session-summary.jsx';
 import {formatTimestamp} from './format-time.js';
 import {formatWhen} from './session-pipeline-model.js';
+import {recapInputs} from './session-record.js';
 
 function when(value) {
   if (value == null || value === '') return null;
@@ -287,7 +288,7 @@ function pipelineGroups(runs) {
     group.runs.push(run);
   }
   return groups.map(group => {
-    const latest = group.runs[0];
+    const latest = group.runs.find(run => !run.stale) || group.runs[0];
     const measured = group.runs.filter(run => !run.stale && Number.isFinite(run.durationSeconds));
     const stale = group.runs.filter(run => run.stale).length;
     return {
@@ -384,7 +385,7 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
   });
   const cards = useQuery({
     queryKey: ['session-pages', scope, gameId, 'cards'],
-    enabled: !sessionId && shell.isSuccess,
+    enabled: shell.isSuccess,
     queryFn: ({signal}) => onLoad({sessionId: null, part: 'cards', signal}),
     retry: false,
     staleTime: 60000,
@@ -394,26 +395,29 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
   const cardById = Object.fromEntries((cards.data?.sessions || []).map(item => [item.id, item]));
   const sessions = (data?.sessions || []).map(item => {
     const extra = cardById[item.id];
-    if (!extra) return item;
+    const recap = recapInputs(item, extra);
+    if (!extra) return {...item, ...recap};
     return {
       ...item,
       thumbnailKey: extra.thumbnailKey || item.thumbnailKey,
-      excerptKey: extra.excerptKey || item.excerptKey,
-      excerptLabel: extra.excerptLabel || item.excerptLabel,
+      excerptKey: recap.excerptKey,
+      excerptLabel: recap.excerptLabel,
     };
   });
   const shellSession = shell.data?.session;
   const fullSession = full.data?.session;
-  const detailSession = fullSession
+  const detailSource = fullSession || shellSession;
+  const detailRecap = recapInputs(detailSource, cardById[sessionId]);
+  const detailSession = detailSource
     ? {
-        ...fullSession,
-        title: shellSession?.title || fullSession.title,
-        excerptKey: shellSession?.excerptKey || fullSession.excerptKey,
-        excerptLabel: shellSession?.excerptLabel || fullSession.excerptLabel,
-        summarySourceKey: shellSession?.summarySourceKey || fullSession.summarySourceKey,
-        player: shellSession?.player || fullSession.player,
+        ...detailSource,
+        title: shellSession?.title || detailSource.title,
+        excerptKey: detailRecap.excerptKey,
+        excerptLabel: detailRecap.excerptLabel,
+        summarySourceKey: fullSession?.summarySourceKey || shellSession?.summarySourceKey,
+        player: shellSession?.player || detailSource.player,
       }
-    : shellSession;
+    : null;
   const libraryPending = Boolean(sessionId) && shell.data?.scope === 'shell' && !full.data;
   const thumbsPending = !sessionId && !cards.data && !cards.error;
   return <div className="session-pages">
