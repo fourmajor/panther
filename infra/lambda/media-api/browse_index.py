@@ -273,7 +273,7 @@ def gather(game, section, *, consistent=False):
         start, end = bounds
         found, cursor, pages = [], None, 0
         try:
-            while pages < 20:
+            while pages < 40:
                 args = {
                     "KeyConditionExpression": range_condition(pk, start),
                     "ConsistentRead": consistent,
@@ -313,7 +313,7 @@ def gather(game, section, *, consistent=False):
         for offset in range(0, len(rows), 100):
             archived.update(asset_archive.archived_keys(game, [item["sk"] for item in rows[offset:offset + 100]]))
     except (ClientError, ValueError, RuntimeError):
-        complete = False
+        archived = set()
     assets = [json.loads(item["payload"]) for item in rows if item["sk"] not in archived]
     return assets, complete
 

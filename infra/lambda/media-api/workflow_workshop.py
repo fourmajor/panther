@@ -315,32 +315,41 @@ def catalog_assets(game, sections=("all",)):
     key = (game, tuple(sections))
     cached = _CATALOG_CACHE.get(key)
     now = time.time()
-    if cached and now - cached[0] < 90:
+    if cached and now - cached[0] < 300:
         return cached[1], cached[2]
-    assets, seen, complete = [], set(), True
     if sections == ("all",):
         assets, complete = browse_index.gather(game, "all", consistent=False)
         if complete:
             _CATALOG_CACHE[key] = (now, assets, complete)
         return assets, complete
-    for section in sections:
-        cursor, pages = None, 0
+
+    def read_section(section):
+        found, cursor, pages, done = [], None, 0, True
         while pages < catalog_page_limit():
             page = browse_index.page(game, section, cursor, consistent=False, tags=False)
-            for asset in page.get("assets") or []:
-                identity = asset.get("key") if isinstance(asset, dict) else None
-                if identity and identity in seen:
-                    continue
-                if identity:
-                    seen.add(identity)
-                assets.append(asset)
+            found.extend(page.get("assets") or [])
             cursor = page.get("cursor")
             pages += 1
             if not cursor:
                 break
         else:
             if cursor:
-                complete = False
+                done = False
+        return found, done
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(3, len(sections))) as pool:
+        loaded = list(pool.map(read_section, sections))
+    assets, seen, complete = [], set(), True
+    for found, done in loaded:
+        complete = complete and done
+        for asset in found:
+            identity = asset.get("key") if isinstance(asset, dict) else None
+            if identity and identity in seen:
+                continue
+            if identity:
+                seen.add(identity)
+            assets.append(asset)
     _CATALOG_CACHE[key] = (now, assets, complete)
     if len(_CATALOG_CACHE) > 16:
         oldest = min(_CATALOG_CACHE, key=lambda item: _CATALOG_CACHE[item][0])

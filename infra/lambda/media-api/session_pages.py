@@ -108,9 +108,10 @@ GENERIC_TITLE = re.compile(
 )
 NOISY_TITLE = re.compile(r"[a-f0-9]{24,}|\.(?:json|wav|mp3|flac|md|png|jpe?g|mp4|webm)\Z", re.IGNORECASE)
 VARIANT_TAIL = re.compile(
-    r"(?:final|procedural|browser|original|original procedural|original procedural cork effects)\Z",
+    r"(?:final|procedural|browser|original|original procedural|original procedural cork effects|cinematic sound mix|sound mix)\Z",
     re.IGNORECASE,
 )
+RECORDING_KINDS = frozenset({"recording", "recording-manifest"})
 ISO_TITLE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 SLUG_TITLE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 TRANSCRIPT_KINDS = ("raw-transcript", "transcript", "corrected-transcript", "edited-transcript")
@@ -485,11 +486,14 @@ def _video_rank_tuple(asset):
 
 
 def _title(assets, session_id, when):
-    """Session name, otherwise the featured episode title. Never a transcript or file label."""
+    """Recording session name, otherwise the featured episode. A mix file cannot rename the session."""
     names = []
     for asset in assets:
         recording = asset.get("recording") if isinstance(asset.get("recording"), dict) else {}
-        for value in (recording.get("sessionName"), _metadata(asset).get("sessionName")):
+        values = [recording.get("sessionName")]
+        if asset.get("kind") in RECORDING_KINDS:
+            values.append(_metadata(asset).get("sessionName"))
+        for value in values:
             name = _clip(value, 160)
             if _usable_title(name):
                 names.append(name)
@@ -567,6 +571,8 @@ def _recording_key(assets):
 
 def _player(assets):
     videos = _video_assets(assets)
+    if not videos:
+        videos = [asset for asset in assets if asset.get("kind") in VIDEO_KINDS and isinstance(asset.get("key"), str)]
     if videos:
         return {"key": sorted(videos, key=_video_rank_tuple)[0]["key"], "media": "video"}
     audio = _recording_key(assets)
