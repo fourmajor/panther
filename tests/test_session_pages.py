@@ -225,6 +225,10 @@ def test_titles_stay_on_the_session_or_episode_and_cards_get_posters():
     matched = pages.assemble(GAME, [mix, episode, quiet], [], session_id="game-night-2026-09-10")["session"]
     assert matched["title"] == "The Kitchen That Remembered — Five Against the Fire"
     assert matched["player"]["media"] == "video" and matched["player"]["key"] == episode["key"]
+    mix["recording"] = {"sessionName": "Curse of the Crimson Throne — The Story So Far — cinematic sound mix"}
+    listed = next(item for item in pages.assemble(GAME, [episode], [])["sessions"] if item["id"] == "game-night-2026-09-10")
+    detailed = pages.assemble(GAME, [episode, mix], [], session_id="game-night-2026-09-10")["session"]
+    assert listed["title"] == detailed["title"] == "The Kitchen That Remembered — Five Against the Fire"
     assert pages._clean_title("The Kitchen That Remembered — Five Against the Fire — browser") == "The Kitchen That Remembered — Five Against the Fire"
     assert pages._clean_title("Borrowed Trust — procedural") == "Borrowed Trust"
     assert pages._friendly_slug("solo-audio-test-2026-09-09") == "Solo Audio Test"

@@ -401,6 +401,18 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
       excerptLabel: extra.excerptLabel || item.excerptLabel,
     };
   });
+  const shellSession = shell.data?.session;
+  const fullSession = full.data?.session;
+  const detailSession = fullSession
+    ? {
+        ...fullSession,
+        title: shellSession?.title || fullSession.title,
+        excerptKey: shellSession?.excerptKey || fullSession.excerptKey,
+        excerptLabel: shellSession?.excerptLabel || fullSession.excerptLabel,
+        summarySourceKey: shellSession?.summarySourceKey || fullSession.summarySourceKey,
+        player: shellSession?.player || fullSession.player,
+      }
+    : shellSession;
   const libraryPending = Boolean(sessionId) && shell.data?.scope === 'shell' && !full.data;
   const thumbsPending = !sessionId && !cards.data && !cards.error;
   return <div className="session-pages">
@@ -421,7 +433,7 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
         </Link>
       </li>)}</ul>}
     </section>}
-    {data && sessionId && data.session && <Detail gameId={gameId} scope={scope} session={data.session} listPath={listPath} onNavigate={onNavigate} onPreview={onPreview} onSign={onSign} onDownload={onDownload} onSummary={onSummary} onExcerpt={onExcerpt} onImage={onImage} libraryPending={libraryPending}/>}
+    {detailSession && sessionId && <Detail gameId={gameId} scope={scope} session={detailSession} listPath={listPath} onNavigate={onNavigate} onPreview={onPreview} onSign={onSign} onDownload={onDownload} onSummary={onSummary} onExcerpt={onExcerpt} onImage={onImage} libraryPending={libraryPending}/>}
     {sessionId && full.error && <p role="status" className="session-note">The rest of this session&apos;s assets did not load. <Button variant="outline" size="sm" onClick={() => full.refetch()}>Retry assets</Button></p>}
     {data && sessionId && !data.session && <p className="session-empty">This session is not in the catalog.</p>}
   </div>;
