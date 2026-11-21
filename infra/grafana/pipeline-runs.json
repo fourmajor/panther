@@ -1,0 +1,1243 @@
+{
+  "uid": "panther-pipeline-runs",
+  "title": "Panther pipeline runs",
+  "description": "Step Functions run counts, durations, and failures for the Editorial, Model, and Playback state machines. Metrics are the built-in AWS/States series. The CloudWatch data source is the datasource variable.",
+  "tags": [
+    "panther",
+    "pipelines",
+    "step-functions"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "CloudWatch data source",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "refresh": 1,
+        "hide": 0,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "custom",
+        "query": "us-west-2",
+        "refresh": 0,
+        "hide": 0,
+        "current": {
+          "text": "us-west-2",
+          "value": "us-west-2",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "us-west-2",
+            "value": "us-west-2",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "editorial",
+        "label": "Editorial state machine",
+        "type": "query",
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "refresh": 1,
+        "regex": "/.*EditorialProcessing.*/",
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "query": {
+          "refId": "CloudWatchVariableQuery",
+          "queryType": "dimensionValues",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsStarted",
+          "dimensionKey": "StateMachineArn",
+          "region": "$region",
+          "metricQueryType": 0,
+          "metricEditorMode": 0
+        }
+      },
+      {
+        "name": "model",
+        "label": "Model state machine",
+        "type": "query",
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "refresh": 1,
+        "regex": "/.*ModelProcessing.*/",
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "query": {
+          "refId": "CloudWatchVariableQuery",
+          "queryType": "dimensionValues",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsStarted",
+          "dimensionKey": "StateMachineArn",
+          "region": "$region",
+          "metricQueryType": 0,
+          "metricEditorMode": 0
+        }
+      },
+      {
+        "name": "playback",
+        "label": "Playback state machine",
+        "type": "query",
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "refresh": 1,
+        "regex": "/.*PlaybackProcessing.*/",
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "query": {
+          "refId": "CloudWatchVariableQuery",
+          "queryType": "dimensionValues",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsStarted",
+          "dimensionKey": "StateMachineArn",
+          "region": "$region",
+          "metricQueryType": 0,
+          "metricEditorMode": 0
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Editorial runs by status",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsStarted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Started",
+          "alias": "Started",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsSucceeded",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Succeeded",
+          "alias": "Succeeded",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsFailed",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Failed",
+          "alias": "Failed",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsAborted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Aborted",
+          "alias": "Aborted",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsTimedOut",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Timed out",
+          "alias": "Timed out",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Editorial duration",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionTime",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Average",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Average",
+          "alias": "Average",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionTime",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "p90",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "p90",
+          "alias": "p90",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Editorial failures",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsFailed",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Failed",
+          "alias": "Failed",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsTimedOut",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Timed out",
+          "alias": "Timed out",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsAborted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$editorial"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Aborted",
+          "alias": "Aborted",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Model runs by status",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsStarted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Started",
+          "alias": "Started",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsSucceeded",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Succeeded",
+          "alias": "Succeeded",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsFailed",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Failed",
+          "alias": "Failed",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsAborted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Aborted",
+          "alias": "Aborted",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsTimedOut",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Timed out",
+          "alias": "Timed out",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Model duration",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionTime",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Average",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Average",
+          "alias": "Average",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionTime",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "p90",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "p90",
+          "alias": "p90",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Model failures",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsFailed",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Failed",
+          "alias": "Failed",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsTimedOut",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Timed out",
+          "alias": "Timed out",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsAborted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$model"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Aborted",
+          "alias": "Aborted",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Playback runs by status",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsStarted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Started",
+          "alias": "Started",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsSucceeded",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Succeeded",
+          "alias": "Succeeded",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsFailed",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Failed",
+          "alias": "Failed",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsAborted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Aborted",
+          "alias": "Aborted",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsTimedOut",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Timed out",
+          "alias": "Timed out",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Playback duration",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionTime",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Average",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Average",
+          "alias": "Average",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionTime",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "p90",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "p90",
+          "alias": "p90",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Playback failures",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsFailed",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Failed",
+          "alias": "Failed",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsTimedOut",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Timed out",
+          "alias": "Timed out",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "region": "$region",
+          "namespace": "AWS/States",
+          "metricName": "ExecutionsAborted",
+          "dimensions": {
+            "StateMachineArn": [
+              "$playback"
+            ]
+          },
+          "statistic": "Sum",
+          "period": "3600",
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "Aborted",
+          "alias": "Aborted",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "links": []
+}
