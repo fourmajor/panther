@@ -1945,7 +1945,8 @@ async function renderRoute() {
         if (!signed?.url || Number(signed.size) > 350000) return null;
         const response = await fetch(signed.url, {signal: AbortSignal.timeout(15000)});
         if (!response.ok) throw new Error("Excerpt unavailable");
-        return response.json();
+        const body = await response.text();
+        try { return JSON.parse(body); } catch { return body; }
       },
       onImage: async key => {
         try {

@@ -174,7 +174,7 @@ def test_scene_clips_leave_one_featured_video_and_readable_titles():
     assert len(detail["library"]["sceneClips"]) == 3
     chapter_card = next(item for item in detail["library"]["finals"] if item["kind"] == "novel-chapter")
     audio_card = next(item for item in detail["library"]["finals"] if item["kind"] == "recording-playback")
-    assert chapter_card["title"] == "Novel chapter"
+    assert chapter_card["title"] == "Harbor night final novel chapter"
     assert audio_card["title"] == "Listening copy"
     assert detail["excerptKey"].endswith("novel-chapter.json")
     assert detail["excerptLabel"] == "Excerpt from the novel chapter"
@@ -200,6 +200,40 @@ def test_failed_runs_with_huge_gaps_are_stale_and_titles_are_readable():
     recent = next(item for item in detail["pipelines"] if item["id"].endswith("new"))
     assert stale["stale"] is True and stale["durationSeconds"] is None
     assert recent["stale"] is False and recent["durationSeconds"] == 24
+
+
+def test_titles_stay_on_the_session_or_episode_and_cards_get_posters():
+    video = asset("movie", "session-video", name="episode.mp4", contentType="video/mp4", size=8_000_000)
+    video["metadata"]["title"] = "The Bottled Dead — original procedural cork effects"
+    transcript = asset("corrected", "corrected-transcript", name="corrected.json", contentType="application/json", size=4000)
+    transcript["metadata"]["title"] = "October 1 — corrected transcript, repaired speaker attribution"
+    still = asset("still", "video-preview", name="final-preview.jpg", contentType="image/jpeg", size=70_000)
+    still["metadata"]["title"] = "The Bottled Dead — final preview"
+    chapter = asset("chapter", "novel-chapter", name="chapter.json", contentType="application/json", size=9000)
+    chapter["novel"] = {"title": "Borrowed Trust", "state": "available"}
+    forward = pages.assemble(GAME, [transcript, video, still, chapter], [], session_id=SESSION)["session"]
+    reverse = pages.assemble(GAME, [chapter, still, video, transcript], [], session_id=SESSION)["session"]
+    assert forward["title"] == reverse["title"] == "The Bottled Dead — original procedural cork effects"
+    assert forward["thumbnailKey"].endswith("final-preview.jpg")
+    episode = next(item for item in forward["library"]["finals"] if item["kind"] == "session-video")
+    assert episode["thumbnailKey"] == forward["thumbnailKey"]
+    named = next(item for item in forward["library"]["finals"] if item["kind"] == "novel-chapter")
+    assert named["title"] == "Borrowed Trust"
+    prose = asset("read", "corrected-transcript", name="read.md", contentType="text/markdown", size=1200)
+    prose["metadata"] = {"sessionId": "damian-screen-tests-20260910", "title": "Corrected transcript", "characterIds": [], "extra": {}}
+    prose["lastModified"] = "2026-10-02T16:30:42+00:00"
+    bare = pages.assemble(GAME, [prose], [], session_id="damian-screen-tests-20260910")["session"]
+    assert bare["title"] == "Oct 2, 2026 · Damian Screen Tests"
+    assert "transcript" not in bare["title"].casefold()
+    assert bare["excerptKey"].endswith("read.md")
+    assert bare["excerptLabel"] == "Excerpt from the corrected transcript"
+    same = {"id": "playback~job", "kind": "playback", "status": "done", "createdAt": 1_700_000_000, "observedAt": 1_700_000_000, "sessionId": SESSION}
+    instant = {"id": "playback~fast", "kind": "playback", "status": "done", "createdAt": 1_700_000_000, "completedAt": 1_700_000_000.4, "sessionId": SESSION}
+    body = pages.assemble(GAME, [video], [same, instant], session_id=SESSION)["session"]
+    unmeasured = next(item for item in body["pipelines"] if item["id"] == "playback~job")
+    measured = next(item for item in body["pipelines"] if item["id"] == "playback~fast")
+    assert unmeasured["durationSeconds"] is None
+    assert measured["durationSeconds"] == 0
 
 
 def test_unknown_session_detail_is_empty_rather_than_invented():
@@ -229,7 +263,9 @@ def test_sessions_route_renders_list_and_detail_for_every_game():
     assert "mountSessionPages" in source
     for heading in ("Final assets", "Intermediary assets", "Pipelines", "Recording", "Session info", "Scene clips"):
         assert heading in ui
-    assert 'part || "shell"' in source and 'part === "full"' in source
+    assert 'part || "shell"' in source and "timeoutMs: 28000" in source
+    assert "full.data || shell.data" in ui
+    assert "Read more" in ui and "<1s" in ui
     assert "canCreateGame !== true" in source
     transcription = (ROOT / "infra/lambda/media-api/browser_transcription.py").read_text()
     assert 'authorized(claims, "MODEL_PUBLISHERS")' in transcription
