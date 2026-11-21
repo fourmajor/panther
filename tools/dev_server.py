@@ -1340,8 +1340,8 @@ class Store:
         sid = doc.get("sessionId") if isinstance(doc, dict) else None
         return sid if session_pipeline.slug(sid) else None
 
-    def session_pipeline(self, game, session_id=None):
-        """Project the session graph from stored jobs. Reading it never starts work."""
+    def session_observations(self, game):
+        """Project stored jobs into pipeline observations. Reading them never starts work."""
         import session_pipeline
         self.game(game)
         observations, audio, episode_sessions = [], {}, {}
@@ -1430,12 +1430,25 @@ class Store:
             sid = chapter.get("sessionId")
             if session_pipeline.slug(sid):
                 observations.append({"sessionId": sid, "kind": "chapter", "status": "done", "updatedAt": chapter.get("publishedAt") or chapter.get("createdAt"), "outputKey": chapter.get("assetKey"), "label": chapter.get("title"), **job_run("chapter", chapter)})
-        return session_pipeline.view(session_id or None, observations)
+        return observations
+
+    def session_pipeline(self, game, session_id=None):
+        import session_pipeline
+        return session_pipeline.view(session_id or None, self.session_observations(game))
+
+    def session_pages(self, game, session_id=None):
+        import session_pages
+        self.game(game)
+        if session_id is not None and not session_pages.slug(session_id):
+            raise ValueError("Invalid session")
+        return session_pages.assemble(game, self.objects(game), self.session_observations(game), session_id=session_id or None)
 
     def workflows(self, game, identity=None, cursor=None, view=None, workflow_type=None, session_id=None):
         """Observe real SQLite jobs without starting processing or inventing activity."""
         if view == "session-pipeline":
             return self.session_pipeline(game, session_id)
+        if view == "session-pages":
+            return self.session_pages(game, session_id)
         self.game(game)
         plan = json.loads((ROOT / "src/panther_journal/editorial-plan.json").read_text())
         states = {"SUBMITTED": "queued", "QUEUED": "queued", "RUNNING": "running", "PROCESSING": "running", "DONE": "done", "NOVEL_READY": "done", "READY_FOR_VIDEO_DISCUSSION": "done", "FAILED": "failed", "BLOCKED": "paused", "DEFERRED": "paused", "IN_QUEUE": "queued", "IN_PROGRESS": "running", "PUBLISHED": "done", "ATTENTION": "failed", "UNKNOWN": "paused", "GENERATING": "running", "COMPOSING": "running"}

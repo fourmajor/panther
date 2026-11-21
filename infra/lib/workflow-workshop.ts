@@ -24,7 +24,7 @@ export class WorkflowWorkshop extends Construct {
     this.authorizer=props.authorizer;
     this.notifications=new Notifications(this,"Notifications",{api:props.api,authorizer:this.authorizer});
   }
-  bind(props:{accessEnvironment:Record<string,string>;tables:Record<string,dynamodb.Table>}) {
+  bind(props:{accessEnvironment:Record<string,string>;tables:Record<string,dynamodb.Table>;browseTable:dynamodb.ITable}) {
     const index=this.index=new dynamodb.Table(this,"Index",{
       partitionKey:{name:"pk",type:dynamodb.AttributeType.STRING},sortKey:{name:"sk",type:dynamodb.AttributeType.STRING},
       billingMode:dynamodb.BillingMode.PAY_PER_REQUEST,encryption:dynamodb.TableEncryption.AWS_MANAGED,removalPolicy:RemovalPolicy.RETAIN,
@@ -36,6 +36,8 @@ export class WorkflowWorkshop extends Construct {
     const code=lambda.Code.fromAsset(path.join(__dirname,"../../lambda/media-api"),{exclude:["**/__pycache__/**","**/*.pyc"]});
     const create=(name:string,handler:string)=>new lambda.Function(this,name,{runtime:lambda.Runtime.PYTHON_3_13,architecture:lambda.Architecture.ARM_64,code,handler,environment,timeout:Duration.seconds(60),memorySize:256,logGroup:new logs.LogGroup(this,name+"Logs",{retention:logs.RetentionDays.ONE_MONTH})});
     const reader=this.reader=create("Reader","workflow_workshop.handler");
+    reader.addEnvironment("ASSET_BROWSE_TABLE", props.browseTable.tableName);
+    props.browseTable.grant(reader, "dynamodb:GetItem", "dynamodb:Query", "dynamodb:BatchGetItem");
     index.grant(reader,"dynamodb:GetItem","dynamodb:Query","dynamodb:PutItem");
     const writer=create("Projection","workflow_workshop.project_handler");
     index.grantReadWriteData(writer);
