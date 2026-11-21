@@ -2,6 +2,7 @@ import React from 'react';
 import {useQuery} from '@tanstack/react-query';
 import {CircleAlert} from 'lucide-react';
 import {Button} from './components/ui/button.jsx';
+import {Input} from './components/ui/input.jsx';
 import {SessionDownload} from './session-summary.jsx';
 import {formatWhen} from './session-pipeline-model.js';
 
@@ -81,26 +82,107 @@ function Thumb({scope, gameId, imageKey, onImage}) {
     staleTime: 240000,
     retry: false,
   });
-  if (query.data) return <img src={query.data} alt="" />;
+  if (query.data) return <img src={query.data} alt="" loading="lazy" decoding="async"/>;
   return <span className="session-thumb-fallback">{imageKey && query.isPending ? '' : 'No thumbnail'}</span>;
 }
 
-function AssetList({title, assets, empty, scope, gameId, onImage, onPreview}) {
-  return <section className="session-asset-group" aria-label={title}>
-    <h3>{title}</h3>
-    {assets.length === 0 && <p className="session-empty">{empty}</p>}
-    {assets.length > 0 && <ul className="session-assets">{assets.map(asset => <li key={asset.key}>
-      <article className="session-asset">
-        <div className="session-asset-preview">{asset.preview === 'image' ? <Thumb scope={scope} gameId={gameId} imageKey={asset.thumbnailKey || asset.key} onImage={onImage}/> : <span className="session-thumb-fallback">{asset.kindLabel}</span>}</div>
-        <div className="session-asset-copy">
-          <strong>{asset.title || asset.name || asset.kindLabel}</strong>
-          <p>{asset.kindLabel}</p>
-          <p>{bytes(asset.size)} · {when(asset.createdAt) || 'Created time unknown'}</p>
-          <Button variant="outline" size="sm" onClick={() => onPreview(asset.key)}>Open</Button>
-        </div>
-      </article>
-    </li>)}</ul>}
-  </section>;
+function createdStamp(asset) {
+  if (typeof asset.createdAt === 'number') return asset.createdAt;
+  const parsed = Date.parse(asset.createdAt || '');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function matchesAsset(asset, chip, query) {
+  if (chip !== 'all' && asset.typeId !== chip) return false;
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [asset.name, asset.title, asset.kind, asset.kindLabel].some(value => String(value || '').toLowerCase().includes(needle));
+}
+
+function assetSummary(assets) {
+  const files = assets.length === 1 ? '1 file' : `${assets.length} files`;
+  const known = assets.map(asset => asset.size).filter(size => Number.isInteger(size) && size >= 0);
+  if (!known.length) return files;
+  const total = known.reduce((sum, size) => sum + size, 0);
+  const label = bytes(total);
+  return known.length === assets.length ? `${files}, ${label}` : `${files}, at least ${label}`;
+}
+
+function sortAssets(assets, newest) {
+  return [...assets].sort((a, b) => (newest ? createdStamp(b) - createdStamp(a) : createdStamp(a) - createdStamp(b)) || String(a.key).localeCompare(String(b.key)));
+}
+
+function Disclosure({summary, forceOpen, children}) {
+  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => { setOpen(Boolean(forceOpen)); }, [forceOpen]);
+  return <details className="session-disclosure" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{summary}</summary>
+    {open ? <div className="session-disclosure-body">{children}</div> : null}
+  </details>;
+}
+
+function AssetRow({asset, onPreview}) {
+  return <div className="session-asset-row">
+    <span><strong>{asset.title || asset.name || asset.kindLabel}</strong><small>{asset.kindLabel} · {bytes(asset.size)} · {when(asset.createdAt) || 'Created time unknown'}</small></span>
+    <Button variant="outline" size="sm" onClick={() => onPreview(asset.key)}>Open</Button>
+  </div>;
+}
+
+function AssetCards({assets, scope, gameId, onImage, onPreview, large=false}) {
+  return <ul className={large ? 'session-final-grid' : 'session-image-grid'}>{assets.map(asset => <li key={asset.key}>
+    <article className="session-final-card">
+      <div className="session-thumb">{asset.preview === 'image' || asset.thumbnailKey ? <Thumb scope={scope} gameId={gameId} imageKey={asset.thumbnailKey || asset.key} onImage={onImage}/> : <span className="session-thumb-fallback">{asset.kindLabel}</span>}</div>
+      <div className="session-asset-copy">
+        <strong>{asset.title || asset.name || asset.kindLabel}</strong>
+        <p>{asset.kindLabel} · {bytes(asset.size)}</p>
+        <Button variant="outline" size="sm" onClick={() => onPreview(asset.key)}>Open</Button>
+      </div>
+    </article>
+  </li>)}</ul>;
+}
+
+function Library({library, scope, gameId, onImage, onPreview, onShowRun}) {
+  const [chip, setChip] = React.useState('all');
+  const [query, setQuery] = React.useState('');
+  const [newest, setNewest] = React.useState(true);
+  const filtering = chip !== 'all' || query.trim() !== '';
+  const finals = sortAssets((library?.finals || []).filter(asset => matchesAsset(asset, chip, query)), newest);
+  const stages = (library?.stages || []).map(stage => ({
+    ...stage,
+    runs: stage.runs.map(run => ({
+      ...run,
+      types: run.types.map(group => ({...group, assets: sortAssets(group.assets.filter(asset => matchesAsset(asset, chip, query)), newest)})).filter(group => group.assets.length),
+    })).filter(run => run.types.length),
+  })).filter(stage => stage.runs.length);
+  return <div className="session-library">
+    <div className="session-asset-tools">
+      <Input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search filename or type" aria-label="Search assets"/>
+      <Button variant="outline" aria-pressed={newest} onClick={() => setNewest(value => !value)}>{newest ? 'Newest first' : 'Oldest first'}</Button>
+    </div>
+    <div className="session-chips" role="toolbar" aria-label="Asset types">
+      <button type="button" className="session-chip" aria-pressed={chip === 'all'} onClick={() => setChip('all')}>All</button>
+      {(library?.types || []).map(type => <button key={type.id} type="button" className="session-chip" aria-pressed={chip === type.id} onClick={() => setChip(type.id)}>{type.label}</button>)}
+    </div>
+    <section aria-label="Final assets">
+      <h3>Final assets</h3>
+      {finals.length ? <AssetCards assets={finals} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} large/> : <p className="session-empty">No final assets yet.</p>}
+    </section>
+    <section aria-label="Intermediary assets">
+      <h3>Intermediary assets</h3>
+      {stages.length === 0 && <p className="session-empty">No intermediary assets for this session.</p>}
+      {stages.map(stage => {
+        const stageAssets = stage.runs.flatMap(run => run.types.flatMap(group => group.assets));
+        return <Disclosure key={stage.id} forceOpen={filtering} summary={<span className="session-disclosure-label"><strong>{stage.title}</strong><span>{assetSummary(stageAssets)}</span></span>}>
+        {stage.runs.map(run => <div key={run.id || 'untied'} className="session-run-group">
+          <p className="session-run-heading">{run.anchor ? <a href={`#${run.anchor}`} onClick={event => { event.preventDefault(); onShowRun(run.anchor); }}>{run.title}</a> : run.title}</p>
+          {run.types.map(group => <Disclosure key={group.id} forceOpen={filtering} summary={<span className="session-disclosure-label"><strong>{group.title}</strong><span>{assetSummary(group.assets)}</span></span>}>
+            {group.layout === 'images' ? <AssetCards assets={group.assets} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview}/> : <div className="session-asset-rows">{group.assets.map(asset => <AssetRow key={asset.key} asset={asset} onPreview={onPreview}/>)}</div>}
+          </Disclosure>)}
+        </div>)}
+      </Disclosure>;
+      })}
+    </section>
+  </div>;
 }
 
 function Player({recordingKey, onSign, onDownload}) {
@@ -121,6 +203,11 @@ function Player({recordingKey, onSign, onDownload}) {
 }
 
 function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign, onDownload, onSummary, onImage}) {
+  const [currentRun, setCurrentRun] = React.useState(null);
+  function showRun(anchor) {
+    setCurrentRun(anchor);
+    document.getElementById(anchor)?.scrollIntoView({block: 'nearest'});
+  }
   return <article className="session-detail">
     <Link href={listPath} onNavigate={onNavigate} className="session-back">Sessions</Link>
     <header className="session-detail-heading">
@@ -143,14 +230,13 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
     </section>
     <section className="session-block" aria-label="Assets">
       <h2>Assets</h2>
-      <AssetList title="Final assets" assets={session.finalAssets || []} empty="No final assets yet." scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview}/>
-      <AssetList title="Intermediary assets" assets={session.intermediaryAssets || []} empty="No intermediary assets for this session." scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview}/>
+      <Library library={session.library} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} onShowRun={showRun}/>
     </section>
     <section className="session-block" aria-label="Pipelines">
       <h2>Pipelines</h2>
       {(session.pipelines || []).length === 0 && <p className="session-empty">No pipeline runs are tied to this session.</p>}
       {(session.pipelines || []).length > 0 && <ul className="session-runs">{session.pipelines.map(run => <li key={run.id}>
-        <article className="session-run">
+        <article className="session-run" id={run.anchor || undefined} data-current={currentRun === run.anchor ? 'true' : 'false'}>
           <header><strong>{run.type}</strong><span className="session-status" data-status={run.status}>{run.statusLabel}</span></header>
           {run.title && run.title !== run.type && <p>{run.title}</p>}
           <dl>

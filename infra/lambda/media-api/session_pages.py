@@ -118,6 +118,133 @@ def classify(asset, finals=None):
     return "intermediary"
 
 
+# Kind to the pipeline that produces it when no run output pin is recorded.
+# Unknown kinds stay visible under Other work rather than disappearing.
+KIND_STAGE = {
+    "raw-transcript": "editorial",
+    "transcript": "editorial",
+    "corrected-transcript": "editorial",
+    "edited-transcript": "editorial",
+    "recording": "playback",
+    "recording-manifest": "playback",
+    "recording-playback": "playback",
+    "recording-playback-manifest": "playback",
+    "recording-checkpoint": "playback",
+    "recording-setup": "playback",
+    "capture-health": "playback",
+    "model-3d": "model",
+    "model-provenance": "model",
+    "face-pass": "model",
+    "scene-render": "scene-render",
+    "episode-render": "episode-render",
+    "narration": "narration",
+    "speech": "narration",
+    "voice-performance": "narration",
+    "asset-generation": "asset-generation",
+    "portrait": "asset-generation",
+    "character-turnaround-view": "asset-generation",
+}
+STAGE_ORDER = (
+    "session-finalization",
+    "editorial",
+    "transcription",
+    "playback",
+    "model",
+    "narration",
+    "asset-generation",
+    "video-generation",
+    "scene-render",
+    "episode-render",
+    "video-production",
+    "other",
+)
+TYPE_SPECS = (
+    ("audio", "Audio", "rows"),
+    ("transcripts", "Transcripts", "rows"),
+    ("scripts", "Scripts", "rows"),
+    ("portraits", "Portraits", "images"),
+    ("face-passes", "Face passes", "images"),
+    ("images", "Images", "images"),
+    ("video", "Video", "rows"),
+    ("logs", "Logs and JSON", "rows"),
+    ("other", "Other", "rows"),
+)
+SCRIPT_KINDS = {
+    "novel-draft", "novel-outline", "novel-revision", "video-screenplay",
+    "video-shooting-script", "video-treatment", "video-audio-script",
+}
+IMAGE_TYPES = {"portraits", "face-passes", "images"}
+
+
+def stage_for_kind(kind):
+    if kind in KIND_STAGE:
+        return KIND_STAGE[kind]
+    if kind.startswith(("novel-", "video-", "editorial-")):
+        return "editorial"
+    return "other"
+
+
+def asset_type(view):
+    """File-type bucket. Unknown kinds land in Other and stay visible."""
+    kind = view.get("kind") or ""
+    name = (view.get("name") or "").lower()
+    preview = view.get("preview")
+    if "face" in kind and "pass" in kind:
+        return "face-passes"
+    if kind in {"portrait", "character-turnaround-view"}:
+        return "portraits"
+    if "transcript" in kind:
+        return "transcripts"
+    if kind in SCRIPT_KINDS or kind.endswith("-script") or "screenplay" in kind:
+        return "scripts"
+    if preview == "audio" or kind in {"recording", "narration", "speech", "voice-performance", "music"}:
+        return "audio"
+    if preview == "video":
+        return "video"
+    if preview == "image":
+        return "images"
+    content = view.get("contentType") or ""
+    if (
+        content in {"application/json", "text/plain"}
+        or name.endswith((".json", ".log", ".txt"))
+        or "provenance" in kind
+        or kind.endswith("-log")
+    ):
+        return "logs"
+    return "other"
+
+
+def format_bytes(size):
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 ** 2:
+        return f"{size / 1024:.1f} KB"
+    if size < 1024 ** 3:
+        return f"{size / 1024 ** 2:.1f} MB"
+    return f"{size / 1024 ** 3:.1f} GB"
+
+
+def size_summary(assets):
+    """Count plus total size. Missing sizes never become zero."""
+    count = len(assets)
+    files = "1 file" if count == 1 else f"{count} files"
+    known = [asset["size"] for asset in assets if isinstance(asset.get("size"), int)]
+    if not known:
+        return {"count": count, "size": None, "summary": files}
+    total = sum(known)
+    label = format_bytes(total)
+    if len(known) != count:
+        text = f"{files}, at least {label}"
+    else:
+        text = f"{files}, {label}"
+    return {"count": count, "size": total, "summary": text}
+
+
+def anchor_for(run_id):
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", run_id).replace("~", "--").strip("-")
+    return "pipeline-" + (safe or "run")[:120]
+
+
 def kind_label(kind):
     if not isinstance(kind, str) or not kind.strip():
         return "Asset"
@@ -227,7 +354,8 @@ def _asset_view(game, asset):
     extra = metadata.get("extra") if isinstance(metadata.get("extra"), dict) else {}
     preview = extra.get("preview") if isinstance(extra.get("preview"), dict) else {}
     image = _same_game_key(game, thumb) or _same_game_key(game, preview.get("imageKey"))
-    return {
+    job = extra.get("jobId")
+    result = {
         "key": asset.get("key"),
         "kind": kind,
         "kindLabel": kind_label(kind),
@@ -239,7 +367,10 @@ def _asset_view(game, asset):
         "role": classify(asset),
         "preview": _preview(asset),
         "thumbnailKey": image,
+        "jobId": job if isinstance(job, str) and job.strip() else None,
     }
+    result["typeId"] = asset_type(result)
+    return result
 
 
 def _people(assets):
@@ -374,6 +505,13 @@ def shape_run(item, game):
             ended = None
     duration = int(ended - started) if ended and started else None
     message = _clip(item.get("note") or item.get("message"))
+    outputs = []
+    for stage in item.get("stages") or []:
+        if isinstance(stage, dict) and isinstance(stage.get("outputKey"), str):
+            outputs.append(stage["outputKey"])
+    for field in ("outputKey", "assetKey"):
+        if isinstance(item.get(field), str):
+            outputs.append(item[field])
     if kind in DETAIL_KINDS and slug(kind):
         detail = f"/games/{game}/workflows/{kind}/{identity}"
     else:
@@ -390,6 +528,115 @@ def shape_run(item, game):
         "durationSeconds": duration,
         "message": message,
         "detailPath": detail,
+        "outputKeys": list(dict.fromkeys(outputs)),
+        "anchor": anchor_for(identity),
+    }
+
+
+def _run_for(view, runs, by_output):
+    pinned = by_output.get(view.get("key"))
+    if pinned:
+        return pinned
+    job = view.get("jobId")
+    if not job:
+        return None
+    for run in runs:
+        if job == run["id"] or job == run["id"].split("~", 1)[-1]:
+            return run
+    return None
+
+
+def _featured_transcript(views):
+    transcripts = [view for view in views if view.get("typeId") == "transcripts" and view.get("role") != "final"]
+    preferred = [view for view in transcripts if view.get("kind") in {"corrected-transcript", "edited-transcript"}]
+    pool = preferred or transcripts
+    if not pool:
+        return None
+    return sorted(pool, key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""))[-1]
+
+
+def organize_library(views, runs):
+    """Final cards, then intermediary files by pipeline stage, run, and type."""
+    by_output = {}
+    for run in runs:
+        for key in run.get("outputKeys") or []:
+            by_output.setdefault(key, run)
+    featured = _featured_transcript(views)
+    finals = [view for view in views if view.get("role") == "final"]
+    if featured and featured not in finals:
+        finals.append(featured)
+    finals.sort(key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""), reverse=True)
+    buckets = {}
+    for view in views:
+        if view.get("role") == "final" or view is featured:
+            continue
+        run = _run_for(view, runs, by_output)
+        stage = run["kind"] if run else stage_for_kind(view.get("kind") or "")
+        run_id = run["id"] if run else ""
+        buckets.setdefault((stage, run_id), {}).setdefault(view["typeId"], []).append(view)
+    type_meta = {type_id: (label, layout) for type_id, label, layout in TYPE_SPECS}
+    present = []
+    stages = []
+    seen_stages = []
+    for stage, _run_id in buckets:
+        if stage not in seen_stages:
+            seen_stages.append(stage)
+    ordered = [stage for stage in STAGE_ORDER if stage in seen_stages]
+    ordered.extend(sorted(stage for stage in seen_stages if stage not in STAGE_ORDER))
+    run_by_id = {run["id"]: run for run in runs}
+    for stage in ordered:
+        run_ids = []
+        for key_stage, run_id in buckets:
+            if key_stage == stage and run_id not in run_ids:
+                run_ids.append(run_id)
+        run_ids.sort(key=lambda run_id: (-(run_by_id.get(run_id, {}).get("startedAt") or 0), run_id))
+        run_groups = []
+        stage_assets = []
+        for run_id in run_ids:
+            types = buckets[(stage, run_id)]
+            type_groups = []
+            run_assets = []
+            for type_id, label, layout in TYPE_SPECS:
+                members = types.get(type_id) or []
+                if not members:
+                    continue
+                members = sorted(members, key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""), reverse=True)
+                run_assets.extend(members)
+                if type_id not in present:
+                    present.append(type_id)
+                type_groups.append({
+                    "id": type_id,
+                    "title": label,
+                    "layout": layout,
+                    **size_summary(members),
+                    "assets": members,
+                })
+            for type_id, members in types.items():
+                if type_id in type_meta:
+                    continue
+                label = type_id.replace("-", " ").capitalize()
+                members = sorted(members, key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""), reverse=True)
+                run_assets.extend(members)
+                type_groups.append({"id": type_id, "title": label, "layout": "rows", **size_summary(members), "assets": members})
+            run = run_by_id.get(run_id)
+            stage_assets.extend(run_assets)
+            run_groups.append({
+                "id": run_id or None,
+                "title": run["title"] if run else "Not tied to a run",
+                "anchor": run["anchor"] if run else None,
+                **size_summary(run_assets),
+                "types": type_groups,
+            })
+        stages.append({
+            "id": stage,
+            "title": pipeline_label(stage) if stage != "other" else "Other work",
+            **size_summary(stage_assets),
+            "runs": run_groups,
+        })
+    return {
+        "finals": finals,
+        "stages": stages,
+        "types": [{"id": type_id, "label": type_meta[type_id][0]} for type_id in present if type_id in type_meta],
     }
 
 
@@ -475,7 +722,10 @@ def assemble(game, assets, runs, session_id=None, summaries=None, assets_complet
         views.sort(key=lambda asset: (str(asset.get("createdAt") or ""), asset["key"]), reverse=True)
         pipeline = []
         for run in match["runs"]:
-            pipeline.append({**run, "pipelinePath": f"/games/{game}/pipeline/{session_id}"})
+            public_run = {key: value for key, value in run.items() if key != "outputKeys"}
+            public_run["pipelinePath"] = f"/games/{game}/pipeline/{session_id}"
+            pipeline.append(public_run)
+        library = organize_library(views, match["runs"])
         selected = {
             "id": session_id,
             "title": match["title"],
@@ -491,6 +741,7 @@ def assemble(game, assets, runs, session_id=None, summaries=None, assets_complet
             "href": match["href"],
             "finalAssets": [asset for asset in views if asset["role"] == "final"],
             "intermediaryAssets": [asset for asset in views if asset["role"] != "final"],
+            "library": library,
             "pipelines": pipeline,
         }
     hidden = {"assets", "runs", "recordingKey"}

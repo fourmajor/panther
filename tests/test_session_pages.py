@@ -113,6 +113,46 @@ def test_pipeline_timing_ignores_an_end_before_the_start_and_empty_recap():
     assert body["intermediaryAssets"][0]["kind"] == "document"
 
 
+def test_intermediary_assets_group_by_stage_run_and_type_with_sizes():
+    faces = []
+    for index, size in enumerate((600 * 1024 ** 2, 600 * 1024 ** 2, None)):
+        item = asset(f"face-{index}", "face-pass", name=f"pass-{index}.png", contentType="image/png", size=size or 0)
+        if size is None:
+            item["size"] = None
+        item["metadata"]["extra"] = {"jobId": "model~tied"}
+        faces.append(item)
+    loose = asset("loose-face", "face-pass", name="loose.png", contentType="image/png", size=1024)
+    log = asset("log", "editorial-proof", name="proof.json", contentType="application/json", size=2048)
+    mystery = asset("mystery", "flux-pass", name="mesh.bin", size=10)
+    transcript = asset("raw", "raw-transcript", name="transcript.json", contentType="application/json", size=100)
+    video = asset("video", "tv-episode", name="episode.mp4", contentType="video/mp4", size=4096)
+    runs = [
+        {"id": "model~tied", "kind": "model", "status": "done", "title": "3D model", "createdAt": 50, "completedAt": 80, "sessionId": SESSION, "stages": [{"id": "processing", "outputKey": faces[0]["key"]}]},
+        {"id": "editorial~job", "kind": "editorial", "status": "done", "title": "Story & screen planning", "createdAt": 10, "completedAt": 20, "sessionId": SESSION, "outputKey": log["key"]},
+    ]
+    detail = pages.assemble(GAME, [*faces, loose, log, mystery, transcript, video], runs, session_id=SESSION)["session"]
+    library = detail["library"]
+    final_kinds = [item["kind"] for item in library["finals"]]
+    assert "tv-episode" in final_kinds
+    assert "raw-transcript" in final_kinds
+    assert "raw-transcript" not in {item["kind"] for stage in library["stages"] for run in stage["runs"] for group in run["types"] for item in group["assets"]}
+    model = next(stage for stage in library["stages"] if stage["id"] == "model")
+    assert model["summary"].startswith("4 files")
+    tied = next(run for run in model["runs"] if run["id"] == "model~tied")
+    assert tied["anchor"] == detail["pipelines"][0]["anchor"] or tied["anchor"] == next(run for run in detail["pipelines"] if run["id"] == "model~tied")["anchor"]
+    faces_group = next(group for group in tied["types"] if group["id"] == "face-passes")
+    assert faces_group["count"] == 3
+    assert faces_group["layout"] == "images"
+    assert "at least" in faces_group["summary"]
+    assert faces_group["title"] == "Face passes"
+    editorial = next(stage for stage in library["stages"] if stage["id"] == "editorial")
+    assert editorial["runs"][0]["id"] == "editorial~job"
+    assert any(group["id"] == "logs" for group in editorial["runs"][0]["types"])
+    other = next(stage for stage in library["stages"] if stage["id"] == "other")
+    assert any(item["kind"] == "flux-pass" for run in other["runs"] for group in run["types"] for item in group["assets"])
+    assert pages.size_summary([{"size": 1536}, {"size": 0}])["summary"] == "2 files, 1.5 KB"
+
+
 def test_unknown_session_detail_is_empty_rather_than_invented():
     body = pages.assemble(GAME, [], [], session_id="quiet-table")
     assert body["session"]["title"] == "quiet-table"
