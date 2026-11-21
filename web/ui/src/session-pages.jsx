@@ -18,6 +18,7 @@ function when(value) {
 function duration(seconds) {
   const total = Number(seconds);
   if (!Number.isFinite(total) || total < 0) return null;
+  if (total < 1) return '<1s';
   const rounded = Math.round(total);
   const hours = Math.floor(rounded / 3600);
   const minutes = Math.floor((rounded % 3600) / 60);
@@ -50,16 +51,32 @@ function names(people, empty) {
 }
 
 function excerptText(document) {
+  if (typeof document === 'string' && document.trim()) return document.trim();
   if (!document || typeof document !== 'object') return null;
-  const chapter = document.payload?.chapter || document.chapter || document.text || document.markdown;
+  const chapter = document.payload?.chapter || document.chapter || document.text || document.markdown
+    || document.review?.markdown || document.payload?.text || document.payload?.markdown || document.payload?.review?.markdown;
   if (typeof chapter === 'string' && chapter.trim()) return chapter.trim();
   const segments = document.segments || document.payload?.transcript?.segments || document.transcript?.segments || document.payload?.segments;
   if (!Array.isArray(segments)) return null;
-  const lines = segments.map(segment => (typeof segment?.text === 'string' && segment.text) || (typeof segment?.utterance === 'string' && segment.utterance) || '').map(line => line.trim()).filter(Boolean);
-  return lines.length ? lines.slice(0, 4).join(' ') : null;
+  const lines = segments.map(segment => (typeof segment?.text === 'string' && segment.text) || (typeof segment?.utterance === 'string' && segment.utterance) || (typeof segment?.content === 'string' && segment.content) || '').map(line => line.trim()).filter(Boolean);
+  return lines.length ? lines.join(' ') : null;
 }
 
-function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSummary, onExcerpt, compact}) {
+function clipExcerpt(text) {
+  const clean = String(text).replace(/\s+/g, ' ').trim();
+  const sentences = clean.match(/[^.!?]+[.!?]+(?:\s+|$)/g) || [];
+  let short = '';
+  for (const sentence of sentences.slice(0, 4)) {
+    if (short && (short + sentence).trim().length > 600) break;
+    short = `${short}${sentence}`;
+    if (short.trim().length >= 600) break;
+  }
+  short = (short || clean.slice(0, 600)).trim();
+  if (short.length > 600) short = short.slice(0, 600).replace(/\s+\S*$/, '').trim();
+  return short;
+}
+
+function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSummary, onExcerpt, onPreview, compact}) {
   const query = useQuery({
     queryKey: ['session-recap', scope, gameId, sourceKey || ''],
     enabled: !text && Boolean(sourceKey),
@@ -86,8 +103,12 @@ function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSumm
   if (sourceKey && query.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
   if (summaryMissing && excerptKey && excerpt.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
   if (fallback) {
-    const short = fallback.length > 180 ? `${fallback.slice(0, 180).replace(/\s+\S*$/, '')}…` : fallback;
-    return <p className={compact ? 'session-card-summary' : 'session-recap'}><span className="session-excerpt-label">{excerptLabel || 'Excerpt'}. </span>{compact ? short : fallback}</p>;
+    const body = clipExcerpt(fallback);
+    const short = body.length > 180 ? `${body.slice(0, 180).replace(/\s+\S*$/, '')}…` : body;
+    return <div className={compact ? undefined : 'session-recap'}>
+      <p className={compact ? 'session-card-summary' : undefined}><span className="session-excerpt-label">{excerptLabel || 'Excerpt'}. </span>{compact ? short : body}</p>
+      {!compact && excerptKey && onPreview && <Button variant="outline" size="sm" onClick={() => onPreview(excerptKey)}>Read more</Button>}
+    </div>;
   }
   if (query.error && query.error.status !== 400 && !excerptKey) {
     if (compact) return <p className="session-card-summary">Recap unavailable.</p>;
@@ -96,7 +117,7 @@ function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSumm
   return compact ? <p className="session-card-summary">No recap yet.</p> : <p className="session-empty">No recap has been written for this session yet.</p>;
 }
 
-function Thumb({scope, gameId, imageKey, onImage}) {
+function Thumb({scope, gameId, imageKey, onImage, pending=false}) {
   const query = useQuery({
     queryKey: ['session-thumb', scope, gameId, imageKey || ''],
     enabled: Boolean(imageKey),
@@ -105,7 +126,8 @@ function Thumb({scope, gameId, imageKey, onImage}) {
     retry: false,
   });
   if (query.data) return <img src={query.data} alt="" loading="lazy" decoding="async"/>;
-  return <span className="session-thumb-fallback">{imageKey && query.isPending ? '' : 'No thumbnail'}</span>;
+  if (pending || (imageKey && query.isPending)) return <span className="session-thumb-fallback" aria-hidden="true"/>;
+  return <span className="session-thumb-fallback">No thumbnail</span>;
 }
 
 function createdStamp(asset) {
@@ -281,7 +303,7 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
         <dt>Characters</dt><dd>{names(session.characters, 'No characters linked')}</dd>
       </dl>
       <h3>Recap</h3>
-      <Recap scope={scope} gameId={gameId} sourceKey={session.summarySourceKey} text={session.summaryText} excerptKey={session.excerptKey} excerptLabel={session.excerptLabel} onSummary={onSummary} onExcerpt={onExcerpt}/>
+      <Recap scope={scope} gameId={gameId} sourceKey={session.summarySourceKey} text={session.summaryText} excerptKey={session.excerptKey} excerptLabel={session.excerptLabel} onSummary={onSummary} onExcerpt={onExcerpt} onPreview={onPreview}/>
     </section>
     <section className="session-block" aria-label="Assets">
       <h2>Assets</h2>
@@ -293,7 +315,7 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
       {(session.pipelines || []).length === 0 && <p className="session-empty">No pipeline runs are tied to this session.</p>}
       {groups.map(group => {
         const last = when(group.lastRun);
-        const total = duration(group.totalDuration);
+        const total = group.totalDuration == null ? '—' : duration(group.totalDuration);
         const summary = [
           group.runs.length === 1 ? '1 run' : `${group.runs.length} runs`,
           group.statusLabel,
@@ -309,7 +331,7 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
               <dl>
                 <dt>Started</dt><dd>{when(run.startedAt) || 'Unknown'}</dd>
                 <dt>Ended</dt><dd>{run.stale ? 'Abandoned' : when(run.endedAt) || (run.status === 'running' || run.status === 'queued' ? 'In progress' : 'Unknown')}</dd>
-                <dt>Duration</dt><dd>{run.stale ? 'Stale' : duration(run.durationSeconds) || 'Unknown'}</dd>
+                <dt>Duration</dt><dd>{run.stale ? 'Stale' : duration(run.durationSeconds) || '—'}</dd>
               </dl>
               {run.message && <p className="session-run-log">{run.message}</p>}
               <div className="session-run-links">
@@ -339,17 +361,18 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
     staleTime: 60000,
   });
   const listPath = `/games/${encodeURIComponent(gameId)}/sessions`;
-  const data = (sessionId && full.data) || shell.data;
+  const data = full.data || shell.data;
   const libraryPending = Boolean(sessionId) && shell.data?.scope === 'shell' && !full.data;
+  const thumbsPending = !full.data && !full.error;
   return <div className="session-pages">
     {shell.isPending && <div className="session-grid" aria-label="Loading sessions">{[0, 1, 2].map(item => <div className="session-tile session-tile-loading" key={item}><div className="session-thumb"/><div className="session-line"/><div className="session-line session-line-short"/></div>)}</div>}
     {shell.error && !data && <div><p role="alert" className="session-error"><CircleAlert size={16}/>{shell.error.message || 'Sessions could not be loaded.'}</p><Button variant="outline" onClick={() => shell.refetch()}>Retry sessions</Button></div>}
-    {data && !data.complete && <p role="status" className="session-note">Some catalog pages were not read. This list may be missing assets. <Button variant="outline" size="sm" onClick={() => query.refetch()}>Retry sessions</Button></p>}
+    {data && !data.complete && <p role="status" className="session-note">Some catalog pages were not read. This list may be missing assets. <Button variant="outline" size="sm" onClick={() => (full.data ? full : shell).refetch()}>Retry sessions</Button></p>}
     {data && !sessionId && <section aria-label="Sessions">
       {data.sessions.length === 0 && <p className="session-empty">No sessions yet.</p>}
       {data.sessions.length > 0 && <ul className="session-grid">{data.sessions.map(item => <li key={item.id}>
         <Link href={item.href || `${listPath}/${encodeURIComponent(item.id)}`} onNavigate={onNavigate} className="session-tile" data-status={item.status} aria-label={`${item.title}, ${item.statusLabel}`}>
-          <span className="session-thumb"><Thumb scope={scope} gameId={gameId} imageKey={item.thumbnailKey} onImage={onImage}/></span>
+          <span className="session-thumb"><Thumb scope={scope} gameId={gameId} imageKey={item.thumbnailKey} onImage={onImage} pending={thumbsPending && !item.thumbnailKey}/></span>
           <span className="session-tile-copy">
             <strong>{item.title}</strong>
             <span className="session-date">{when(item.occurredAt) || 'Date unknown'}</span>
