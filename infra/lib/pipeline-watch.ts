@@ -7,6 +7,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as sns from "aws-cdk-lib/aws-sns";
 
@@ -53,6 +54,11 @@ export class PipelineWatch extends Construct {
     props.workshopTable.grantReadWriteData(fn);
     for (const table of Object.values(props.jobs)) table.grantReadData(fn);
     topic.grantPublish(fn);
+    fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["cloudwatch:PutMetricData"],
+      resources: ["*"],
+      conditions: {StringEquals: {"cloudwatch:namespace": "Panther/Pipelines"}},
+    }));
     new events.Rule(this, "Schedule", {
       schedule: events.Schedule.rate(Duration.minutes(10)),
       targets: [new targets.LambdaFunction(fn)],

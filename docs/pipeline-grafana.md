@@ -1,33 +1,25 @@
 # Pipeline runs in Grafana
 
-Panther's Editorial, Model, and Playback state machines already publish run metrics to
-CloudWatch in `us-west-2` under the `AWS/States` namespace. No custom metric series is
-added for this dashboard. Grafana is not part of the AWS deployment. Import
-[`infra/grafana/pipeline-runs.json`](../infra/grafana/pipeline-runs.json) into the
-self-hosted Grafana that already has a CloudWatch data source.
+Pipeline runs are counted in CloudWatch namespace `Panther/Pipelines`, in `us-west-2`.
+The samples come from the same workshop records the session page lists, including
+transcription, audio assembly, 3D modeling, narration, asset and video generation,
+scene video, episode assembly, and video finishing. Step Functions executions are not
+the source. A run id or session id is never a dimension.
 
-The dashboard graphs, for each of those three pipelines:
+Metrics, each with one dimension `Pipeline` (the run kind):
 
-- runs by status: `ExecutionsStarted`, `ExecutionsSucceeded`, `ExecutionsFailed`,
-  `ExecutionsAborted`, `ExecutionsTimedOut` (sum, one hour)
-- duration: `ExecutionTime` average and p90, in milliseconds
-- failures: `ExecutionsFailed`, `ExecutionsTimedOut`, and `ExecutionsAborted`
+- `RunsStarted`, `RunsSucceeded`, `RunsFailed` — count, emitted when a run is first
+  recorded or when it reaches that status
+- `RunDuration` — milliseconds from creation to the terminal update, average and p90
 
-`ExecutionTime` is the Step Functions interval from start to close. A run that has not
-closed yet does not contribute a duration.
+Game is not a dimension. Each extra game would bill another metric per pipeline.
+A finished run from the last 14 days is published once by the existing 10-minute
+watcher. CloudWatch rejects older timestamps. Later status changes publish themselves.
 
-## Import
-
-In Grafana: Dashboards, New, Import, and upload `infra/grafana/pipeline-runs.json`.
-When asked for **CloudWatch data source**, choose the existing CloudWatch data source.
-That choice fills the `datasource` variable. Region defaults to `us-west-2`.
-
-The Editorial, Model, and Playback variables list `StateMachineArn` values from
-`ExecutionsStarted` and keep the ARN whose name contains `EditorialProcessing`,
-`ModelProcessing`, or `PlaybackProcessing`. Those strings are the CDK construct ids.
-If a variable is empty, the machine has not emitted that metric yet, or the generated
-state-machine name does not contain the construct id. Open the variable and select the
-ARN. Do not rename a state machine to satisfy the filter.
+Import [`infra/grafana/pipeline-runs.json`](../infra/grafana/pipeline-runs.json).
+The dashboard time range is 30 days. Stat panels also show the last 24 hours and 7 days.
+The CloudWatch data source is the `datasource` variable. Region defaults to `us-west-2`.
+Re-import replaces the previous Step Functions panels.
 
 ## Read-only data source
 
@@ -35,13 +27,9 @@ CDK creates IAM user `panther-grafana-readonly` and one access key. The key is w
 only to Secrets Manager secret `panther/grafana-cloudwatch-readonly`.
 `PantherWatchdogReadOnly` can call `secretsmanager:GetSecretValue` on that secret's ARN
 and on `panther/viewer-credentials`. It cannot read other secrets. Do not create another
-user or key, and do not print the secret value.
+user or key, and do not print the secret value. Do not rotate the key for a policy change.
 
 The user's policy is:
-
-CloudWatch metric reads cannot be limited to a state-machine ARN. `Resource` is `*`.
-The actions are read-only. This dashboard does not query logs, and it does not need
-`states:StartExecution` or any write.
 
 ```json
 {
@@ -68,13 +56,17 @@ The actions are read-only. This dashboard does not query logs, and it does not n
         "tag:GetResources"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "LogGroupList",
+      "Effect": "Allow",
+      "Action": ["logs:DescribeLogGroups"],
+      "Resource": "*"
     }
   ]
 }
 ```
 
-`cloudwatch:GetMetricData` and `cloudwatch:ListMetrics` are what the panels and the
-state-machine variables call. `GetMetricStatistics` remains because older Grafana
-CloudWatch plugin builds still use it. The describe-alarm and EC2/tag actions are the
-plugin's metric-browser calls, not a request to read game data. `states:ListStateMachines`
-is not required. The variable values come from `ListMetrics`.
+`logs:DescribeLogGroups` is only the list Grafana's data-source health check calls.
+It is not permission to read log events. This dashboard does not query logs, and it
+does not need `states:StartExecution` or any write.

@@ -182,6 +182,12 @@ def store(value, previous):
         if exc.response["Error"]["Code"] == "TransactionCanceledException" and all(reason.get("Code") in {"None", "ConditionalCheckFailed"} for reason in exc.response.get("CancellationReasons", [])):
             raise ClientError({"Error": {"Code": "ConditionalCheckFailedException", "Message": "Workflow hierarchy revision changed"}}, "PutItem") from exc
         raise
+    try:
+        from pipeline_metrics import points_for_transition, publish
+        import boto3
+        publish(points_for_transition(previous, value), boto3.client("cloudwatch"))
+    except Exception:
+        pass
     return item
 
 

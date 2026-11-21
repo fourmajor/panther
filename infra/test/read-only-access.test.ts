@@ -32,6 +32,7 @@ test("grafana and viewer credentials are stored, not emitted as access keys", ()
   assert.match(body, /cloudwatch:DescribeAlarms/);
   assert.match(body, /ec2:DescribeRegions/);
   assert.match(body, /tag:GetResources/);
+  assert.match(body, /logs:DescribeLogGroups/);
   assert.match(body, /secretsmanager:GetSecretValue/);
   assert.match(body, /PantherWatchdogReadOnly/);
   assert.match(body, /penelope-viewer/);

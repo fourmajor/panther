@@ -7,6 +7,7 @@ import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as sources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import {Notifications} from "./notifications";
 
@@ -41,6 +42,13 @@ export class WorkflowWorkshop extends Construct {
     index.grant(reader,"dynamodb:GetItem","dynamodb:Query","dynamodb:PutItem");
     const writer=create("Projection","workflow_workshop.project_handler");
     index.grantReadWriteData(writer);
+    const publishMetrics = () => new iam.PolicyStatement({
+      actions: ["cloudwatch:PutMetricData"],
+      resources: ["*"],
+      conditions: {StringEquals: {"cloudwatch:namespace": "Panther/Pipelines"}},
+    });
+    reader.addToRolePolicy(publishMetrics());
+    writer.addToRolePolicy(publishMetrics());
     for(const table of Object.values(props.tables)) {
       table.grant(writer,"dynamodb:GetItem","dynamodb:Query","dynamodb:Scan");
       writer.addEventSource(new sources.DynamoEventSource(table,{startingPosition:lambda.StartingPosition.TRIM_HORIZON,batchSize:10,bisectBatchOnError:true,reportBatchItemFailures:true,retryAttempts:-1}));
