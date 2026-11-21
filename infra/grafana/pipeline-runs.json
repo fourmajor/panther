@@ -75,12 +75,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsStarted\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsStarted"
         }
       ],
       "fieldConfig": {
@@ -125,12 +126,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsSucceeded\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsSucceeded"
         }
       ],
       "fieldConfig": {
@@ -175,12 +177,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
       "fieldConfig": {
@@ -225,12 +228,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsStarted\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsStarted"
         }
       ],
       "fieldConfig": {
@@ -275,12 +279,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsSucceeded\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsSucceeded"
         }
       ],
       "fieldConfig": {
@@ -325,12 +330,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
       "fieldConfig": {
@@ -375,12 +381,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsStarted\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsStarted"
         },
         {
           "refId": "B",
@@ -390,12 +397,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsSucceeded\"', 'Sum', 3600)",
           "id": "B",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsSucceeded"
         },
         {
           "refId": "C",
@@ -405,12 +413,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "C",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
       "fieldConfig": {
@@ -454,12 +463,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunsFailed\"', 'Sum', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunsFailed"
         }
       ],
       "fieldConfig": {
@@ -503,12 +513,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunDuration\"', 'Average', 3600)",
           "id": "A",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunDuration"
         },
         {
           "refId": "B",
@@ -518,12 +529,13 @@
           },
           "region": "$region",
           "queryMode": "Metrics",
-          "metricQueryType": 1,
+          "metricQueryType": 0,
           "metricEditorMode": 1,
           "expression": "SEARCH('{Panther/Pipelines,Pipeline} MetricName=\"RunDuration\"', 'p90', 3600)",
           "id": "B",
           "period": "3600",
-          "label": "${PROP('Dim.Pipeline')}"
+          "label": "${PROP('Dim.Pipeline')}",
+          "statistic": "Pipeline} MetricName=\"RunDuration"
         }
       ],
       "fieldConfig": {
