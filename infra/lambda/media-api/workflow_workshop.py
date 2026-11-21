@@ -320,7 +320,8 @@ def catalog_assets(game, sections=("all",)):
     assets, seen, complete = [], set(), True
     if sections == ("all",):
         assets, complete = browse_index.gather(game, "all", consistent=False)
-        _CATALOG_CACHE[key] = (now, assets, complete)
+        if complete:
+            _CATALOG_CACHE[key] = (now, assets, complete)
         return assets, complete
     for section in sections:
         cursor, pages = None, 0
