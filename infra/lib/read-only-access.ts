@@ -45,6 +45,11 @@ export function grafanaPolicyStatements(): iam.PolicyStatementProps[] {
       actions: ["ec2:DescribeRegions", "ec2:DescribeTags", "tag:GetResources"],
       resources: ["*"],
     },
+    {
+      sid: "LogGroupList",
+      actions: ["logs:DescribeLogGroups"],
+      resources: ["*"],
+    },
   ];
 }
 

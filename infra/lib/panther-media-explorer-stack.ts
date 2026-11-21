@@ -496,11 +496,7 @@ export class PantherMediaExplorerStack extends Stack {
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, executionLogs: notifications.executionLogs });
     const browserRecording = new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
     workshop.bind({accessEnvironment,browseTable:assetBrowse.table,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table}});
-    pipelineDashboard(this, "PipelineRuns", [
-      { type: "editorial", label: "Editorial", machine: editorial.stateMachine },
-      { type: "model", label: "Model", machine: modeling.stateMachine },
-      { type: "playback", label: "Playback", machine: playback.stateMachine },
-    ]);
+    pipelineDashboard(this, "PipelineRuns");
     new PipelineWatch(notifications, "PipelineWatch", {
       api: mediaApi,
       authorizer,

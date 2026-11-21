@@ -68,8 +68,43 @@ def stalled_alerts(now):
     return alerts
 
 
+def backfill_metrics(now):
+    """Recent workshop runs, a few pages per visit. CloudWatch only accepts 14 days of history."""
+    marker = INDEX.get_item(Key={"pk": "SYSTEM", "sk": "pipeline-metrics-v1"}, ConsistentRead=True).get("Item") or {}
+    if marker.get("done"):
+        return 0
+    from pipeline_metrics import points_for_backfill, publish
+    import boto3
+    points = []
+    cursor = marker.get("cursor")
+    finished = False
+    for _ in range(8):
+        args = {"Limit": 100, "ProjectionExpression": "pk, sk, kind, #s, createdAt, completedAt, reportedAt, observedAt, updatedAt",
+                "ExpressionAttributeNames": {"#s": "status"}}
+        if cursor:
+            args["ExclusiveStartKey"] = cursor
+        page = INDEX.scan(**args)
+        for item in page.get("Items", []):
+            points.extend(points_for_backfill(item, now))
+        cursor = page.get("LastEvaluatedKey")
+        if not cursor:
+            finished = True
+            break
+    sent = publish(points, boto3.client("cloudwatch"), now)
+    saved = {"pk": "SYSTEM", "sk": "pipeline-metrics-v1", "seenAt": int(now),
+             "samples": int(marker.get("samples", 0)) + sent, "done": finished}
+    if cursor and not finished:
+        saved["cursor"] = cursor
+    INDEX.put_item(Item=saved)
+    return sent
+
+
 def handler(_event, _context):
     now = int(time.time())
+    try:
+        backfill_metrics(now)
+    except Exception:
+        pass
     alerts = worker_alerts(now) + stalled_alerts(now)
     message = "\n".join(alerts)
     previous = INDEX.get_item(Key={"pk": "SYSTEM", "sk": "watch-alert"}, ConsistentRead=True).get("Item") or {}

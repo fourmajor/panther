@@ -1,4 +1,4 @@
-"""The self-hosted Grafana dashboard reads the same Step Functions metrics."""
+"""The Grafana dashboard reads workshop pipeline metrics, not Step Functions executions."""
 
 import json
 from pathlib import Path
@@ -8,60 +8,48 @@ DASHBOARD = ROOT / "infra/grafana/pipeline-runs.json"
 DOC = ROOT / "docs/pipeline-grafana.md"
 
 
-def test_grafana_dashboard_uses_a_cloudwatch_datasource_variable():
+def test_grafana_dashboard_uses_workshop_metrics():
     board = json.loads(DASHBOARD.read_text())
     variables = {item["name"]: item for item in board["templating"]["list"]}
     assert variables["datasource"]["type"] == "datasource"
     assert variables["datasource"]["query"] == "cloudwatch"
     assert variables["region"]["current"]["value"] == "us-west-2"
-    for name, needle in (
-        ("editorial", "EditorialProcessing"),
-        ("model", "ModelProcessing"),
-        ("playback", "PlaybackProcessing"),
-    ):
-        assert variables[name]["query"]["namespace"] == "AWS/States"
-        assert variables[name]["query"]["dimensionKey"] == "StateMachineArn"
-        assert needle in variables[name]["regex"]
+    assert "editorial" not in variables
+    assert board["time"]["from"] == "now-30d"
     titles = [panel["title"] for panel in board["panels"]]
-    for label in ("Editorial", "Model", "Playback"):
-        assert f"{label} runs by status" in titles
-        assert f"{label} duration" in titles
-        assert f"{label} failures" in titles
-    metrics = {
-        target["metricName"]
+    assert "Runs by status" in titles
+    assert "Failures" in titles
+    assert "Duration" in titles
+    assert any(title.startswith("Runs started, last 24") for title in titles)
+    assert any(title.startswith("Runs failed, last 7") for title in titles)
+    expressions = [
+        target.get("expression", "")
         for panel in board["panels"]
         for target in panel["targets"]
-    }
-    assert metrics == {
-        "ExecutionsStarted",
-        "ExecutionsSucceeded",
-        "ExecutionsFailed",
-        "ExecutionsAborted",
-        "ExecutionsTimedOut",
-        "ExecutionTime",
-    }
-    for panel in board["panels"]:
-        assert panel["datasource"]["uid"] == "${datasource}"
-        for target in panel["targets"]:
-            assert target["namespace"] == "AWS/States"
-            assert target["datasource"]["uid"] == "${datasource}"
-            assert set(target["dimensions"]) == {"StateMachineArn"}
-    text = DASHBOARD.read_text()
-    assert "AKIA" not in text
-    assert "aws_secret" not in text
+    ]
+    blob = "\n".join(expressions)
+    assert "Panther/Pipelines" in blob
+    for name in ("RunsStarted", "RunsSucceeded", "RunsFailed", "RunDuration"):
+        assert name in blob
+    assert "AWS/States" not in blob
+    assert "StateMachineArn" not in blob
+    assert "AKIA" not in DASHBOARD.read_text()
 
 
 def test_grafana_doc_lists_read_only_permissions_and_no_new_user():
     text = DOC.read_text()
     assert "infra/grafana/pipeline-runs.json" in text
+    assert "Panther/Pipelines" in text
     for action in (
         "cloudwatch:GetMetricData",
         "cloudwatch:ListMetrics",
         "cloudwatch:GetMetricStatistics",
         "ec2:DescribeRegions",
         "tag:GetResources",
+        "logs:DescribeLogGroups",
     ):
         assert action in text
+    assert "GetLogEvents" not in text
     assert "Do not create another" in text
     assert "panther-grafana-readonly" in text
     assert "do not print the secret value" in text

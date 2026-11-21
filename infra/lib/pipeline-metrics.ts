@@ -1,52 +1,59 @@
 import { Duration } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
-import * as sfn from "aws-cdk-lib/aws-stepfunctions";
 
-/** Built-in Step Functions metrics. No custom metric series and no new service. */
-export const PIPELINE_COUNT_METRICS = [
-  "ExecutionsStarted",
-  "ExecutionsSucceeded",
-  "ExecutionsFailed",
-  "ExecutionsAborted",
-  "ExecutionsTimedOut",
-] as const;
+/** Workshop run counters. One series per pipeline kind, not per session or job. */
+export const PIPELINE_NAMESPACE = "Panther/Pipelines";
+export const PIPELINE_COUNT_METRICS = ["RunsStarted", "RunsSucceeded", "RunsFailed"] as const;
+export const PIPELINE_DURATION_METRIC = "RunDuration";
 
-export const PIPELINE_DURATION_METRIC = "ExecutionTime";
-
-export interface PipelineMachine {
-  readonly type: string;
-  readonly label: string;
-  readonly machine: sfn.IStateMachine;
-}
-
-function metric(name: string, machine: sfn.IStateMachine, statistic: string): cloudwatch.Metric {
-  return new cloudwatch.Metric({
-    namespace: "AWS/States",
-    metricName: name,
-    dimensionsMap: { StateMachineArn: machine.stateMachineArn },
-    statistic,
+function search(metricName: string, statistic: string): cloudwatch.MathExpression {
+  return new cloudwatch.MathExpression({
+    expression: `SEARCH('{${PIPELINE_NAMESPACE},Pipeline} MetricName="${metricName}"', '${statistic}', 3600)`,
+    usingMetrics: {},
     period: Duration.hours(1),
+    label: "${PROP('Dim.Pipeline')}",
   });
 }
 
-/** CloudWatch dashboard for the state machines Panther already runs. */
-export function pipelineDashboard(scope: Construct, id: string, pipelines: readonly PipelineMachine[]): cloudwatch.Dashboard {
-  const dashboard = new cloudwatch.Dashboard(scope, id, { dashboardName: "PantherPipelineRuns" });
-  for (const pipeline of pipelines) {
-    dashboard.addWidgets(new cloudwatch.GraphWidget({
-      title: `${pipeline.label} runs by status`,
+/** CloudWatch view of the same runs the session page lists. */
+export function pipelineDashboard(scope: Construct, id: string): cloudwatch.Dashboard {
+  const dashboard = new cloudwatch.Dashboard(scope, id, {
+    dashboardName: "PantherPipelineRuns",
+    start: "-P30D",
+  });
+  const totals: Array<[string, string, string]> = [
+    ["Runs started, 24 hours", "RunsStarted", "-PT24H"],
+    ["Runs succeeded, 24 hours", "RunsSucceeded", "-PT24H"],
+    ["Runs failed, 24 hours", "RunsFailed", "-PT24H"],
+    ["Runs started, 7 days", "RunsStarted", "-P7D"],
+    ["Runs succeeded, 7 days", "RunsSucceeded", "-P7D"],
+    ["Runs failed, 7 days", "RunsFailed", "-P7D"],
+  ];
+  dashboard.addWidgets(...totals.map(([title, metric, start]) => new cloudwatch.SingleValueWidget({
+    title,
+    width: 4,
+    height: 4,
+    start,
+    metrics: [search(metric, "Sum")],
+    setPeriodToTimeRange: true,
+  })));
+  dashboard.addWidgets(
+    new cloudwatch.GraphWidget({
+      title: "Runs by status",
       width: 12,
-      left: PIPELINE_COUNT_METRICS.map(name => metric(name, pipeline.machine, "Sum")),
-    }));
-    dashboard.addWidgets(new cloudwatch.GraphWidget({
-      title: `${pipeline.label} duration`,
+      left: PIPELINE_COUNT_METRICS.map(name => search(name, "Sum")),
+    }),
+    new cloudwatch.GraphWidget({
+      title: "Failures",
       width: 12,
-      left: [
-        metric(PIPELINE_DURATION_METRIC, pipeline.machine, "Average"),
-        metric(PIPELINE_DURATION_METRIC, pipeline.machine, "p90"),
-      ],
-    }));
-  }
+      left: [search("RunsFailed", "Sum")],
+    }),
+  );
+  dashboard.addWidgets(new cloudwatch.GraphWidget({
+    title: "Duration",
+    width: 24,
+    left: [search(PIPELINE_DURATION_METRIC, "Average"), search(PIPELINE_DURATION_METRIC, "p90")],
+  }));
   return dashboard;
 }
