@@ -210,7 +210,7 @@ def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     if not access_policy.authorized(claims, "CATALOG_READERS"):
         return reply(403, {"error": "Member sign-in required"})
-    can_record = access_policy.authorized(claims, "MODEL_PUBLISHERS")
+    can_record = access_policy.authorized(claims, "RECORDING_STARTERS")
     try:
         route = event.get("routeKey")
         if route == "GET /browser-recording/capabilities":
@@ -228,7 +228,7 @@ def handler(event, _context):
                 },
             )
         if not can_record:
-            return reply(403, {"error": "Publishing access is required to record"})
+            return reply(403, {"error": "Recording access is required"})
         if route in {"POST /browser-recording/live-session", "POST /browser-recording/live-events"}:
             return live_request(event, claims["sub"])
         if route == "GET /browser-transcriptions":

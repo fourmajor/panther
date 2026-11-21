@@ -4,6 +4,7 @@ import {SceneStoryboard} from './scene-storyboard.jsx';
 import {EpisodeCreateActions} from './episode-create-actions.jsx';
 import {EpisodePlanningStatus} from './episode-planning-status.jsx';
 export {LiveTranscription} from './live-transcription.js';
+export {formatTimestamp} from './format-time.js';
 export {renderProseMarkdown} from './prose-markdown.js';
 import {ChapterEditor} from './chapter-editor.jsx';
 import {AccountControls,NotificationsPage} from './account-notifications.jsx';

@@ -3,11 +3,12 @@ import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {Bell,Settings,LogOut,AlertCircle} from 'lucide-react';
 import {Popover,PopoverTrigger,PopoverContent} from './components/ui/popover.jsx';
 import {Button} from './components/ui/button.jsx';
+import {formatTimestamp} from './format-time.js';
 
 function Notice({notice,onOpen,busy}){
  return <button type="button" className="notification-row" disabled={busy} onClick={()=>onOpen(notice)}>
   <span className={`notification-marker ${notice.readAt?'is-read':''}`} aria-label={notice.readAt?'Read':'Unread'}/>
-  <span><strong>{notice.title}</strong><span>{notice.description}</span><time dateTime={new Date(notice.createdAt*1000).toISOString()}>{new Date(notice.createdAt*1000).toLocaleString()}</time></span>
+  <span><strong>{notice.title}</strong><span>{notice.description}</span><time dateTime={new Date(notice.createdAt*1000).toISOString()}>{formatTimestamp(notice.createdAt*1000) || ''}</time></span>
  </button>;
 }
 

@@ -3,7 +3,7 @@ import { Template } from "aws-cdk-lib/assertions";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { catalogReaders, GRAFANA_USERNAME, ReadOnlyAccess, VIEWER_USERNAME } from "../lib/read-only-access";
+import { catalogReaders, GRAFANA_USERNAME, ReadOnlyAccess, recordingStarters, VIEWER_USERNAME } from "../lib/read-only-access";
 
 test("the synthetic reader is only added to the catalog reader list", () => {
   const readers = catalogReaders(
@@ -14,6 +14,14 @@ test("the synthetic reader is only added to the catalog reader list", () => {
   assert.throws(() => catalogReaders(["example-operator"], {
     publishers: [VIEWER_USERNAME], workers: [], migrationAdmins: [],
   }));
+});
+
+test("recording starters are the human accounts, not the viewer or a headless worker", () => {
+  assert.deepEqual(recordingStarters({
+    users: ["example-operator", "example-member", "example-worker", VIEWER_USERNAME],
+    passwordBootstrap: ["example-worker"],
+  }), ["example-operator", "example-member"]);
+  assert.ok(!recordingStarters({users: ["example-operator"], passwordBootstrap: []}).includes(VIEWER_USERNAME));
 });
 
 test("grafana and viewer credentials are stored, not emitted as access keys", () => {

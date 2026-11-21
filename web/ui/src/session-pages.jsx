@@ -4,6 +4,7 @@ import {CircleAlert} from 'lucide-react';
 import {Button} from './components/ui/button.jsx';
 import {Input} from './components/ui/input.jsx';
 import {SessionDownload} from './session-summary.jsx';
+import {formatTimestamp} from './format-time.js';
 import {formatWhen} from './session-pipeline-model.js';
 
 function when(value) {
@@ -12,7 +13,7 @@ function when(value) {
   if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value)) return formatWhen(Number(value));
   const parsed = Date.parse(String(value));
   if (!Number.isFinite(parsed)) return null;
-  return new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'short'}).format(new Date(parsed));
+  return formatTimestamp(new Date(parsed));
 }
 
 function duration(seconds) {

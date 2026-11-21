@@ -3,6 +3,7 @@ import { Button } from './components/ui/button.jsx';
 import { Input } from './components/ui/input.jsx';
 import { File, Folder, FolderUp } from 'lucide-react';
 import {flexRender, getCoreRowModel, getFilteredRowModel, getSortedRowModel, useReactTable} from '@tanstack/react-table';
+import {formatTimestamp} from './format-time.js';
 
 export function MediaBrowser({prefix, gameName, gameId, folders=[], files=[], loading=false, error='', hasMore=false, onFolder, onFile, onMore}) {
   const [search,setSearch]=useState(''), [sorting,setSorting]=useState([]);
@@ -12,7 +13,7 @@ export function MediaBrowser({prefix, gameName, gameId, folders=[], files=[], lo
     {accessorKey:'name',header:'Name',cell:({row})=><Button variant="ghost" type="button" className="media-item-link justify-start" onClick={()=>row.original.folder?onFolder(row.original.key):onFile(row.original)}>{row.original.folder?<Folder size={16} aria-hidden="true"/>:<File size={16} aria-hidden="true"/>}<span>{row.original.name}</span></Button>},
     {id:'type',header:'Type',accessorFn:r=>r.folder?'Folder':r.contentType?.split('/').at(-1)||r.name.split('.').at(-1)},
     {accessorKey:'size',header:'Size',cell:({getValue,row})=>row.original.folder?'—':new Intl.NumberFormat(undefined,{style:'unit',unit:'kilobyte',maximumFractionDigits:1}).format((getValue()||0)/1024)},
-    {accessorKey:'lastModified',header:'Modified',cell:({getValue})=>getValue()?new Date(getValue()).toLocaleDateString():'—'},
+    {accessorKey:'lastModified',header:'Modified',cell:({getValue})=>formatTimestamp(getValue()) || '—'},
   ],[onFolder,onFile]);
   const table=useReactTable({data,columns,state:{globalFilter:search,sorting},onGlobalFilterChange:setSearch,onSortingChange:setSorting,getCoreRowModel:getCoreRowModel(),getFilteredRowModel:getFilteredRowModel(),getSortedRowModel:getSortedRowModel()});
   const parts=prefix.split('/').filter(Boolean), crumbs=parts.slice(1).map((part,i)=>({name:i===0?gameName:part,key:parts.slice(0,i+2).join('/')+'/'}));
