@@ -1,6 +1,7 @@
 """The Grafana dashboard reads workshop pipeline metrics, not Step Functions executions."""
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -16,14 +17,24 @@ def test_grafana_dashboard_uses_workshop_metrics():
     assert variables["region"]["current"]["value"] == "us-west-2"
     assert "editorial" not in variables
     assert board["time"]["from"] == "now-30d"
+    assert board["version"] >= 3
+    query_id = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
     titles = [panel["title"] for panel in board["panels"]]
     assert "Runs by status" in titles
     assert "Failures" in titles
     assert "Duration" in titles
     assert any(title.startswith("Runs started, last 24") for title in titles)
     assert any(title.startswith("Runs failed, last 7") for title in titles)
-    targets = [target for panel in board["panels"] for target in panel["targets"]]
-    search = [target for target in targets if str(target.get("expression", "")).startswith("SEARCH(")]
+    search = []
+    for panel in board["panels"]:
+        ids = []
+        for target in panel["targets"]:
+            assert query_id.fullmatch(target["id"])
+            assert target["id"] == target["refId"]
+            ids.append(target["id"])
+            if str(target.get("expression", "")).startswith("SEARCH("):
+                search.append(target)
+        assert len(ids) == len(set(ids))
     assert len(search) == 12
     for target in search:
         assert target["metricQueryType"] == 0

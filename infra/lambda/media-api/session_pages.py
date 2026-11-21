@@ -489,11 +489,10 @@ def _title(assets, session_id, when):
     """Recording session name, otherwise the featured episode. A mix file cannot rename the session."""
     names = []
     for asset in assets:
+        if asset.get("kind") not in RECORDING_KINDS:
+            continue
         recording = asset.get("recording") if isinstance(asset.get("recording"), dict) else {}
-        values = [recording.get("sessionName")]
-        if asset.get("kind") in RECORDING_KINDS:
-            values.append(_metadata(asset).get("sessionName"))
-        for value in values:
+        for value in (recording.get("sessionName"), _metadata(asset).get("sessionName")):
             name = _clip(value, 160)
             if _usable_title(name):
                 names.append(name)
