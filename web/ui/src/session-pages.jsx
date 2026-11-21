@@ -79,36 +79,46 @@ function clipExcerpt(text) {
 function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSummary, onExcerpt, onPreview, compact}) {
   const query = useQuery({
     queryKey: ['session-recap', scope, gameId, sourceKey || ''],
-    enabled: !text && Boolean(sourceKey),
+    enabled: !text && Boolean(sourceKey) && sourceKey !== excerptKey,
     queryFn: ({signal}) => onSummary({key: sourceKey, signal}),
     staleTime: 60000,
     retry: false,
     refetchInterval: current => ['QUEUED', 'GENERATING'].includes(current.state.data?.status) ? 5000 : false,
   });
-  const summaryMissing = !text && (!sourceKey || query.isError || query.data?.status === 'MISSING' || (query.isSuccess && !query.data?.summary?.summary));
-  const excerptSource = excerptKey || (query.error?.status === 400 ? sourceKey : '');
-  const excerpt = useQuery({
-    queryKey: ['session-excerpt', scope, gameId, excerptSource || ''],
-    enabled: summaryMissing && Boolean(excerptSource),
-    queryFn: () => onExcerpt(excerptSource),
+  const primary = useQuery({
+    queryKey: ['session-excerpt', scope, gameId, excerptKey || ''],
+    enabled: !text && Boolean(excerptKey),
+    queryFn: () => onExcerpt(excerptKey),
+    staleTime: 300000,
+    retry: false,
+  });
+  const primaryText = excerptText(primary.data);
+  const secondaryKey = sourceKey && sourceKey !== excerptKey && !primaryText && (primary.isFetched || !excerptKey) ? sourceKey : '';
+  const secondary = useQuery({
+    queryKey: ['session-excerpt', scope, gameId, secondaryKey || ''],
+    enabled: !text && Boolean(secondaryKey),
+    queryFn: () => onExcerpt(secondaryKey),
     staleTime: 300000,
     retry: false,
   });
   const loaded = text || query.data?.summary?.summary;
-  const fallback = !loaded && summaryMissing ? excerptText(excerpt.data) : null;
+  const fallback = !loaded ? (primaryText || excerptText(secondary.data)) : null;
+  const label = primaryText ? excerptLabel : 'Excerpt from the transcript';
   if (loaded) {
     const body = String(loaded);
     const short = body.length > 180 ? `${body.slice(0, 180).replace(/\s+\S*$/, '')}…` : body;
     return <p className={compact ? 'session-card-summary' : 'session-recap'}>{compact ? short : body}</p>;
   }
-  if (sourceKey && query.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
-  if (summaryMissing && excerptSource && excerpt.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
+  if ((excerptKey && primary.isPending) || (secondaryKey && secondary.isPending) || (sourceKey && !excerptKey && query.isPending)) {
+    return <div className="session-recap-loading" aria-label="Loading recap"/>;
+  }
   if (fallback) {
     const body = clipExcerpt(fallback);
     const short = body.length > 180 ? `${body.slice(0, 180).replace(/\s+\S*$/, '')}…` : body;
+    const moreKey = primaryText ? excerptKey : sourceKey;
     return <div className={compact ? undefined : 'session-recap'}>
-      <p className={compact ? 'session-card-summary' : undefined}><span className="session-excerpt-label">{excerptLabel || 'Excerpt'}. </span>{compact ? short : body}</p>
-      {!compact && excerptSource && onPreview && <Button variant="outline" size="sm" onClick={() => onPreview(excerptSource)}>Read more</Button>}
+      <p className={compact ? 'session-card-summary' : undefined}><span className="session-excerpt-label">{label || 'Excerpt'}. </span>{compact ? short : body}</p>
+      {!compact && moreKey && onPreview && <Button variant="outline" size="sm" onClick={() => onPreview(moreKey)}>Read more</Button>}
     </div>;
   }
   if (query.error && query.error.status !== 400 && !excerptKey) {
@@ -128,7 +138,7 @@ function Thumb({scope, gameId, imageKey, onImage, pending=false}) {
   });
   if (query.data) return <img src={query.data} alt="" loading="lazy" decoding="async"/>;
   if (pending || (imageKey && query.isPending)) return <span className="session-thumb-fallback" aria-hidden="true"/>;
-  return <span className="session-thumb-fallback">No thumbnail</span>;
+  return <span className="session-audio-mark" aria-hidden="true"><i/><i/><i/></span>;
 }
 
 function createdStamp(asset) {
@@ -396,7 +406,7 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
   return <div className="session-pages">
     {shell.isPending && <div className="session-grid" aria-label="Loading sessions">{[0, 1, 2].map(item => <div className="session-tile session-tile-loading" key={item}><div className="session-thumb"/><div className="session-line"/><div className="session-line session-line-short"/></div>)}</div>}
     {shell.error && !data && <div><p role="alert" className="session-error"><CircleAlert size={16}/>{shell.error.message || 'Sessions could not be loaded.'}</p><Button variant="outline" onClick={() => shell.refetch()}>Retry sessions</Button></div>}
-    {data && !data.complete && <p role="status" className="session-note">Some catalog pages were not read. This list may be missing assets. <Button variant="outline" size="sm" onClick={() => (full.data ? full : shell).refetch()}>Retry sessions</Button></p>}
+    {!sessionId && data && !data.complete && <p role="status" className="session-note">Some catalog pages were not read. A session may be missing from this list. <Button variant="outline" size="sm" onClick={() => shell.refetch()}>Retry sessions</Button></p>}
     {data && !sessionId && <section aria-label="Sessions">
       {sessions.length === 0 && <p className="session-empty">No sessions yet.</p>}
       {sessions.length > 0 && <ul className="session-grid">{sessions.map(item => <li key={item.id}>

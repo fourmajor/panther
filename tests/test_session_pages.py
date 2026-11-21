@@ -213,6 +213,18 @@ def test_titles_stay_on_the_session_or_episode_and_cards_get_posters():
     forward = pages.assemble(GAME, [transcript, video, still, chapter], [], session_id=SESSION)["session"]
     reverse = pages.assemble(GAME, [chapter, still, video, transcript], [], session_id=SESSION)["session"]
     assert forward["title"] == reverse["title"] == "The Bottled Dead"
+    mix = asset("mix", "music", name="mix.wav", contentType="audio/wav", size=4_000_000)
+    episode = asset("episode", "session-video", name="episode.mp4", contentType="video/mp4", size=2_000_000)
+    quiet = asset("clip", "video", name="episode-cut.mp4", contentType="application/octet-stream", size=500)
+    for item in (mix, episode, quiet):
+        item["metadata"]["sessionId"] = "game-night-2026-09-10"
+    mix["metadata"]["sessionName"] = "Curse of the Crimson Throne — The Story So Far — cinematic sound mix"
+    mix["metadata"]["title"] = mix["metadata"]["sessionName"]
+    episode["metadata"]["title"] = "The Kitchen That Remembered — Five Against the Fire"
+    quiet["metadata"]["title"] = "Kitchen episode"
+    matched = pages.assemble(GAME, [mix, episode, quiet], [], session_id="game-night-2026-09-10")["session"]
+    assert matched["title"] == "The Kitchen That Remembered — Five Against the Fire"
+    assert matched["player"]["media"] == "video" and matched["player"]["key"] == episode["key"]
     assert pages._clean_title("The Kitchen That Remembered — Five Against the Fire — browser") == "The Kitchen That Remembered — Five Against the Fire"
     assert pages._clean_title("Borrowed Trust — procedural") == "Borrowed Trust"
     assert pages._friendly_slug("solo-audio-test-2026-09-09") == "Solo Audio Test"
