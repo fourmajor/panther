@@ -4,9 +4,10 @@ import {ArrowLeft, ChevronRight, Check, CircleAlert, Workflow, File, Volume2, Fi
 import {Button} from './components/ui/button.jsx';
 import {Badge} from './components/ui/badge.jsx';
 import {Dialog,DialogTrigger,DialogContent,DialogHeader,DialogTitle,DialogDescription} from './components/ui/dialog.jsx';
+import {formatTimestamp} from './format-time.js';
 
 const labels={done:'Complete',failed:'Failed',running:'Running',queued:'Queued',paused:'Paused',pending:'Pending',unknown:'Unknown'};
-function date(value){if(!value)return '—';return new Date(typeof value==='number'?value*1000:value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'});}
+function date(value){if(!value)return '—';return formatTimestamp(typeof value==='number'?value*1000:value) || '—';}
 function Link({href,onNavigate,children,...props}){return <a href={href} {...props} onClick={event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();onNavigate(href);}}>{children}</a>;}
 function outputKey(job){return job.outputKey||job.stages?.find(stage=>stage.outputKey)?.outputKey;}
 function Output({assetKey,scope,gameId,onLoadOutput,onPreview,compact=false,label='Output'}){

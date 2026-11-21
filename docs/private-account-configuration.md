@@ -62,10 +62,13 @@ deploying: this cutover must not delete/replace account resources, change provis
 or expand permissions. Inspect real accounts and a signed-in API read afterward without publishing
 the roster, credentials or private content. No game asset schema changes are involved.
 
-Adding an account changes this private file, not GitHub source. Adding it to `users` alone does not
-grant publisher, worker or migration access, create a Player record, or infer an administrator role.
-The catalog's `CATALOG_READERS` is derived from `users`: configured members can browse games,
-players and character details. Catalog writes still require a publisher; migration inventory,
+Adding an account changes this private file, not GitHub source. Adding it to `users` grants catalog
+reading and browser recording. It does not grant publisher, worker, or migration access, create a
+Player record, or infer an administrator role. The catalog's `CATALOG_READERS` is derived from
+`users`: configured members can browse games, players and character details. Browser recording uses
+a separate `RECORDING_STARTERS` list, also derived at deploy: every configured account in `users`,
+excluding headless password-bootstrap workers. The synthetic catalog viewer is added only to
+`CATALOG_READERS` and cannot start a recording. Catalog writes still require a publisher; migration inventory,
 verification and writes still require a migration administrator. Deploy the CDK stack to update
 these lists; a Cognito invitation alone does not update a running Lambda's configuration.
 Infrastructure definitions remain reviewed through PRs; private account inputs remain outside them.

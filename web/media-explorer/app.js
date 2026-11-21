@@ -2022,12 +2022,16 @@ function appendFolder(prefix) {
   elements.entries.append(fragment);
 }
 
+function formatStamp(value) {
+  return window.PantherUI.formatTimestamp(value) || "";
+}
+
 function appendFile(file) {
   const fragment = elements.fileTemplate.content.cloneNode(true);
   const button = fragment.querySelector(".entry");
   fragment.querySelector(".entry-name").textContent = file.name;
   fragment.querySelector(".file-kind").textContent = fileGlyph(file.name);
-  fragment.querySelector(".entry-meta").textContent = `${formatBytes(file.size)} · ${new Date(file.lastModified).toLocaleString()}`;
+  fragment.querySelector(".entry-meta").textContent = `${formatBytes(file.size)} · ${formatStamp(file.lastModified)}`;
   button.addEventListener("click", () => previewFile(file));
   elements.entries.append(fragment);
 }
@@ -3349,7 +3353,7 @@ function restoreSessionCaptureResult(){
 function sessionName(asset,date){
   const title=asset?.recording?.sessionName||asset?.metadata?.sessionName||asset?.metadata?.title;
   if(typeof title==='string'&&title.trim()&&!/^(recording(?:-manifest|-playback)?|(?:raw-|corrected-|edited-)?transcript)$/i.test(title)&&!/[a-f0-9]{24,}|\.(json|wav|mp3|flac|md)$/i.test(title))return title;
-  const parsed=new Date(date||NaN);return !Number.isNaN(parsed.valueOf())?parsed.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}):'Session';
+  const parsed=new Date(date||NaN);return !Number.isNaN(parsed.valueOf())?formatStamp(parsed):'Session';
 }
 function sessionPlaybackRow(parent,player,key,current=()=>true){
  let row=parent.querySelector(':scope > .session-playback-row');
@@ -3439,7 +3443,7 @@ async function loadLibrary(section, epoch, previousAssets = [], cursor = null) {
       const group=ensureSessionGroup(list,id,sessionName(primary,date),date),meta=document.createElement('p');meta.className='session-asset-meta';
       const duration=recording?.recording?.durationSeconds??audio?.metadata?.extra?.mediaProbe?.duration;
       const names=[...new Set(transcripts.flatMap(asset=>(asset.transcript?.participants||[]).map(person=>person.name).filter(Boolean)))];
-      const parsedDate=new Date(date||NaN),dateLabel=!Number.isNaN(parsedDate.valueOf())?parsedDate.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}):'';
+      const parsedDate=new Date(date||NaN),dateLabel=!Number.isNaN(parsedDate.valueOf())?formatStamp(parsedDate):'';
       meta.textContent=[group.querySelector('h2').textContent.includes(dateLabel)?'':dateLabel,!audio&&Number.isFinite(duration)&&duration>=0?timestamp(duration):'',names.join(', ')].filter(Boolean).join(' · ');if(meta.textContent)group.append(meta);
       const links=document.createElement('div');links.className='session-asset-links';
       const latest=values=>[...values].sort((a,b)=>b.lastModified.localeCompare(a.lastModified)||a.key.localeCompare(b.key))[0];
@@ -3927,7 +3931,7 @@ class RoomRecorder {
         if(this.context.sampleRate!==32000) throw new Error('This browser cannot provide the supported 32 kHz capture format.');
         await this.context.audioWorklet.addModule(document.querySelector('meta[name="panther-pcm-worklet"]').content);
         const track=this.stream.getAudioTracks()[0];
-        this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+new Date().toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
+        this.draft={owner:this.owner(),id:'recording-'+crypto.randomUUID().replaceAll('-',''),gameId:state.gameId,sessionId:'session-'+new Date().toISOString().slice(0,10)+'-'+crypto.randomUUID().slice(0,8),sessionName:'Session · '+formatStamp(new Date()),startedAt:new Date().toISOString(),device:track.label || 'Browser microphone',status:'recording',parts:[],captureWarnings:['Browser capture does not verify hardware continuity or identify speakers.']};
         this.writeChain=Promise.resolve(); this.storageError=null; await this.persist(); this.uploadError=false; this.nodes.clear(); this.el['live-text'].replaceChildren(); this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true; this.el.recovery.hidden=true;this.el.resume.hidden=false;this.el['final-link'].hidden=true;
         this.liveFailed=false;this.liveAuditFailed=false;this.liveStarting=true;
         const liveSession={draft:this.draft,events:[],batches:[],chain:Promise.resolve(),operationId:crypto.randomUUID().replaceAll('-','')};this.liveSession=liveSession;
@@ -4428,7 +4432,7 @@ function transcriptSourceChoice(asset,destination,selected,updateSubmit,gameId,c
   const humanTitle=value=>typeof value==='string'&&value.trim()&&value.trim().length<=80&&!/\.(json|md|txt|wav|mp3|flac)$/i.test(value.trim())&&!/^[a-f0-9-]{24,}$/i.test(value.trim())?value.trim():null;
   const render=()=>{
     const recordedAt=record?.recordedAt||asset.metadata?.recordedAt,date=recordedAt||asset.lastModified,timestamp=date?new Date(date):null;
-    const formatted=timestamp&&!Number.isNaN(timestamp.valueOf())?timestamp.toLocaleString():null;
+    const formatted=timestamp&&!Number.isNaN(timestamp.valueOf())?formatStamp(timestamp):null;
     item.name=humanTitle(record?.summary?.title)||humanTitle(asset.metadata?.sessionName)||humanTitle(asset.metadata?.title)||(recordedAt&&formatted?`Session · ${formatted}`:'Session');
     const participants=record?.participants||asset.transcript?.participants||[],characters=record?.characters||[];
     item.meta=[formatted,participants.map(person=>person.name||person.id).filter(Boolean).join(', '),characters.map(character=>character.name||character.id).filter(Boolean).join(', ')].filter(Boolean).join(' · ');

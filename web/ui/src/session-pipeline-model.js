@@ -1,3 +1,5 @@
+import {formatTimestamp} from "./format-time.js";
+
 /** Visual states for the session graph.
  * Gray is not started. Blue is running. Green is success. Red is failed.
  * The storyboard gate stays a distinct waiting state so paid video never looks authorized.
@@ -48,9 +50,7 @@ export function cardText(pipeline) {
 export function formatWhen(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
-  const date = new Date(n > 1e12 ? n : n * 1000);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"}).format(date);
+  return formatTimestamp(new Date(n > 1e12 ? n : n * 1000));
 }
 
 export function runIdentity(run) {

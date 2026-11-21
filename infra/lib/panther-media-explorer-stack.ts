@@ -47,7 +47,7 @@ import { PipelineWatch } from "./pipeline-watch";
 import { pipelineDashboard } from "./pipeline-metrics";
 
 import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
-import { catalogReaders, ReadOnlyAccess } from "./read-only-access";
+import { catalogReaders, ReadOnlyAccess, recordingStarters } from "./read-only-access";
 
 // The module build has bare Three.js imports; static hosting needs this
 // self-contained browser distribution instead.
@@ -77,6 +77,7 @@ export class PantherMediaExplorerStack extends Stack {
       MODEL_PUBLISHERS: identities.publishers.join(","),
       MODEL_WORKERS: identities.workers.join(","),
       ASSET_MIGRATORS: identities.migrationAdmins.join(","),
+      RECORDING_STARTERS: recordingStarters(identities).join(","),
     };
 
     if (this.node.tryGetContext("assetStorageMode") !== undefined) {

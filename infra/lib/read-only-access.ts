@@ -27,6 +27,17 @@ export function catalogReaders(users: readonly string[], elevated: {
   return [...new Set([...users, VIEWER_USERNAME])];
 }
 
+/** People who can start a browser recording. The synthetic viewer and headless workers stay off this list. */
+export function recordingStarters(identities: {
+  users: readonly string[];
+  passwordBootstrap?: readonly string[];
+}): string[] {
+  const machines = new Set(identities.passwordBootstrap ?? []);
+  const names = identities.users.filter(name => name !== VIEWER_USERNAME && name !== GRAFANA_USERNAME && !machines.has(name));
+  if (names.includes(VIEWER_USERNAME)) throw new Error(`${VIEWER_USERNAME} must not record`);
+  return names;
+}
+
 export function grafanaPolicyStatements(): iam.PolicyStatementProps[] {
   return [
     {
