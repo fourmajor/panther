@@ -86,10 +86,11 @@ function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSumm
     refetchInterval: current => ['QUEUED', 'GENERATING'].includes(current.state.data?.status) ? 5000 : false,
   });
   const summaryMissing = !text && (!sourceKey || query.isError || query.data?.status === 'MISSING' || (query.isSuccess && !query.data?.summary?.summary));
+  const excerptSource = excerptKey || (query.error?.status === 400 ? sourceKey : '');
   const excerpt = useQuery({
-    queryKey: ['session-excerpt', scope, gameId, excerptKey || ''],
-    enabled: summaryMissing && Boolean(excerptKey),
-    queryFn: () => onExcerpt(excerptKey),
+    queryKey: ['session-excerpt', scope, gameId, excerptSource || ''],
+    enabled: summaryMissing && Boolean(excerptSource),
+    queryFn: () => onExcerpt(excerptSource),
     staleTime: 300000,
     retry: false,
   });
@@ -101,13 +102,13 @@ function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSumm
     return <p className={compact ? 'session-card-summary' : 'session-recap'}>{compact ? short : body}</p>;
   }
   if (sourceKey && query.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
-  if (summaryMissing && excerptKey && excerpt.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
+  if (summaryMissing && excerptSource && excerpt.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
   if (fallback) {
     const body = clipExcerpt(fallback);
     const short = body.length > 180 ? `${body.slice(0, 180).replace(/\s+\S*$/, '')}…` : body;
     return <div className={compact ? undefined : 'session-recap'}>
       <p className={compact ? 'session-card-summary' : undefined}><span className="session-excerpt-label">{excerptLabel || 'Excerpt'}. </span>{compact ? short : body}</p>
-      {!compact && excerptKey && onPreview && <Button variant="outline" size="sm" onClick={() => onPreview(excerptKey)}>Read more</Button>}
+      {!compact && excerptSource && onPreview && <Button variant="outline" size="sm" onClick={() => onPreview(excerptSource)}>Read more</Button>}
     </div>;
   }
   if (query.error && query.error.status !== 400 && !excerptKey) {

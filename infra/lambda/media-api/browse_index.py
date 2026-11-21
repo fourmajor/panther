@@ -225,6 +225,33 @@ def page(game, section, cursor=None, *, selection=None, consistent=True, tags=Tr
     }
 
 
+def range_condition(pk, start):
+    """One equality on the partition key and one lower bound on the sort key.
+
+    DynamoDB allows a single condition per key. The upper bound is applied to
+    the returned rows, not as a second sort-key comparison.
+    """
+    return Key("pk").eq(pk) & Key("sk").gte(start)
+
+
+def comparison_counts(condition):
+    """Count comparison operators touching each key in a condition tree."""
+    counts = {}
+
+    def walk(node):
+        expression = node.get_expression()
+        if expression.get("operator") == "AND":
+            for child in expression["values"]:
+                walk(child)
+            return
+        attribute = expression["values"][0]
+        name = attribute.name
+        counts[name] = counts.get(name, 0) + 1
+
+    walk(condition)
+    return counts
+
+
 def gather(game, section, *, consistent=False):
     """Read one catalog section in parallel key ranges. Same rows as paging it."""
     if section not in SECTIONS:
@@ -245,21 +272,31 @@ def gather(game, section, *, consistent=False):
     def span(bounds):
         start, end = bounds
         found, cursor, pages = [], None, 0
-        while pages < 20:
-            args = {
-                "KeyConditionExpression": Key("pk").eq(pk) & Key("sk").gte(start) & Key("sk").lt(end),
-                "ConsistentRead": consistent,
-                "Limit": 100,
-            }
-            if cursor:
-                args["ExclusiveStartKey"] = cursor
-            page = table().query(**args)
-            found.extend(page.get("Items", []))
-            cursor = page.get("LastEvaluatedKey")
-            pages += 1
-            if not cursor:
-                return found, True
-        return found, cursor is None
+        try:
+            while pages < 20:
+                args = {
+                    "KeyConditionExpression": range_condition(pk, start),
+                    "ConsistentRead": consistent,
+                    "Limit": 100,
+                }
+                if cursor:
+                    args["ExclusiveStartKey"] = cursor
+                page = table().query(**args)
+                crossed = False
+                for item in page.get("Items", []):
+                    if item["sk"] >= end:
+                        crossed = True
+                        break
+                    found.append(item)
+                if crossed:
+                    return found, True
+                cursor = page.get("LastEvaluatedKey")
+                pages += 1
+                if not cursor:
+                    return found, True
+            return found, False
+        except ClientError:
+            return found, False
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -271,7 +308,12 @@ def gather(game, section, *, consistent=False):
         complete = complete and done
     import asset_archive
 
-    archived = asset_archive.archived_keys(game, [item["sk"] for item in rows])
+    archived = set()
+    try:
+        for offset in range(0, len(rows), 100):
+            archived.update(asset_archive.archived_keys(game, [item["sk"] for item in rows[offset:offset + 100]]))
+    except (ClientError, ValueError, RuntimeError):
+        complete = False
     assets = [json.loads(item["payload"]) for item in rows if item["sk"] not in archived]
     return assets, complete
 
