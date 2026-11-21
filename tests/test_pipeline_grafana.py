@@ -22,11 +22,16 @@ def test_grafana_dashboard_uses_workshop_metrics():
     assert "Duration" in titles
     assert any(title.startswith("Runs started, last 24") for title in titles)
     assert any(title.startswith("Runs failed, last 7") for title in titles)
-    expressions = [
-        target.get("expression", "")
-        for panel in board["panels"]
-        for target in panel["targets"]
-    ]
+    targets = [target for panel in board["panels"] for target in panel["targets"]]
+    search = [target for target in targets if str(target.get("expression", "")).startswith("SEARCH(")]
+    assert len(search) == 12
+    for target in search:
+        assert target["metricQueryType"] == 0
+        assert target["metricEditorMode"] == 1
+        assert target["queryMode"] == "Metrics"
+        assert target["period"] == "3600"
+        assert target["statistic"]
+    expressions = [target.get("expression", "") for target in search]
     blob = "\n".join(expressions)
     assert "Panther/Pipelines" in blob
     for name in ("RunsStarted", "RunsSucceeded", "RunsFailed", "RunDuration"):

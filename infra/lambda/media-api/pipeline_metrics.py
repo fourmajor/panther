@@ -22,9 +22,26 @@ def _kind(item):
     return "other"
 
 
+_RAW_STATUS = {
+    "SUBMITTED": "queued", "QUEUED": "queued", "RUNNING": "running", "PROCESSING": "running",
+    "DONE": "done", "NOVEL_READY": "done", "READY_FOR_VIDEO_DISCUSSION": "done",
+    "FAILED": "failed", "BLOCKED": "paused", "DEFERRED": "paused", "IN_QUEUE": "queued",
+    "IN_PROGRESS": "running", "PUBLISHED": "done", "ATTENTION": "failed", "UNKNOWN": "unknown",
+    "GENERATING": "running", "COMPOSING": "running",
+}
+
+
 def _num(value):
     if isinstance(value, bool) or value is None:
         return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            value = datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            return None
     if isinstance(value, (int, float, Decimal)):
         number = float(value)
         if number > 0 and number == number:
@@ -32,8 +49,17 @@ def _num(value):
     return None
 
 
+def _status(value):
+    if isinstance(value, str) and value in {"pending", "queued", "running", "done", "failed", "paused", "unknown", "started"}:
+        return value
+    if isinstance(value, str):
+        return _RAW_STATUS.get(value, value.strip().lower() or "unknown")
+    return "unknown"
+
+
 def _end(item):
-    for field in ("completedAt", "reportedAt", "observedAt", "updatedAt"):
+    # observedAt is when a projection ran, so it is only a last resort.
+    for field in ("completedAt", "endedAt", "reportedAt", "updatedAt", "observedAt"):
         value = _num(item.get(field))
         if value:
             return value
@@ -67,8 +93,8 @@ def points_for_transition(previous, current, now=None):
         return []
     now = float(now if now is not None else time.time())
     kind = _kind(current)
-    new = current.get("status") or "unknown"
-    old = previous.get("status") if isinstance(previous, dict) else None
+    new = _status(current.get("status"))
+    old = _status(previous.get("status")) if isinstance(previous, dict) else None
     points = []
     if not isinstance(previous, dict):
         points.append(_point("RunsStarted", kind, _num(current.get("createdAt")) or now, 1, "Count"))
@@ -86,20 +112,33 @@ def points_for_transition(previous, current, now=None):
 
 
 def points_for_backfill(item, now):
-    """Historical samples for a run the new emitter did not see change."""
+    """Historical samples whose own timestamp CloudWatch will accept.
+
+    A run that started before the 14-day window can still publish its finish
+    when that finish is inside the window. The start sample is kept only when
+    its own timestamp is inside the window.
+    """
     if not isinstance(item, dict) or not str(item.get("pk", "")).startswith("GAME#"):
         return []
     now = float(now)
     created = _num(item.get("createdAt"))
-    if not created or created < now - MAX_AGE:
+    end = _end(item)
+    activity = end or created
+    if not activity or activity > now - RECENT:
         return []
-    status = item.get("status") or "unknown"
-    activity = _end(item) or created
-    if activity > now - RECENT:
+    current = {**item, "status": _status(item.get("status"))}
+    if current["status"] in {"done", "failed"}:
+        points = points_for_transition(None, current, now)
+        if not created:
+            points = [point for point in points if point["MetricName"] != "RunsStarted"]
+    elif created:
+        points = [_point("RunsStarted", _kind(item), created, 1, "Count")]
+    else:
         return []
-    if status in {"done", "failed"}:
-        return points_for_transition(None, item, now)
-    return [_point("RunsStarted", _kind(item), created, 1, "Count")]
+    return [
+        point for point in points
+        if now - MAX_AGE < point["Timestamp"] <= now + 120
+    ]
 
 
 def publish(points, client, now=None):

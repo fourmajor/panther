@@ -1,6 +1,7 @@
 """Scheduled notice when a worker stops checking in or a callback sits unclaimed."""
 
 import json
+import logging
 import os
 import time
 
@@ -70,7 +71,7 @@ def stalled_alerts(now):
 
 def backfill_metrics(now):
     """Recent workshop runs, a few pages per visit. CloudWatch only accepts 14 days of history."""
-    marker = INDEX.get_item(Key={"pk": "SYSTEM", "sk": "pipeline-metrics-v1"}, ConsistentRead=True).get("Item") or {}
+    marker = INDEX.get_item(Key={"pk": "SYSTEM", "sk": "pipeline-metrics-v2"}, ConsistentRead=True).get("Item") or {}
     if marker.get("done"):
         return 0
     from pipeline_metrics import points_for_backfill, publish
@@ -91,7 +92,7 @@ def backfill_metrics(now):
             finished = True
             break
     sent = publish(points, boto3.client("cloudwatch"), now)
-    saved = {"pk": "SYSTEM", "sk": "pipeline-metrics-v1", "seenAt": int(now),
+    saved = {"pk": "SYSTEM", "sk": "pipeline-metrics-v2", "seenAt": int(now),
              "samples": int(marker.get("samples", 0)) + sent, "done": finished}
     if cursor and not finished:
         saved["cursor"] = cursor
@@ -104,7 +105,7 @@ def handler(_event, _context):
     try:
         backfill_metrics(now)
     except Exception:
-        pass
+        logging.getLogger("pipeline_watch").exception("pipeline metric backfill failed")
     alerts = worker_alerts(now) + stalled_alerts(now)
     message = "\n".join(alerts)
     previous = INDEX.get_item(Key={"pk": "SYSTEM", "sk": "watch-alert"}, ConsistentRead=True).get("Item") or {}

@@ -36,6 +36,16 @@ def test_terminal_transitions_emit_status_and_duration_without_ids():
     assert "session" not in blob and "job" not in blob.lower()
 
 
+def test_a_finish_inside_the_window_publishes_even_when_the_run_started_earlier():
+    started = NOW - 40 * 86400
+    finished = NOW - 2 * 86400
+    item = {"pk": "GAME#example", "kind": "playback", "status": "DONE", "createdAt": started, "completedAt": finished}
+    points = metrics.points_for_backfill(item, NOW)
+    assert _names(points) == ["RunsSucceeded", "RunDuration"]
+    assert points[0]["Dimensions"] == [{"Name": "Pipeline", "Value": "playback"}]
+    assert points[0]["Timestamp"] == finished
+
+
 def test_backfill_skips_recent_and_ancient_runs():
     fresh = {"pk": "GAME#example", "kind": "editorial", "status": "done", "createdAt": NOW - 100, "completedAt": NOW - 10}
     assert metrics.points_for_backfill(fresh, NOW) == []
