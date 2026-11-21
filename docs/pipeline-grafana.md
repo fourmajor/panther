@@ -29,11 +29,15 @@ If a variable is empty, the machine has not emitted that metric yet, or the gene
 state-machine name does not contain the construct id. Open the variable and select the
 ARN. Do not rename a state machine to satisfy the filter.
 
-## Read-only data source permissions
+## Read-only data source
 
-Attach this policy to the IAM role the existing Grafana CloudWatch data source already
-assumes. Do not create an IAM user, an access key, or a new role for this dashboard.
-This repository does not provision those credentials.
+CDK creates IAM user `panther-grafana-readonly` and one access key. The key is written
+only to Secrets Manager secret `panther/grafana-cloudwatch-readonly`.
+`PantherWatchdogReadOnly` can call `secretsmanager:GetSecretValue` on that secret's ARN
+and on `panther/viewer-credentials`. It cannot read other secrets. Do not create another
+user or key, and do not print the secret value.
+
+The user's policy is:
 
 CloudWatch metric reads cannot be limited to a state-machine ARN. `Resource` is `*`.
 The actions are read-only. This dashboard does not query logs, and it does not need
@@ -49,7 +53,6 @@ The actions are read-only. This dashboard does not query logs, and it does not n
       "Action": [
         "cloudwatch:DescribeAlarms",
         "cloudwatch:DescribeAlarmsForMetric",
-        "cloudwatch:DescribeAlarmHistory",
         "cloudwatch:GetMetricData",
         "cloudwatch:GetMetricStatistics",
         "cloudwatch:ListMetrics"

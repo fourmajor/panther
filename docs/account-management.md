@@ -82,6 +82,17 @@ properties. Verify the deployed handler and repeat the private preservation/abse
 cleanup. Earlier migration evidence remains private operational history, not a supported legacy
 format. Never use an old whole-stack template or pre-cutover handler as a recovery mechanism.
 
+## Synthetic catalog reader
+
+`penelope-viewer` is a CDK-managed sign-in used to open the site for verification. It is
+not a person and it is not added to the private identity file. Its username is appended
+only to `CATALOG_READERS`. It is not a publisher, worker, or migration admin, so the app
+does not treat it as an editor. There is no narrower Cognito group: browser recording is
+also allowed for every catalog reader. The permanent password is generated in Secrets
+Manager (`panther/viewer-credentials`) and set with `AdminSetUserPassword` so the first
+sign-in does not demand a change. The value is not an output, a log line, or a parameter.
+Do not extend this exception to any other account.
+
 ## Self-service web controls
 
 The **Account** button opens an accessible, scrollable settings dialog with a permanently visible

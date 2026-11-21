@@ -47,6 +47,7 @@ import { PipelineWatch } from "./pipeline-watch";
 import { pipelineDashboard } from "./pipeline-metrics";
 
 import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
+import { catalogReaders, ReadOnlyAccess } from "./read-only-access";
 
 // The module build has bare Three.js imports; static hosting needs this
 // self-contained browser distribution instead.
@@ -72,7 +73,7 @@ export class PantherMediaExplorerStack extends Stack {
       throw new Error("credentialCutover was retired; credential policy version 2 is unconditional");
     }
     const accessEnvironment = {
-      CATALOG_READERS: identities.users.join(","),
+      CATALOG_READERS: catalogReaders(identities.users, identities).join(","),
       MODEL_PUBLISHERS: identities.publishers.join(","),
       MODEL_WORKERS: identities.workers.join(","),
       ASSET_MIGRATORS: identities.migrationAdmins.join(","),
@@ -697,6 +698,15 @@ export class PantherMediaExplorerStack extends Stack {
     new CfnOutput(this, "MediaExplorerUrl", {
       value: siteUrl,
       description: "Password-protected Panther media explorer",
+    });
+    const readOnlyAccess = new ReadOnlyAccess(this, "ReadOnlyAccess", {userPool});
+    new CfnOutput(this, "ViewerCredentialsSecretArn", {
+      value: readOnlyAccess.viewerSecret.secretArn,
+      description: "Secrets Manager ARN for the synthetic catalog reader. The value is not an output.",
+    });
+    new CfnOutput(this, "GrafanaCredentialsSecretArn", {
+      value: readOnlyAccess.grafanaSecretArn,
+      description: "Secrets Manager ARN for the Grafana CloudWatch key. The value is not an output.",
     });
     new CfnOutput(this, "UserPoolId", {
       value: userPool.userPoolId,
