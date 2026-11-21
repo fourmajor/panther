@@ -6,7 +6,7 @@ import {Input} from './components/ui/input.jsx';
 import {SessionDownload} from './session-summary.jsx';
 import {formatTimestamp} from './format-time.js';
 import {formatWhen} from './session-pipeline-model.js';
-import {recapInputs} from './session-record.js';
+import {latestCurrentRun, recapInputs} from './session-record.js';
 
 function when(value) {
   if (value == null || value === '') return null;
@@ -288,7 +288,7 @@ function pipelineGroups(runs) {
     group.runs.push(run);
   }
   return groups.map(group => {
-    const latest = group.runs.find(run => !run.stale) || group.runs[0];
+    const latest = latestCurrentRun(group.runs);
     const measured = group.runs.filter(run => !run.stale && Number.isFinite(run.durationSeconds));
     const stale = group.runs.filter(run => run.stale).length;
     return {
