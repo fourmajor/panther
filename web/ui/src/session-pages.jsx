@@ -49,7 +49,17 @@ function names(people, empty) {
   return people.map(person => person.name || person.id).join(', ');
 }
 
-function Recap({scope, gameId, sourceKey, text, onSummary, compact}) {
+function excerptText(document) {
+  if (!document || typeof document !== 'object') return null;
+  const chapter = document.payload?.chapter || document.chapter || document.text || document.markdown;
+  if (typeof chapter === 'string' && chapter.trim()) return chapter.trim();
+  const segments = document.segments || document.payload?.transcript?.segments || document.transcript?.segments || document.payload?.segments;
+  if (!Array.isArray(segments)) return null;
+  const lines = segments.map(segment => (typeof segment?.text === 'string' && segment.text) || (typeof segment?.utterance === 'string' && segment.utterance) || '').map(line => line.trim()).filter(Boolean);
+  return lines.length ? lines.slice(0, 4).join(' ') : null;
+}
+
+function Recap({scope, gameId, sourceKey, text, excerptKey, excerptLabel, onSummary, onExcerpt, compact}) {
   const query = useQuery({
     queryKey: ['session-recap', scope, gameId, sourceKey || ''],
     enabled: !text && Boolean(sourceKey),
@@ -58,20 +68,32 @@ function Recap({scope, gameId, sourceKey, text, onSummary, compact}) {
     retry: false,
     refetchInterval: current => ['QUEUED', 'GENERATING'].includes(current.state.data?.status) ? 5000 : false,
   });
+  const summaryMissing = !text && (!sourceKey || query.isError || query.data?.status === 'MISSING' || (query.isSuccess && !query.data?.summary?.summary));
+  const excerpt = useQuery({
+    queryKey: ['session-excerpt', scope, gameId, excerptKey || ''],
+    enabled: summaryMissing && Boolean(excerptKey),
+    queryFn: () => onExcerpt(excerptKey),
+    staleTime: 300000,
+    retry: false,
+  });
   const loaded = text || query.data?.summary?.summary;
-  if (!sourceKey && !text) return compact ? <p className="session-card-summary">No recap yet.</p> : <p className="session-empty">No recap has been written for this session yet.</p>;
-  if (!loaded && query.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
-  if (!loaded && query.error) {
-    if (query.error.status === 400) return compact ? <p className="session-card-summary">No recap yet.</p> : <p className="session-empty">No recap has been written for this session yet.</p>;
+  const fallback = !loaded && summaryMissing ? excerptText(excerpt.data) : null;
+  if (loaded) {
+    const body = String(loaded);
+    const short = body.length > 180 ? `${body.slice(0, 180).replace(/\s+\S*$/, '')}…` : body;
+    return <p className={compact ? 'session-card-summary' : 'session-recap'}>{compact ? short : body}</p>;
+  }
+  if (sourceKey && query.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
+  if (summaryMissing && excerptKey && excerpt.isPending) return <div className="session-recap-loading" aria-label="Loading recap"/>;
+  if (fallback) {
+    const short = fallback.length > 180 ? `${fallback.slice(0, 180).replace(/\s+\S*$/, '')}…` : fallback;
+    return <p className={compact ? 'session-card-summary' : 'session-recap'}><span className="session-excerpt-label">{excerptLabel || 'Excerpt'}. </span>{compact ? short : fallback}</p>;
+  }
+  if (query.error && query.error.status !== 400 && !excerptKey) {
     if (compact) return <p className="session-card-summary">Recap unavailable.</p>;
     return <p role="alert" className="session-error"><CircleAlert size={16}/>Recap unavailable. <Button variant="outline" size="sm" onClick={() => query.refetch()}>Retry recap</Button></p>;
   }
-  if (!loaded || query.data?.status === 'MISSING') {
-    return compact ? <p className="session-card-summary">No recap yet.</p> : <p className="session-empty">No recap has been written for this session yet.</p>;
-  }
-  const body = String(loaded);
-  const short = body.length > 180 ? `${body.slice(0, 180).replace(/\s+\S*$/, '')}…` : body;
-  return <p className={compact ? 'session-card-summary' : 'session-recap'}>{compact ? short : body}</p>;
+  return compact ? <p className="session-card-summary">No recap yet.</p> : <p className="session-empty">No recap has been written for this session yet.</p>;
 }
 
 function Thumb({scope, gameId, imageKey, onImage}) {
@@ -166,6 +188,9 @@ function Library({library, scope, gameId, onImage, onPreview, onShowRun}) {
     <section aria-label="Final assets">
       <h3>Final assets</h3>
       {finals.length ? <AssetCards assets={finals} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} large/> : <p className="session-empty">No final assets yet.</p>}
+      {(library?.sceneClips || []).length > 0 && <Disclosure summary={<span className="session-disclosure-label"><strong>Scene clips</strong><span>{assetSummary(library.sceneClips)}</span></span>}>
+        <AssetCards assets={library.sceneClips} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview}/>
+      </Disclosure>}
     </section>
     <section aria-label="Intermediary assets">
       <h3>Intermediary assets</h3>
@@ -185,29 +210,59 @@ function Library({library, scope, gameId, onImage, onPreview, onShowRun}) {
   </div>;
 }
 
-function Player({recordingKey, onSign, onDownload}) {
+function Player({media, onSign, onDownload}) {
+  const key = media?.key || null;
+  const video = media?.media === 'video';
   const query = useQuery({
-    queryKey: ['session-recording', recordingKey || ''],
-    enabled: Boolean(recordingKey),
-    queryFn: () => onSign(recordingKey),
+    queryKey: ['session-recording', key || ''],
+    enabled: Boolean(key),
+    queryFn: () => onSign(key),
     staleTime: 240000,
     retry: false,
   });
-  if (!recordingKey) return <p className="session-empty">No listening copy has been published for this session yet.</p>;
+  if (!key) return <p className="session-empty">No listening copy has been published for this session yet.</p>;
   if (query.isPending) return <div className="session-player-loading" aria-label="Loading recording"/>;
   if (query.error || !query.data?.url) return <div><p role="alert" className="session-error"><CircleAlert size={16}/>The recording could not be loaded.</p><Button variant="outline" onClick={() => query.refetch()}>Retry recording</Button></div>;
   return <div className="session-player">
-    <audio controls preload="none" src={query.data.url} data-key={recordingKey} aria-label="Session recording"/>
-    <SessionDownload onDownload={() => onDownload(recordingKey)}/>
+    {video
+      ? <video controls playsInline preload="metadata" src={query.data.url} data-key={key} aria-label="Session video"/>
+      : <audio controls preload="metadata" src={query.data.url} data-key={key} aria-label="Session recording"/>}
+    <SessionDownload onDownload={() => onDownload(key)}/>
   </div>;
 }
 
-function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign, onDownload, onSummary, onImage}) {
+function pipelineGroups(runs) {
+  const groups = [];
+  for (const run of runs || []) {
+    let group = groups.find(item => item.kind === run.kind);
+    if (!group) {
+      group = {kind: run.kind, type: run.type, runs: []};
+      groups.push(group);
+    }
+    group.runs.push(run);
+  }
+  return groups.map(group => {
+    const latest = group.runs[0];
+    const measured = group.runs.filter(run => !run.stale && Number.isFinite(run.durationSeconds));
+    const stale = group.runs.filter(run => run.stale).length;
+    return {
+      ...group,
+      status: latest?.status,
+      statusLabel: latest?.statusLabel,
+      lastRun: latest?.startedAt,
+      totalDuration: measured.length ? measured.reduce((sum, run) => sum + run.durationSeconds, 0) : null,
+      stale,
+    };
+  });
+}
+
+function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign, onDownload, onSummary, onExcerpt, onImage, libraryPending}) {
   const [currentRun, setCurrentRun] = React.useState(null);
   function showRun(anchor) {
     setCurrentRun(anchor);
-    document.getElementById(anchor)?.scrollIntoView({block: 'nearest'});
+    requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({block: 'nearest'})));
   }
+  const groups = pipelineGroups(session.pipelines);
   return <article className="session-detail">
     <Link href={listPath} onNavigate={onNavigate} className="session-back">Sessions</Link>
     <header className="session-detail-heading">
@@ -216,7 +271,7 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
     </header>
     <section className="session-block" aria-label="Recording">
       <h2>Recording</h2>
-      <Player recordingKey={session.recordingKey} onSign={onSign} onDownload={onDownload}/>
+      <Player media={session.player || (session.recordingKey ? {key: session.recordingKey, media: 'audio'} : null)} onSign={onSign} onDownload={onDownload}/>
     </section>
     <section className="session-block" aria-label="Session info">
       <h2>Session info</h2>
@@ -226,47 +281,69 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
         <dt>Characters</dt><dd>{names(session.characters, 'No characters linked')}</dd>
       </dl>
       <h3>Recap</h3>
-      <Recap scope={scope} gameId={gameId} sourceKey={session.summarySourceKey} text={session.summaryText} onSummary={onSummary}/>
+      <Recap scope={scope} gameId={gameId} sourceKey={session.summarySourceKey} text={session.summaryText} excerptKey={session.excerptKey} excerptLabel={session.excerptLabel} onSummary={onSummary} onExcerpt={onExcerpt}/>
     </section>
     <section className="session-block" aria-label="Assets">
       <h2>Assets</h2>
+      {libraryPending && <p role="status" className="session-note">Loading the rest of this session&apos;s assets.</p>}
       <Library library={session.library} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} onShowRun={showRun}/>
     </section>
     <section className="session-block" aria-label="Pipelines">
       <h2>Pipelines</h2>
       {(session.pipelines || []).length === 0 && <p className="session-empty">No pipeline runs are tied to this session.</p>}
-      {(session.pipelines || []).length > 0 && <ul className="session-runs">{session.pipelines.map(run => <li key={run.id}>
-        <article className="session-run" id={run.anchor || undefined} data-current={currentRun === run.anchor ? 'true' : 'false'}>
-          <header><strong>{run.type}</strong><span className="session-status" data-status={run.status}>{run.statusLabel}</span></header>
-          {run.title && run.title !== run.type && <p>{run.title}</p>}
-          <dl>
-            <dt>Started</dt><dd>{when(run.startedAt) || 'Unknown'}</dd>
-            <dt>Ended</dt><dd>{when(run.endedAt) || (run.status === 'running' || run.status === 'queued' ? 'In progress' : 'Unknown')}</dd>
-            <dt>Duration</dt><dd>{duration(run.durationSeconds) || 'Unknown'}</dd>
-          </dl>
-          {run.message && <p className="session-run-log">{run.message}</p>}
-          <div className="session-run-links">
-            {run.detailPath && <Link href={run.detailPath} onNavigate={onNavigate}>Details</Link>}
-            {run.pipelinePath && <Link href={run.pipelinePath} onNavigate={onNavigate}>Pipeline</Link>}
-          </div>
-        </article>
-      </li>)}</ul>}
+      {groups.map(group => {
+        const last = when(group.lastRun);
+        const total = duration(group.totalDuration);
+        const summary = [
+          group.runs.length === 1 ? '1 run' : `${group.runs.length} runs`,
+          group.statusLabel,
+          last,
+          total,
+          group.stale ? `${group.stale} stale` : null,
+        ].filter(Boolean).join(' · ');
+        return <Disclosure key={group.kind} forceOpen={group.runs.some(run => run.anchor && run.anchor === currentRun)} summary={<span className="session-disclosure-label"><strong>{group.type}</strong><span>{summary}</span></span>}>
+          <ul className="session-runs">{group.runs.map(run => <li key={run.id}>
+            <article className="session-run" id={run.anchor || undefined} data-current={currentRun === run.anchor ? 'true' : 'false'} data-stale={run.stale ? 'true' : 'false'}>
+              <header><strong>{run.type}</strong><span className="session-status" data-status={run.stale ? 'paused' : run.status}>{run.stale ? 'Stale' : run.statusLabel}</span></header>
+              {run.title && run.title !== run.type && <p>{run.title}</p>}
+              <dl>
+                <dt>Started</dt><dd>{when(run.startedAt) || 'Unknown'}</dd>
+                <dt>Ended</dt><dd>{run.stale ? 'Abandoned' : when(run.endedAt) || (run.status === 'running' || run.status === 'queued' ? 'In progress' : 'Unknown')}</dd>
+                <dt>Duration</dt><dd>{run.stale ? 'Stale' : duration(run.durationSeconds) || 'Unknown'}</dd>
+              </dl>
+              {run.message && <p className="session-run-log">{run.message}</p>}
+              <div className="session-run-links">
+                {run.detailPath && <Link href={run.detailPath} onNavigate={onNavigate}>Details</Link>}
+                {run.pipelinePath && <Link href={run.pipelinePath} onNavigate={onNavigate}>Pipeline</Link>}
+              </div>
+            </article>
+          </li>)}</ul>
+        </Disclosure>;
+      })}
     </section>
   </article>;
 }
 
-export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPreview, onSign, onDownload, onSummary, onImage}) {
-  const query = useQuery({
-    queryKey: ['session-pages', scope, gameId, sessionId || ''],
-    queryFn: ({signal}) => onLoad({sessionId: sessionId || null, signal}),
+export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPreview, onSign, onDownload, onSummary, onExcerpt, onImage}) {
+  const shell = useQuery({
+    queryKey: ['session-pages', scope, gameId, sessionId || '', 'shell'],
+    queryFn: ({signal}) => onLoad({sessionId: sessionId || null, part: 'shell', signal}),
     retry: false,
-    refetchInterval: 20000,
+    staleTime: 60000,
+  });
+  const full = useQuery({
+    queryKey: ['session-pages', scope, gameId, sessionId || '', 'full'],
+    enabled: shell.isSuccess,
+    queryFn: ({signal}) => onLoad({sessionId: sessionId || null, part: 'full', signal}),
+    retry: false,
+    staleTime: 60000,
   });
   const listPath = `/games/${encodeURIComponent(gameId)}/sessions`;
-  const data = query.data;
+  const data = (sessionId && full.data) || shell.data;
+  const libraryPending = Boolean(sessionId) && shell.data?.scope === 'shell' && !full.data;
   return <div className="session-pages">
-    {query.isPending && <div className="session-grid" aria-label="Loading sessions">{[0, 1, 2].map(item => <div className="session-tile session-tile-loading" key={item}><div className="session-thumb"/><div className="session-line"/><div className="session-line session-line-short"/></div>)}</div>}
-    {query.error && <div><p role="alert" className="session-error"><CircleAlert size={16}/>{query.error.message || 'Sessions could not be loaded.'}</p><Button variant="outline" onClick={() => query.refetch()}>Retry sessions</Button></div>}
+    {shell.isPending && <div className="session-grid" aria-label="Loading sessions">{[0, 1, 2].map(item => <div className="session-tile session-tile-loading" key={item}><div className="session-thumb"/><div className="session-line"/><div className="session-line session-line-short"/></div>)}</div>}
+    {shell.error && !data && <div><p role="alert" className="session-error"><CircleAlert size={16}/>{shell.error.message || 'Sessions could not be loaded.'}</p><Button variant="outline" onClick={() => shell.refetch()}>Retry sessions</Button></div>}
     {data && !data.complete && <p role="status" className="session-note">Some catalog pages were not read. This list may be missing assets. <Button variant="outline" size="sm" onClick={() => query.refetch()}>Retry sessions</Button></p>}
     {data && !sessionId && <section aria-label="Sessions">
       {data.sessions.length === 0 && <p className="session-empty">No sessions yet.</p>}
@@ -276,13 +353,14 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
           <span className="session-tile-copy">
             <strong>{item.title}</strong>
             <span className="session-date">{when(item.occurredAt) || 'Date unknown'}</span>
-            <Recap scope={scope} gameId={gameId} sourceKey={item.summarySourceKey} text={item.summaryText} onSummary={onSummary} compact/>
+            <Recap scope={scope} gameId={gameId} sourceKey={item.summarySourceKey} text={item.summaryText} excerptKey={item.excerptKey} excerptLabel={item.excerptLabel} onSummary={onSummary} onExcerpt={onExcerpt} compact/>
             <span className="session-status" data-status={item.status}>{item.statusLabel}</span>
           </span>
         </Link>
       </li>)}</ul>}
     </section>}
-    {data && sessionId && data.session && <Detail gameId={gameId} scope={scope} session={data.session} listPath={listPath} onNavigate={onNavigate} onPreview={onPreview} onSign={onSign} onDownload={onDownload} onSummary={onSummary} onImage={onImage}/>}
+    {data && sessionId && data.session && <Detail gameId={gameId} scope={scope} session={data.session} listPath={listPath} onNavigate={onNavigate} onPreview={onPreview} onSign={onSign} onDownload={onDownload} onSummary={onSummary} onExcerpt={onExcerpt} onImage={onImage} libraryPending={libraryPending}/>}
+    {sessionId && full.error && <p role="status" className="session-note">The rest of this session&apos;s assets did not load. <Button variant="outline" size="sm" onClick={() => full.refetch()}>Retry assets</Button></p>}
     {data && sessionId && !data.session && <p className="session-empty">This session is not in the catalog.</p>}
   </div>;
 }

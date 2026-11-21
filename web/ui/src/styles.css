@@ -545,7 +545,9 @@
 .session-facts dd,.session-run dd{margin:0;overflow-wrap:anywhere;}
 .session-recap{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;}
 .session-player{display:flex;align-items:center;gap:.5rem;min-width:0;}
-.session-player audio{width:min(100%,36rem);min-width:0;flex:1;}
+.session-player audio,.session-player video{display:block;width:100%;max-width:40rem;min-height:54px;height:54px;flex:none;}
+.session-player video{height:auto;aspect-ratio:16/9;min-height:180px;max-height:70vh;background:#000;}
+.session-excerpt-label{color:var(--panther-muted);font-size:.8rem;}
 .session-asset-group{display:grid;gap:.6rem;}
 .session-assets,.session-runs{list-style:none;display:grid;gap:.65rem;margin:0;padding:0;}
 .session-asset,.session-run{display:grid;grid-template-columns:7.5rem minmax(0,1fr);gap:.75rem;padding:.75rem;border:1px solid var(--line);border-radius:.75rem;background:var(--panel);min-width:0;}
@@ -595,3 +597,10 @@
   .session-facts dt,.session-run dt{margin-top:.35rem;}
 }
 @media(prefers-reduced-motion:reduce){.session-recap-loading,.session-player-loading,.session-tile-loading .session-thumb,.session-line{animation:none;}}
+.nav-menu{display:none;}
+@media(max-width:600px){
+  .masthead #game-toolbar{grid-column:1/-1;grid-row:2;max-width:none;}
+  .nav-menu{display:inline-flex;grid-column:1/-1;grid-row:3;min-height:44px;align-items:center;justify-content:center;}
+  .masthead .primary-nav,.masthead .primary-nav[hidden]{display:none!important;grid-row:4;}
+  .masthead .primary-nav[data-open=true]{display:grid!important;grid-template-columns:1fr 1fr;visibility:visible;pointer-events:auto;}
+}

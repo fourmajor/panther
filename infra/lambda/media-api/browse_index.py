@@ -148,19 +148,19 @@ def refresh_for_maintenance(media, reference, *, write):
             time.sleep(random.uniform(0.05, 0.15) * (2 ** attempt))
 
 
-def page(game, section, cursor=None, *, selection=None):
+def page(game, section, cursor=None, *, selection=None, consistent=True, tags=True):
     if section not in SECTIONS:
         raise ValueError("Invalid asset section")
     if (
         not table()
-        .get_item(Key={"pk": f"v{VERSION}#catalog", "sk": "ready"}, ConsistentRead=True)
+        .get_item(Key={"pk": f"v{VERSION}#catalog", "sk": "ready"}, ConsistentRead=consistent)
         .get("Item")
     ):
         raise IndexNotReady(
             "The catalog upgrade is being prepared. No assets have been removed; please retry shortly."
         )
     pk = partition(game, section)
-    args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": selection['limit'] if selection else 100, "ConsistentRead": True}
+    args = {"KeyConditionExpression": Key("pk").eq(pk), "Limit": selection['limit'] if selection else 100, "ConsistentRead": consistent}
     if cursor:
         try:
             key = json.loads(base64.urlsafe_b64decode(cursor))
@@ -200,7 +200,7 @@ def page(game, section, cursor=None, *, selection=None):
                 table()
                 .get_item(
                     Key={"pk": partition(game, "all"), "sk": asset["key"][:-3] + ".json"},
-                    ConsistentRead=True,
+                    ConsistentRead=consistent,
                 )
                 .get("Item")
             )
@@ -209,7 +209,7 @@ def page(game, section, cursor=None, *, selection=None):
         assets = [asset for asset in assets if unpaired(asset)]
     import user_metadata
     from tag_management import project
-    events = user_metadata.tag_events(game)
+    events = user_metadata.tag_events(game) if tags else []
     assets = [project(asset, events) for asset in assets] if events else assets
     if selection:
         import asset_browser

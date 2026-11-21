@@ -6,6 +6,7 @@ visible under intermediary assets.
 """
 
 import re
+import time
 from datetime import datetime, timezone
 
 from session_pipeline import normalize, session_of, slug, stamp
@@ -95,12 +96,19 @@ STATUS_LABELS = {
     "pending": "Not started",
     "unknown": "Unknown",
 }
+VIDEO_KINDS = frozenset({"tv-episode", "silly-video", "session-video", "video"})
+THUMB_KINDS = frozenset({"video-thumbnail", "thumbnail", "poster", "cover"})
+RECAP_KINDS = frozenset({"transcript-summary", "recap", "session-recap"})
+CHAPTER_KINDS = frozenset({"novel-chapter", "novel", "story"})
+STALE_SECONDS = 12 * 3600
 PART = re.compile(r"part-\d{4}\.(?:flac|wav|mp3|m4a|ogg)\Z", re.IGNORECASE)
 GENERIC_TITLE = re.compile(
     r"^(?:recording(?:-manifest|-playback)?|(?:raw-|corrected-|edited-)?transcript)\Z",
     re.IGNORECASE,
 )
 NOISY_TITLE = re.compile(r"[a-f0-9]{24,}|\.(?:json|wav|mp3|flac|md|png|jpe?g|mp4|webm)\Z", re.IGNORECASE)
+ISO_TITLE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+SLUG_TITLE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 TRANSCRIPT_KINDS = ("raw-transcript", "transcript", "corrected-transcript", "edited-transcript")
 TERMINAL = {"done", "failed", "paused"}
 ASSET_PAGES = 30
@@ -270,6 +278,42 @@ def _clip(value, limit=500):
     return text[:limit]
 
 
+def _display_title(kind, title, name):
+    """Replace a raw kind, slug, or filename with the kind's readable name."""
+    if (
+        not title
+        or title == kind
+        or title == name
+        or GENERIC_TITLE.fullmatch(title)
+        or NOISY_TITLE.search(title)
+        or SLUG_TITLE.fullmatch(title)
+        or ISO_TITLE.match(title)
+    ):
+        return kind_label(kind)
+    return title
+
+
+def _person_name(identity, name=None):
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    words = re.sub(r"[-_]+", " ", identity).strip()
+    return words.title() if words else identity
+
+
+def _friendly_slug(session_id):
+    words = re.sub(r"[-_]+", " ", session_id)
+    words = re.sub(r"\b\d{6,8}\b", "", words)
+    words = " ".join(words.split())
+    return words.title() if words else "Session"
+
+
+def _friendly_date(when):
+    stamped = stamp(when)
+    if not stamped:
+        return None
+    return datetime.fromtimestamp(stamped, timezone.utc).strftime("%b %d, %Y").replace(" 0", " ")
+
+
 def _metadata(asset):
     metadata = asset.get("metadata")
     return metadata if isinstance(metadata, dict) else {}
@@ -341,7 +385,7 @@ def _same_game_key(game, key):
 def _asset_view(game, asset):
     metadata = _metadata(asset)
     kind = asset.get("kind") if isinstance(asset.get("kind"), str) else "unclassified"
-    title = _clip(metadata.get("title"), 160)
+    title = _display_title(kind, _clip(metadata.get("title"), 160), asset.get("name") if isinstance(asset.get("name"), str) else "")
     created = asset.get("lastModified") or asset.get("createdAt")
     size = asset.get("size")
     if isinstance(size, bool) or not isinstance(size, (int, float)) or size < 0:
@@ -385,15 +429,15 @@ def _people(assets):
             if not isinstance(identity, str) or identity in seen:
                 continue
             seen.add(identity)
-            name = person.get("name") if isinstance(person.get("name"), str) and person["name"].strip() else None
-            players.append({"id": identity, "name": name})
+            given = person.get("name") if isinstance(person.get("name"), str) and person["name"].strip() else None
+            players.append({"id": identity, "name": _person_name(identity, given)})
     characters = []
     character_ids = set()
     for asset in assets:
         for identity in _metadata(asset).get("characterIds") or []:
             if isinstance(identity, str) and slug(identity) and identity not in character_ids:
                 character_ids.add(identity)
-                characters.append({"id": identity})
+                characters.append({"id": identity, "name": _person_name(identity)})
     players.sort(key=lambda person: (person["name"] or person["id"]).casefold())
     characters.sort(key=lambda character: character["id"])
     return players, characters
@@ -407,11 +451,13 @@ def _title(assets, session_id, when):
             return name
     for asset in assets:
         title = _clip(_metadata(asset).get("title"), 160)
-        if title and not GENERIC_TITLE.fullmatch(title) and not NOISY_TITLE.search(title):
+        if title and not GENERIC_TITLE.fullmatch(title) and not NOISY_TITLE.search(title) and not ISO_TITLE.match(title) and not SLUG_TITLE.fullmatch(title):
             return title
-    if when:
-        return when
-    return session_id
+    date = _friendly_date(when)
+    label = _friendly_slug(session_id)
+    if date and label:
+        return f"{date} · {label}"
+    return date or label or session_id
 
 
 def _iso(value):
@@ -439,18 +485,22 @@ def _when(assets, runs):
 
 
 def _thumbnail(game, assets):
-    for asset in assets:
-        view = _asset_view(game, asset)
-        if view["role"] == "final" and view["preview"] == "image" and view["kind"] in {"video-thumbnail", "thumbnail", "poster", "cover"}:
+    views = [_asset_view(game, asset) for asset in assets]
+    for view in views:
+        if view["preview"] == "image" and view["kind"] in THUMB_KINDS:
             return view["key"]
-        if view["role"] == "final" and view["preview"] == "image" and view["kind"] in {"tv-episode", "session-video", "video", "silly-video"}:
-            return view["key"]
-    for asset in assets:
-        view = _asset_view(game, asset)
+    for view in views:
         if view["thumbnailKey"]:
             return view["thumbnailKey"]
-        if view["role"] == "final" and view["preview"] == "image":
-            return view["key"]
+    stills = [
+        view for view in views
+        if view["preview"] == "image" and ("preview" in (view["kind"] or "") or "preview" in (view["title"] or "").lower())
+    ]
+    if stills:
+        return stills[0]["key"]
+    portraits = [view for view in views if view["preview"] == "image" and view["kind"] in {"portrait", "character-turnaround-view"}]
+    if portraits:
+        return portraits[0]["key"]
     return None
 
 
@@ -465,6 +515,40 @@ def _recording_key(assets):
         if isinstance(key, str):
             return key
     return None
+
+
+def _player(assets):
+    videos = [asset for asset in assets if asset.get("kind") in VIDEO_KINDS and _preview(asset) == "video" and isinstance(asset.get("key"), str)]
+    if videos:
+        def rank(asset):
+            title = (_metadata(asset).get("title") or "")
+            title = title.lower() if isinstance(title, str) else ""
+            kind = asset.get("kind") or ""
+            tier = 0 if "final" in title else 1 if kind in {"session-video", "tv-episode"} else 2
+            size = asset.get("size") if isinstance(asset.get("size"), (int, float)) and not isinstance(asset.get("size"), bool) else 0
+            return (tier, -size, str(asset.get("lastModified") or ""))
+        return {"key": sorted(videos, key=rank)[0]["key"], "media": "video"}
+    audio = _recording_key(assets)
+    if audio:
+        return {"key": audio, "media": "audio"}
+    return None
+
+
+def _excerpt(assets):
+    def newest(kind_set):
+        chosen = [asset for asset in assets if asset.get("kind") in kind_set and str(asset.get("key") or "").endswith(".json")]
+        chosen.sort(key=lambda asset: str(asset.get("lastModified") or asset.get("createdAt") or ""))
+        return chosen[-1]["key"] if chosen else None
+    chapter = newest(CHAPTER_KINDS)
+    if chapter:
+        return chapter, "Excerpt from the novel chapter"
+    corrected = newest({"corrected-transcript", "edited-transcript"})
+    if corrected:
+        return corrected, "Excerpt from the corrected transcript"
+    raw = newest({"raw-transcript", "transcript"})
+    if raw:
+        return raw, "Excerpt from the transcript"
+    return None, None
 
 
 def _summary_source(assets):
@@ -486,7 +570,7 @@ def _summary_text(summary):
     return _clip(text, 600)
 
 
-def shape_run(item, game):
+def shape_run(item, game, now=None):
     if not isinstance(item, dict):
         return None
     identity = item.get("id") if isinstance(item.get("id"), str) and item.get("id").strip() else item.get("runId")
@@ -497,13 +581,26 @@ def shape_run(item, game):
     started = stamp(item.get("createdAt")) or stamp(item.get("startedAt")) or None
     ended = None
     if status in TERMINAL:
-        for field in ("completedAt", "endedAt", "reportedAt", "observedAt", "updatedAt"):
+        for field in ("completedAt", "endedAt"):
             ended = stamp(item.get(field)) or None
             if ended:
                 break
         if ended and started and ended < started:
             ended = None
-    duration = int(ended - started) if ended and started else None
+        if not ended and started:
+            for field in ("reportedAt", "observedAt", "updatedAt"):
+                touched = stamp(item.get(field)) or None
+                if touched and 0 <= touched - started <= STALE_SECONDS:
+                    ended = touched
+                    break
+    observed = float(now if now is not None else time.time())
+    stale = False
+    if status != "done" and started:
+        span = ended - started if ended else None
+        if (span is not None and span > STALE_SECONDS) or (ended is None and observed - started > STALE_SECONDS):
+            stale = True
+            ended = None
+    duration = int(ended - started) if ended and started and not stale else None
     message = _clip(item.get("note") or item.get("message"))
     outputs = []
     for stage in item.get("stages") or []:
@@ -526,6 +623,7 @@ def shape_run(item, game):
         "startedAt": started,
         "endedAt": ended,
         "durationSeconds": duration,
+        "stale": stale,
         "message": message,
         "detailPath": detail,
         "outputKeys": list(dict.fromkeys(outputs)),
@@ -555,20 +653,42 @@ def _featured_transcript(views):
     return sorted(pool, key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""))[-1]
 
 
+def _newest(views):
+    return sorted(views, key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""))[-1]
+
+
+def _video_rank(view):
+    title = (view.get("title") or "").lower()
+    kind = view.get("kind") or ""
+    tier = 0 if "final" in title else 1 if kind in {"session-video", "tv-episode"} else 2
+    return (tier, -(view.get("size") or 0), str(view.get("createdAt") or ""))
+
+
 def organize_library(views, runs):
-    """Final cards, then intermediary files by pipeline stage, run, and type."""
+    """A few finished cards, scene clips, then intermediary files by stage, run, and type."""
     by_output = {}
     for run in runs:
         for key in run.get("outputKeys") or []:
             by_output.setdefault(key, run)
     featured = _featured_transcript(views)
     finals = [view for view in views if view.get("role") == "final"]
-    if featured and featured not in finals:
-        finals.append(featured)
-    finals.sort(key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""), reverse=True)
+    videos = [view for view in views if view.get("kind") in VIDEO_KINDS and view.get("preview") == "video"]
+    featured_video = sorted(videos, key=_video_rank)[0] if videos else None
+    scene_clips = [view for view in videos if view is not featured_video]
+    scene_clips.sort(key=lambda view: (str(view.get("createdAt") or ""), view.get("key") or ""), reverse=True)
+    thumbs = [view for view in finals if view.get("kind") in THUMB_KINDS and view.get("preview") == "image"]
+    recaps = [view for view in finals if view.get("kind") in RECAP_KINDS]
+    chapters = [view for view in finals if view.get("kind") in CHAPTER_KINDS]
+    story = _newest(recaps or chapters) if (recaps or chapters) else None
+    listening = [view for view in finals if view.get("kind") == "recording-playback" and view.get("preview") == "audio"]
+    big = []
+    for item in (featured_video, _newest(thumbs) if thumbs else None, story, featured, _newest(listening) if listening else None):
+        if item and item not in big:
+            big.append(item)
+    shown = {item["key"] for item in big} | {item["key"] for item in scene_clips}
     buckets = {}
     for view in views:
-        if view.get("role") == "final" or view is featured:
+        if view.get("key") in shown:
             continue
         run = _run_for(view, runs, by_output)
         stage = run["kind"] if run else stage_for_kind(view.get("kind") or "")
@@ -634,7 +754,8 @@ def organize_library(views, runs):
             "runs": run_groups,
         })
     return {
-        "finals": finals,
+        "finals": big,
+        "sceneClips": scene_clips,
         "stages": stages,
         "types": [{"id": type_id, "label": type_meta[type_id][0]} for type_id in present if type_id in type_meta],
     }
@@ -696,6 +817,7 @@ def assemble(game, assets, runs, session_id=None, summaries=None, assets_complet
         status = _status(bucket_runs, bucket_assets)
         summary = _summary_text(summaries.get(sid))
         players, characters = _people(bucket_assets)
+        excerpt_key, excerpt_label = _excerpt(bucket_assets)
         return {
             "id": sid,
             "title": _title(bucket_assets, sid, when),
@@ -703,6 +825,9 @@ def assemble(game, assets, runs, session_id=None, summaries=None, assets_complet
             "thumbnailKey": _thumbnail(game, bucket_assets),
             "summaryText": summary,
             "summarySourceKey": _summary_source(bucket_assets),
+            "excerptKey": None if summary else excerpt_key,
+            "excerptLabel": None if summary else excerpt_label,
+            "player": _player(bucket_assets),
             "status": status,
             "statusLabel": STATUS_LABELS.get(status, "Unknown"),
             "players": players,
@@ -733,10 +858,13 @@ def assemble(game, assets, runs, session_id=None, summaries=None, assets_complet
             "thumbnailKey": match["thumbnailKey"],
             "summaryText": match["summaryText"],
             "summarySourceKey": match["summarySourceKey"],
+            "excerptKey": match["excerptKey"],
+            "excerptLabel": match["excerptLabel"],
             "status": match["status"],
             "statusLabel": match["statusLabel"],
             "players": match["players"],
             "characters": match["characters"],
+            "player": match["player"],
             "recordingKey": match["recordingKey"],
             "href": match["href"],
             "finalAssets": [asset for asset in views if asset["role"] == "final"],

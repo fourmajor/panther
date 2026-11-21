@@ -180,6 +180,7 @@ def detail(game_id, can_edit=False):
             "visualStyles": STYLES,
             "gameSettings": game_settings.description(sys.modules[__name__], game_id),
             "canEditGame": can_edit and not game.get("legacy", False),
+            "canCreateGame": bool(can_edit),
         },
     )
 

@@ -300,6 +300,7 @@ export class PantherMediaExplorerStack extends Stack {
       environment: {
         ASSET_BUCKET_NAME: privateAssets.bucketName,
         SIGNED_URL_TTL_SECONDS: "300",
+        CATALOG_READERS: accessEnvironment.CATALOG_READERS,
         MODEL_PUBLISHERS: accessEnvironment.MODEL_PUBLISHERS,
       },
     });
