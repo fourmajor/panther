@@ -44,6 +44,7 @@ import { PlaybackProcessing } from "./playback-processing";
 import { BrowserRecordings } from "./browser-recordings";
 import { WorkflowWorkshop } from "./workflow-workshop";
 import { PipelineWatch } from "./pipeline-watch";
+import { pipelineDashboard } from "./pipeline-metrics";
 
 import { DeploymentIdentities, validateIdentities } from "./deployment-identities";
 
@@ -493,7 +494,12 @@ export class PantherMediaExplorerStack extends Stack {
     new AssetArchive(this,"AssetArchive",{bucket:privateAssets,api:mediaApi,authorizer,browseTable:assetBrowse.table,catalogTable:gameCatalog.table,jobTables:[modeling.table,editorial.table,assetGeneration.table],accessEnvironment});
     const playback = new PlaybackProcessing(this, "PlaybackProcessing", { bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, executionLogs: notifications.executionLogs });
     const browserRecording = new BrowserRecordings(this, "BrowserRecordings", {bucket: privateAssets, api: mediaApi, authorizer, accessEnvironment, playbackTable: playback.table, secretArn: this.node.tryGetContext("browserTranscriptionSecretArn")});
-    workshop.bind({accessEnvironment,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table}});
+    workshop.bind({accessEnvironment,browseTable:assetBrowse.table,tables:{editorial:editorial.table,model:modeling.table,playback:playback.table,transcription:browserRecording.table}});
+    pipelineDashboard(this, "PipelineRuns", [
+      { type: "editorial", label: "Editorial", machine: editorial.stateMachine },
+      { type: "model", label: "Model", machine: modeling.stateMachine },
+      { type: "playback", label: "Playback", machine: playback.stateMachine },
+    ]);
     new PipelineWatch(notifications, "PipelineWatch", {
       api: mediaApi,
       authorizer,

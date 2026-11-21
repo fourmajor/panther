@@ -13,6 +13,7 @@ import {AssetCreateForm} from './asset-create-form.jsx';
 import {AssetGenerationStatus} from './asset-generation-status.jsx';
 import {WorkflowBrowser} from './workflow-browser.jsx';
 import {SessionPipeline} from './session-pipeline.jsx';
+import {SessionPages} from './session-pages.jsx';
 import {TranscriptSources} from './transcript-sources.jsx';
 import {GameSystemPicker} from './game-system-picker.jsx';
 import React from "react";
@@ -199,6 +200,12 @@ export function mountSessionPipeline(host,props){
  pipelineRoots.get(host).render(<QueryClientProvider client={client}><SessionPipeline {...props}/></QueryClientProvider>);
 }
 export function unmountSessionPipeline(host){pipelineRoots.get(host)?.unmount();pipelineRoots.delete(host);}
+const sessionPageRoots=new WeakMap();
+export function mountSessionPages(host,props){
+ if(!sessionPageRoots.has(host))sessionPageRoots.set(host,createRoot(host));
+ sessionPageRoots.get(host).render(<QueryClientProvider client={client}><SessionPages {...props}/></QueryClientProvider>);
+}
+export function unmountSessionPages(host){sessionPageRoots.get(host)?.unmount();sessionPageRoots.delete(host);}
 
 const characterComposerRoots = new WeakMap(), characterJobRoots = new WeakMap();
 export function unmountAssetCreateForm(host){const root=characterComposerRoots.get(host);if(root){root.unmount();characterComposerRoots.delete(host);}}

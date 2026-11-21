@@ -124,6 +124,12 @@ def source_view(kind, key):
               "title": title[:240], "status": status(job["status"]), "sourceStatus": job["status"],
               "createdAt": job.get("createdAt", 0), "sessionId": job.get("sessionId"), "stages": stages,
               "note": note, "observedAt": int(time.time()), "source": "durable-job", "workflowVersion": job.get("workflowVersion")}
+    completed = job.get("completedAt")
+    if completed not in (None, "") and not isinstance(completed, bool):
+        try:
+            result["completedAt"] = int(completed)
+        except (TypeError, ValueError):
+            pass
     recovery = job.get("recovery") if kind == "editorial" and isinstance(job.get("recovery"), dict) else {}
     reused = recovery.get("reusedStages")
     if isinstance(reused, list):
@@ -269,6 +275,39 @@ def remember_worker(body):
     return {"worker": name, "seenAt": now, "status": "ready"}
 
 
+class IndexBound(RuntimeError):
+    pass
+
+
+def game_items(game):
+    items, cursor = [], None
+    for _ in range(10):
+        args = {"KeyConditionExpression": Key("pk").eq("GAME#" + game), "Limit": 50, "ConsistentRead": True}
+        if cursor:
+            args["ExclusiveStartKey"] = cursor
+        page = INDEX.query(**args)
+        items.extend(page.get("Items", []))
+        cursor = page.get("LastEvaluatedKey")
+        if not cursor:
+            return items
+    raise IndexBound("Session pipeline index exceeds its supported bound.")
+
+
+def catalog_assets(game):
+    """Read the materialized catalog. Never scans object storage."""
+    import browse_index
+    from session_pages import catalog_page_limit
+
+    assets, cursor = [], None
+    for _ in range(catalog_page_limit()):
+        page = browse_index.page(game, "all", cursor)
+        assets.extend(page.get("assets") or [])
+        cursor = page.get("cursor")
+        if not cursor:
+            return assets, True
+    return assets, False
+
+
 def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     route = event.get("routeKey")
@@ -319,20 +358,24 @@ def handler(event, _context):
         marker = get(INDEX, **STATE)
         if not marker or set(marker.get("sources", [])) != set(SOURCES):
             return reply(503, {"error": "Workflow history is being indexed; the library is not complete yet."})
-        if q.get("view") == "session-pipeline":
+        if q.get("view") in {"session-pipeline", "session-pages"}:
             from session_pipeline import session_of, view as session_view
-            items, cursor = [], None
-            for _ in range(10):
-                args = {"KeyConditionExpression": Key("pk").eq("GAME#" + game), "Limit": 50, "ConsistentRead": True}
-                if cursor:
-                    args["ExclusiveStartKey"] = cursor
-                page = INDEX.query(**args)
-                items.extend(page.get("Items", []))
-                cursor = page.get("LastEvaluatedKey")
-                if not cursor:
-                    break
-            else:
-                return reply(503, {"error": "Session pipeline index exceeds its supported bound."})
+            try:
+                items = game_items(game)
+            except IndexBound as exc:
+                return reply(503, {"error": str(exc)})
+            if q.get("view") == "session-pages":
+                import browse_index
+                from session_pages import assemble
+                if q.get("sessionId") is not None and not q.get("sessionId"):
+                    raise ValueError("Invalid session")
+                try:
+                    assets, complete = catalog_assets(game)
+                except browse_index.IndexNotReady as exc:
+                    return reply(503, {"error": str(exc)})
+                except KeyError:
+                    return reply(503, {"error": "Session catalog is not configured."})
+                return reply(200, assemble(game, assets, items, session_id=q.get("sessionId") or None, assets_complete=complete))
             observations = []
             for item in items:
                 sid = session_of(item)

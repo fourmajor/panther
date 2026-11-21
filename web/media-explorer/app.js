@@ -526,8 +526,8 @@ async function revalidateForeground() {
     else if (section === "characters") {
       if (!elements.characterProfile.hidden && state.currentCharacter) await loadCharacterFacts(state.currentCharacter.gameId, state.currentCharacter.characterId, epoch);
       else await loadCharacters();
-    } else if (section === "novel") await loadNovel(null, epoch);
-    else if (["sessions", "videos"].includes(section)) await loadLibrary(section, epoch);
+    }     else if (section === "novel") await loadNovel(null, epoch);
+    else if (section === "videos") await loadLibrary(section, epoch);
   })().catch(() => { /* Retain visible content through a temporary refresh failure. */ }).finally(() => {foregroundRefresh = null;});
   return foregroundRefresh;
 }
@@ -1898,10 +1898,51 @@ async function renderRoute() {
     else {const folder=new URLSearchParams(location.search).get('folder');await loadPrefix(folder?.startsWith(`games/${state.gameId}/`)?folder:`games/${state.gameId}/`);}
     const key=new URLSearchParams(location.search).get('asset');if(epoch===routeEpoch&&sameGameKey(key))await previewFile({key,name:key.split('/').at(-1)});return;
   }
-  if (["sessions", "videos"].includes(section)) {
-    setActiveNavigation(section);
+  if (section === "sessions") {
+    setActiveNavigation("sessions");
     elements.characters.hidden = true;
     elements.explorer.hidden = true;
+    const library = document.getElementById("session-library");
+    library.hidden = false;
+    const sessionId = gameRoute?.[3] || null;
+    document.getElementById("library-list").hidden = true;
+    document.getElementById("library-status").hidden = true;
+    const title = document.getElementById("library-title");
+    title.hidden = Boolean(sessionId);
+    title.textContent = "Sessions";
+    document.getElementById("live-transcript").hidden = !liveReaderOpen;
+    const host = document.getElementById("session-pages");
+    host.hidden = false;
+    window.PantherUI.mountSessionPages(host, {
+      gameId: state.gameId,
+      scope: apiScope(),
+      sessionId,
+      onLoad: ({sessionId: selected, signal}) => api("/workflows", {gameId: state.gameId, view: "session-pages", ...(selected ? {sessionId: selected} : {})}, {signal}),
+      onNavigate: href => navigate(href),
+      onPreview: key => { void previewFile({key, name: key.split("/").at(-1)}); },
+      onSign: key => api("/object-url", {key}),
+      onDownload: async key => {
+        if (!key) return;
+        const result = await api("/object-url", {key, download: "true"});
+        const link = document.createElement("a");
+        link.href = result.url;
+        link.download = result.filename || key.split("/").at(-1);
+        document.body.append(link);
+        link.click();
+        link.remove();
+      },
+      onSummary: ({key, signal}) => api("/transcript-summaries", {gameId: state.gameId, key}, {signal}),
+      onImage: key => thumbnailUrl(state.gameId, {key, contentType: "image/jpeg"}),
+    });
+    return;
+  }
+  if (section === "videos") {
+    setActiveNavigation("videos");
+    elements.characters.hidden = true;
+    elements.explorer.hidden = true;
+    document.getElementById("session-pages").hidden = true;
+    window.PantherUI.unmountSessionPages?.(document.getElementById("session-pages"));
+    document.getElementById("library-title").hidden = false;
     await loadLibrary(section, epoch);
     return;
   }
@@ -2910,6 +2951,9 @@ function clearLibrary() {
   for(const host of document.querySelectorAll("[data-multi-filter]"))window.PantherUI.unmountMultiSelect?.(host);
   for(const native of document.querySelectorAll('#episode-workspace select[data-react-select]'))window.PantherUI.destroySelect(native);
   document.getElementById("session-library").hidden = true;
+  window.PantherUI.unmountSessionPages?.(document.getElementById("session-pages"));
+  const sessionPages = document.getElementById("session-pages");
+  if (sessionPages) sessionPages.hidden = true;
   document.getElementById("library-list").replaceChildren();
   document.getElementById("library-list").hidden = false;
   document.getElementById("library-status").hidden = false;
