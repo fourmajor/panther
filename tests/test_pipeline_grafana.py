@@ -62,5 +62,7 @@ def test_grafana_doc_lists_read_only_permissions_and_no_new_user():
         "tag:GetResources",
     ):
         assert action in text
-    assert "Do not create an IAM user" in text
+    assert "Do not create another" in text
+    assert "panther-grafana-readonly" in text
+    assert "do not print the secret value" in text
     assert "states:StartExecution" in text
