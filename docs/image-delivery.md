@@ -5,8 +5,8 @@ request, then fetch image bytes concurrently straight from private S3. Images ar
 through Lambda and the page never calls `/object-url` once per gallery image. This removes
 the API invocation fan-out that produced 503 responses under the account's low concurrency quota.
 
-The reusable route accepts up to 60 same-game immutable image references and requires the
-existing publisher capability plus API Gateway JWT authentication. It resolves each unique
+The reusable route accepts up to 60 same-game immutable image references. Catalog readers
+and publishers can request the links; API Gateway still requires a signed-in JWT. It resolves each unique
 location through the current validated catalog once, with bounded internal I/O, and signs locally.
 It does not HEAD or read image payloads, scan assets, alter metadata, or expose a public bucket.
 Missing locators are reported per image rather than hiding the whole gallery. File extensions

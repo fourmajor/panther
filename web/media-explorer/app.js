@@ -388,13 +388,19 @@ async function apiRequest(path, parameters = {}, options = {}) {
   for (const [key, value] of Object.entries(parameters)) {
     if (value) url.searchParams.set(key, value);
   }
-  const requestSignal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000);
-  let response = await fetch(url, {
+  const requestSignal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs || 30000)]) : AbortSignal.timeout(options.timeoutMs || 30000);
+  let response;
+  try {
+    response = await fetch(url, {
     signal: requestSignal,
     method: options.body ? "POST" : "GET",
     body: options.body ? JSON.stringify(options.body) : undefined,
     headers: { authorization: `Bearer ${state.tokens.id_token}`, ...(options.body ? {"content-type":"application/json"} : {}) },
   });
+  } catch (error) {
+    if (error?.name === "TimeoutError") throw new Error("This is taking longer than usual. Retry.");
+    throw error;
+  }
   if (response.status === 401) {
     await ensureSession({ force: true });
     response = await fetch(url, { signal: requestSignal, method: options.body ? "POST" : "GET",
@@ -694,6 +700,7 @@ async function selectGame(requested, epoch) {
     const detail = await api("/game", { gameId: selected });
     if (epoch !== routeEpoch || state.gameId !== selected) return false;
     state.gameDetail = detail;
+    document.getElementById("game-create-button").hidden = detail?.canCreateGame !== true;
 
   }
   try { sessionStorage.setItem("panther.game", selected); } catch { /* Optional preference. */ }
@@ -805,6 +812,7 @@ async function loadDashboardRecent(epoch) {
 
 function applyGameDetail(detail) {
   state.gameDetail = detail;
+  document.getElementById("game-create-button").hidden = detail?.canCreateGame !== true;
   const entry = state.games.find(g => g.id === state.gameId); if (entry) Object.assign(entry, detail.game);
   const option = Array.from(elements.gameSelector.options).find(o => o.value === state.gameId);
   if (option) option.textContent = detail.game.name;
@@ -1917,7 +1925,7 @@ async function renderRoute() {
       gameId: state.gameId,
       scope: apiScope(),
       sessionId,
-      onLoad: ({sessionId: selected, signal}) => api("/workflows", {gameId: state.gameId, view: "session-pages", ...(selected ? {sessionId: selected} : {})}, {signal}),
+      onLoad: ({sessionId: selected, part, signal}) => api("/workflows", {gameId: state.gameId, view: "session-pages", part: part || "shell", ...(selected ? {sessionId: selected} : {})}, {signal, timeoutMs: 28000}),
       onNavigate: href => navigate(href),
       onPreview: key => { void previewFile({key, name: key.split("/").at(-1)}); },
       onSign: key => api("/object-url", {key}),
@@ -1932,7 +1940,21 @@ async function renderRoute() {
         link.remove();
       },
       onSummary: ({key, signal}) => api("/transcript-summaries", {gameId: state.gameId, key}, {signal}),
-      onImage: key => thumbnailUrl(state.gameId, {key, contentType: "image/jpeg"}),
+      onExcerpt: async key => {
+        const signed = await api("/object-url", {key});
+        if (!signed?.url || Number(signed.size) > 350000) return null;
+        const response = await fetch(signed.url, {signal: AbortSignal.timeout(15000)});
+        if (!response.ok) throw new Error("Excerpt unavailable");
+        return response.json();
+      },
+      onImage: async key => {
+        try {
+          const linked = await thumbnailUrl(state.gameId, {key, contentType: "image/jpeg", thumbnailKey: key});
+          if (linked) return linked;
+        } catch { /* A signed object URL still shows the image. */ }
+        const signed = await api("/object-url", {key});
+        return signed.contentType?.startsWith("image/") && signed.url ? signed.url : "";
+      },
     });
     return;
   }
@@ -3876,7 +3898,7 @@ class RoomRecorder {
       this.capabilities ||= await api('/browser-recording/capabilities');
       if(epoch!==routeEpoch) return;
       if((this.recording || this.stopping || this.archiving) && this.draft?.owner!==this.owner()) {this.host.hidden=true;this.controls.hidden=true;return;}
-      if(!this.capabilities.canRecord) {this.host.hidden=true;this.controls.hidden=true; return;}
+      if(!this.capabilities.canRecord || !this.capabilities.transcriptionAvailable) {this.host.hidden=true;this.controls.hidden=true; return;}
       if(!this.loadedGame || this.loadedGame!==state.gameId || this.loadedOwner!==this.owner()) {
         this.loadedGame=state.gameId;this.loadedOwner=this.owner();clearTimeout(this.pollTimer);this.nodes.clear();this.dialog.close();this.el['live-text'].replaceChildren();this.el.live.hidden=true;this.el.result.hidden=true;this.el.audio.pause();this.el.audio.remove();this.el.audio.hidden=true;this.el.audio.removeAttribute('src');this.audioKey=null;this.el['final-status'].hidden=true;this.el['final-link'].hidden=true;this.el.recovery.hidden=true;this.el.resume.hidden=false;
         const held=await navigator.locks?.query();
@@ -3887,7 +3909,7 @@ class RoomRecorder {
         if(this.draft) {if(this.draft.status==='archived'){this.processingStarted=this.draft.processingStarted || Date.now();this.showResult('Audio saved','ready');this.el.resume.hidden=true;this.el.recovery.hidden=false;this.el.download.hidden=false;this.transcriptionAvailability();this.schedulePoll();}else {if(this.draft.status==='recording'){this.draft.status='interrupted';this.draft.captureWarnings.push('Capture did not finish in this tab; only persisted parts are available.');}await this.persist();this.showResult('Not saved','error');this.el.recovery.hidden=false;this.say('Audio is saved in this browser. Retry saving or download it.',true);}}
         await this.listRetained();
       }
-      this.buttons();if(!this.capabilities.transcriptionAvailable)this.say('Live transcription unavailable. Recording cannot start.',true);
+      this.buttons();
       if (this.draft?.status === 'archived' && this.capabilities.playbackAvailable === false) this.processingUnavailable();
     } catch(error) {this.say(error.message,true);this.el.start.disabled=true;}
   }
@@ -4142,7 +4164,14 @@ elements.primaryNav.addEventListener("click", (event) => {
   const link = event.target.closest("a");
   if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
+  elements.primaryNav.dataset.open = "false";
+  document.getElementById("nav-menu")?.setAttribute("aria-expanded", "false");
   navigate(link.getAttribute("href"));
+});
+document.getElementById("nav-menu")?.addEventListener("click", () => {
+  const open = elements.primaryNav.dataset.open !== "true";
+  elements.primaryNav.dataset.open = String(open);
+  document.getElementById("nav-menu").setAttribute("aria-expanded", String(open));
 });
 document.querySelector(".brand").addEventListener("click", (event) => {
   if (!state.tokens || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

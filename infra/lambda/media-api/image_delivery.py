@@ -11,8 +11,8 @@ IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "avif", "gif", "svg"}
 
 def handle(event, media):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
-    if not authorized(claims, "MODEL_PUBLISHERS"):
-        return media._response(403, {"error": "Publisher sign-in required"})
+    if not authorized(claims, "CATALOG_READERS") and not authorized(claims, "MODEL_PUBLISHERS"):
+        return media._response(403, {"error": "Member sign-in required"})
     try:
         if len(event.get("body") or "") > 64000:
             raise ValueError()

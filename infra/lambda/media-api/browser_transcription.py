@@ -210,7 +210,7 @@ def handler(event, _context):
     claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
     if not access_policy.authorized(claims, "CATALOG_READERS"):
         return reply(403, {"error": "Member sign-in required"})
-    can_record = access_policy.authorized(claims, "CATALOG_READERS")
+    can_record = access_policy.authorized(claims, "MODEL_PUBLISHERS")
     try:
         route = event.get("routeKey")
         if route == "GET /browser-recording/capabilities":

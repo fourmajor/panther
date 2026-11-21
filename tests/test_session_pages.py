@@ -95,8 +95,10 @@ def test_detail_splits_assets_and_does_not_hide_or_mutate_sources():
     assert render["pipelinePath"] == f"/games/{GAME}/pipeline/{SESSION}"
     assert render["endedAt"] is None
     assert detail["recordingKey"].endswith("listen.mp3")
-    assert detail["players"] == [{"id": "ada", "name": "Ada"}, {"id": "bo", "name": None}]
-    assert detail["characters"] == [{"id": "captain-vell"}]
+    assert detail["players"] == [{"id": "ada", "name": "Ada"}, {"id": "bo", "name": "Bo"}]
+    assert detail["characters"] == [{"id": "captain-vell", "name": "Captain Vell"}]
+    assert detail["player"]["media"] == "video" and detail["player"]["key"].endswith("episode.mp4")
+    assert detail["recordingKey"].endswith("listen.mp3")
     assert detail["summarySourceKey"].endswith("transcript.json")
 
 
@@ -153,9 +155,56 @@ def test_intermediary_assets_group_by_stage_run_and_type_with_sizes():
     assert pages.size_summary([{"size": 1536}, {"size": 0}])["summary"] == "2 files, 1.5 KB"
 
 
+def test_scene_clips_leave_one_featured_video_and_readable_titles():
+    final = asset("movie", "session-video", name="final.mp4", contentType="video/mp4", size=9_000_000)
+    final["metadata"]["title"] = "Harbor night final"
+    clips = []
+    for index in range(3):
+        clip = asset(f"clip-{index}", "video", name=f"clip-{index}.mp4", contentType="video/mp4", size=1000 + index)
+        clip["metadata"]["title"] = f"clip-{index}.mp4"
+        clips.append(clip)
+    chapter = asset("chapter", "novel-chapter", name="novel-chapter.json", contentType="application/json", size=4000)
+    listen = asset("listen", "recording-playback", name="playback-v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp3", contentType="audio/mpeg", size=2000)
+    detail = pages.assemble(GAME, [final, *clips, chapter, listen], [], session_id=SESSION)["session"]
+    kinds = [item["kind"] for item in detail["library"]["finals"]]
+    assert kinds[0] == "session-video"
+    assert "novel-chapter" in kinds and "recording-playback" in kinds
+    assert all(item["kind"] != "video" for item in detail["library"]["finals"])
+    assert [item["title"] for item in detail["library"]["sceneClips"]] == ["Video", "Video", "Video"]
+    assert len(detail["library"]["sceneClips"]) == 3
+    chapter_card = next(item for item in detail["library"]["finals"] if item["kind"] == "novel-chapter")
+    audio_card = next(item for item in detail["library"]["finals"] if item["kind"] == "recording-playback")
+    assert chapter_card["title"] == "Novel chapter"
+    assert audio_card["title"] == "Listening copy"
+    assert detail["excerptKey"].endswith("novel-chapter.json")
+    assert detail["excerptLabel"] == "Excerpt from the novel chapter"
+    assert detail["player"]["media"] == "video"
+
+
+def test_failed_runs_with_huge_gaps_are_stale_and_titles_are_readable():
+    note = asset("note", "document", name="notes.txt", contentType="text/plain")
+    note["metadata"] = {"sessionId": "damian-screen-tests-20260910", "title": "2026-10-02T16:30:42+00:00", "characterIds": ["sergeant-kade"], "extra": {}}
+    note["lastModified"] = "2026-10-02T16:30:42+00:00"
+    still = asset("still", "video-preview", name="preview.jpg", contentType="image/jpeg", size=50_000, lastModified="2026-10-02T16:30:42+00:00")
+    still["metadata"]["sessionId"] = "damian-screen-tests-20260910"
+    started = 1_700_000_000
+    run = {"id": "video-generation~old", "kind": "video-generation", "status": "failed", "createdAt": started, "updatedAt": started + 600 * 3600, "sessionId": "damian-screen-tests-20260910"}
+    fresh = {"id": "video-generation~new", "kind": "video-generation", "status": "failed", "createdAt": started, "completedAt": started + 24, "sessionId": "damian-screen-tests-20260910"}
+    detail = pages.assemble(GAME, [note, still], [run, fresh], session_id="damian-screen-tests-20260910")["session"]
+    assert "2026-10-02T" not in detail["title"]
+    assert "Damian Screen Tests" in detail["title"]
+    assert "Oct" in detail["title"]
+    assert detail["thumbnailKey"].endswith("preview.jpg")
+    assert detail["characters"] == [{"id": "sergeant-kade", "name": "Sergeant Kade"}]
+    stale = next(item for item in detail["pipelines"] if item["id"].endswith("old"))
+    recent = next(item for item in detail["pipelines"] if item["id"].endswith("new"))
+    assert stale["stale"] is True and stale["durationSeconds"] is None
+    assert recent["stale"] is False and recent["durationSeconds"] == 24
+
+
 def test_unknown_session_detail_is_empty_rather_than_invented():
     body = pages.assemble(GAME, [], [], session_id="quiet-table")
-    assert body["session"]["title"] == "quiet-table"
+    assert body["session"]["title"] == "Quiet Table"
     assert body["session"]["pipelines"] == []
     assert body["session"]["finalAssets"] == []
     assert body["session"]["intermediaryAssets"] == []
@@ -178,5 +227,12 @@ def test_sessions_route_renders_list_and_detail_for_every_game():
     assert opened.group(1) == GAME and opened.group(2) == "sessions" and opened.group(3) == SESSION
     assert 'view: "session-pages"' in source
     assert "mountSessionPages" in source
-    for heading in ("Final assets", "Intermediary assets", "Pipelines", "Recording", "Session info"):
+    for heading in ("Final assets", "Intermediary assets", "Pipelines", "Recording", "Session info", "Scene clips"):
         assert heading in ui
+    assert 'part || "shell"' in source and 'part === "full"' in source
+    assert "canCreateGame !== true" in source
+    transcription = (ROOT / "infra/lambda/media-api/browser_transcription.py").read_text()
+    assert 'authorized(claims, "MODEL_PUBLISHERS")' in transcription
+    page = (ROOT / "web/media-explorer/index.html").read_text()
+    assert 'id="nav-menu"' in page
+    assert "hidden" in page.split('id="game-create-button"', 1)[1][:160]
