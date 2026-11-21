@@ -28,23 +28,43 @@ class EncryptedSessionStore:
         parent = self.path.parent
         if create:
             parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if not parent.is_dir():
+        try:
+            descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except FileNotFoundError:
             return False
-        details = parent.stat()
+        except OSError as error:
+            raise KeyringError("Panther credential directory must be private and not a symlink") from error
+        try:
+            try:
+                os.fchmod(descriptor, 0o700)
+            except PermissionError as error:
+                raise KeyringError("Panther credential directory must be private") from error
+            details = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
         if details.st_uid != os.getuid() or details.st_mode & 0o077:
             raise KeyringError("Panther credential directory must be private")
         return True
 
     def _private_file(self) -> bool:
         try:
-            details = self.path.lstat()
+            descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         except FileNotFoundError:
             return False
-        if (
-            not stat.S_ISREG(details.st_mode)
-            or details.st_uid != os.getuid()
-            or details.st_mode & 0o077
-        ):
+        except OSError as error:
+            raise KeyringError("Panther credential file must be private and not a symlink") from error
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_uid != os.getuid():
+                raise KeyringError("Panther credential file must be private")
+            try:
+                os.fchmod(descriptor, 0o600)
+            except PermissionError as error:
+                raise KeyringError("Panther credential file must be private") from error
+            details = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        if details.st_uid != os.getuid() or details.st_mode & 0o077:
             raise KeyringError("Panther credential file must be private")
         return True
 
@@ -96,8 +116,9 @@ class EncryptedSessionStore:
         lock_path = self.path.with_name(self.path.name + ".lock")
         descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
         try:
+            os.fchmod(descriptor, 0o600)
             details = os.fstat(descriptor)
-            if details.st_uid != os.getuid() or details.st_mode & 0o077:
+            if details.st_uid != os.getuid() or not stat.S_ISREG(details.st_mode) or details.st_mode & 0o077:
                 raise KeyringError("Panther credential lock must be private")
             fcntl.flock(descriptor, fcntl.LOCK_EX)
             yield

@@ -724,6 +724,27 @@ def test_box_session_store_is_opt_in_encrypted_and_private(tmp_path, monkeypatch
         cloud.credential_store()
 
 
+def test_box_session_private_dir_tightens_an_existing_directory(tmp_path):
+    from keyring.errors import KeyringError
+
+    from panther_journal import box_session
+
+    directory = tmp_path / "panther"
+    directory.mkdir()
+    directory.chmod(0o755)
+    assert box_session._private_dir(directory, True) is True
+    assert directory.stat().st_mode & 0o777 == 0o700
+    secret = directory / "box-session.enc"
+    secret.write_bytes(b"sealed")
+    secret.chmod(0o644)
+    assert box_session._private_file(secret) is True
+    assert secret.stat().st_mode & 0o777 == 0o600
+    link = tmp_path / "linked"
+    link.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(KeyringError, match="not a symlink"):
+        box_session._private_dir(link, True)
+
+
 def _store_or_none(cloud):
     try:
         return cloud.credential_store()
