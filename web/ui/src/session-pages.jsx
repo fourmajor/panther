@@ -172,20 +172,30 @@ function AssetRow({asset, onPreview}) {
   </div>;
 }
 
+function finalHeading(asset) {
+  const chapter = asset.chapterTitle && asset.chapterTitle !== 'Untitled chapter' ? asset.chapterTitle : (asset.kind === 'novel-chapter' ? asset.title : null);
+  if (asset.kind === 'novel-chapter' && chapter && chapter !== asset.kindLabel) return `Novel chapter: ${chapter}`;
+  return asset.kindLabel || 'Asset';
+}
+
 function AssetCards({assets, scope, gameId, onImage, onPreview, large=false}) {
-  return <ul className={large ? 'session-final-grid' : 'session-image-grid'}>{assets.map(asset => <li key={asset.key}>
+  return <ul className={large ? 'session-final-grid' : 'session-image-grid'}>{assets.map(asset => {
+    const heading = large ? finalHeading(asset) : (asset.title || asset.name || asset.kindLabel);
+    const detail = large && asset.title && asset.title !== heading && asset.title !== asset.chapterTitle ? asset.title : asset.kindLabel;
+    return <li key={asset.key}>
     <article className="session-final-card">
-      <div className="session-thumb">{asset.preview === 'image' || asset.thumbnailKey ? <Thumb scope={scope} gameId={gameId} imageKey={asset.thumbnailKey || asset.key} onImage={onImage}/> : <span className="session-thumb-fallback">{asset.kindLabel}</span>}</div>
+      <div className="session-thumb">{asset.preview === 'image' || asset.thumbnailKey ? <Thumb scope={scope} gameId={gameId} imageKey={asset.thumbnailKey || (asset.preview === 'image' ? asset.key : null)} onImage={onImage}/> : <span className="session-thumb-fallback">{asset.kindLabel}</span>}</div>
       <div className="session-asset-copy">
-        <strong>{asset.title || asset.name || asset.kindLabel}</strong>
-        <p>{asset.kindLabel} · {bytes(asset.size)}</p>
+        <strong>{heading}</strong>
+        <p>{detail} · {bytes(asset.size)}</p>
         <Button variant="outline" size="sm" onClick={() => onPreview(asset.key)}>Open</Button>
       </div>
     </article>
-  </li>)}</ul>;
+  </li>;
+  })}</ul>;
 }
 
-function Library({library, scope, gameId, onImage, onPreview, onShowRun}) {
+function Library({library, scope, gameId, onImage, onPreview, onShowRun, partial=false}) {
   const [chip, setChip] = React.useState('all');
   const [query, setQuery] = React.useState('');
   const [newest, setNewest] = React.useState(true);
@@ -203,18 +213,18 @@ function Library({library, scope, gameId, onImage, onPreview, onShowRun}) {
       <Input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search filename or type" aria-label="Search assets"/>
       <Button variant="outline" aria-pressed={newest} onClick={() => setNewest(value => !value)}>{newest ? 'Newest first' : 'Oldest first'}</Button>
     </div>
-    <div className="session-chips" role="toolbar" aria-label="Asset types">
+    {!partial && <div className="session-chips" role="toolbar" aria-label="Asset types">
       <button type="button" className="session-chip" aria-pressed={chip === 'all'} onClick={() => setChip('all')}>All</button>
       {(library?.types || []).map(type => <button key={type.id} type="button" className="session-chip" aria-pressed={chip === type.id} onClick={() => setChip(type.id)}>{type.label}</button>)}
-    </div>
+    </div>}
     <section aria-label="Final assets">
       <h3>Final assets</h3>
       {finals.length ? <AssetCards assets={finals} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} large/> : <p className="session-empty">No final assets yet.</p>}
-      {(library?.sceneClips || []).length > 0 && <Disclosure summary={<span className="session-disclosure-label"><strong>Scene clips</strong><span>{assetSummary(library.sceneClips)}</span></span>}>
+      {!partial && (library?.sceneClips || []).length > 0 && <Disclosure summary={<span className="session-disclosure-label"><strong>Scene clips</strong><span>{assetSummary(library.sceneClips)}</span></span>}>
         <AssetCards assets={library.sceneClips} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview}/>
       </Disclosure>}
     </section>
-    <section aria-label="Intermediary assets">
+    {!partial && <section aria-label="Intermediary assets">
       <h3>Intermediary assets</h3>
       {stages.length === 0 && <p className="session-empty">No intermediary assets for this session.</p>}
       {stages.map(stage => {
@@ -228,7 +238,8 @@ function Library({library, scope, gameId, onImage, onPreview, onShowRun}) {
         </div>)}
       </Disclosure>;
       })}
-    </section>
+    </section>}
+    {partial && <p role="status" className="session-note">Loading the rest of this session&apos;s assets.</p>}
   </div>;
 }
 
@@ -307,15 +318,14 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
     </section>
     <section className="session-block" aria-label="Assets">
       <h2>Assets</h2>
-      {libraryPending && <p role="status" className="session-note">Loading the rest of this session&apos;s assets.</p>}
-      <Library library={session.library} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} onShowRun={showRun}/>
+      <Library library={session.library} scope={scope} gameId={gameId} onImage={onImage} onPreview={onPreview} onShowRun={showRun} partial={libraryPending}/>
     </section>
     <section className="session-block" aria-label="Pipelines">
       <h2>Pipelines</h2>
       {(session.pipelines || []).length === 0 && <p className="session-empty">No pipeline runs are tied to this session.</p>}
       {groups.map(group => {
         const last = when(group.lastRun);
-        const total = group.totalDuration == null ? '—' : duration(group.totalDuration);
+        const total = group.totalDuration == null ? null : duration(group.totalDuration);
         const summary = [
           group.runs.length === 1 ? '1 run' : `${group.runs.length} runs`,
           group.statusLabel,
@@ -323,14 +333,14 @@ function Detail({gameId, scope, session, listPath, onNavigate, onPreview, onSign
           total,
           group.stale ? `${group.stale} stale` : null,
         ].filter(Boolean).join(' · ');
-        return <Disclosure key={group.kind} forceOpen={group.runs.some(run => run.anchor && run.anchor === currentRun)} summary={<span className="session-disclosure-label"><strong>{group.type}</strong><span>{summary}</span></span>}>
+        return <Disclosure key={group.kind} forceOpen={group.runs.some(run => run.anchor && run.anchor === currentRun)} summary={<span className="session-disclosure-label"><strong>{group.type}</strong><span className="session-pipeline-summary">{summary}</span></span>}>
           <ul className="session-runs">{group.runs.map(run => <li key={run.id}>
             <article className="session-run" id={run.anchor || undefined} data-current={currentRun === run.anchor ? 'true' : 'false'} data-stale={run.stale ? 'true' : 'false'}>
               <header><strong>{run.type}</strong><span className="session-status" data-status={run.stale ? 'paused' : run.status}>{run.stale ? 'Stale' : run.statusLabel}</span></header>
               {run.title && run.title !== run.type && <p>{run.title}</p>}
               <dl>
                 <dt>Started</dt><dd>{when(run.startedAt) || 'Unknown'}</dd>
-                <dt>Ended</dt><dd>{run.stale ? 'Abandoned' : when(run.endedAt) || (run.status === 'running' || run.status === 'queued' ? 'In progress' : 'Unknown')}</dd>
+                <dt>Ended</dt><dd>{run.stale ? 'Abandoned' : when(run.endedAt) || (run.status === 'running' || run.status === 'queued' ? 'In progress' : '—')}</dd>
                 <dt>Duration</dt><dd>{run.stale ? 'Stale' : duration(run.durationSeconds) || '—'}</dd>
               </dl>
               {run.message && <p className="session-run-log">{run.message}</p>}
@@ -355,22 +365,40 @@ export function SessionPages({gameId, scope, sessionId, onLoad, onNavigate, onPr
   });
   const full = useQuery({
     queryKey: ['session-pages', scope, gameId, sessionId || '', 'full'],
-    enabled: shell.isSuccess,
-    queryFn: ({signal}) => onLoad({sessionId: sessionId || null, part: 'full', signal}),
+    enabled: Boolean(sessionId) && shell.isSuccess,
+    queryFn: ({signal}) => onLoad({sessionId, part: 'full', signal}),
+    retry: false,
+    staleTime: 60000,
+  });
+  const cards = useQuery({
+    queryKey: ['session-pages', scope, gameId, 'cards'],
+    enabled: !sessionId && shell.isSuccess,
+    queryFn: ({signal}) => onLoad({sessionId: null, part: 'cards', signal}),
     retry: false,
     staleTime: 60000,
   });
   const listPath = `/games/${encodeURIComponent(gameId)}/sessions`;
   const data = full.data || shell.data;
+  const cardById = Object.fromEntries((cards.data?.sessions || []).map(item => [item.id, item]));
+  const sessions = (data?.sessions || []).map(item => {
+    const extra = cardById[item.id];
+    if (!extra) return item;
+    return {
+      ...item,
+      thumbnailKey: extra.thumbnailKey || item.thumbnailKey,
+      excerptKey: extra.excerptKey || item.excerptKey,
+      excerptLabel: extra.excerptLabel || item.excerptLabel,
+    };
+  });
   const libraryPending = Boolean(sessionId) && shell.data?.scope === 'shell' && !full.data;
-  const thumbsPending = !full.data && !full.error;
+  const thumbsPending = !sessionId && !cards.data && !cards.error;
   return <div className="session-pages">
     {shell.isPending && <div className="session-grid" aria-label="Loading sessions">{[0, 1, 2].map(item => <div className="session-tile session-tile-loading" key={item}><div className="session-thumb"/><div className="session-line"/><div className="session-line session-line-short"/></div>)}</div>}
     {shell.error && !data && <div><p role="alert" className="session-error"><CircleAlert size={16}/>{shell.error.message || 'Sessions could not be loaded.'}</p><Button variant="outline" onClick={() => shell.refetch()}>Retry sessions</Button></div>}
     {data && !data.complete && <p role="status" className="session-note">Some catalog pages were not read. This list may be missing assets. <Button variant="outline" size="sm" onClick={() => (full.data ? full : shell).refetch()}>Retry sessions</Button></p>}
     {data && !sessionId && <section aria-label="Sessions">
-      {data.sessions.length === 0 && <p className="session-empty">No sessions yet.</p>}
-      {data.sessions.length > 0 && <ul className="session-grid">{data.sessions.map(item => <li key={item.id}>
+      {sessions.length === 0 && <p className="session-empty">No sessions yet.</p>}
+      {sessions.length > 0 && <ul className="session-grid">{sessions.map(item => <li key={item.id}>
         <Link href={item.href || `${listPath}/${encodeURIComponent(item.id)}`} onNavigate={onNavigate} className="session-tile" data-status={item.status} aria-label={`${item.title}, ${item.statusLabel}`}>
           <span className="session-thumb"><Thumb scope={scope} gameId={gameId} imageKey={item.thumbnailKey} onImage={onImage} pending={thumbsPending && !item.thumbnailKey}/></span>
           <span className="session-tile-copy">

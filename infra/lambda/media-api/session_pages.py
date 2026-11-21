@@ -107,6 +107,10 @@ GENERIC_TITLE = re.compile(
     re.IGNORECASE,
 )
 NOISY_TITLE = re.compile(r"[a-f0-9]{24,}|\.(?:json|wav|mp3|flac|md|png|jpe?g|mp4|webm)\Z", re.IGNORECASE)
+VARIANT_TAIL = re.compile(
+    r"(?:final|procedural|browser|original|original procedural|original procedural cork effects)\Z",
+    re.IGNORECASE,
+)
 ISO_TITLE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 SLUG_TITLE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 TRANSCRIPT_KINDS = ("raw-transcript", "transcript", "corrected-transcript", "edited-transcript")
@@ -302,9 +306,19 @@ def _person_name(identity, name=None):
 
 def _friendly_slug(session_id):
     words = re.sub(r"[-_]+", " ", session_id)
-    words = re.sub(r"\b\d{6,8}\b", "", words)
+    words = re.sub(r"\b20\d{2}\b", " ", words)
+    words = re.sub(r"\b\d{2}\b", " ", words)
+    words = re.sub(r"\b\d{6,8}\b", " ", words)
     words = " ".join(words.split())
     return words.title() if words else "Session"
+
+
+def _clean_title(title):
+    """Drop production suffixes. Keep a real subtitle such as a second name."""
+    parts = re.split(r"\s+[—–]\s+", title.strip())
+    while len(parts) > 1 and VARIANT_TAIL.fullmatch(parts[-1].strip()):
+        parts.pop()
+    return " — ".join(part.strip() for part in parts if part.strip())
 
 
 def _friendly_date(when):
@@ -480,18 +494,15 @@ def _title(assets, session_id, when):
             if _usable_title(name):
                 names.append(name)
     if names:
-        return sorted(names, key=str.casefold)[0]
+        return _clean_title(sorted(names, key=str.casefold)[0])
     videos = _video_assets(assets)
     if videos:
         chosen = sorted(videos, key=_video_rank_tuple)[0]
         title = _clip(_metadata(chosen).get("title"), 160)
         if _usable_title(title):
-            return title
-    date = _friendly_date(when)
+            return _clean_title(title)
     label = _friendly_slug(session_id)
-    if date and label:
-        return f"{date} · {label}"
-    return date or label or session_id
+    return label or _friendly_date(when) or session_id
 
 
 def _iso(value):

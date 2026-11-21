@@ -225,6 +225,57 @@ def page(game, section, cursor=None, *, selection=None, consistent=True, tags=Tr
     }
 
 
+def gather(game, section, *, consistent=False):
+    """Read one catalog section in parallel key ranges. Same rows as paging it."""
+    if section not in SECTIONS:
+        raise ValueError("Invalid asset section")
+    if (
+        not table()
+        .get_item(Key={"pk": f"v{VERSION}#catalog", "sk": "ready"}, ConsistentRead=consistent)
+        .get("Item")
+    ):
+        raise IndexNotReady(
+            "The catalog upgrade is being prepared. No assets have been removed; please retry shortly."
+        )
+    pk = partition(game, section)
+    prefix = f"games/{game}/assets/"
+    cuts = [prefix + letter for letter in ("", "9", "d", "h", "l", "p", "t")]
+    ends = cuts[1:] + [prefix + "{"]
+
+    def span(bounds):
+        start, end = bounds
+        found, cursor, pages = [], None, 0
+        while pages < 20:
+            args = {
+                "KeyConditionExpression": Key("pk").eq(pk) & Key("sk").gte(start) & Key("sk").lt(end),
+                "ConsistentRead": consistent,
+                "Limit": 100,
+            }
+            if cursor:
+                args["ExclusiveStartKey"] = cursor
+            page = table().query(**args)
+            found.extend(page.get("Items", []))
+            cursor = page.get("LastEvaluatedKey")
+            pages += 1
+            if not cursor:
+                return found, True
+        return found, cursor is None
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        parts = list(pool.map(span, zip(cuts, ends)))
+    rows, complete = [], True
+    for found, done in parts:
+        rows.extend(found)
+        complete = complete and done
+    import asset_archive
+
+    archived = asset_archive.archived_keys(game, [item["sk"] for item in rows])
+    assets = [json.loads(item["payload"]) for item in rows if item["sk"] not in archived]
+    return assets, complete
+
+
 def records(game, keys):
     import asset_browser
     import asset_archive

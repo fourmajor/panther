@@ -192,8 +192,7 @@ def test_failed_runs_with_huge_gaps_are_stale_and_titles_are_readable():
     fresh = {"id": "video-generation~new", "kind": "video-generation", "status": "failed", "createdAt": started, "completedAt": started + 24, "sessionId": "damian-screen-tests-20260910"}
     detail = pages.assemble(GAME, [note, still], [run, fresh], session_id="damian-screen-tests-20260910")["session"]
     assert "2026-10-02T" not in detail["title"]
-    assert "Damian Screen Tests" in detail["title"]
-    assert "Oct" in detail["title"]
+    assert detail["title"] == "Damian Screen Tests"
     assert detail["thumbnailKey"].endswith("preview.jpg")
     assert detail["characters"] == [{"id": "sergeant-kade", "name": "Sergeant Kade"}]
     stale = next(item for item in detail["pipelines"] if item["id"].endswith("old"))
@@ -213,7 +212,10 @@ def test_titles_stay_on_the_session_or_episode_and_cards_get_posters():
     chapter["novel"] = {"title": "Borrowed Trust", "state": "available"}
     forward = pages.assemble(GAME, [transcript, video, still, chapter], [], session_id=SESSION)["session"]
     reverse = pages.assemble(GAME, [chapter, still, video, transcript], [], session_id=SESSION)["session"]
-    assert forward["title"] == reverse["title"] == "The Bottled Dead — original procedural cork effects"
+    assert forward["title"] == reverse["title"] == "The Bottled Dead"
+    assert pages._clean_title("The Kitchen That Remembered — Five Against the Fire — browser") == "The Kitchen That Remembered — Five Against the Fire"
+    assert pages._clean_title("Borrowed Trust — procedural") == "Borrowed Trust"
+    assert pages._friendly_slug("solo-audio-test-2026-09-09") == "Solo Audio Test"
     assert forward["thumbnailKey"].endswith("final-preview.jpg")
     episode = next(item for item in forward["library"]["finals"] if item["kind"] == "session-video")
     assert episode["thumbnailKey"] == forward["thumbnailKey"]
@@ -223,7 +225,7 @@ def test_titles_stay_on_the_session_or_episode_and_cards_get_posters():
     prose["metadata"] = {"sessionId": "damian-screen-tests-20260910", "title": "Corrected transcript", "characterIds": [], "extra": {}}
     prose["lastModified"] = "2026-10-02T16:30:42+00:00"
     bare = pages.assemble(GAME, [prose], [], session_id="damian-screen-tests-20260910")["session"]
-    assert bare["title"] == "Oct 2, 2026 · Damian Screen Tests"
+    assert bare["title"] == "Damian Screen Tests"
     assert "transcript" not in bare["title"].casefold()
     assert bare["excerptKey"].endswith("read.md")
     assert bare["excerptLabel"] == "Excerpt from the corrected transcript"
@@ -265,6 +267,8 @@ def test_sessions_route_renders_list_and_detail_for_every_game():
         assert heading in ui
     assert 'part || "shell"' in source and "timeoutMs: 28000" in source
     assert "full.data || shell.data" in ui
+    assert "part: 'cards'" in ui
+    assert "Novel chapter:" in ui
     assert "Read more" in ui and "<1s" in ui
     assert "canCreateGame !== true" in source
     transcription = (ROOT / "infra/lambda/media-api/browser_transcription.py").read_text()

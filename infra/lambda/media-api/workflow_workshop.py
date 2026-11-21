@@ -318,6 +318,10 @@ def catalog_assets(game, sections=("all",)):
     if cached and now - cached[0] < 90:
         return cached[1], cached[2]
     assets, seen, complete = [], set(), True
+    if sections == ("all",):
+        assets, complete = browse_index.gather(game, "all", consistent=False)
+        _CATALOG_CACHE[key] = (now, assets, complete)
+        return assets, complete
     for section in sections:
         cursor, pages = None, 0
         while pages < catalog_page_limit():
@@ -401,11 +405,12 @@ def handler(event, _context):
                 if q.get("sessionId") is not None and not q.get("sessionId"):
                     raise ValueError("Invalid session")
                 part = q.get("part") or ("full" if q.get("sessionId") else "shell")
-                if part not in {"shell", "full"}:
+                if part not in {"shell", "full", "cards"}:
                     raise ValueError("Invalid session page")
-                # The list and the first detail paint use the smaller session,
-                # video, and novel sections. The full library follows.
-                sections = ("all",) if part == "full" else ("sessions", "videos", "novels")
+                # The list paints from the session, video, and novel sections.
+                # Card thumbnails and excerpts are a separate small projection.
+                # A detail's full library is the whole catalog.
+                sections = ("sessions", "videos", "novels") if part == "shell" else ("all",)
                 try:
                     items = game_items(game, consistent=False)
                     assets, complete = catalog_assets(game, sections)
@@ -417,6 +422,17 @@ def handler(event, _context):
                     return reply(503, {"error": "Session catalog is not configured."})
                 body = assemble(game, assets, items, session_id=q.get("sessionId") or None, assets_complete=complete)
                 body["scope"] = part
+                if part == "cards":
+                    body["sessions"] = [
+                        {
+                            "id": card["id"],
+                            "thumbnailKey": card.get("thumbnailKey"),
+                            "excerptKey": card.get("excerptKey"),
+                            "excerptLabel": card.get("excerptLabel"),
+                        }
+                        for card in body["sessions"]
+                    ]
+                    body["session"] = None
                 return reply(200, body)
             try:
                 items = game_items(game)
